@@ -1,0 +1,122 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Build artifacts
+/bin/
+/dist/
+/build/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Configuration files that might contain secrets
+config/local.yml
+config/secrets.yml
+
+# Docker files
+.dockerignore
+
+# Air live reload tool
+.air.toml
+tmp/
+
+# Delve debugger
+debug.test
+
+# Local development database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor backup files
+*~
+*.backup
+*.bak
+
+# JetBrains IDEs
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Vim
+*.swp
+*.swo
+.vimrc.local
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Local certificates
+*.pem
+*.key
+*.crt
+
+# Node.js (if you have any frontend components)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log* 

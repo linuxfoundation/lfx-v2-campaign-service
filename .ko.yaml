@@ -1,0 +1,9 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+builds:
+  - id: campaign-service
+    dir: ./cmd
+    ldflags:
+      - -X=main.version={{.Env.VERSION}}
+      - -X=main.buildTime={{.Env.BUILD_TIME}}
+      - -X=main.gitCommit={{.Env.GIT_COMMIT}}

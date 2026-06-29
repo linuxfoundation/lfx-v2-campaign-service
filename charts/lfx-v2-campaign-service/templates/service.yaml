@@ -1,0 +1,17 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+
+spec:
+  ports:
+    - name: web
+      port: {{ .Values.service.port }}
+      targetPort: web
+
+  selector:
+    app: {{ .Chart.Name }}

@@ -1,0 +1,127 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        app: {{ .Chart.Name }}
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | default .Chart.Name }}
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+          {{- range $name, $config := .Values.app.environment }}
+          - name: {{ $name }}
+            {{- if $config.value }}
+            value: {{ $config.value | quote }}
+            {{- else if $config.valueFrom }}
+            valueFrom:
+              {{- toYaml $config.valueFrom | nindent 14 }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.app.extraEnv }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+          {{- $otelServiceName := .Values.app.otel.serviceName | toString | trim }}
+          {{- if ne $otelServiceName "" }}
+          - name: OTEL_SERVICE_NAME
+            value: {{ $otelServiceName | quote }}
+          {{- end }}
+          {{- $otelServiceVersion := .Values.app.otel.serviceVersion | toString | trim }}
+          {{- if ne $otelServiceVersion "" }}
+          - name: OTEL_SERVICE_VERSION
+            value: {{ $otelServiceVersion | quote }}
+          {{- end }}
+          {{- $otelEndpoint := .Values.app.otel.endpoint | toString | trim }}
+          {{- if ne $otelEndpoint "" }}
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: {{ $otelEndpoint | quote }}
+          {{- end }}
+          {{- $otelProtocol := .Values.app.otel.protocol | toString | trim }}
+          {{- if ne $otelProtocol "" }}
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: {{ $otelProtocol | quote }}
+          {{- end }}
+          {{- $otelInsecure := .Values.app.otel.insecure | toString | trim }}
+          {{- if ne $otelInsecure "" }}
+          - name: OTEL_EXPORTER_OTLP_INSECURE
+            value: {{ $otelInsecure | quote }}
+          {{- end }}
+          {{- $otelTracesExporter := .Values.app.otel.tracesExporter | toString | trim }}
+          {{- if ne $otelTracesExporter "" }}
+          - name: OTEL_TRACES_EXPORTER
+            value: {{ $otelTracesExporter | quote }}
+          {{- end }}
+          {{- $otelTracesSampleRatio := .Values.app.otel.tracesSampleRatio | toString | trim }}
+          {{- if ne $otelTracesSampleRatio "" }}
+          - name: OTEL_TRACES_SAMPLE_RATIO
+            value: {{ $otelTracesSampleRatio | quote }}
+          {{- end }}
+          {{- $otelMetricsExporter := .Values.app.otel.metricsExporter | toString | trim }}
+          {{- if ne $otelMetricsExporter "" }}
+          - name: OTEL_METRICS_EXPORTER
+            value: {{ $otelMetricsExporter | quote }}
+          {{- end }}
+          {{- $otelLogsExporter := .Values.app.otel.logsExporter | toString | trim }}
+          {{- if ne $otelLogsExporter "" }}
+          - name: OTEL_LOGS_EXPORTER
+            value: {{ $otelLogsExporter | quote }}
+          {{- end }}
+          {{- $otelPropagators := .Values.app.otel.propagators | toString | trim }}
+          {{- if ne $otelPropagators "" }}
+          - name: OTEL_PROPAGATORS
+            value: {{ $otelPropagators | quote }}
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              name: web
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: web
+            failureThreshold: 3
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: web
+            failureThreshold: 1
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: web
+            failureThreshold: 30
+            periodSeconds: 1

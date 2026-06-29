@@ -1,0 +1,36 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+#
+# SPDX-License-Identifier: MIT
+---
+name: "LFX V2 Campaign Service Build"
+
+"on":
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-pr:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+      - name: Setup go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5  # v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download Dependencies
+        run: make deps
+
+      - name: Generate service code
+        run: make apigen
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test

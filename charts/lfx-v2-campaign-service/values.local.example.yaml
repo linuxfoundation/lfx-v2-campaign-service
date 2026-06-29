@@ -1,0 +1,17 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+# Local development values override file.
+# Copy this file to values.local.yaml and customize as needed.
+# values.local.yaml is gitignored so your local settings won't be committed.
+#
+# Usage:
+#   cp charts/lfx-v2-campaign-service/values.local.example.yaml \
+#      charts/lfx-v2-campaign-service/values.local.yaml
+#   make helm-install-local
+
+# Image configuration
+image:
+  repository: ghcr.io/linuxfoundation/lfx-v2-campaign-service
+  tag: "latest"  # Overrides appVersion from Chart.yaml
+  pullPolicy: Never

@@ -1,0 +1,6 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+---
+site_name: LFX V2 Campaign Service
+site_description: A collection service endpoints to support Marketing Operations campaign creation and management.
+plugins:
+  - techdocs-core

@@ -1,0 +1,132 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+name: Publish Tagged Release
+
+"on":
+  push:
+    tags:
+      - v*
+
+env:
+  COSIGN_VERSION: v2.5.3
+  HELM_VERSION: v3.18.4
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish Tagged Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      app_version: 
+      chart_name: 
+      chart_version: 
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+      - name: Prepare versions and chart name
+        id: prepare
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(echo  | sed 's/v//g')
+          CHART_NAME="$(yq '.name' charts/*/Chart.yaml)"
+          CHART_VERSION=$(echo  | sed 's/v//g')
+          {
+            echo "app_version=$APP_VERSION"
+            echo "chart_name=$CHART_NAME"
+            echo "chart_version=$CHART_VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5  # v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Ko
+        uses: ko-build/setup-ko@d006021bd0c28d1ce33a07e7943d48b079944c8d  # v0.9
+        with:
+          version: v0.18.0
+
+      - name: Build and publish campaign-service image
+        env:
+          VERSION: 
+        run: |
+          BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+          GIT_COMMIT=""
+          GIT_COMMIT="${GIT_COMMIT:0:7}"
+          export BUILD_TIME
+          export GIT_COMMIT
+          ko build github.com/linuxfoundation/lfx-v2-campaign-service/cmd/campaign-service \
+            -B \
+            --platform linux/amd64,linux/arm64 \
+            -t  \
+            -t  \
+            -t latest \
+            --sbom spdx
+
+  release-helm-chart:
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    outputs:
+      digest: NaN
+      image_name: NaN
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5
+
+      - name: Publish Chart to GHCR
+        id: publish-ghcr
+        # yamllint disable-line rule:line-length
+        uses: linuxfoundation/lfx-public-workflows/.github/actions/helm-chart-oci-publisher@17e4144d7ba68f7c3e8c16eece5aed15fd7c2dc8  # main
+        with:
+          name: 
+          repository: /chart
+          chart_version: 
+          app_version: 
+          registry: ghcr.io
+          registry_username: 
+          registry_password: 
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        with:
+          cosign-release: ""
+
+      - name: Login to GitHub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3.4.0
+        with:
+          registry: ghcr.io
+          username: 
+          password: 
+
+      - name: Sign the Helm chart in GHCR
+        env:
+          GITHUB_TOKEN: 
+        run: |
+          set -euo pipefail
+          cosign sign --yes 'NaN@NaN'
+
+  create-ghcr-helm-provenance:
+    needs:
+      - release-helm-chart
+    permissions:
+      actions: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a  # v2.1.0
+    with:
+      image: NaN
+      digest: NaN
+      registry-username: 
+    secrets:
+      registry-password: 

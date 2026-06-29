@@ -1,0 +1,217 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+# image is the configuration for the container images
+image:
+  # repository is the container image repository
+  repository: ghcr.io/linuxfoundation/lfx-v2-campaign-service/campaign-service
+  # tag is the container image tag (overrides appVersion from Chart.yaml)
+  tag: ""
+  # pullPolicy is the image pull policy
+  pullPolicy: IfNotPresent
+
+# replicaCount is the number of replicas for the deployment
+replicaCount: 1
+
+# podAnnotations are additional annotations applied to the pod template.
+# Example:
+#   prometheus.io/scrape: "true"
+#   prometheus.io/port: "8080"
+podAnnotations: {}
+
+# podLabels are additional labels applied to the pod template.
+# Example:
+#   team: platform
+#   environment: production
+podLabels: {}
+
+# podDisruptionBudget configures a PodDisruptionBudget for the deployment.
+# Only one of minAvailable or maxUnavailable may be set (not both).
+podDisruptionBudget:
+  enabled: false
+  # minAvailable: 1
+  # maxUnavailable: 1
+
+# resources is the configuration for container resource requests and limits
+resources:
+  # limits is the maximum amount of resources allowed
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  # requests is the minimum amount of resources required
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# traefik is the configuration for Traefik Gateway API routing
+traefik:
+  # gateway specifies the platform Gateway to attach to
+  gateway:
+    # name is the name of the Gateway resource
+    name: lfx-platform-gateway
+    # namespace is the namespace of the Gateway resource
+    namespace: lfx
+
+# lfx is the configuration for LFX platform
+lfx:
+  # domain is the base domain for routing
+  domain: k8s.orb.local
+  # namespace is the target namespace for deployment
+  namespace: lfx
+
+# service is the configuration for the Kubernetes service
+service:
+  # port is the service port
+  port: 8080
+
+# openfga is the configuration for the OpenFGA server
+openfga:
+  # enabled is a boolean to determine if the OpenFGA server should be enabled for authorization
+  # Note: If it is disabled, then the service will allow all requests
+  # (Disabling OpenFGA should only be used for local development).
+  enabled: true
+
+# heimdall is the configuration for the heimdall middleware
+heimdall:
+  enabled: true
+  url: http://lfx-platform-heimdall.lfx.svc.cluster.local:4456
+  # jwksUrl is the URL to the JSON Web Key Set endpoint for JWT validation
+  jwksUrl: http://lfx-platform-heimdall.lfx.svc.cluster.local:4457/.well-known/jwks
+  # add_middleware determines whether or not the middleware is installed. If not managed
+  # by another service or helm chart then it is needed.
+  add_middleware: false
+
+# authelia is the configuration for the Authelia server
+authelia:
+  # enabled is a boolean to determine if the Authelia authenticator is enabled
+  # Note: Disabling Authelia should only be used for local development
+  enabled: true
+
+# nats is the configuration for the NATS server
+nats:
+  # url is the URL of the NATS server
+  url: nats://lfx-platform-nats.lfx.svc.cluster.local:4222
+
+# app is the configuration for the application
+app:
+  # logLevel is the log level (debug, info, warn, error)
+  logLevel: debug
+  # logAddSource is a boolean to determine if the log source should be added
+  logAddSource: true
+  # use_oidc_contextualizer is a boolean to determine if the OIDC contextualizer should be used
+  use_oidc_contextualizer: true
+  # jwt is the configuration for JWT authentication
+  # audience is the intended audience for the JWT token
+  audience: lfx-v2-campaign-service
+
+  # extraEnv allows injecting additional environment variables into the container.
+  # Supports both simple key-value pairs and Kubernetes field references.
+  # These are rendered BEFORE OTEL variables, allowing use in OTEL configuration.
+  extraEnv: []
+
+  # otel is the configuration for OpenTelemetry tracing
+  otel:
+    # serviceName is the service name for OpenTelemetry resource identification
+    # (default: "lfx-v2-campaign-service")
+    # TODO(agaetep): will comments still get flushed out with values?
+    serviceName: ""
+    # serviceVersion is the service version for OpenTelemetry resource identification
+    # (default: build-time Version variable)
+    serviceVersion: ""
+    # protocol specifies the OTLP protocol: "grpc" or "http"
+    # (default: "grpc")
+    protocol: "grpc"
+    # endpoint is the OTLP collector endpoint
+    # For gRPC: typically "host:4317", for HTTP: typically "host:4318"
+    endpoint: ""
+    # insecure disables TLS for the OTLP connection
+    # Set to "true" for in-cluster communication without TLS
+    insecure: "false"
+    # tracesExporter specifies the traces exporter: "otlp" or "none"
+    # (default: "none")
+    tracesExporter: "none"
+    # tracesSampleRatio specifies the sampling ratio for traces (0.0 to 1.0)
+    # A value of 1.0 means all traces are sampled, 0.5 means 50% are sampled
+    # (default: "1.0")
+    tracesSampleRatio: "1.0"
+    # metricsExporter specifies the metrics exporter: "otlp" or "none"
+    # (default: "none")
+    metricsExporter: "none"
+    # logsExporter specifies the logs exporter: "otlp" or "none"
+    # (default: "none")
+    logsExporter: "none"
+    # propagators specifies the trace context propagators to use
+    # Comma-separated list of: "tracecontext", "baggage", "jaeger"
+    # (default: "tracecontext,baggage")
+    propagators: "tracecontext,baggage,jaeger"
+
+  # environment contains all application environment variables
+  # Each variable can have either a 'value' (for direct values) or 'valueFrom' (for secret references)
+  environment:
+    # NATS_URL is the URL of the NATS server (required)
+    NATS_URL:
+      value: nats://lfx-platform-nats.lfx.svc.cluster.local:4222
+
+    # LOG_LEVEL is the log level (debug, info, warn, error) - optional, defaults to info
+    LOG_LEVEL:
+      value: info
+
+    # LOG_ADD_SOURCE determines if log source should be added - optional, defaults to true
+    LOG_ADD_SOURCE:
+      value: true
+
+    # JWKS_URL is the URL to the JSON Web Key Set endpoint for JWT validation
+    # Required unless JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL is set
+    JWKS_URL:
+      value: http://lfx-platform-heimdall.lfx.svc.cluster.local:4457/.well-known/jwks
+
+    # JWT_AUDIENCE is the intended audience for the JWT token (required)
+    JWT_AUDIENCE:
+      value: lfx-v2-campaign-service
+
+    # JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL is used for local development to bypass JWT validation
+    # Optional, local dev only. Set to a principal name to enable mock authentication
+    JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL:
+      value: ''
+
+    # AUTH_SOURCE is the authentication source: 'jwt' for production, 'mock' for local dev (optional, defaults to jwt)
+    AUTH_SOURCE:
+      value: jwt
+
+    # REPOSITORY_SOURCE is the repository implementation: 'nats' for production, 'mock' for local dev
+    # Optional, defaults to nats. Production should use 'nats', local development should use 'mock'
+    REPOSITORY_SOURCE:
+      value: nats
+
+    # ITX Proxy Configuration
+    ITX_BASE_URL:
+      value: ""
+
+    ITX_CLIENT_ID:
+      value: ""
+
+    # ITX_CLIENT_PRIVATE_KEY is the private key for ITX proxy authentication
+    # WARNING: Do not commit actual credentials to this file - should be set via Kubernetes secrets using valueFrom
+    ITX_CLIENT_PRIVATE_KEY:
+      value: ""
+
+    ITX_AUTH0_DOMAIN:
+      value: ""
+
+    ITX_AUDIENCE:
+      value: ""
+
+    EVENTING_ENABLED:
+      value: "true"
+
+# serviceAccount is the configuration for the Kubernetes service account (used by multiple components)
+serviceAccount:
+  # create specifies whether a service account should be created
+  create: true
+  # name is the name of the service account to use.
+  # If not set and create is true, defaults to the chart name.
+  name: ""
+  # annotations to add to the service account
+  annotations: {}
+  # automountServiceAccountToken is a boolean to determine if the service account token should be automatically mounted
+  automountServiceAccountToken: true
