@@ -24,31 +24,38 @@ flowchart TD
         frontend["Browser / frontend"]
         ssr["Server-side rendering\n& BFF routes"]
         frontend -->|html page loads| ssr
-        frontend -->|partial-page loads / client-side rendering| ssr
+        frontend -->|"partial-page loads /<br />client-side rendering"| ssr
     end
 
     mcp[MCP Server]
-    mobile[mobile-app?]
+
+    mobile["Mobile app<br />(theoretical)"]
+
     snowflake[(Snowflake)]
 
-    ssr ----->|less ideal| snowflake
+    ssr -->|"less ideal<br />(UI-brokered authz)"| snowflake
 
     subgraph Platform[LFX Platform]
         api-gw["API Gateway\n(Authorization)"]
         querysvc[Query Service]
         opensearch[(OpenSearch)]
         api-gw --> querysvc -->|searches| opensearch
-        domains[Project domains]
-        lists[Mailing lists]
-        meetings[Meetings]
+        committees[Committees svc]
+        %% the committees DB is currently NATS KV but will move to Postgres
+        committees-db[(committees DB)]
+        committees --> committees-db
+        domains[Domains svc]
+        lists[Mailing lists svc]
+        meetings[Meetings svc]
+        api-gw --> committees
         api-gw --> domains
         api-gw --> lists
         api-gw --> meetings
 
-        subgraph campaigns-group["Campaigns"]
+        subgraph campaigns-group["Campaigns Service (preferred)"]
             campaigns["Campaigns service\n(Golang)"]
             campaigns-db[("Postgres\n(stores briefs, shared-tenant mappings, etc)")]
-            google-ads-helper["Google Ads Typescript<br />helper (optional)"]
+            google-ads-helper["Google Ads Typescript<br >helper (optional)"]
             campaigns --> campaigns-db
         end
 
@@ -56,26 +63,28 @@ flowchart TD
 
         api-gw --> campaigns
 
-        domains & lists & meetings & campaigns -.->|index| opensearch
+        committees & domains & lists & meetings & campaigns -..->|index| opensearch
     end
 
+    ssr ----> api-gw
     ssr & mcp & mobile --> api-gw
 
-    domains ---> DNsimple
-    lists ---> GroupsIO
-    meetings ---> Zoom
+    domains ----> DNSimple
+    lists ----> GroupsIO
+    meetings ----> Zoom
 
     campaigns -->|NATS RPC| google-ads-helper
-    campaigns ---> ads[Ad platforms]
+    campaigns --> ads[Ad platforms]
     google-ads-helper --> ads
 
-    lists -->|more ideal| snowflake
+    lists --->|"more ideal<br/>(behind platform authz)"| snowflake
 
     subgraph auth-service
         subsystem[UI subsystem]
     end
 
     subsystem --> cdp[Crowd.dev CDP]
+
     ssr -->|NATS RPC| subsystem
 
     subgraph campaigns-ui-service["Campaigns UI Microservice (alternative)"]
@@ -90,7 +99,7 @@ flowchart TD
 
     ssr -->|NATS RPC| campaigns-ui-subsystem
     campaigns-ui-ads-helper --> ads
-    campaigns-ui-subsystem --> ads
+    campaigns-ui-subsystem ------> ads
 ```
 
 | | Orange (API Gateway brokered) | Blue (NATS RPC from SSR) |
@@ -358,6 +367,7 @@ erDiagram
         UUID id PK
         UUID project_id
         UUID brief_id FK
+        UUID job_id FK
         VARCHAR platform
         VARCHAR platform_campaign_id
         VARCHAR campaign_name
@@ -384,7 +394,7 @@ erDiagram
 
     campaign_jobs {
         UUID id PK
-        UUID execution_id FK
+        UUID brief_id FK
         VARCHAR status
         JSONB result
         TEXT error
@@ -395,9 +405,9 @@ erDiagram
 
     channel_connections ||--o{ channel_connection_audit : "audits"
     campaign_briefs ||--o{ brief_versions : "versions"
-    campaign_briefs ||--o{ campaign_executions : "creates"
+    campaign_briefs ||--o{ campaign_jobs : "dispatches"
+    campaign_jobs ||--o{ campaign_executions : "creates"
     campaign_executions ||--o{ campaign_audit : "audits"
-    campaign_executions ||--o{ campaign_jobs : "tracks"
 ```
 
 **7 tables total:**
@@ -407,7 +417,7 @@ erDiagram
 - `brief_versions` — every edit to a brief saved as a version. Records what changed (budget, dates, copy, targeting), who changed it, when, and which campaigns were affected by the update. Full snapshot of the brief state at each version for auditability.
 - `campaign_executions` — one row per platform campaign created or updated from a brief. Stores campaign name, platform, platform campaign ID, budget, dates, and who created it. If the brief is updated after campaigns exist, the existing campaigns are updated (not recreated) and the change is tracked in both `brief_versions` and `campaign_audit`.
 - `campaign_audit` — audit trail for campaign changes. Logs every budget update, status change, date change, targeting change, and copy update with who made the change and the before/after values.
-- `campaign_jobs` — async job queue for multi-platform dispatch
+- `campaign_jobs` — async job queue for multi-platform dispatch. One job per brief submission dispatches to multiple `campaign_executions` (one per platform).
 
 **Database:** Tofu-provisioned PostgreSQL for shared infrastructure. CloudNativePG for local development.
 
@@ -475,6 +485,7 @@ All platform and channel connections stored in a single flexible schema. Credent
 |                               'discord' | 'email' |                |
 |                               'linkedin-organic' |                  |
 |                               'twitter-organic' |                   |
+|                               'microsoft-ads' |                     |
 |                               'bluesky' | 'mastodon' |             |
 |                               'youtube'                             |
 | channel_category  VARCHAR     'paid' | 'email' | 'organic' |       |
@@ -524,6 +535,7 @@ The `credentials` JSONB column stores encrypted, channel-specific secrets. The `
 | `meta-ads` | `{ access_token, app_secret }` | `{ ad_account_id, page_id, app_id }` |
 | `reddit-ads` | `{ client_id, client_secret, refresh_token }` | `{ ad_account_id }` |
 | `twitter-ads` | `{ consumer_key, consumer_secret, access_token, access_token_secret }` | `{ account_id, funding_instrument_id }` |
+| `microsoft-ads` | `{ client_id, client_secret, refresh_token, developer_token }` | `{ customer_id }` |
 
 **Email:**
 

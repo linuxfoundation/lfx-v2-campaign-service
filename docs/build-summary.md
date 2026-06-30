@@ -18,31 +18,38 @@ flowchart TD
         frontend["Browser / frontend"]
         ssr["Server-side rendering\n& BFF routes"]
         frontend -->|html page loads| ssr
-        frontend -->|partial-page loads / client-side rendering| ssr
+        frontend -->|"partial-page loads /<br />client-side rendering"| ssr
     end
 
     mcp[MCP Server]
-    mobile[mobile-app?]
+
+    mobile["Mobile app<br />(theoretical)"]
+
     snowflake[(Snowflake)]
 
-    ssr ----->|less ideal| snowflake
+    ssr -->|"less ideal<br />(UI-brokered authz)"| snowflake
 
     subgraph Platform[LFX Platform]
         api-gw["API Gateway\n(Authorization)"]
         querysvc[Query Service]
         opensearch[(OpenSearch)]
         api-gw --> querysvc -->|searches| opensearch
-        domains[Project domains]
-        lists[Mailing lists]
-        meetings[Meetings]
+        committees[Committees svc]
+        %% the committees DB is currently NATS KV but will move to Postgres
+        committees-db[(committees DB)]
+        committees --> committees-db
+        domains[Domains svc]
+        lists[Mailing lists svc]
+        meetings[Meetings svc]
+        api-gw --> committees
         api-gw --> domains
         api-gw --> lists
         api-gw --> meetings
 
-        subgraph campaigns-group["Campaigns"]
+        subgraph campaigns-group["Campaigns Service (preferred)"]
             campaigns["Campaigns service\n(Golang)"]
             campaigns-db[("Postgres\n(stores briefs, shared-tenant mappings, etc)")]
-            google-ads-helper["Google Ads Typescript<br />helper (optional)"]
+            google-ads-helper["Google Ads Typescript<br >helper (optional)"]
             campaigns --> campaigns-db
         end
 
@@ -50,26 +57,28 @@ flowchart TD
 
         api-gw --> campaigns
 
-        domains & lists & meetings & campaigns -.->|index| opensearch
+        committees & domains & lists & meetings & campaigns -..->|index| opensearch
     end
 
+    ssr ----> api-gw
     ssr & mcp & mobile --> api-gw
 
-    domains ---> DNsimple
-    lists ---> GroupsIO
-    meetings ---> Zoom
+    domains ----> DNSimple
+    lists ----> GroupsIO
+    meetings ----> Zoom
 
     campaigns -->|NATS RPC| google-ads-helper
-    campaigns ---> ads[Ad platforms]
+    campaigns --> ads[Ad platforms]
     google-ads-helper --> ads
 
-    lists -->|more ideal| snowflake
+    lists --->|"more ideal<br/>(behind platform authz)"| snowflake
 
     subgraph auth-service
         subsystem[UI subsystem]
     end
 
     subsystem --> cdp[Crowd.dev CDP]
+
     ssr -->|NATS RPC| subsystem
 
     subgraph campaigns-ui-service["Campaigns UI Microservice (alternative)"]
@@ -84,7 +93,7 @@ flowchart TD
 
     ssr -->|NATS RPC| campaigns-ui-subsystem
     campaigns-ui-ads-helper --> ads
-    campaigns-ui-subsystem --> ads
+    campaigns-ui-subsystem ------> ads
 ```
 
 ### Option comparison
