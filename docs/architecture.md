@@ -14,136 +14,146 @@ The service supports the full campaign lifecycle: multi-platform campaign creati
 
 ## System Context
 
+_Source: [Eric's marketing stack diagram](https://gist.github.com/emsearcy/6464a2b87ccb0b5d56c0d96bd1415c8c) (updated 2026-06-30)_
+
+Two architecture options. **Orange** (API Gateway brokered) is preferred but requires adopting v2-Platform idioms (OpenFGA, Query Service). **Blue** (NATS RPC from SSR) de-risks by splitting into two phases: first the TypeScript → Go migration, then platform idiom adoption.
+
+```mermaid
+flowchart TD
+    subgraph LFX Web UI
+        frontend["Browser / frontend"]
+        ssr["Server-side rendering\n& BFF routes"]
+        frontend -->|html page loads| ssr
+        frontend -->|partial-page loads / client-side rendering| ssr
+    end
+
+    mcp[MCP Server]
+    mobile[mobile-app?]
+    snowflake[(Snowflake)]
+
+    ssr ----->|less ideal| snowflake
+
+    subgraph Platform[LFX Platform]
+        api-gw["API Gateway\n(Authorization)"]
+        querysvc[Query Service]
+        opensearch[(OpenSearch)]
+        api-gw --> querysvc -->|searches| opensearch
+        domains[Project domains]
+        lists[Mailing lists]
+        meetings[Meetings]
+        api-gw --> domains
+        api-gw --> lists
+        api-gw --> meetings
+
+        subgraph campaigns-group["Campaigns"]
+            campaigns["Campaigns service\n(Golang)"]
+            campaigns-db[("Postgres\n(stores briefs, shared-tenant mappings, etc)")]
+            google-ads-helper["Google Ads Typescript<br />helper (optional)"]
+            campaigns --> campaigns-db
+        end
+
+        style campaigns-group fill:#fff4cc,stroke:#e6ac00,color:#000
+
+        api-gw --> campaigns
+
+        domains & lists & meetings & campaigns -.->|index| opensearch
+    end
+
+    ssr & mcp & mobile --> api-gw
+
+    domains ---> DNsimple
+    lists ---> GroupsIO
+    meetings ---> Zoom
+
+    campaigns -->|NATS RPC| google-ads-helper
+    campaigns ---> ads[Ad platforms]
+    google-ads-helper --> ads
+
+    lists -->|more ideal| snowflake
+
+    subgraph auth-service
+        subsystem[UI subsystem]
+    end
+
+    subsystem --> cdp[Crowd.dev CDP]
+    ssr -->|NATS RPC| subsystem
+
+    subgraph campaigns-ui-service["Campaigns UI Microservice (alternative)"]
+        campaigns-ui-subsystem["UI subsystem\n(Golang)"]
+        campaigns-ui-db[("Postgres")]
+        campaigns-ui-subsystem --> campaigns-ui-db
+        campaigns-ui-ads-helper["Google Ads Typescript<br />helper (optional)"]
+        campaigns-ui-subsystem -->|NATS RPC| campaigns-ui-ads-helper
+    end
+
+    style campaigns-ui-service fill:#e8f4ff,stroke:#4a90d9,color:#000
+
+    ssr -->|NATS RPC| campaigns-ui-subsystem
+    campaigns-ui-ads-helper --> ads
+    campaigns-ui-subsystem --> ads
 ```
-                                    +-------------------+
-                                    |   LiteLLM Proxy   |
-                                    | (Claude Sonnet 4) |
-                                    +--------+----------+
-                                             |
-                                             | AI brief generation
-                                             |
-+------------+     +----------------+     +--+-------------------+     +------------------+
-|            |     |                |     |                      |     |                  |
-|  Angular   +---->+  Express BFF   +---->+  Campaign Service    +---->+  PostgreSQL      |
-|  Frontend  |     |  (thin proxy)  |     |  (Go + Goa)          |     |  (persistence)   |
-|            |     |                |     |                      |     |                  |
-+------------+     +----------------+     +--+--+--+--+--+------+     +------------------+
-                                             |  |  |  |  |
-                         +-------------------+  |  |  |  +-------------------+
-                         |          +-----------+  |  +-----------+          |
-                         v          v              v              v          v
-                   +-----------+ +----------+ +----------+ +---------+ +---------+
-                   |Google Ads | |LinkedIn  | |Meta Ads  | |Reddit   | |X/Twitter|
-                   |API (gRPC) | |API (REST)| |API (REST)| |API(REST)| |API(REST)|
-                   +-----------+ +----------+ +----------+ +---------+ +---------+
-```
+
+| | Orange (API Gateway brokered) | Blue (NATS RPC from SSR) |
+|---|---|---|
+| **Auth** | Heimdall / OpenFGA at API Gateway | UI-brokered (SSR passes auth context via NATS) |
+| **Routing** | API Gateway → Campaigns service | SSR → NATS RPC → Campaigns UI subsystem |
+| **Platform idioms** | Full: OpenFGA rules, Query Service, OpenSearch indexing | Deferred to phase 2 |
+| **Risk** | Higher — must adopt platform auth + query patterns upfront | Lower — migration first, platform adoption second |
+| **Recommendation** | Preferred (per Eric) | De-risks implementation |
 
 ## Campaign Lifecycle
 
 The campaigns page has four tabs, each mapping to a phase of the campaign lifecycle:
 
-```
-+-------------------------------------------------------------------+
-|                      Campaign Lifecycle                            |
-|                                                                   |
-|  +-----------+    +----------------+    +-----------+    +-------+ |
-|  |           |    |                |    |           |    |       | |
-|  | Planning  +--->+ Implementation +--->+ Monitoring+--->+ Opti- | |
-|  | (Brief)   |    | (Create)       |    | (Insights)|    | mize  | |
-|  |           |    |                |    |           |    |       | |
-|  +-----------+    +----------------+    +-----------+    +-------+ |
-|                                                                   |
-|  AI generates     Multi-platform       Live metrics     Keyword   |
-|  copy, keywords,  campaign creation    from platform    actions,  |
-|  targeting        in parallel          APIs, pacing     status    |
-|  strategy                              analysis         toggle    |
-+-------------------------------------------------------------------+
+```mermaid
+flowchart LR
+    planning["**Planning**\n(Brief)\n\nAI generates copy,\nkeywords, targeting\nstrategy"]
+    impl["**Implementation**\n(Create)\n\nMulti-platform\ncampaign creation\nin parallel"]
+    monitor["**Monitoring**\n(Insights)\n\nLive metrics from\nplatform APIs,\npacing analysis"]
+    optimize["**Optimization**\n\nKeyword actions,\nstatus toggle"]
+
+    planning --> impl --> monitor --> optimize
 ```
 
 ### Phase 1: Planning (Brief Generation)
 
 AI-powered campaign brief generation using SSE streaming.
 
+```mermaid
+flowchart TD
+    submit["User submits URL + platform selection"] --> scrape["Scrape HTML\nURL → raw HTML"]
+    scrape --> extract["Extract Details (AI)\nEvent name, dates, location,\naudience, pricing, speakers"]
+    extract --> hubspot["HubSpot UTM Lookup/Create\nUTM tracking token"]
+    hubspot --> copy["Generate Copy (AI, streaming)\nPer-platform character limits"]
+    copy --> keywords["Generate Keywords (AI)\nMatch types: exact, phrase, broad"]
+    keywords --> targeting["LinkedIn Geo + Targeting Resolution\nAI recommends geos → server resolves URNs"]
+    targeting --> save["Save Brief (auto-save)\nPersisted to campaign_briefs\nKeyed by project_id + event_slug"]
+    save --> done["SSE stream complete → user reviews brief"]
 ```
-User submits URL + platform selection
-         |
-         v
-+------------------+
-| Scrape HTML      |    URL -> raw HTML
-+--------+---------+
-         |
-         v
-+------------------+
-| Extract Details  |    AI parses event name, dates, location,
-| (AI)             |    audience, pricing, speakers
-+--------+---------+
-         |
-         v
-+------------------+
-| HubSpot UTM      |    Lookup or create HubSpot campaign
-| Lookup/Create    |    for UTM tracking token
-+--------+---------+
-         |
-         v
-+------------------+
-| Generate Copy    |    AI generates platform-specific ad copy
-| (AI, streaming)  |    with character limits per platform:
-|                  |
-|  Google Search:  |    Headlines (30ch x 15) + Descriptions (90ch x 4)
-|  Google Display: |    Headlines (40ch x 5) + Descriptions (90ch x 5)
-|  LinkedIn:       |    Intro text (600ch) + Headline (200ch)
-|  Meta:           |    Primary (125ch) + Headline (40ch) + Desc (30ch)
-|  Reddit:         |    Headline (300ch) + Body (500ch)
-|  X/Twitter:      |    Tweet text (280ch)
-+--------+---------+
-         |
-         v
-+------------------+
-| Generate         |    AI generates high-intent keywords
-| Keywords (AI)    |    with match types (exact, phrase, broad)
-+--------+---------+
-         |
-         v
-+------------------+
-| LinkedIn Geo +   |    AI recommends geos + targeting profile
-| Targeting        |    Server resolves names -> LinkedIn URNs
-| Resolution       |
-+------------------+
-         |
-         v
-+------------------+
-| Save Brief       |    Persisted to campaign_briefs table
-| (auto-save)      |    Keyed by (project_id, event_slug)
-+------------------+
-         |
-         v
-    SSE stream complete -> user reviews brief
 
-Brief Lifecycle:
-  - First visit:  new brief created (status: draft), created_by = current user
-  - Return visit: existing brief loaded, user can refresh or edit
-  - Refresh:      re-runs AI generation, updates brief, bumps version
-  - Edit:         manual edits saved as new version in brief_versions
-                  (what changed, who changed it, when)
-  - Approve:      brief reviewed and approved (status: approved),
-                  approved_by + approved_at recorded
-  - Create:       approved brief used to create campaigns.
-                  Each platform campaign saved as a campaign_execution
-                  linked to the brief (campaign name, platform, budget,
-                  dates, created_by, create date)
-  - Update:       if campaigns already exist for this brief, edits to
-                  budget, dates, copy, or targeting UPDATE the existing
-                  campaigns on the platform (not create new ones).
-                  The brief_version records which campaigns were affected.
-                  Each campaign change logged in campaign_audit with
-                  who made the change and before/after values.
+**Character limits per platform:**
 
-Create vs Update logic:
-  - No campaign_executions for this brief? -> CREATE new campaigns
-  - Campaign_executions already exist?     -> UPDATE existing campaigns
-    on the platform using platform_campaign_id, then update the
-    execution record with new budget/dates/status
-```
+| Platform | Format |
+|----------|--------|
+| Google Search | Headlines (30ch x 15) + Descriptions (90ch x 4) |
+| Google Display | Headlines (40ch x 5) + Descriptions (90ch x 5) |
+| LinkedIn | Intro text (600ch) + Headline (200ch) |
+| Meta | Primary (125ch) + Headline (40ch) + Description (30ch) |
+| Reddit | Headline (300ch) + Body (500ch) |
+| X/Twitter | Tweet text (280ch) |
+
+**Brief Lifecycle:**
+- **First visit:** new brief created (status: draft), `created_by` = current user
+- **Return visit:** existing brief loaded, user can refresh or edit
+- **Refresh:** re-runs AI generation, updates brief, bumps version
+- **Edit:** manual edits saved as new version in `brief_versions` (what changed, who, when)
+- **Approve:** brief reviewed and approved (status: approved), `approved_by` + `approved_at` recorded
+- **Create:** approved brief used to create campaigns — each platform campaign saved as a `campaign_execution` linked to the brief
+- **Update:** if campaigns already exist, edits UPDATE the existing campaigns on the platform (not create new ones). The `brief_version` records which campaigns were affected. Each change logged in `campaign_audit`.
+
+**Create vs Update logic:**
+- No `campaign_executions` for this brief? → CREATE new campaigns
+- `campaign_executions` already exist? → UPDATE existing campaigns on the platform using `platform_campaign_id`, then update the execution record
 
 **SSE Event Types:**
 - `status` — progress messages
@@ -160,40 +170,28 @@ Create vs Update logic:
 
 Multi-platform campaign creation dispatched in parallel.
 
-```
-User submits campaign config
-(budget, dates, copy, keywords, platforms)
-         |
-         v
-+------------------+
-| Create Job       |    Returns jobId immediately
-| (async)          |    Client polls for result
-+--------+---------+
-         |
-         v (background)
-+------------------+
-| Resolve HubSpot  |    Get UTM token if not provided
-| UTM              |
-+--------+---------+
-         |
-         v
-+------------------+    Parallel dispatch via Promise.allSettled
-| Platform         |    Errors from one platform don't block others
-| Dispatch         |
-+--+--+--+--+--+--+
-   |  |  |  |  |
-   v  v  v  v  v
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Campaign Service
+    participant PG as PostgreSQL
+    participant O as Orchestrator
+    participant P as Ad Platforms
 
-Google Ads          LinkedIn            Meta              Reddit            X/Twitter
-+-----------+       +-----------+       +-----------+     +-----------+     +-----------+
-| Budget    |       | Campaign  |       | Campaign  |     | Campaign  |     | Campaign  |
-| Campaign  |       | Group     |       | Ad Set    |     | Ad Group  |     | Line Item |
-| Ad Group  |       | Campaign  |       | Ad        |     | Promoted  |     | Promoted  |
-| Keywords  |       | Dark Post |       |           |     | Post      |     | Tweet     |
-| RSA Ad    |       | Creative  |       |           |     |           |     |           |
-+-----------+       +-----------+       +-----------+     +-----------+     +-----------+
+    C->>S: Submit campaign config (budget, dates, copy, platforms)
+    S->>PG: Create job row
+    S-->>C: 202 Accepted {jobId}
 
-All results aggregated -> stored in job map -> client polls until done
+    Note over S,P: Async (context.WithoutCancel)
+
+    S->>O: Dispatch(platforms)
+    O->>P: errgroup.SetLimit(5) — parallel, errors don't block others
+    P-->>O: Results per platform
+    O->>PG: Persist executions + update job → COMPLETED
+
+    C->>S: GET /jobs/{id}
+    S->>PG: Read job
+    PG-->>C: {status: COMPLETED, results: [...]}
 ```
 
 **Platform Creation Hierarchy:**
@@ -211,35 +209,23 @@ All results aggregated -> stored in job map -> client polls until done
 
 Live metrics fetched from platform APIs.
 
-```
-+-------------------------------------------------------------------+
-|                     Monitoring Dashboard                           |
-|                                                                   |
-|  Per-Platform Metrics:                                            |
-|  +----------+ +----------+ +--------+ +--------+ +----------+    |
-|  |Google Ads| |LinkedIn  | |Meta    | |Reddit  | |X/Twitter |    |
-|  |          | |          | |        | |        | |          |    |
-|  |Campaigns | |Campaigns | |Campaig.| |Campaig.| |Campaigns |    |
-|  |Keywords  | |          | |        | |        | |          |    |
-|  |Audience  | |          | |        | |        | |          |    |
-|  +----------+ +----------+ +--------+ +--------+ +----------+    |
-|                                                                   |
-|  Shared Metrics Per Campaign:                                     |
-|  - Impressions, Clicks, CTR                                       |
-|  - Spend, CPC, CPM                                                |
-|  - Conversions, Cost per Conversion                                |
-|  - Pacing % (actual spend vs expected spend)                      |
-|                                                                   |
-|  Google Ads Extras:                                                |
-|  - Keyword performance (top 50 by impressions)                    |
-|  - Quality score per keyword                                       |
-|  - Audience demographics (age, gender, device)                    |
-|                                                                   |
-|  Action Items:                                                     |
-|  - Pacing alerts (underspending, overspending)                    |
-|  - Low CTR warnings                                                |
-|  - Budget recommendations                                         |
-+-------------------------------------------------------------------+
+```mermaid
+flowchart TD
+    subgraph metrics["Monitoring Dashboard"]
+        shared["**Shared Metrics Per Campaign**\nImpressions, Clicks, CTR\nSpend, CPC, CPM\nConversions, Cost per Conversion\nPacing % (actual vs expected)"]
+
+        subgraph platforms["Per-Platform"]
+            gads["Google Ads\nCampaigns + Keywords + Audience"]
+            li["LinkedIn\nCampaigns"]
+            meta["Meta\nCampaigns"]
+            reddit["Reddit\nCampaigns"]
+            x["X/Twitter\nCampaigns"]
+        end
+
+        extras["**Google Ads Extras**\nKeyword performance (top 50)\nQuality score per keyword\nAudience demographics"]
+
+        actions["**Action Items**\nPacing alerts\nLow CTR warnings\nBudget recommendations"]
+    end
 ```
 
 **Pacing Calculation:**
@@ -260,75 +246,29 @@ Live metrics fetched from platform APIs.
 
 Actions to adjust running campaigns.
 
-```
-+-------------------------------------------------------------------+
-|                  Optimization Actions (current)                    |
-|                                                                   |
-|  Keyword Management (Google Ads):                                  |
-|  - Bulk pause underperforming keywords                            |
-|  - Bulk remove irrelevant keywords                                |
-|                                                                   |
-|  Campaign Status Toggle (Meta, Reddit, X/Twitter):                |
-|  - ACTIVE -> PAUSED                                                |
-|  - PAUSED -> ACTIVE                                                |
-+-------------------------------------------------------------------+
+**Current:**
+- **Keyword Management** (Google Ads) — bulk pause underperforming keywords, bulk remove irrelevant keywords
+- **Campaign Status Toggle** (Meta, Reddit, X/Twitter) — ACTIVE ↔ PAUSED
 
-+-------------------------------------------------------------------+
-|                  Optimization Actions (tentative)                  |
-|                                                                   |
-|  Budget & Bidding:                                                 |
-|  - Adjust daily or lifetime budget per campaign                   |
-|  - Change bid strategy (maximize clicks, target CPA, target ROAS) |
-|  - Update individual keyword bids (Google Ads)                    |
-|                                                                   |
-|  Ad Copy & Creative:                                               |
-|  - A/B test ad variants (pause underperforming, activate new)     |
-|  - Update ad copy without recreating campaigns                    |
-|  - Rotate creatives (LinkedIn, Meta)                              |
-|                                                                   |
-|  Targeting:                                                        |
-|  - Add or remove geo targets                                      |
-|  - Update audience segments (skills, groups, interests)           |
-|  - Add negative keywords (Google Ads)                             |
-|  - Adjust age, gender, or device bid modifiers                    |
-|                                                                   |
-|  Scheduling:                                                       |
-|  - Set ad scheduling / dayparting                                 |
-|  - Extend or shorten campaign flight dates                        |
-|                                                                   |
-|  Cross-Platform:                                                   |
-|  - Bulk status toggle across all platforms                        |
-|  - Reallocate budget across platforms based on performance        |
-+-------------------------------------------------------------------+
-```
+**Tentative:**
+- **Budget & Bidding** — adjust daily/lifetime budget, change bid strategy, update keyword bids
+- **Ad Copy & Creative** — A/B test variants, update copy without recreating, rotate creatives
+- **Targeting** — add/remove geo targets, update audience segments, negative keywords, bid modifiers
+- **Scheduling** — ad scheduling / dayparting, extend/shorten flight dates
+- **Cross-Platform** — bulk status toggle, reallocate budget across platforms based on performance
 
 ## Authorization Model
 
-```
-                    +------------------+
-                    |  TLF (parent)    |
-                    |                  |
-                    |  Global Teams:   |
-                    |  - Marketing Ops |
-                    |  - PR & Comms    |
-                    +--------+---------+
-                             |
-              inherits from parent (marketing_auditor only)
-                             |
-          +------------------+------------------+
-          |                                     |
-+---------+----------+             +-----------+---------+
-|  CNCF              |             |  LF AI              |
-|                    |             |                     |
-|  campaign_manager: |             |  campaign_manager:  |
-|    - CNCF ED       |             |    - LF AI ED       |
-|    - Marketing Ops |             |    - Marketing Ops  |
-|                    |             |                     |
-|  marketing_auditor:|             |  marketing_auditor: |
-|    - CNCF ED       |             |    - LF AI ED       |
-|    - Marketing Ops |             |    - Marketing Ops  |
-|    - PR & Comms    |             |    - PR & Comms     |
-+---------+----------+             +---------------------+
+```mermaid
+flowchart TD
+    tlf["**TLF (parent)**\n\nGlobal Teams:\n- Marketing Ops\n- PR & Comms"]
+
+    tlf -->|"inherits marketing_auditor only"| cncf
+    tlf -->|"inherits marketing_auditor only"| lfai
+
+    cncf["**CNCF**\n\ncampaign_manager:\n- CNCF ED\n- Marketing Ops\n\nmarketing_auditor:\n- CNCF ED\n- Marketing Ops\n- PR & Comms"]
+
+    lfai["**LF AI**\n\ncampaign_manager:\n- LF AI ED\n- Marketing Ops\n\nmarketing_auditor:\n- LF AI ED\n- Marketing Ops\n- PR & Comms"]
 ```
 
 | Role | Access | Inheritance |
@@ -357,122 +297,107 @@ Actions to adjust running campaigns.
 
 ## Persistence
 
-```
-+-------------------------------------------------------------------+
-|                        PostgreSQL                                  |
-|                                                                   |
-|  +-----------------------------+  +-----------------------------+  |
-|  | channel_connections         |  | campaign_briefs             |  |
-|  |-----------------------------|  |-----------------------------|  |
-|  | id              (UUID) PK  |  | id              (UUID) PK  |  |
-|  | project_id      (UUID)     |  | project_id      (UUID)     |  |
-|  | channel_type    (VARCHAR)  |  | program_type    (VARCHAR)  |  |
-|  | channel_category(VARCHAR)  |  |   (events/education/       |  |
-|  | label           (VARCHAR)  |  |    membership)             |  |
-|  | account_id      (VARCHAR)  |  |                            |  |
-|  | credentials     (JSONB)    |  | event_slug      (VARCHAR)  |  |
-|  |                            |  |   UNIQUE(project_id,       |  |
-|  |                            |  |          event_slug)       |  |
-|  |                            |  | url             (TEXT)     |  |
-|  |                            |  | platforms       (JSONB)    |  |
-|  | metadata        (JSONB)    |  | event_details   (JSONB)    |  |
-|  | status          (VARCHAR)  |  | copy            (JSONB)    |  |
-|  | created_by      (UUID)     |  | keywords        (JSONB)    |  |
-|  | created_at      (TIMESTAMPTZ) | targeting       (JSONB)    |  |
-|  | updated_at      (TIMESTAMPTZ) | status (draft/approved/    |  |
-|  +-----------------------------+  |   archived)               |  |
-|                                   | version         (INT)     |  |
-|  +-----------------------------+  | approved_by     (UUID)    |  |
-|  | channel_connection_audit |  | approved_at     (TIMESTAMPTZ) |
-|  |-----------------------------|  | created_by      (UUID)     |  |
-|  | id              (UUID) PK  |  | updated_by      (UUID)     |  |
-|  | connection_id   (UUID) FK  |  | created_at      (TIMESTAMPTZ) |
-|  | action          (VARCHAR)  |  | updated_at      (TIMESTAMPTZ) |
-|  | changed_by      (UUID)     |  +-----------------------------+  |
-|  | changed_at      (TIMESTAMPTZ)                                  |
-|  | previous_values (JSONB)    |                                   |
-|  +-----------------------------+                                  |
-|                                                                   |
-|  +-----------------------------+  +-----------------------------+  |
-|  | brief_versions              |  | campaign_jobs              |  |
-|  |-----------------------------|  |-----------------------------|  |
-|  | id              (UUID) PK  |  | id              (UUID) PK  |  |
-|  | brief_id        (UUID) FK  |  | execution_id    (UUID) FK  |  |
-|  | version         (INT)      |  | status          (VARCHAR)  |  |
-|  | change_type     (VARCHAR)  |  | result          (JSONB)    |  |
-|  |   (created/refreshed/     |  | error           (TEXT)     |  |
-|  |    budget_changed/         |  | created_at      (TIMESTAMPTZ) |
-|  |    dates_changed/          |  | updated_at      (TIMESTAMPTZ) |
-|  |    copy_edited/            |  | expires_at      (TIMESTAMPTZ) |
-|  |    targeting_changed/      |  +-----------------------------+  |
-|  |    approved)               |                                   |
-|  | changes         (JSONB)    |  Tracks what changed:             |
-|  |   { field, old, new }      |  e.g. budget 5000 -> 8000,       |
-|  | snapshot        (JSONB)    |  start_date 2026-07-01 ->         |
-|  |   (full brief state at    |  2026-07-15                       |
-|  |    this version)           |                                   |
-|  | affected_campaigns (JSONB) |  Which campaigns were updated:    |
-|  |   [{ execution_id,        |  e.g. Google Search campaign      |
-|  |      campaign_name,       |  got new budget, LinkedIn         |
-|  |      platform }]          |  got new dates                    |
-|  | changed_by      (UUID)     |                                   |
-|  | changed_at      (TIMESTAMPTZ)                                  |
-|  +-----------------------------+                                  |
-|                                                                   |
-|  +-----------------------------+                                  |
-|  | campaign_executions         |                                  |
-|  |-----------------------------|                                  |
-|  | id              (UUID) PK  |                                  |
-|  | project_id      (UUID)     |                                  |
-|  | brief_id        (UUID) FK  |                                  |
-|  | platform        (VARCHAR)  |                                  |
-|  | platform_campaign_id       |                                  |
-|  | campaign_name   (VARCHAR)  |                                  |
-|  | status          (VARCHAR)  |                                  |
-|  | budget_amount   (DECIMAL)  |                                  |
-|  | budget_type     (VARCHAR)  |                                  |
-|  |   (daily/lifetime)        |                                  |
-|  | start_date      (DATE)     |                                  |
-|  | end_date        (DATE)     |                                  |
-|  | config_snapshot (JSONB)    |                                  |
-|  | result          (JSONB)    |                                  |
-|  | created_by      (UUID)     |                                  |
-|  | created_at      (TIMESTAMPTZ)                                  |
-|  +-----------------------------+                                  |
-|                                                                   |
-|  +-----------------------------+                                  |
-|  | campaign_audit              |                                  |
-|  |-----------------------------|                                  |
-|  | id              (UUID) PK  |                                  |
-|  | execution_id    (UUID) FK  |                                  |
-|  | action          (VARCHAR)  |                                  |
-|  |   (created/budget_changed/ |                                  |
-|  |    status_changed/         |                                  |
-|  |    dates_changed/          |                                  |
-|  |    targeting_changed/      |                                  |
-|  |    copy_updated)           |                                  |
-|  | changed_by      (UUID)     |                                  |
-|  | changed_at      (TIMESTAMPTZ)                                  |
-|  | previous_values (JSONB)    |                                  |
-|  | new_values      (JSONB)    |                                  |
-|  +-----------------------------+                                  |
-+-------------------------------------------------------------------+
+```mermaid
+erDiagram
+    channel_connections {
+        UUID id PK
+        UUID project_id
+        VARCHAR channel_type
+        VARCHAR channel_category
+        VARCHAR label
+        VARCHAR account_id
+        JSONB credentials "AES-256-GCM encrypted"
+        JSONB metadata
+        VARCHAR status
+        UUID created_by
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
 
-Relationships:
+    channel_connection_audit {
+        UUID id PK
+        UUID connection_id FK
+        VARCHAR action
+        UUID changed_by
+        TIMESTAMPTZ changed_at
+        JSONB previous_values "no creds logged"
+    }
 
-  campaign_briefs (1) ---< brief_versions (many)
-       |                        |
-  One brief per event      Every edit saved as a version:
-  per project              who changed what, when, and
-       |                   which campaigns were affected
-       |
-       +---< campaign_executions (many)
-                    |
-               One row per platform campaign
-               created from this brief
-                    |
-               e.g. Google Search, Google Display,
-               LinkedIn Sponsored, Meta, Reddit
+    campaign_briefs {
+        UUID id PK
+        UUID project_id
+        VARCHAR program_type "events/education/membership"
+        VARCHAR event_slug "UNIQUE with project_id"
+        TEXT url
+        JSONB platforms
+        JSONB event_details
+        JSONB copy
+        JSONB keywords
+        JSONB targeting
+        VARCHAR status "draft/approved/archived"
+        INT version
+        UUID approved_by
+        TIMESTAMPTZ approved_at
+        UUID created_by
+        UUID updated_by
+    }
+
+    brief_versions {
+        UUID id PK
+        UUID brief_id FK
+        INT version
+        VARCHAR change_type
+        JSONB changes "field old new"
+        JSONB snapshot "full brief state"
+        JSONB affected_campaigns
+        UUID changed_by
+        TIMESTAMPTZ changed_at
+    }
+
+    campaign_executions {
+        UUID id PK
+        UUID project_id
+        UUID brief_id FK
+        VARCHAR platform
+        VARCHAR platform_campaign_id
+        VARCHAR campaign_name
+        VARCHAR status
+        DECIMAL budget_amount
+        VARCHAR budget_type "daily/lifetime"
+        DATE start_date
+        DATE end_date
+        JSONB config_snapshot
+        JSONB result
+        UUID created_by
+        TIMESTAMPTZ created_at
+    }
+
+    campaign_audit {
+        UUID id PK
+        UUID execution_id FK
+        VARCHAR action
+        UUID changed_by
+        TIMESTAMPTZ changed_at
+        JSONB previous_values
+        JSONB new_values
+    }
+
+    campaign_jobs {
+        UUID id PK
+        UUID execution_id FK
+        VARCHAR status
+        JSONB result
+        TEXT error
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+        TIMESTAMPTZ expires_at
+    }
+
+    channel_connections ||--o{ channel_connection_audit : "audits"
+    campaign_briefs ||--o{ brief_versions : "versions"
+    campaign_briefs ||--o{ campaign_executions : "creates"
+    campaign_executions ||--o{ campaign_audit : "audits"
+    campaign_executions ||--o{ campaign_jobs : "tracks"
 ```
 
 **7 tables total:**
@@ -492,89 +417,32 @@ Campaign managers can create, read, update, and remove connections to ad platfor
 
 ### Account Tenancy
 
-```
-+-------------------------------------------------------------------+
-|                     Account Tenancy Model                          |
-|                                                                   |
-|  Shared across foundations:        Per-foundation accounts:        |
-|  +------------------+             +------------------+            |
-|  | Google Ads       |             | LinkedIn Ads     |            |
-|  | (one manager     |             | (separate ad     |            |
-|  |  account, scoped |             |  account per     |            |
-|  |  by naming       |             |  foundation)     |            |
-|  |  convention)     |             +------------------+            |
-|  +------------------+             | Meta Ads         |            |
-|                                   | (separate ad     |            |
-|                                   |  account per     |            |
-|                                   |  foundation)     |            |
-|  Per-project (multiple allowed):  +------------------+            |
-|  +------------------+             | Reddit / X       |            |
-|  | Slack workspaces |             | (TBD per         |            |
-|  | Discord servers  |             |  foundation      |            |
-|  | Email lists      |             |  rollout)        |            |
-|  | Social accounts  |             +------------------+            |
-|  +------------------+                                             |
-+-------------------------------------------------------------------+
-```
+| Tenancy | Platforms | Details |
+|---------|-----------|---------|
+| Shared across foundations | Google Ads, HubSpot | One manager account, campaigns scoped by naming convention |
+| Per-foundation | LinkedIn Ads, Meta Ads, Reddit, X/Twitter | Separate ad account per foundation |
+| Per-project (multiple allowed) | Slack, Discord, Email lists, Social accounts | Multiple connections of the same type per project |
 
 ## Current Platform Accounts
 
 Each platform has a different tenancy model. Some platforms use a single shared account across all foundations (campaigns separated by naming convention). Others have separate accounts per foundation/project, meaning each project connects to its own ad account.
 
-```
-+-------------------------------------------------------------------+
-|                  Current Account Inventory                         |
-+-------------------------------------------------------------------+
+**Single shared account:**
 
-SINGLE SHARED ACCOUNT (all foundations use one account)
-------------------------------------------------------
+| Platform | Account | Notes |
+|----------|---------|-------|
+| Google Ads | Manager: 9746983954, Customer: 8666746580 | All foundations, distinguished by naming convention |
+| HubSpot | Single private app token (org-wide) | Per-project brand kits, footers, templates |
 
-Google Ads
-+----------------------------------------------------+
-| Manager Account: 9746983954                        |
-| Customer Account: 8666746580                       |
-| ALL foundations run campaigns under this account.   |
-| Projects distinguished by campaign naming           |
-| convention, not by separate accounts.               |
-+----------------------------------------------------+
+**Separate accounts per foundation:**
 
-HubSpot
-+----------------------------------------------------+
-| Single private app token (org-wide)                |
-| Campaigns matched to projects by name              |
-| Each project has its own brand kit, footer, and    |
-| email templates -- selected based on the request   |
-+----------------------------------------------------+
-
-SEPARATE ACCOUNTS PER FOUNDATION/PROJECT
-------------------------------------------------------
-
-LinkedIn Ads — each foundation has its own ad account
-+----------------------------------------------------+
-| TLF:        Account 538170226, Org 208777          |
-| LF Events:  Account 509430019                     |
-| (more accounts added per foundation as needed)     |
-| (loaded from ConfigMap at runtime)                 |
-+----------------------------------------------------+
-
-Meta Ads — separate ad accounts per foundation
-+----------------------------------------------------+
-| LF Core:    Account act_193556282970417            |
-|             Page ID 41911143546                    |
-| (more accounts added per foundation as needed)     |
-+----------------------------------------------------+
-
-Reddit Ads — per foundation (currently TLF only)
-+----------------------------------------------------+
-| TLF:        Account t2_gv9wtbfa                    |
-+----------------------------------------------------+
-
-X/Twitter Ads — per foundation (currently LF Events only)
-+----------------------------------------------------+
-| LF Events:  Account 8r7gb                          |
-|             Funding Instrument: (pending)           |
-+----------------------------------------------------+
-```
+| Platform | Foundation | Account |
+|----------|-----------|---------|
+| LinkedIn Ads | TLF | Account 538170226, Org 208777 |
+| LinkedIn Ads | LF Events | Account 509430019 |
+| Meta Ads | LF Core | Account act_193556282970417, Page 41911143546 |
+| Reddit Ads | TLF | Account t2_gv9wtbfa |
+| X/Twitter Ads | LF Events | Account 8r7gb (funding instrument pending) |
 
 This distinction matters for the connection CRUD: Google Ads connections are typically one-per-org (shared), while LinkedIn/Meta connections are one-per-project (separate accounts). The `channel_connections` table supports both models.
 
@@ -582,22 +450,14 @@ This distinction matters for the connection CRUD: Google Ads connections are typ
 
 Beyond paid ad platforms, the campaign service will manage connections to organic channels for unified marketing operations. One project can have multiple channels of the same type (e.g., multiple Slack workspaces or Discord servers).
 
-```
-+-------------------------------------------------------------------+
-|                  Channel Types (Future)                             |
-+-------------------------------------------------------------------+
-
-Paid (current)          Email              Organic            Community
-+------------------+  +---------------+  +---------------+  +---------------+
-| Google Ads       |  | Email /       |  | LinkedIn Org  |  | Slack         |
-| LinkedIn Ads     |  | HubSpot       |  | Twitter/X Org |  | (multiple per |
-| Meta Ads         |  |               |  | Bluesky       |  |  project)     |
-| Reddit Ads       |  | (per-project  |  | Mastodon      |  | Discord       |
-| X/Twitter Ads    |  |  brand kits,  |  | YouTube       |  | (multiple per |
-| Microsoft Ads    |  |  footers,     |  |               |  |  project)     |
-|                  |  |  templates)   |  |               |  |               |
-+------------------+  +---------------+  +---------------+  +---------------+
-```
+| Paid (current) | Email | Organic | Community |
+|----------------|-------|---------|-----------|
+| Google Ads | Email / HubSpot | LinkedIn Org | Slack (multiple per project) |
+| LinkedIn Ads | (per-project brand kits, footers, templates) | Twitter/X Org | Discord (multiple per project) |
+| Meta Ads | | Bluesky | |
+| Reddit Ads | | Mastodon | |
+| X/Twitter Ads | | YouTube | |
+| Microsoft Ads | | | |
 
 ### Channel Connection Database Schema
 
@@ -744,28 +604,37 @@ The data pipeline parses campaign names to attribute them to the correct foundat
 
 The existing campaign code lives in three layers in the Angular monorepo:
 
-```
-Current State (Express BFF)              Target State (Go Service)
-+---------------------------+            +---------------------------+
-| Express Server Layer      |            | Campaign Service (Go)     |
-|                           |            |                           |
-| campaign-proxy.service.ts | ---------> | Campaign orchestration    |
-| campaign-metrics.service  |            | Platform API calls        |
-| google-ads.service.ts     |            | Persistence layer         |
-| linkedin-ads.service.ts   |            | OAuth management          |
-| meta-ads.service.ts       |            | Rate limiting             |
-| reddit-ads.service.ts     |            | Metrics normalization     |
-| x-ads.service.ts          |            |                           |
-+---------------------------+            +---------------------------+
-           |                                        |
-           v                                        v
-+---------------------------+            +---------------------------+
-| Express BFF (after)       |            | Express BFF (thin proxy)  |
-|                           |            |                           |
-| AI brief generation (SSE) |            | Routes to Go service      |
-| campaign.controller.ts    |            | AI brief generation (SSE) |
-|   (thin proxy to Go)      |            |                           |
-+---------------------------+            +---------------------------+
+```mermaid
+flowchart LR
+    subgraph before["Current — Express BFF"]
+        proxy["campaign-proxy.service.ts"]
+        metrics["campaign-metrics.service.ts"]
+        gads["google-ads.service.ts"]
+        li["linkedin-ads.service.ts"]
+        meta["meta-ads.service.ts"]
+        reddit["reddit-ads.service.ts"]
+        xads["x-ads.service.ts"]
+    end
+
+    subgraph after["Target — Go Service"]
+        orch["Campaign orchestration"]
+        platform["Platform API calls"]
+        persist["Persistence layer"]
+        oauth["OAuth management"]
+        rate["Rate limiting"]
+        norm["Metrics normalization"]
+    end
+
+    before -->|port| after
+
+    subgraph remains["Express BFF (after)"]
+        ai["AI brief generation (SSE)"]
+        ctrl["campaign.controller.ts\n(thin proxy to Go service)"]
+    end
+
+    style before fill:#fee,stroke:#c00
+    style after fill:#efe,stroke:#0a0
+    style remains fill:#fff,stroke:#999
 ```
 
 ### Phase 1: Scaffold + Persistence (ships first)
