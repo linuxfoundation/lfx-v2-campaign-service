@@ -4,7 +4,7 @@
 
 The Campaign Service is the backend for LFX Self Serve marketing campaign operations. It acts as a broker between the LFX UI and paid advertising platforms, owning both the upstream platform API calls and the persistence layer.
 
-The service supports the full campaign lifecycle: AI-powered brief generation, multi-platform campaign creation, real-time monitoring, and optimization actions.
+The service supports the full campaign lifecycle: multi-platform campaign creation, real-time monitoring, and optimization actions. AI-powered brief generation currently runs in the Express BFF and will migrate to this service in a later phase.
 
 ### User Personas
 
@@ -710,8 +710,8 @@ Project: CNCF
 | discord       | Kubernetes Server           | active   | community|
 | bluesky       | @cncf.io                    | active   | organic |
 | mastodon      | @cncf@fosstodon.org         | active   | organic |
-| linkedin-org  | CNCF org page               | active   | organic |
-| twitter-org   | @CloudNativeFdn             | active   | organic |
+| linkedin-organic | CNCF org page            | active   | organic |
+| twitter-organic  | @CloudNativeFdn          | active   | organic |
 | youtube       | CNCF channel                | active   | organic |
 +-------------------------------------------------------------------+
 ```

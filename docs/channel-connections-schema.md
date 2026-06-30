@@ -9,7 +9,9 @@ Database schema for storing platform and channel connections. Supports paid ad p
 Primary table for all platform and channel connections. Credentials stored as encrypted JSONB.
 
 ```sql
--- PostgreSQL 13+ provides gen_random_uuid() natively; no extension needed.
+-- gen_random_uuid() requires pgcrypto on PostgreSQL < 13.
+-- PostgreSQL 13+ includes it as a built-in function (no extension needed).
+-- Our deployment target is PostgreSQL 16.
 CREATE TABLE channel_connections (
     id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id        UUID        NOT NULL REFERENCES projects(id),
@@ -22,7 +24,7 @@ CREATE TABLE channel_connections (
     status            VARCHAR(20) NOT NULL DEFAULT 'active',
     created_by        UUID        NOT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),  -- application sets this on UPDATE; no DB trigger
 
     CONSTRAINT chk_channel_type CHECK (channel_type IN (
         -- Paid advertising
