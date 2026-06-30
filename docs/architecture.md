@@ -111,8 +111,6 @@ User submits URL + platform selection
 +------------------+
          |
          v
-         |
-         v
 +------------------+
 | Save Brief       |    Persisted to campaign_briefs table
 | (auto-save)      |    Keyed by (project_id, event_slug)
@@ -593,7 +591,7 @@ Paid (current)          Email              Organic            Community
 +------------------+  +---------------+  +---------------+  +---------------+
 | Google Ads       |  | Email /       |  | LinkedIn Org  |  | Slack         |
 | LinkedIn Ads     |  | HubSpot       |  | Twitter/X Org |  | (multiple per |
-| Meta Ads         |  | (per-project  |  | Bluesky       |  |  project)     |
+| Meta Ads         |  |               |  | Bluesky       |  |  project)     |
 | Reddit Ads       |  | (per-project  |  | Mastodon      |  | Discord       |
 | X/Twitter Ads    |  |  brand kits,  |  | YouTube       |  | (multiple per |
 | Microsoft Ads    |  |  footers,     |  |               |  |  project)     |
