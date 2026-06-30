@@ -88,7 +88,9 @@ Briefs are persisted per project and keyed by event slug. When a user returns to
 | GET | `/projects/:projectId/connections` | JSON | List all connections for a project |
 | GET | `/projects/:projectId/connections/:id` | JSON | Get a specific connection |
 | PUT | `/projects/:projectId/connections/:id` | JSON | Update a connection |
-| DELETE | `/projects/:projectId/connections/:id` | JSON | Remove a connection |
+| DELETE | `/projects/:projectId/connections/:id` | JSON | Remove a connection (soft delete, audit logged) |
+| POST | `/projects/:projectId/connections/:id/test` | JSON | Test connection (verify credentials are valid) |
+| POST | `/projects/:projectId/connections/:id/rotate` | JSON | Rotate credentials (token refresh) |
 
 ---
 

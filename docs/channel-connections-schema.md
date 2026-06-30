@@ -9,9 +9,10 @@ Database schema for storing platform and channel connections. Supports paid ad p
 Primary table for all platform and channel connections. Credentials stored as encrypted JSONB.
 
 ```sql
+-- PostgreSQL 13+ provides gen_random_uuid() natively; no extension needed.
 CREATE TABLE channel_connections (
     id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id        UUID        NOT NULL,
+    project_id        UUID        NOT NULL REFERENCES projects(id),
     channel_type      VARCHAR(50) NOT NULL,
     channel_category  VARCHAR(20) NOT NULL,
     label             VARCHAR(255) NOT NULL,
@@ -38,13 +39,13 @@ CREATE TABLE channel_connections (
         'paid', 'email', 'organic', 'community'
     )),
     CONSTRAINT chk_status CHECK (status IN (
-        'active', 'inactive', 'error'
+        'active', 'inactive', 'error', 'deleted'
     ))
 );
 
 CREATE INDEX idx_connections_project_type ON channel_connections (project_id, channel_type);
 CREATE INDEX idx_connections_project_status ON channel_connections (project_id, status);
-CREATE INDEX idx_connections_type_account ON channel_connections (channel_type, account_id);
+CREATE INDEX idx_connections_type_account ON channel_connections (channel_type, account_id);  -- supports lookup, not unique (multiple connections per project allowed)
 ```
 
 ### channel_connection_audit
@@ -203,7 +204,7 @@ Credentials are never returned in API responses. The `credentials` field is repl
   "id": "uuid",
   "project_id": "uuid",
   "channel_type": "slack",
-  "channel_category": "communication",
+  "channel_category": "community",
   "label": "#kubecon-na-2025",
   "account_id": "T01234",
   "has_credentials": true,

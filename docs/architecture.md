@@ -628,7 +628,8 @@ All platform and channel connections stored in a single flexible schema. Credent
 |                               (see per-channel schema below)       |
 | metadata          JSONB       Non-secret config                    |
 |                               (org ID, page ID, server name, etc.) |
-| status            VARCHAR     'active' | 'inactive' | 'error'     |
+| status            VARCHAR     'active' | 'inactive' |             |
+|                               'error' | 'deleted'                  |
 | created_by        UUID        User who created the connection      |
 | created_at        TIMESTAMPTZ                                      |
 | updated_at        TIMESTAMPTZ                                      |
@@ -636,7 +637,7 @@ All platform and channel connections stored in a single flexible schema. Credent
   Indexes:
     - (project_id, channel_type)   -- list all connections of a type
     - (project_id, status)         -- list active connections
-    - (channel_type, account_id)   -- prevent duplicate account bindings
+    - (channel_type, account_id)   -- supports lookup (not unique; multiple connections per project allowed)
 
 +-------------------------------------------------------------------+
 |                    channel_connection_audit                         |
