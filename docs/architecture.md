@@ -188,7 +188,7 @@ sequenceDiagram
     participant P as Ad Platforms
 
     C->>S: Submit campaign config (budget, dates, copy, platforms)
-    S->>PG: Create job row
+    S->>PG: Create job row (status: PENDING)
     S-->>C: 202 Accepted {jobId}
 
     Note over S,P: Async (context.WithoutCancel)
@@ -196,7 +196,8 @@ sequenceDiagram
     S->>O: Dispatch(platforms)
     O->>P: errgroup.SetLimit(5) — parallel, errors don't block others
     P-->>O: Results per platform
-    O->>PG: Persist executions + update job → COMPLETED
+    O->>PG: Persist executions (one per platform, each with job_id)
+    O->>PG: Update job → COMPLETED (or FAILED)
 
     C->>S: GET /jobs/{id}
     S->>PG: Read job

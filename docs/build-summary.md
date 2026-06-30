@@ -114,14 +114,14 @@ _Reference: [committee-service/cmd/committee-api/http.go](https://github.com/lin
 
 ```mermaid
 flowchart TD
-    req[Incoming HTTP Request] --> rid[Request ID middleware]
-    rid -->|"X-Request-ID → context + slog"| authz[Authorization propagation]
-    authz -->|"Authorization header → context\n(no JWT validation — Heimdall handles that)"| goa[Goa Mux]
-    goa -->|"Route match → decode/validate → type-safe payload"| otel[OpenTelemetry]
+    req[Incoming HTTP Request] --> otel[OpenTelemetry\noutermost wrapper]
     otel -->|"Trace spans, metrics\n(excludes /livez, /readyz)"| debug{DEBUG=true?}
     debug -->|yes| dbg[Debug handler\nlog payloads + /debug/pprof]
-    debug -->|no| svc[campaign_svc.go\nGoa service handlers]
-    dbg --> svc
+    debug -->|no| authz[Authorization propagation]
+    dbg --> authz
+    authz -->|"Authorization header → context\n(no JWT validation — Heimdall handles that)"| rid[Request ID middleware]
+    rid -->|"X-Request-ID → context + slog"| goa[Goa Mux]
+    goa -->|"Route match → decode/validate → type-safe payload"| svc[campaign_svc.go\nGoa service handlers]
 ```
 
 **Not in-app (handled upstream):**
@@ -312,7 +312,7 @@ sequenceDiagram
     T->>T: Heimdall → OpenFGA check
     T->>G: ✓ authorized
     G->>S: decoded + validated payload
-    S->>PG: Create job row
+    S->>PG: Create job row (status: PENDING)
     S-->>C: 202 Accepted {jobId}
 
     Note over S,P: Async goroutine (context.WithoutCancel)
@@ -320,8 +320,8 @@ sequenceDiagram
     S->>O: Dispatch(platforms)
     O->>P: errgroup.SetLimit(5)
     P-->>O: results per platform
-    O->>PG: Persist executions
-    O->>PG: Update job → COMPLETED
+    O->>PG: Persist executions (one per platform, each with job_id)
+    O->>PG: Update job → COMPLETED (or FAILED)
 
     C->>G: GET /jobs/{id}
     G->>PG: Read job status

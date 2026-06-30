@@ -2,6 +2,8 @@
 
 Database schema for storing platform and channel connections. Supports paid ad platforms (current) and organic/communication channels (future). One project can have multiple connections of the same channel type.
 
+This document covers the **connection tables only** (`channel_connections` + `channel_connection_audit`). Campaign tables (`campaign_briefs`, `brief_versions`, `campaign_executions`, `campaign_audit`, `campaign_jobs`) are documented in the ER diagram in [architecture.md](architecture.md) and will ship as separate migration files.
+
 ## Tables
 
 ### channel_connections
