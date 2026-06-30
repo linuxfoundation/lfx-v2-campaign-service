@@ -1,7 +1,7 @@
 # Copyright The Linux Foundation and each contributor to LFX.
 # SPDX-License-Identifier: MIT
 ---
-{{- if .Values.heimdall.enabled }}
+{{- if and .Values.heimdall.enabled .Values.heimdall.rules }}
 apiVersion: heimdall.dadrus.github.com/v1alpha4
 kind: RuleSet
 metadata:
@@ -10,6 +10,6 @@ metadata:
   labels:
     app: {{ .Chart.Name }}
 spec:
-  # TODO: Define rules as needed for your service
-  rules: []
+  rules:
+    {{- toYaml .Values.heimdall.rules | nindent 4 }}
 {{- end }}

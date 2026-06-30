@@ -80,6 +80,9 @@ heimdall:
   # add_middleware determines whether or not the middleware is installed. If not managed
   # by another service or helm chart then it is needed.
   add_middleware: false
+  # rules is the list of Heimdall RuleSet rules. The RuleSet is only created when at
+  # least one rule is defined. Add rules here when the service is ready to enforce authn/authz.
+  rules: []
 
 # authelia is the configuration for the Authelia server
 authelia:
