@@ -4,9 +4,9 @@ Reference catalog of all campaign endpoints, platform account attributes, and da
 
 ## API Design Rules
 
-These rules apply to every endpoint below and reflect platform idioms (`entity-design.md`) rather than the shape of the existing Express BFF:
+These rules apply to every endpoint below and reflect platform idioms ([entity-design.md](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/docs/entity-design.md)) rather than the shape of the existing Express BFF:
 
-1. **Everything is nested under a project.** No new top-level FGA types were introduced for this service — only new *relations against `project`*. Per `entity-design.md`, a resource may only be a root API path if it is a top-level FGA type. Consequently **every** campaign resource is nested under `/projects/{projectId}/…`. Briefs and campaigns are subordinate to a project (campaigns are further subordinate to a brief).
+1. **Everything is nested under a project.** No new top-level FGA types were introduced for this service — only new *relations against `project`*. Per [entity-design.md](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/docs/entity-design.md), a resource may only be a root API path if it is a top-level FGA type. Consequently **every** campaign resource is nested under `/projects/{projectId}/…`. Briefs and campaigns are subordinate to a project (campaigns are further subordinate to a brief).
 2. **Every endpoint declares its gating FGA relation.** The service defines no new object types; it relies on the marketing relations on `project` (defined in [`lfx-v2-helm/.../files/model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga#L36-L43)):
    - **`marketing_ops`** — team members with cross-project campaign management.
    - **`campaign_manager`** = `executive_director or marketing_ops` — manages campaigns/briefs/connections for a project. Does *not* cascade from parent; scoped to the project it is granted on.
@@ -103,8 +103,10 @@ Per-provider account identifiers, config fields, and encrypted credential shapes
 
 ## Campaign Platforms
 
-| Platform | Key | Status | Auth Type |
-|----------|-----|--------|-----------|
+Status refers to the **existing TypeScript BFF** (the migration source — see [build-summary.md](build-summary.md)); no provider code exists in this repo yet. All "Implemented" providers are migration targets for this service.
+
+| Platform | Key | Status (current TS BFF) | Auth Type |
+|----------|-----|-------------------------|-----------|
 | Google Ads | `google-ads` | Implemented | OAuth 2.0 |
 | LinkedIn Ads | `linkedin-ads` | Implemented | OAuth 2.0 |
 | Meta Ads | `meta-ads` | Implemented | Bearer token |

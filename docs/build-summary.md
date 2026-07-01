@@ -131,7 +131,7 @@ flowchart TD
 
 | Concern | Handled by | Notes |
 |---------|-----------|-------|
-| CORS | — (not applicable) | Not needed: this is not an SPA. API requests are made by the SSR backend, not the browser. CORS is handled inside the Angular app for its own frontend→Express partial-page updates — it is not a concern of this service and is not "handled by Traefik". |
+| CORS | — (not applicable) | Not needed: this is not an SPA. API requests are made by the SSR backend (server-to-server), so the browser never calls this service cross-origin. Any CORS concerns are confined to the web app's own frontend→Express partial-page updates (response headers set by that Express layer) — CORS is not a concern of this service and is not "handled by Traefik". |
 | Authorization (ReBAC) | Heimdall → OpenFGA | This service defines its **own** RuleSets (referencing the marketing relations on `project`). There is no per-service `*/heimdall-middleware.yaml` resource — routes reference a shared middleware; each service supplies its rulesets. |
 | Panic recovery | Go `http.Server` default | Not in committee-service |
 

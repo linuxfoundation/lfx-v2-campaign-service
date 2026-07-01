@@ -14,26 +14,6 @@ One project can have multiple connections of the same provider (e.g. separate Li
 4. **Application-level credential encryption.** Credentials are encrypted by the application (AES-256-GCM) using a key sourced from a Kubernetes secret via an environment variable — *not* by pgcrypto. pgcrypto can do symmetric encryption (`pgp_sym_encrypt`), but doing it in the database would require the key to be present at the DB layer; encrypting in the application keeps the key out of the database entirely (it lives only in the app's k8s secret). That key-custody boundary — not any capability gap in pgcrypto — is the reason for app-level encryption.
 5. **Attribution is served by Query Service.** `created_at`/`updated_at`/`created_by` audit and revision history are maintained by the Query Service on each (re)index; this schema does not attempt to reproduce a separate audit/revision store. Where a `created_by` value is retained inline for convenience, it captures the full actor (`name`, `email`, `username`) so historical records remain meaningful even after a user is removed.
 
-## Common Columns
-
-Every provider connection table shares this shape. Provider-specific credential/config columns are added per table (see below).
-
-```sql
--- gen_random_uuid() is built in on PostgreSQL 13+; deployment target is PostgreSQL 16.
-id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-project_id   UUID        NOT NULL,                    -- owned by project-service; no cross-service FK
-label        TEXT        NOT NULL,                    -- human label, e.g. "TLF Main"
-account_id   TEXT,                                    -- provider account identifier
-credentials  BYTEA,                                   -- AES-256-GCM ciphertext (app-encrypted)
-status       TEXT        NOT NULL DEFAULT 'active'
-             CHECK (status IN ('active', 'inactive', 'error', 'deleted')),
-version      BIGINT      NOT NULL DEFAULT 1,          -- optimistic-lock iterator → ETag/If-Match
-created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()       -- set by application on UPDATE (no DB trigger)
-```
-
-Each table carries `idx_<provider>_project_id ON (project_id)` and, where lookups by account are needed, a non-unique `(project_id, account_id)` index (multiple connections per project are allowed).
-
 ## Per-Provider Tables
 
 Each provider gets its own table. To avoid repeating nine identical columns seven times, the shared columns are defined **once** below as a reusable fragment, and each provider table is shown as **the common fragment plus its provider-specific columns**. `account_id` and `label` are common (present on every table); the fragment below is the full base. The `credentials` column holds the app-encrypted blob; the *plaintext* JSON shape it encrypts is documented above each table so the API contract is explicit.
@@ -41,7 +21,8 @@ Each provider gets its own table. To avoid repeating nine identical columns seve
 **Common columns** (every connection table begins with these):
 
 ```sql
--- Reusable base for every *_connections table. gen_random_uuid() is built in on PG 13+ (target: PG 16).
+-- Reusable base for every *_connections table.
+-- gen_random_uuid() is in PostgreSQL core since v13 (no pgcrypto extension required); target: PG 16.
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id   UUID        NOT NULL,                 -- owned by project-service; no cross-service FK
     label        TEXT        NOT NULL,                 -- human label, e.g. "TLF Main"
@@ -54,7 +35,7 @@ Each provider gets its own table. To avoid repeating nine identical columns seve
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()    -- set by application on UPDATE (no DB trigger)
 ```
 
-Each table also gets `CREATE INDEX idx_<table>_project_id ON <table> (project_id)`. `google_ads_connections` is shown in full as the worked example; the rest list only the provider-specific columns that extend the common fragment.
+Each table also gets `CREATE INDEX idx_<table>_project_id ON <table> (project_id)` and, where lookups by account are needed, a non-unique `(project_id, account_id)` index (multiple connections per project are allowed). `google_ads_connections` is shown in full as the worked example; the rest list only the provider-specific columns that extend the common fragment.
 
 ### google_ads_connections
 
