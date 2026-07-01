@@ -6,11 +6,11 @@
 
 ---
 
-## Architecture Options
+## Target Architecture
 
 _Source: [Eric's marketing stack diagram](https://gist.github.com/emsearcy/6464a2b87ccb0b5d56c0d96bd1415c8c) (updated 2026-06-30)_
 
-Two options for how campaigns integrates into the LFX platform. **Orange** (API Gateway brokered) is preferred but requires adopting v2-Platform idioms (OpenFGA, Query Service). **Blue** (NATS RPC from SSR) de-risks by splitting into two phases: first the TypeScript → Go migration, then platform idiom adoption.
+Campaigns integrates as an **API Gateway-brokered platform service** (orange in the diagram below) — behind the API Gateway with Heimdall/OpenFGA authorization and the Query Service for reads/indexing. The blue NATS-RPC-from-SSR shape is retained in the diagram for context only and is not the chosen architecture.
 
 ```mermaid
 flowchart TD
@@ -49,7 +49,7 @@ flowchart TD
         subgraph campaigns-group["Campaigns Service (preferred)"]
             campaigns["Campaigns service\n(Golang)"]
             campaigns-db[("Postgres\n(stores briefs, shared-tenant mappings, etc)")]
-            google-ads-helper["Google Ads Typescript<br >helper (optional)"]
+            google-ads-helper["Google Ads TypeScript<br >helper (optional)"]
             campaigns --> campaigns-db
         end
 
@@ -85,7 +85,7 @@ flowchart TD
         campaigns-ui-subsystem["UI subsystem\n(Golang)"]
         campaigns-ui-db[("Postgres")]
         campaigns-ui-subsystem --> campaigns-ui-db
-        campaigns-ui-ads-helper["Google Ads Typescript<br />helper (optional)"]
+        campaigns-ui-ads-helper["Google Ads TypeScript<br />helper (optional)"]
         campaigns-ui-subsystem -->|NATS RPC| campaigns-ui-ads-helper
     end
 
@@ -115,22 +115,24 @@ _Reference: [committee-service/cmd/committee-api/http.go](https://github.com/lin
 ```mermaid
 flowchart TD
     req[Incoming HTTP Request] --> otel[OpenTelemetry\noutermost wrapper]
-    otel -->|"Trace spans, metrics\n(excludes /livez, /readyz)"| debug{DEBUG=true?}
+    otel -->|"Trace spans, metrics\n(trace ID = canonical request ID; excludes /livez, /readyz)"| debug{DEBUG=true?}
     debug -->|yes| dbg[Debug handler\nlog payloads + /debug/pprof]
-    debug -->|no| authz[Authorization propagation]
-    dbg --> authz
-    authz -->|"Authorization header → context\n(no JWT validation — Heimdall handles that)"| rid[Request ID middleware]
-    rid -->|"X-Request-ID → context + slog"| goa[Goa Mux]
+    debug -->|no| jwt[JWT validation]
+    dbg --> jwt
+    jwt -->|"Validate Heimdall-issued JWT\n(audience = this service) → principal in context"| goa[Goa Mux]
     goa -->|"Route match → decode/validate → type-safe payload"| svc[campaign_svc.go\nGoa service handlers]
 ```
 
+**JWT is validated in-app.** This service does *not* validate the user's original API access token — but it **does** validate the Heimdall-issued JWT whose audience is this backend microservice, extracting the principal into the request context. That validation step lives in this service, not upstream.
+
+**Request ID:** no separate request-ID middleware. The **OTEL trace ID is the canonical request identifier** and is what is emitted in logs, so log lines align with traces. (Other services carry an `X-Request-ID`, but that is redundant with the trace ID.)
+
 **Not in-app (handled upstream):**
 
-| Concern | Handled by | Reference |
-|---------|-----------|-----------|
-| CORS | Traefik ingress | Not in committee-service or any resource service |
-| JWT validation | Heimdall ForwardAuth | `charts/*/heimdall-middleware.yaml` |
-| Authorization (ReBAC) | Heimdall → OpenFGA | URL pattern rulesets at ingress |
+| Concern | Handled by | Notes |
+|---------|-----------|-------|
+| CORS | — (not applicable) | Not needed: this is not an SPA. API requests are made by the SSR backend, not the browser. CORS is handled inside the Angular app for its own frontend→Express partial-page updates — it is not a concern of this service and is not "handled by Traefik". |
+| Authorization (ReBAC) | Heimdall → OpenFGA | This service defines its **own** RuleSets (referencing the marketing relations on `project`). There is no per-service `*/heimdall-middleware.yaml` resource — routes reference a shared middleware; each service supplies its rulesets. |
 | Panic recovery | Go `http.Server` default | Not in committee-service |
 
 Health probes `/livez` and `/readyz` bypass the middleware chain.
@@ -175,8 +177,8 @@ flowchart LR
 flowchart TD
     subgraph http["HTTP Layer (Goa)"]
         svc["campaign_svc.go — Goa service impl"]
-        svc --> conn["Connection CRUD (7 endpoints)"]
-        svc --> brief["Brief lifecycle (8 endpoints)"]
+        svc --> conn["Typed connection CRUD (per provider)"]
+        svc --> brief["Brief lifecycle (6 endpoints)"]
         svc --> create["Campaign create (async → jobId)"]
         svc --> monitor["Monitoring (metrics, keywords, audience)"]
         svc --> optim["Optimization (keyword actions, status toggle)"]
@@ -215,9 +217,9 @@ flowchart TD
     orch & optimsvc & metricssvc --> nats
 ```
 
-**Why PostgreSQL instead of NATS KV:** committee-service uses NATS KV as primary store. Campaigns uses PostgreSQL because ad platform credentials require AES-256-GCM encryption at rest + relational queries for briefs and executions. NATS is used for events, inter-service comms, index updates → OpenSearch, and FGA sync → OpenFGA.
+**Why PostgreSQL:** campaigns needs relational queries and secondary-index lookups across briefs, executions, and per-provider connections (lookups on more than a primary key). NATS KV does not scale to that — committee-service is itself moving off NATS KV for the same reason (maintaining secondary indexes for non-primary-key lookups). Note that credential encryption is not itself an argument for one backend over another: because credentials are encrypted at the application layer *before* storage, they would be equally opaque in any store. NATS remains in use for events, inter-service comms, index updates → OpenSearch, and FGA sync → OpenFGA.
 
-Auth (JWT validation, CORS, ReBAC) is handled upstream by Traefik + Heimdall + OpenFGA — not in this service.
+**Auth:** ReBAC (OpenFGA relations) is evaluated upstream at the gateway via Heimdall; CORS does not apply (this is not an SPA — see the middleware section). The **Heimdall-issued JWT is validated in this service** (audience = this microservice).
 
 ---
 
@@ -233,8 +235,8 @@ lfx-v2-campaign-service/
 │   ├── design/                          — Goa design DSL (co-located, not top-level)
 │   │   ├── design.go                    — API definition, auth, errors
 │   │   ├── types.go                     — shared Goa types
-│   │   ├── connections.go               — connection CRUD (7 endpoints)
-│   │   ├── briefs.go                    — brief lifecycle (8 endpoints)
+│   │   ├── connections.go               — typed connection CRUD (per provider)
+│   │   ├── briefs.go                    — brief lifecycle (6 endpoints)
 │   │   ├── campaigns.go                 — create + job tracking
 │   │   ├── monitoring.go                — metrics endpoints
 │   │   └── optimization.go             — keyword actions, status toggle
@@ -261,8 +263,7 @@ lfx-v2-campaign-service/
 │   │   ├── nats/                        — pub/sub, request/reply
 │   │   └── postgres/                    — pool, migrations, repositories
 │   └── middleware/
-│       ├── request_id.go                — X-Request-ID propagation
-│       └── authorization.go             — Authorization header → context
+│       └── jwt.go                       — validate Heimdall-issued JWT (audience = this service)
 │
 ├── gen/                                 — Goa-generated (committed per platform convention)
 ├── pkg/constants/                       — platforms, char limits, targeting, campaign naming
@@ -287,9 +288,12 @@ lfx-v2-campaign-service/
 | Broker pattern (not stateful store) | Go owns platform APIs + persistence. Per Eric/Jordan (2026-06-24). |
 | PostgreSQL + NATS (not NATS KV only) | PG for relational data (credentials, briefs, executions). NATS for events + inter-service. Campaigns needs PG for AES-256-GCM encrypted creds. |
 | AES-256-GCM | Credentials encrypted at rest. Never returned in API responses. Backwards-compatible passthrough. |
-| Auth via Heimdall (not in-app) | JWT validation + ReBAC at Traefik ingress, same as all platform resource services. |
+| ReBAC upstream, JWT validated in-app | ReBAC (OpenFGA) evaluated at the gateway via Heimdall; the Heimdall-issued JWT (audience = this service) is validated in-app. CORS N/A (not an SPA). |
+| Typed per-provider persistence | One table per provider (`google_ads_connections`, …), not a generic `channel_connections` + untyped `metadata`. Credentials/config differ per provider; strong typing is a clearer contract. |
+| `version` iterator + ETag/If-Match | Every resource table carries `version BIGINT`; PUTs require `If-Match`. Optimistic-locking per 2026-05-CloudNativePG. |
+| Reads/lists/history via Query Service | No bespoke list or audit endpoints; the Query Service serves lists and revision history from indexed resources. |
 | Hexagonal architecture | domain → ports → adapters. Easy to swap DB or add platforms. |
-| Platform-agnostic persistence | No per-platform columns or CHECK constraints. JSONB for platform config. |
+| Per-provider typed tables + app encryption | One table per provider with first-class credential/config columns; credentials app-encrypted (AES-256-GCM) with a key from a k8s secret. |
 | errgroup (cap 5) | Bounded concurrency for multi-platform dispatch. Won't overwhelm APIs. |
 | context.WithoutCancel | Async goroutines survive request cancellation (Go 1.21+). |
 | Google Ads TS helper (optional) | gRPC client complexity may warrant keeping TypeScript sidecar, connected via NATS RPC. |
@@ -389,10 +393,11 @@ flowchart TD
    - Move `campaign_svc.go` → `cmd/campaign-api/service/`
    - Add `providers.go` with `sync.Once` pattern
    - Rename `server.go` → `http.go`
-   - Remove in-app CORS middleware (handled by Traefik)
-   - Remove in-app JWT validation (handled by Heimdall)
+   - Remove in-app CORS middleware (CORS is not applicable — not an SPA)
+   - Keep in-app JWT validation of the Heimdall-issued JWT (audience = this service)
+   - Drop the request-ID middleware; use the OTEL trace ID as the canonical request ID in logs
    - Add NATS client for platform bus integration
-   - Add authorization middleware (header propagation only)
+   - Define this service's own Heimdall RuleSets (no per-service `heimdall-middleware.yaml`)
 
 ### After alignment approval
 

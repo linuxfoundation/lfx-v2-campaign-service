@@ -16,7 +16,7 @@ The service supports the full campaign lifecycle: multi-platform campaign creati
 
 _Source: [Eric's marketing stack diagram](https://gist.github.com/emsearcy/6464a2b87ccb0b5d56c0d96bd1415c8c) (updated 2026-06-30)_
 
-Two architecture options. **Orange** (API Gateway brokered) is preferred but requires adopting v2-Platform idioms (OpenFGA, Query Service). **Blue** (NATS RPC from SSR) de-risks by splitting into two phases: first the TypeScript → Go migration, then platform idiom adoption.
+**Decision:** the Campaign Service is an **API Gateway-brokered platform service** (the orange path in the diagram below). It sits behind the API Gateway with Heimdall/OpenFGA authorization, adopts the Query Service for reads/indexing, and owns both the upstream platform API calls and persistence. The alternative NATS-RPC-from-SSR shape (blue) was considered and is retained in the diagram for context only; it is **not** the chosen architecture.
 
 ```mermaid
 flowchart TD
@@ -55,7 +55,7 @@ flowchart TD
         subgraph campaigns-group["Campaigns Service (preferred)"]
             campaigns["Campaigns service\n(Golang)"]
             campaigns-db[("Postgres\n(stores briefs, shared-tenant mappings, etc)")]
-            google-ads-helper["Google Ads Typescript<br >helper (optional)"]
+            google-ads-helper["Google Ads TypeScript<br >helper (optional)"]
             campaigns --> campaigns-db
         end
 
@@ -91,7 +91,7 @@ flowchart TD
         campaigns-ui-subsystem["UI subsystem\n(Golang)"]
         campaigns-ui-db[("Postgres")]
         campaigns-ui-subsystem --> campaigns-ui-db
-        campaigns-ui-ads-helper["Google Ads Typescript<br />helper (optional)"]
+        campaigns-ui-ads-helper["Google Ads TypeScript<br />helper (optional)"]
         campaigns-ui-subsystem -->|NATS RPC| campaigns-ui-ads-helper
     end
 
@@ -102,13 +102,7 @@ flowchart TD
     campaigns-ui-subsystem ------> ads
 ```
 
-| | Orange (API Gateway brokered) | Blue (NATS RPC from SSR) |
-|---|---|---|
-| **Auth** | Heimdall / OpenFGA at API Gateway | UI-brokered (SSR passes auth context via NATS) |
-| **Routing** | API Gateway → Campaigns service | SSR → NATS RPC → Campaigns UI subsystem |
-| **Platform idioms** | Full: OpenFGA rules, Query Service, OpenSearch indexing | Deferred to phase 2 |
-| **Risk** | Higher — must adopt platform auth + query patterns upfront | Lower — migration first, platform adoption second |
-| **Recommendation** | Preferred (per Eric) | De-risks implementation |
+**Chosen architecture (orange):** authorization via Heimdall/OpenFGA at the API Gateway; routing API Gateway → Campaigns service; full platform idioms (OpenFGA relations, Query Service, OpenSearch indexing). The service adopts these upfront rather than deferring them.
 
 ## Campaign Lifecycle
 
@@ -152,17 +146,17 @@ flowchart TD
 | X/Twitter | Tweet text (280ch) |
 
 **Brief Lifecycle:**
-- **First visit:** new brief created (status: draft), `created_by` = current user
+- **First visit:** new brief created (status: draft)
 - **Return visit:** existing brief loaded, user can refresh or edit
-- **Refresh:** re-runs AI generation, updates brief, bumps version
-- **Edit:** manual edits saved as new version in `brief_versions` (what changed, who, when)
+- **Refresh:** re-runs AI generation, updates the brief, increments `version`
+- **Edit:** a `PUT` replace (requires `If-Match`), incrementing `version`. Revision history is served by the Query Service, which indexes each write.
 - **Approve:** brief reviewed and approved (status: approved), `approved_by` + `approved_at` recorded
-- **Create:** approved brief used to create campaigns — each platform campaign saved as a `campaign_execution` linked to the brief
-- **Update:** if campaigns already exist, edits UPDATE the existing campaigns on the platform (not create new ones). The `brief_version` records which campaigns were affected. Each change logged in `campaign_audit`.
+- **Create:** approved brief used to create campaigns — each platform campaign saved as a `campaign` row (subordinate to the brief)
+- **Update:** if campaigns already exist, edits UPDATE the existing campaigns on the platform (not create new ones), then update the `campaign` row. History is served by the Query Service.
 
 **Create vs Update logic:**
-- No `campaign_executions` for this brief? → CREATE new campaigns
-- `campaign_executions` already exist? → UPDATE existing campaigns on the platform using `platform_campaign_id`, then update the execution record
+- No `campaign` rows for this brief? → CREATE new campaigns
+- `campaign` rows already exist? → UPDATE existing campaigns on the platform using `platform_campaign_id`, then update the row
 
 **SSE Event Types:**
 - `status` — progress messages
@@ -281,10 +275,33 @@ flowchart TD
     lfai["**LF AI**\n\ncampaign_manager:\n- LF AI ED\n- Marketing Ops\n\nmarketing_auditor:\n- LF AI ED\n- Marketing Ops\n- PR & Comms"]
 ```
 
-| Role | Access | Inheritance |
-|------|--------|-------------|
-| `campaign_manager` | Full CRUD on campaigns, connections, executions | ED + Marketing Ops. Does NOT inherit from parent. |
-| `marketing_auditor` | Read-only access to marketing KPIs and campaign data | ED + Marketing Ops + PR & Comms. Inherits from parent for global team access. |
+The service introduces **no new FGA object types** — only relations on the existing `project` type, defined in [`lfx-v2-helm/.../files/model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga#L36-L43):
+
+| Relation | Definition (model.fga) | Access | Inheritance |
+|----------|------------------------|--------|-------------|
+| `marketing_ops` | `[team#member] or marketing_ops from parent` | Cross-project campaign management (Marketing Ops team) | Cascades from parent |
+| `campaign_manager` | `executive_director or marketing_ops` | Full CRUD on briefs, campaigns, connections | Does NOT cascade from parent; scoped to the project it is granted on |
+| `marketing_auditor` | `[team#member] or executive_director or marketing_ops or marketing_auditor from parent` | Read-only marketing KPIs and campaign data | Cascades from parent (grant at root flows down) |
+
+Heimdall RuleSets gate write paths on `campaign_manager` and read paths on `marketing_auditor`, evaluated against the `{projectId}` in the path. Because these are project relations (not a new type), all API paths are nested under `/projects/{projectId}/…` (see [api-catalog.md](api-catalog.md#api-design-rules)).
+
+### Indexer Resource Type Names
+
+Every resource is indexed into the Query Service under a globally-unique type name (the platform maintains a single object namespace shared across services). This service declares:
+
+| Type name | Resource |
+|-----------|----------|
+| `campaign_brief` | Campaign brief |
+| `campaign` | Campaign execution (subordinate to a brief) |
+| `google_ads_connection` | Google Ads connection |
+| `linkedin_ads_connection` | LinkedIn Ads connection |
+| `meta_ads_connection` | Meta Ads connection |
+| `reddit_ads_connection` | Reddit Ads connection |
+| `twitter_ads_connection` | X/Twitter Ads connection |
+| `microsoft_ads_connection` | Microsoft Ads connection |
+| `hubspot_connection` | HubSpot (email) connection |
+
+The Query Service maintains revision history on each (re)index, so listing and audit/history are served from the Query Service rather than from bespoke endpoints in this service.
 
 ## What the Service Owns
 
@@ -307,30 +324,21 @@ flowchart TD
 
 ## Persistence
 
+Each resource that maps to an LFX platform type carries a `version BIGINT` iterator (ETag/If-Match). Connections are **typed per provider** — the diagram shows `google_ads_connections` as the representative; every provider has its own analogous table (see [channel-connections-schema.md](channel-connections-schema.md)). Revision history and attribution are served by the **Query Service** on each (re)index, so there are no bespoke `*_audit` tables.
+
 ```mermaid
 erDiagram
-    channel_connections {
+    google_ads_connections {
         UUID id PK
-        UUID project_id
-        VARCHAR channel_type
-        VARCHAR channel_category
+        UUID project_id "indexed; no cross-service FK"
         VARCHAR label
-        VARCHAR account_id
-        JSONB credentials "AES-256-GCM encrypted"
-        JSONB metadata
+        VARCHAR account_id "customer ID"
+        VARCHAR login_customer_id
+        BYTEA credentials "app AES-256-GCM"
         VARCHAR status
-        UUID created_by
+        BIGINT version "ETag/If-Match"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
-    }
-
-    channel_connection_audit {
-        UUID id PK
-        UUID connection_id FK
-        VARCHAR action
-        UUID changed_by
-        TIMESTAMPTZ changed_at
-        JSONB previous_values "no creds logged"
     }
 
     campaign_briefs {
@@ -345,31 +353,19 @@ erDiagram
         JSONB keywords
         JSONB targeting
         VARCHAR status "draft/approved/archived"
-        INT version
+        BIGINT version "ETag/If-Match"
         UUID approved_by
         TIMESTAMPTZ approved_at
-        UUID created_by
-        UUID updated_by
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
-    brief_versions {
-        UUID id PK
-        UUID brief_id FK
-        INT version
-        VARCHAR change_type
-        JSONB changes "field old new"
-        JSONB snapshot "full brief state"
-        JSONB affected_campaigns
-        UUID changed_by
-        TIMESTAMPTZ changed_at
-    }
-
-    campaign_executions {
+    campaigns {
         UUID id PK
         UUID project_id
-        UUID brief_id FK
+        UUID brief_id FK "many campaigns share one brief"
         UUID job_id FK
-        VARCHAR platform
+        VARCHAR platform "channel: google-ads/linkedin-ads/..."
         VARCHAR platform_campaign_id
         VARCHAR campaign_name
         VARCHAR status
@@ -379,18 +375,9 @@ erDiagram
         DATE end_date
         JSONB config_snapshot
         JSONB result
-        UUID created_by
+        BIGINT version "ETag/If-Match"
         TIMESTAMPTZ created_at
-    }
-
-    campaign_audit {
-        UUID id PK
-        UUID execution_id FK
-        VARCHAR action
-        UUID changed_by
-        TIMESTAMPTZ changed_at
-        JSONB previous_values
-        JSONB new_values
+        TIMESTAMPTZ updated_at
     }
 
     campaign_jobs {
@@ -404,21 +391,16 @@ erDiagram
         TIMESTAMPTZ expires_at
     }
 
-    channel_connections ||--o{ channel_connection_audit : "audits"
-    campaign_briefs ||--o{ brief_versions : "versions"
     campaign_briefs ||--o{ campaign_jobs : "dispatches"
-    campaign_jobs ||--o{ campaign_executions : "creates"
-    campaign_executions ||--o{ campaign_audit : "audits"
+    campaign_jobs ||--o{ campaigns : "creates"
+    campaign_briefs ||--o{ campaigns : "drives"
 ```
 
-**7 tables total:**
-- `channel_connections` — all platform and channel connections (paid, email, organic, community)
-- `channel_connection_audit` — audit trail for connection changes (no credentials logged)
-- `campaign_briefs` — AI-generated campaign briefs, keyed by (project_id, event_slug). Tracks who created, last updated, and approved the brief. Must be approved before campaigns can be created from it.
-- `brief_versions` — every edit to a brief saved as a version. Records what changed (budget, dates, copy, targeting), who changed it, when, and which campaigns were affected by the update. Full snapshot of the brief state at each version for auditability.
-- `campaign_executions` — one row per platform campaign created or updated from a brief. Stores campaign name, platform, platform campaign ID, budget, dates, and who created it. If the brief is updated after campaigns exist, the existing campaigns are updated (not recreated) and the change is tracked in both `brief_versions` and `campaign_audit`.
-- `campaign_audit` — audit trail for campaign changes. Logs every budget update, status change, date change, targeting change, and copy update with who made the change and the before/after values.
-- `campaign_jobs` — async job queue for multi-platform dispatch. One job per brief submission dispatches to multiple `campaign_executions` (one per platform).
+**Tables:**
+- **Per-provider connection tables** — `google_ads_connections`, `linkedin_ads_connections`, `meta_ads_connections`, `reddit_ads_connections`, `twitter_ads_connections`, `microsoft_ads_connections`, `hubspot_connections`. One strongly-typed table per provider; credentials app-encrypted; provider-specific config as first-class columns. Full definitions in [channel-connections-schema.md](channel-connections-schema.md).
+- `campaign_briefs` — campaign briefs, keyed by (project_id, event_slug). Tracks approval. Must be approved before campaigns can be created from it. `version` powers ETag/If-Match; edit history served by Query Service.
+- `campaigns` — one row per platform campaign created or updated from a brief (subordinate to the brief). Stores campaign name, platform, platform campaign ID, budget, dates. Updated in place (not recreated) when a brief changes after campaigns exist.
+- `campaign_jobs` — async job queue for multi-platform dispatch. One job per brief submission dispatches to multiple `campaigns` (one per platform).
 
 **Database:** Tofu-provisioned PostgreSQL for shared infrastructure. CloudNativePG for local development.
 
@@ -455,7 +437,7 @@ Each platform has a different tenancy model. Some platforms use a single shared 
 | Reddit Ads | TLF | Account t2_gv9wtbfa |
 | X/Twitter Ads | LF Events | Account 8r7gb (funding instrument pending) |
 
-This distinction matters for the connection CRUD: Google Ads connections are typically one-per-org (shared), while LinkedIn/Meta connections are one-per-project (separate accounts). The `channel_connections` table supports both models.
+This distinction matters for the connection CRUD: Google Ads connections are typically one-per-org (shared), while LinkedIn/Meta connections are one-per-project (separate accounts). The per-provider connection tables support both models.
 
 ## Future: Organic & Communication Channels
 
@@ -470,130 +452,19 @@ Beyond paid ad platforms, the campaign service will manage connections to organi
 | X/Twitter Ads | | YouTube | |
 | Microsoft Ads | | | |
 
-### Channel Connection Database Schema
+### Database Schema
 
-All platform and channel connections stored in a single flexible schema. Credentials are encrypted at rest. One project can have many connections, and multiple connections of the same channel type.
+Persistence uses **strongly-typed, one-table-per-provider** schemas rather than a single generic `channel_connections` table with an untyped `metadata` blob. Credentials and configuration differ materially between providers, so folding them into untyped JSON would weaken the contract and make the API harder to develop and validate against (especially for agents). Each supported provider gets its own table with provider-specific columns.
 
-```
-+-------------------------------------------------------------------+
-|                    channel_connections                              |
-+-------------------------------------------------------------------+
-| id                UUID        PK                                   |
-| project_id        UUID        FK -> projects                       |
-| channel_type      VARCHAR     'google-ads' | 'linkedin-ads' |      |
-|                               'meta-ads' | 'reddit-ads' |          |
-|                               'twitter-ads' | 'slack' |            |
-|                               'discord' | 'email' |                |
-|                               'linkedin-organic' |                  |
-|                               'twitter-organic' |                   |
-|                               'microsoft-ads' |                     |
-|                               'bluesky' | 'mastodon' |             |
-|                               'youtube'                             |
-| channel_category  VARCHAR     'paid' | 'email' | 'organic' |       |
-|                               'community'                          |
-| label             VARCHAR     Human-readable name                  |
-|                               e.g. "CNCF LinkedIn", "#kubecon-na"  |
-| account_id        VARCHAR     Platform account identifier          |
-| credentials       JSONB       Encrypted credential blob            |
-|                               (see per-channel schema below)       |
-| metadata          JSONB       Non-secret config                    |
-|                               (org ID, page ID, server name, etc.) |
-| status            VARCHAR     'active' | 'inactive' |             |
-|                               'error' | 'deleted'                  |
-| created_by        UUID        User who created the connection      |
-| created_at        TIMESTAMPTZ                                      |
-| updated_at        TIMESTAMPTZ                                      |
-+-------------------------------------------------------------------+
-  Indexes:
-    - (project_id, channel_type)   -- list all connections of a type
-    - (project_id, status)         -- list active connections
-    - (channel_type, account_id)   -- supports lookup (not unique; multiple connections per project allowed)
+Every table that maps to an LFX platform resource type carries a `version BIGINT` iterator that powers the platform-idiomatic **ETag / `If-Match`** optimistic-concurrency controls on `PUT`s (pattern per [2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG)). `project_id` is a plain indexed `UUID` (owned by the project-service; no cross-service FK). Credentials are encrypted at the application layer (AES-256-GCM) using a key from a Kubernetes secret — not pgcrypto.
 
-+-------------------------------------------------------------------+
-|                    channel_connection_audit                         |
-+-------------------------------------------------------------------+
-| id                UUID        PK                                   |
-| connection_id     UUID        FK -> channel_connections             |
-| action            VARCHAR     'created' | 'updated' | 'deleted' |  |
-|                               'credentials_rotated' |              |
-|                               'status_changed'                     |
-| changed_by        UUID        User who made the change             |
-| changed_at        TIMESTAMPTZ                                      |
-| previous_values   JSONB       Snapshot of changed fields (no creds)|
-+-------------------------------------------------------------------+
-```
-
-### Credential Storage Per Channel Type
-
-The `credentials` JSONB column stores encrypted, channel-specific secrets. The `metadata` column stores non-secret configuration.
-
-**Paid Ad Platforms:**
-
-| Channel | credentials (encrypted) | metadata |
-|---------|------------------------|----------|
-| `google-ads` | `{ refresh_token, client_id, client_secret, developer_token }` | `{ customer_id, login_customer_id }` |
-| `linkedin-ads` | `{ access_token }` | `{ ad_account_id, org_id }` |
-| `meta-ads` | `{ access_token, app_secret }` | `{ ad_account_id, page_id, app_id }` |
-| `reddit-ads` | `{ client_id, client_secret, refresh_token }` | `{ ad_account_id }` |
-| `twitter-ads` | `{ consumer_key, consumer_secret, access_token, access_token_secret }` | `{ account_id, funding_instrument_id }` |
-| `microsoft-ads` | `{ client_id, client_secret, refresh_token, developer_token }` | `{ customer_id }` |
-
-**Email:**
-
-| Channel | credentials (encrypted) | metadata |
-|---------|------------------------|----------|
-| `email` | `{ private_app_token }` | `{ portal_id, list_ids[], sender_email, brand_kit }` |
-
-Each project has its own brand kit, footer, and email templates, selected based on the request.
-
-**Organic Social:**
-
-| Channel | credentials (encrypted) | metadata |
-|---------|------------------------|----------|
-| `linkedin-organic` | `{ access_token }` | `{ org_id, org_name }` |
-| `twitter-organic` | `{ consumer_key, consumer_secret, access_token, access_token_secret, bearer_token }` | `{ username, user_id }` |
-| `bluesky` | `{ app_password }` | `{ handle, did }` |
-| `mastodon` | `{ access_token }` | `{ instance_url, username }` |
-| `youtube` | `{ refresh_token, client_id, client_secret }` | `{ channel_id, channel_name }` |
-
-**Community (Slack / Discord):**
-
-| Channel | credentials (encrypted) | metadata |
-|---------|------------------------|----------|
-| `slack` | `{ bot_token, signing_secret }` | `{ workspace_id, workspace_name, channel_ids[] }` |
-| `discord` | `{ bot_token }` | `{ server_id, server_name, channel_ids[] }` |
-
-### One Project, Many Channels
-
-```
-Project: CNCF
-+-------------------------------------------------------------------+
-| channel_connections                                                |
-|-------------------------------------------------------------------|
-| google-ads    | Customer 8666746580          | active   | paid    |
-| linkedin-ads  | Account 538170226 (TLF)     | active   | paid    |
-| linkedin-ads  | Account 509430019 (Events)  | active   | paid    |
-| meta-ads      | Account act_19355...        | active   | paid    |
-| email         | HubSpot list "CNCF News"    | active   | email   |
-| email         | HubSpot list "KubeCon"      | active   | email   |
-| slack         | #cncf-marketing             | active   | community|
-| slack         | #kubecon-na-2025            | active   | community|
-| slack         | #kubecon-eu-2025            | active   | community|
-| discord       | CNCF Community Server       | active   | community|
-| discord       | Kubernetes Server           | active   | community|
-| bluesky       | @cncf.io                    | active   | organic |
-| mastodon      | @cncf@fosstodon.org         | active   | organic |
-| linkedin-organic | CNCF org page            | active   | organic |
-| twitter-organic  | @CloudNativeFdn          | active   | organic |
-| youtube       | CNCF channel                | active   | organic |
-+-------------------------------------------------------------------+
-```
+The full table definitions — per-provider connection tables **plus** `campaign_briefs` and `campaigns` — live in [channel-connections-schema.md](channel-connections-schema.md) and are not duplicated here. Attribution and revision history are served by the Query Service on each (re)index, so this service keeps no separate audit tables.
 
 ## Supported Platforms
 
 | Platform | Auth | API Style | Key Details |
 |----------|------|-----------|-------------|
-| Google Ads | OAuth 2.0 | gRPC | Budget in micros (divide by 1M), no GAQL date fields in v23+ |
+| Google Ads | OAuth 2.0 | gRPC | Budget in micros (write: ×1M; read: ÷1M), no GAQL date fields in v23+ |
 | LinkedIn Ads | OAuth 2.0 | REST (v202602) | Targeting profiles (skills + groups), geo URN resolution, `feedDistribution: NONE` for dark posts |
 | Meta Ads | Bearer token | REST (Graph API) | ISO geo codes, objective-to-parameter mapping |
 | Reddit Ads | OAuth 2.0 | REST | Token refresh with expiry buffer, subreddit targeting |

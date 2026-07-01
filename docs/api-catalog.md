@@ -1,141 +1,103 @@
 # Campaign Service — API & Platform Catalog
 
-Reference catalog of all campaign endpoints, platform account attributes, and data structures. This documents the current Express BFF implementation that will be ported to the Go service.
+Reference catalog of all campaign endpoints, platform account attributes, and data structures for the Go service.
 
-## API Endpoints
+## API Design Rules
 
-Base path: `/api/campaigns`
+These rules apply to every endpoint below and reflect platform idioms (`entity-design.md`) rather than the shape of the existing Express BFF:
 
-### Brief Generation (Planning Phase)
+1. **Everything is nested under a project.** No new top-level FGA types were introduced for this service — only new *relations against `project`*. Per `entity-design.md`, a resource may only be a root API path if it is a top-level FGA type. Consequently **every** campaign resource is nested under `/projects/{projectId}/…`. Briefs and campaigns are subordinate to a project (campaigns are further subordinate to a brief).
+2. **Every endpoint declares its gating FGA relation.** The service defines no new object types; it relies on the three marketing relations on `project` (defined in [`lfx-v2-helm/.../files/model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga#L36-L43)):
+   - **`marketing_ops`** — team members with cross-project campaign management.
+   - **`campaign_manager`** = `executive_director or marketing_ops` — manages campaigns/briefs/connections for a project. Does *not* cascade from parent; scoped to the project it is granted on.
+   - **`marketing_auditor`** = read access to marketing dashboards and campaigns; cascades from parent projects.
+   The Heimdall RuleSet for each write path references `campaign_manager` on the `{projectId}`; read paths reference `marketing_auditor`.
+3. **Reads/lists/history come from the Query Service.** All of these resources are indexed into the Query Service. Per platform convention, consumers (UI, MCP) fetch **lists** and **revision/audit history** from the Query Service, which maintains revision history on each (re)index. This service therefore exposes **no dedicated list endpoints and no bespoke audit endpoints** — only the canonical item CRUD needed to mutate state. `GET` on a single item is retained for ETag retrieval prior to a conditional update.
+4. **Create and replace are separate; replace requires `If-Match`.** There is no "create-or-update" endpoint. A `PUT` (replace) requires an `If-Match: "<version>"` header carrying the current ETag; the caller must have fetched the current version first. Mismatches return `412 Precondition Failed`; a missing header returns `428 Precondition Required`. (Optimistic-locking pattern per [committee-service / 2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG).)
+5. **No bulk mutation endpoints.** Bulk status/budget changes are omitted: HTTP cannot cleanly express partial success/failure across a set, and a single bulk call cuts across per-target permission boundaries. Each mutation is scoped to one permission-evaluated target.
 
-| Method | Path | Type | Description |
-|--------|------|------|-------------|
-| POST | `/brief/generate` | SSE stream | Generate a new brief or refresh an existing one. If a brief already exists for this project + event slug, it updates and bumps the version. |
-| POST | `/brief/refine` | SSE stream | Refine existing brief based on user feedback |
-| GET | `/projects/:projectId/briefs` | JSON | List all saved briefs for a project |
-| GET | `/projects/:projectId/briefs/:id` | JSON | Get a specific brief (full copy, keywords, targeting) |
-| PUT | `/projects/:projectId/briefs/:id` | JSON | Manually edit a saved brief (copy, keywords, targeting) |
-| POST | `/projects/:projectId/briefs/:id/approve` | JSON | Approve a brief for campaign creation. Records who approved and when. |
-| GET | `/projects/:projectId/briefs/:id/versions` | JSON | Get version history for a brief (what changed, who changed it, when, which campaigns were affected) |
-| DELETE | `/projects/:projectId/briefs/:id` | JSON | Archive a brief (soft delete) |
+Resource pseudotypes declared into the global indexer namespace: `campaign_brief`, `campaign`, and one connection type per provider (`google_ads_connection`, `linkedin_ads_connection`, …). See [architecture.md](architecture.md) for the full type-name and relation catalog.
 
-Briefs are persisted per project and keyed by event slug. When a user returns to the same event, the existing brief is loaded for review. They can refresh it (re-run AI generation with latest event data) or manually edit it. Once reviewed and approved, the brief can be used to create campaigns. All campaigns created from a brief are saved as execution records linked back to the brief, including campaign name, platform, budget allocated, and who created them.
+### Brief Lifecycle (Planning Phase)
+
+Briefs are subordinate to a project. AI generation currently runs SSE-streamed in the Express BFF and will migrate later; the persistence/CRUD surface below is what this service owns.
+
+A brief is the funnel unit: it carries the **program** (`program_type` = events / education / membership) that sets the funnel context, and it is **shared across channels** — one brief drives many channel campaigns (see next section), each a row under the brief with the same `brief_id`. Program is a field on the brief, not a separate resource.
+
+| Method | Path | FGA relation | Type | Description |
+|--------|------|--------------|------|-------------|
+| POST | `/projects/{projectId}/briefs` | `campaign_manager` | JSON | Create a brief. |
+| GET | `/projects/{projectId}/briefs/{id}` | `marketing_auditor` | JSON | Get a brief (full copy, keywords, targeting); returns ETag. |
+| PUT | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Replace a brief (requires `If-Match`). |
+| POST | `/projects/{projectId}/briefs/{id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
+| POST | `/projects/{projectId}/briefs/{id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation. |
+| DELETE | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Archive a brief (soft delete). |
+
+> Listing briefs and viewing a brief's version history are served by the Query Service, not by dedicated endpoints here.
 
 ### Campaign Creation (Implementation Phase)
 
-| Method | Path | Type | Description |
-|--------|------|------|-------------|
-| POST | `/create` | JSON | Create or update campaigns across selected platforms (async, returns jobId). If campaigns already exist for this brief, updates them on the platform instead of creating new ones. Saves execution record with who created/updated, budget, dates, and platform details. |
-| GET | `/jobs/:jobId` | JSON | Poll campaign creation job status |
-| GET | `/projects/:projectId/executions` | JSON | List all campaign executions for a project |
-| GET | `/projects/:projectId/executions/:id` | JSON | Get a specific execution with full details |
-| GET | `/projects/:projectId/executions/:id/audit` | JSON | Get audit history for a campaign (budget changes, status changes, who made each change) |
+A campaign is subordinate to a brief. This is a **collection** under the brief (a brief may drive multiple campaigns across platforms). Creation is async and returns a job to poll.
+
+| Method | Path | FGA relation | Type | Description |
+|--------|------|--------------|------|-------------|
+| POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across selected platforms (async → `jobId`). Persists one execution record per platform. |
+| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `marketing_auditor` | JSON | Get one campaign execution; returns ETag. |
+| PUT | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Replace a campaign execution (requires `If-Match`). |
+| GET | `/projects/{projectId}/jobs/{jobId}` | `campaign_manager` | JSON | Poll campaign creation job status. |
+
+> Listing a project's or brief's campaigns, and per-campaign change history, are served by the Query Service.
 
 ### Monitoring (Insights Phase)
 
-| Method | Path | Type | Description |
-|--------|------|------|-------------|
-| GET | `/monitor` | JSON | Google Ads campaign metrics (days param, default 14) |
-| GET | `/keywords` | JSON | Google Ads keyword performance (top 50 by impressions) |
-| GET | `/audience` | JSON | Audience demographics (age, gender, device) |
-| GET | `/linkedin/accounts` | JSON | List linked LinkedIn ad accounts |
-| GET | `/linkedin/monitor` | JSON | LinkedIn campaign metrics (accountKey, days) |
-| GET | `/reddit/accounts` | JSON | List configured Reddit ad accounts |
-| GET | `/reddit/monitor` | JSON | Reddit campaign metrics (accountKey, days) |
-| GET | `/meta/accounts` | JSON | List configured Meta ad accounts |
-| GET | `/meta/monitor` | JSON | Meta campaign metrics (accountKey, days) |
-| GET | `/twitter/accounts` | JSON | List configured X/Twitter ad accounts |
-| GET | `/twitter/monitor` | JSON | X/Twitter campaign metrics (accountKey, days) |
+Metrics are read-through from the ad platforms, scoped by project. There are no per-platform root paths; the provider is a path segment under the project.
+
+| Method | Path | FGA relation | Type | Description |
+|--------|------|--------------|------|-------------|
+| GET | `/projects/{projectId}/{provider}/metrics` | `marketing_auditor` | JSON | Campaign metrics for a provider (`days` param, default 14). `{provider}` ∈ `google-ads`, `linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`. |
+| GET | `/projects/{projectId}/google-ads/keywords` | `marketing_auditor` | JSON | Google Ads keyword performance (top 50 by impressions). |
+| GET | `/projects/{projectId}/google-ads/audience` | `marketing_auditor` | JSON | Audience demographics (age, gender, device). |
+
+> Connected-account listings come from the Query Service (indexed from the connection tables), not from `/{provider}/accounts` endpoints.
 
 ### HubSpot UTM Integration
 
-| Method | Path | Type | Description |
-|--------|------|------|-------------|
-| GET | `/hubspot/utm` | JSON | Lookup HubSpot campaign by event name |
-| POST | `/hubspot/utm/create` | JSON | Create HubSpot campaign if not found |
+| Method | Path | FGA relation | Type | Description |
+|--------|------|--------------|------|-------------|
+| GET | `/projects/{projectId}/hubspot/utm` | `marketing_auditor` | JSON | Lookup HubSpot campaign by event name. |
+| POST | `/projects/{projectId}/hubspot/utm` | `campaign_manager` | JSON | Create a HubSpot campaign if not found. |
 
-### Optimization (current)
+### Optimization
 
-| Method | Path | Type | Description |
-|--------|------|------|-------------|
-| POST | `/keywords/actions` | JSON | Bulk pause/remove Google Ads keywords |
-| PATCH | `/:campaignId/status` | JSON | Toggle campaign ACTIVE/PAUSED (Meta, Reddit, X) |
+Each optimization action is scoped to a single campaign under its brief and is individually permission-evaluated. Bulk cross-campaign endpoints are intentionally omitted (see rule 5).
 
-### Optimization (tentative)
+| Method | Path | FGA relation | Type | Description |
+|--------|------|--------------|------|-------------|
+| PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED (Meta, Reddit, X). |
+| POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` | `campaign_manager` | JSON | Pause/remove Google Ads keywords for this campaign. |
 
-| Method | Path | Type | Description |
-|--------|------|------|-------------|
-| PATCH | `/:campaignId/budget` | JSON | Adjust daily or lifetime budget |
-| PATCH | `/:campaignId/bid-strategy` | JSON | Change bid strategy (maximize clicks, target CPA, target ROAS) |
-| PATCH | `/:campaignId/keywords/:keywordId/bid` | JSON | Update individual keyword bid (Google Ads) |
-| POST | `/:campaignId/ads/rotate` | JSON | Pause underperforming ad variants, activate new ones |
-| PATCH | `/:campaignId/ads/:adId/copy` | JSON | Update ad copy (headlines, descriptions) without recreating |
-| POST | `/:campaignId/creatives/rotate` | JSON | Rotate creatives (LinkedIn, Meta) |
-| PATCH | `/:campaignId/geo-targets` | JSON | Add or remove geo targets |
-| PATCH | `/:campaignId/audience` | JSON | Update audience segments (skills, groups, interests) |
-| POST | `/:campaignId/negative-keywords` | JSON | Add negative keywords (Google Ads) |
-| PATCH | `/:campaignId/bid-modifiers` | JSON | Adjust age, gender, or device bid modifiers |
-| PATCH | `/:campaignId/schedule` | JSON | Set ad scheduling / dayparting |
-| PATCH | `/:campaignId/flight-dates` | JSON | Extend or shorten campaign flight dates |
-| POST | `/bulk/status` | JSON | Bulk status toggle across all platforms |
-| POST | `/budget/reallocate` | JSON | Reallocate budget across platforms based on performance |
+**Tentative** (later phases, same nesting + `campaign_manager` gating): budget adjust, bid-strategy change, per-keyword bid, ad/creative rotation, ad-copy edit, geo-target edit, audience edit, negative keywords, bid modifiers, scheduling, flight-date change. Cross-platform budget reallocation, if built, is modeled as a first-class per-project resource with its own single-target mutations — not a bulk endpoint.
 
-### Platform Connection Management (new endpoints for Go service)
+### Platform Connections (new — typed per provider)
 
-| Method | Path | Type | Description |
-|--------|------|------|-------------|
-| POST | `/projects/:projectId/connections` | JSON | Create a new platform connection |
-| GET | `/projects/:projectId/connections` | JSON | List all connections for a project |
-| GET | `/projects/:projectId/connections/:id` | JSON | Get a specific connection |
-| PUT | `/projects/:projectId/connections/:id` | JSON | Update a connection |
-| DELETE | `/projects/:projectId/connections/:id` | JSON | Remove a connection (soft delete, audit logged) |
-| POST | `/projects/:projectId/connections/:id/test` | JSON | Test connection (verify credentials are valid) |
-| POST | `/projects/:projectId/connections/:id/rotate` | JSON | Rotate credentials (token refresh) |
+Connections are strongly typed per provider (see [channel-connections-schema.md](channel-connections-schema.md)); each provider is its own collection under the project. The table below shows the pattern for `google-ads`; every provider (`linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`, `microsoft-ads`, `hubspot`) exposes the identical shape with its own typed payload.
+
+| Method | Path | FGA relation | Type | Description |
+|--------|------|--------------|------|-------------|
+| POST | `/projects/{projectId}/google-ads-connections` | `campaign_manager` | JSON | Create a Google Ads connection. |
+| GET | `/projects/{projectId}/google-ads-connections/{id}` | `marketing_auditor` | JSON | Get a connection (credentials redacted); returns ETag. |
+| PUT | `/projects/{projectId}/google-ads-connections/{id}` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
+| DELETE | `/projects/{projectId}/google-ads-connections/{id}` | `campaign_manager` | JSON | Remove a connection (soft delete). |
+| POST | `/projects/{projectId}/google-ads-connections/{id}/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
+| POST | `/projects/{projectId}/google-ads-connections/{id}/set-credential` | `campaign_manager` | JSON | Replace the stored (encrypted) credential. Split out from `PUT` so credential replacement is independently permissioned/audited. Not "rotate" — the service does not generate/swap secrets upstream. |
+
+> Listing a project's connections is served by the Query Service, which indexes each connection table on write.
 
 ---
 
 ## Platform Account Attributes
 
-Each platform connection stores the account identifiers needed to interact with that platform's API.
-
-### Google Ads
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `customer_id` | string | Google Ads customer ID (10-digit, e.g. `8666746580`) |
-| `login_customer_id` | string | Manager account ID used for API access |
-
-### LinkedIn Ads
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ad_account_id` | string | LinkedIn ad account ID (e.g. `538170226`) |
-| `org_id` | string | LinkedIn organization ID (e.g. `208777`) |
-
-### Meta Ads
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ad_account_id` | string | Meta ad account ID |
-
-### Reddit Ads
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ad_account_id` | string | Reddit advertiser account ID (e.g. `t2_gv9wtbfa`) |
-
-### X/Twitter Ads
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `account_id` | string | X Ads account ID (e.g. `8r7gb`) |
-| `funding_instrument_id` | string | Funding instrument ID for the account |
-
-### HubSpot
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `portal_id` | string | HubSpot portal/account ID |
+Per-provider account identifiers, config fields, and encrypted credential shapes are defined once in [channel-connections-schema.md](channel-connections-schema.md#per-provider-tables) and are not duplicated here.
 
 ---
 
@@ -358,7 +320,7 @@ pacingLabel: string             — underspending | normal | constrained | overs
 ## Platform-Specific Gotchas
 
 ### Google Ads
-- Budget is in micros (multiply by 1,000,000)
+- Budget is in micros: on **write**, multiply currency → micros (× 1,000,000); on **read**, divide micros → currency (÷ 1,000,000)
 - No `campaign.start_date` / `campaign.end_date` in GAQL for API v23+
 - Demand Gen campaigns use ad group level geo targeting (not campaign level)
 - Duplicate campaign names cause creation failure; retry adds timestamp suffix

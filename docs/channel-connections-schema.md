@@ -1,233 +1,131 @@
-# Channel Connections — Database Schema
+# Campaign Connections — Database Schema
 
-Database schema for storing platform and channel connections. Supports paid ad platforms (current) and organic/communication channels (future). One project can have multiple connections of the same channel type.
+Database schema for storing per-project connections to marketing platforms. Each supported provider is modeled as its **own strongly-typed resource** — both in the API (distinct sub-paths and payload contracts) and in the database (one table per provider). There is intentionally **no generic `connection` abstraction with an untyped `metadata` blob**: credentials and configuration differ materially between providers (an API key is not shaped like `client_id`/`secret`/`refresh_token` is not shaped like OAuth 1.0a consumer/access pairs), and folding that variance into untyped JSON produces a weak contract that is hard to develop and validate against — especially for agents.
 
-This document covers the **connection tables only** (`channel_connections` + `channel_connection_audit`). Campaign tables (`campaign_briefs`, `brief_versions`, `campaign_executions`, `campaign_audit`, `campaign_jobs`) are documented in the ER diagram in [architecture.md](architecture.md) and will ship as separate migration files.
+One project can have multiple connections of the same provider (e.g. separate LinkedIn ad accounts per sub-brand).
 
-## Tables
+> **Decision, not options.** This document describes the target design. See [architecture.md](architecture.md) for the full ER model and the FGA relations that gate each endpoint; API paths are catalogued in [api-catalog.md](api-catalog.md). To avoid duplication, the endpoint tables live in the API catalog and are linked, not repeated, here.
 
-### channel_connections
+## Design Principles
 
-Primary table for all platform and channel connections. Credentials stored as encrypted JSONB.
+1. **One typed table per provider.** `google_ads_connections`, `linkedin_ads_connections`, etc. Provider-specific credential and config fields are first-class columns (or a typed sub-object), not `metadata`.
+2. **Optimistic concurrency on every table.** Every table that maps to an LFX platform resource type carries a `version BIGINT` iterator. The DB handle implements optimistic locking: `UPDATE ... WHERE id = $1 AND version = $2`, incrementing `version` on success and returning `ErrPreconditionFailed` on mismatch. This powers the platform-idiomatic **ETag / `If-Match`** concurrency controls on PUTs. (Pattern mirrors committee-service; see [lfx-architecture-scratch/2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG).)
+3. **No cross-service FK on `project_id`.** Projects are owned by the project-service; like committee-service, `project_id` is a plain `UUID NOT NULL` (indexed), not a foreign key into a table this service owns.
+4. **Application-level credential encryption.** Credentials are encrypted by the application (AES-256-GCM) using a key sourced from a Kubernetes secret via an environment variable — *not* by pgcrypto. pgcrypto is oriented toward digests/hashes; symmetric credential encryption is an application concern so the key never lives in the database.
+5. **Attribution is served by Query Service.** `created_at`/`updated_at`/`created_by` audit and revision history are maintained by the Query Service on each (re)index; this schema does not attempt to reproduce a separate audit/revision store. Where a `created_by` value is retained inline for convenience, it captures the full actor (`name`, `email`, `username`) so historical records remain meaningful even after a user is removed.
 
-```sql
--- gen_random_uuid() requires pgcrypto on PostgreSQL < 13.
--- PostgreSQL 13+ includes it as a built-in function (no extension needed).
--- Our deployment target is PostgreSQL 16.
-CREATE TABLE channel_connections (
-    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id        UUID        NOT NULL REFERENCES projects(id),
-    channel_type      VARCHAR(50) NOT NULL,
-    channel_category  VARCHAR(20) NOT NULL,
-    label             VARCHAR(255) NOT NULL,
-    account_id        VARCHAR(255),
-    credentials       JSONB,          -- encrypted at rest
-    metadata          JSONB,          -- non-secret config
-    status            VARCHAR(20) NOT NULL DEFAULT 'active',
-    created_by        UUID        NOT NULL,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),  -- application sets this on UPDATE; no DB trigger
+## Common Columns
 
-    CONSTRAINT chk_channel_type CHECK (channel_type IN (
-        -- Paid advertising
-        'google-ads', 'linkedin-ads', 'meta-ads', 'reddit-ads', 'twitter-ads',
-        'microsoft-ads',
-        -- Email
-        'email',
-        -- Organic social
-        'linkedin-organic', 'twitter-organic', 'bluesky', 'mastodon', 'youtube',
-        -- Community
-        'slack', 'discord'
-    )),
-    CONSTRAINT chk_channel_category CHECK (channel_category IN (
-        'paid', 'email', 'organic', 'community'
-    )),
-    CONSTRAINT chk_status CHECK (status IN (
-        'active', 'inactive', 'error', 'deleted'
-    ))
-);
-
-CREATE INDEX idx_connections_project_type ON channel_connections (project_id, channel_type);
-CREATE INDEX idx_connections_project_status ON channel_connections (project_id, status);
-CREATE INDEX idx_connections_type_account ON channel_connections (channel_type, account_id);  -- supports lookup, not unique (multiple connections per project allowed)
-```
-
-### channel_connection_audit
-
-Audit trail for connection changes. Never stores credentials.
+Every provider connection table shares this shape. Provider-specific credential/config columns are added per table (see below).
 
 ```sql
-CREATE TABLE channel_connection_audit (
-    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    connection_id     UUID        NOT NULL REFERENCES channel_connections(id) ON DELETE CASCADE,
-    action            VARCHAR(30) NOT NULL,
-    changed_by        UUID        NOT NULL,
-    changed_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    previous_values   JSONB,          -- snapshot of changed fields (never includes credentials)
-
-    CONSTRAINT chk_action CHECK (action IN (
-        'created', 'updated', 'deleted',
-        'credentials_rotated', 'status_changed'
-    ))
-);
-
-CREATE INDEX idx_audit_connection ON channel_connection_audit (connection_id);
-CREATE INDEX idx_audit_changed_at ON channel_connection_audit (changed_at);
+-- gen_random_uuid() is built in on PostgreSQL 13+; deployment target is PostgreSQL 16.
+id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+project_id   UUID        NOT NULL,                    -- owned by project-service; no cross-service FK
+label        TEXT        NOT NULL,                    -- human label, e.g. "TLF Main"
+account_id   TEXT,                                    -- provider account identifier
+credentials  BYTEA,                                   -- AES-256-GCM ciphertext (app-encrypted)
+status       TEXT        NOT NULL DEFAULT 'active'
+             CHECK (status IN ('active', 'inactive', 'error', 'deleted')),
+version      BIGINT      NOT NULL DEFAULT 1,          -- optimistic-lock iterator → ETag/If-Match
+created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()       -- set by application on UPDATE (no DB trigger)
 ```
 
-## Channel Type Reference
+Each table carries `idx_<provider>_project_id ON (project_id)` and, where lookups by account are needed, a non-unique `(project_id, account_id)` index (multiple connections per project are allowed).
 
-### Paid Advertising
+## Per-Provider Tables
 
-| channel_type | channel_category | account_id | credentials (encrypted) | metadata |
-|-------------|-----------------|------------|------------------------|----------|
-| `google-ads` | `paid` | Customer ID (e.g. `8666746580`) | `{ refresh_token, client_id, client_secret, developer_token }` | `{ login_customer_id }` |
-| `linkedin-ads` | `paid` | Ad account ID (e.g. `538170226`) | `{ access_token }` | `{ org_id }` |
-| `meta-ads` | `paid` | Ad account ID (e.g. `act_193556282970417`) | `{ access_token, app_secret }` | `{ page_id, app_id }` |
-| `reddit-ads` | `paid` | Advertiser ID (e.g. `t2_gv9wtbfa`) | `{ client_id, client_secret, refresh_token }` | `{}` |
-| `twitter-ads` | `paid` | Account ID (e.g. `8r7gb`) | `{ consumer_key, consumer_secret, access_token, access_token_secret }` | `{ funding_instrument_id }` |
-| `microsoft-ads` | `paid` | Account ID | `{ client_id, client_secret, refresh_token, developer_token }` | `{ customer_id }` |
+Provider-specific fields are shown as the columns that supplement the common shape. The `credentials` column always holds the encrypted blob; the *plaintext* credential shape it encrypts is documented per provider so the API contract is explicit.
 
-### Organic Social
+### google_ads_connections
+- Config columns: `login_customer_id TEXT`
+- `account_id` = customer ID (e.g. `8666746580`)
+- Encrypted credential shape: `{ refresh_token, client_id, client_secret, developer_token }`
 
-| channel_type | channel_category | account_id | credentials (encrypted) | metadata |
-|-------------|-----------------|------------|------------------------|----------|
-| `linkedin-organic` | `organic` | Org ID (e.g. `208777`) | `{ access_token }` | `{ org_name }` |
-| `twitter-organic` | `organic` | User ID | `{ consumer_key, consumer_secret, access_token, access_token_secret, bearer_token }` | `{ username, handle }` |
-| `bluesky` | `organic` | DID | `{ app_password }` | `{ handle }` |
-| `mastodon` | `organic` | Username | `{ access_token }` | `{ instance_url }` |
-| `youtube` | `organic` | Channel ID | `{ refresh_token, client_id, client_secret }` | `{ channel_name }` |
+### linkedin_ads_connections
+- Config columns: `org_id TEXT NOT NULL`
+- `account_id` = ad account ID (e.g. `538170226`)
+- Encrypted credential shape: `{ access_token }`
 
-### Email
+### meta_ads_connections
+- Config columns: `page_id TEXT`, `app_id TEXT`
+- `account_id` = ad account ID (e.g. `act_193556282970417`)
+- Encrypted credential shape: `{ access_token, app_secret }`
 
-| channel_type | channel_category | account_id | credentials (encrypted) | metadata |
-|-------------|-----------------|------------|------------------------|----------|
-| `email` | `email` | List/audience ID | `{ private_app_token }` | `{ portal_id, list_name, sender_email, sender_name, brand_kit }` |
+### reddit_ads_connections
+- `account_id` = advertiser ID (e.g. `t2_gv9wtbfa`)
+- Encrypted credential shape: `{ client_id, client_secret, refresh_token }`
 
-HubSpot is the first email integration. Each project has its own brand kit, footer, and email templates, selected based on the request.
+### twitter_ads_connections
+- Config columns: `funding_instrument_id TEXT`
+- `account_id` = account ID (e.g. `8r7gb`)
+- Encrypted credential shape: `{ consumer_key, consumer_secret, access_token, access_token_secret }`
 
-### Community (Slack / Discord)
+### microsoft_ads_connections
+- Config columns: `customer_id TEXT`
+- `account_id` = account ID
+- Encrypted credential shape: `{ client_id, client_secret, refresh_token, developer_token }`
 
-| channel_type | channel_category | account_id | credentials (encrypted) | metadata |
-|-------------|-----------------|------------|------------------------|----------|
-| `slack` | `community` | Workspace ID | `{ bot_token, signing_secret }` | `{ workspace_name, channel_ids[], default_channel_id }` |
-| `discord` | `community` | Server (guild) ID | `{ bot_token }` | `{ server_name, channel_ids[], default_channel_id }` |
+### hubspot_connections (email)
+- Config columns: `portal_id TEXT`, `sender_email TEXT`, `sender_name TEXT`, `brand_kit TEXT`
+- `account_id` = list/audience ID
+- Encrypted credential shape: `{ private_app_token }`
+
+> Organic/community channels (LinkedIn organic, X organic, Bluesky, Mastodon, YouTube, Slack, Discord) follow the same one-table-per-provider pattern and will be added as those integrations land. They are out of scope for the initial paid-platform migration and are not detailed here to keep this document focused on the decided target.
 
 ## Multiple Connections Per Project
 
-A single project can have many connections of the same type. Examples:
+A project can hold many connections of the same provider — e.g. TLF running two LinkedIn ad accounts:
 
-**Slack** — a foundation may have separate workspaces or channels for different events:
-```
-project: CNCF
-  slack | workspace: T01234 | #cncf-marketing       | active
-  slack | workspace: T01234 | #kubecon-na-2025       | active
-  slack | workspace: T01234 | #kubecon-eu-2025       | active
-  slack | workspace: T56789 | #cncf-partners         | active
-```
-
-**Discord** — a foundation may participate in multiple community servers:
-```
-project: CNCF
-  discord | server: 123456 | CNCF Community         | active
-  discord | server: 789012 | Kubernetes              | active
-```
-
-**Email (HubSpot)** — different lists for different audiences:
-```
-project: CNCF
-  email | list: abc123 | CNCF Newsletter           | active
-  email | list: def456 | KubeCon Updates            | active
-  email | list: ghi789 | CNCF Certification News   | active
-```
-
-**LinkedIn Ads** — different ad accounts for different sub-brands:
 ```
 project: TLF
-  linkedin-ads | account: 538170226 | TLF Main       | active
-  linkedin-ads | account: 509430019 | LF Events      | active
+  linkedin_ads | account 538170226 | "TLF Main"  | active
+  linkedin_ads | account 509430019 | "LF Events" | active
 ```
 
 ## Current Account Inventory
 
-Accounts currently configured in the Express BFF (to be migrated to this service).
+Non-secret platform account IDs currently configured in the Express BFF, retained here as a migration reference. Each provider has a different tenancy model — some share one account across foundations (campaigns separated by naming convention), others use separate accounts per foundation.
 
-Each platform has a different tenancy model. Some use a single shared account across all foundations (campaigns separated by naming convention). Others have separate accounts per foundation/project.
+**Single shared account (all foundations):**
+- **Google Ads** — Manager `9746983954`, Customer `8666746580`; projects distinguished by campaign naming convention, not separate accounts.
+- **HubSpot** — single org-wide private app token; campaigns matched to projects by name.
 
-### Single Shared Account (all foundations use one account)
+**Separate accounts per foundation:**
+- **LinkedIn Ads** — TLF `538170226` (org `208777`), LF Events `509430019`
+- **Meta Ads** — LF Core `act_193556282970417` (page `41911143546`)
+- **Reddit Ads** — TLF `t2_gv9wtbfa`
+- **X/Twitter Ads** — LF Events `8r7gb`
 
-**Google Ads**
-- Manager Account: 9746983954
-- Customer Account: 8666746580
-- ALL foundations run campaigns under this single account
-- Projects distinguished by campaign naming convention, not by separate accounts
+## API
 
-**HubSpot**
-- Single private app token (org-wide)
-- Campaigns matched to projects by name
-- Each project has its own brand kit, footer, and email templates, selected based on the request
-
-### Separate Accounts Per Foundation/Project
-
-**LinkedIn Ads** — each foundation has its own ad account
-- TLF: Account 538170226, Org 208777
-- LF Events: Account 509430019
-- More accounts added per foundation as needed
-- Loaded from ConfigMap at runtime
-
-**Meta Ads** — separate ad accounts per foundation
-- LF Core: Account act_193556282970417, Page 41911143546
-- More accounts added per foundation as needed
-
-**Reddit Ads** — per foundation
-- TLF: Account t2_gv9wtbfa
-
-**X/Twitter Ads** — per foundation
-- LF Events: Account 8r7gb, Funding Instrument (pending)
-
-## API Endpoints
-
-### Connection CRUD
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/projects/{project_id}/connections` | Create a new connection |
-| `GET` | `/projects/{project_id}/connections` | List all connections (filterable by `channel_type`, `channel_category`, `status`) |
-| `GET` | `/projects/{project_id}/connections/{id}` | Get a specific connection (credentials redacted in response) |
-| `PUT` | `/projects/{project_id}/connections/{id}` | Update a connection |
-| `DELETE` | `/projects/{project_id}/connections/{id}` | Remove a connection (soft delete, audit logged) |
-| `POST` | `/projects/{project_id}/connections/{id}/test` | Test connection (verify credentials are valid) |
-| `POST` | `/projects/{project_id}/connections/{id}/rotate` | Rotate credentials (for token refresh) |
+Connection endpoints are nested under `/projects/{projectId}/…` and are strongly typed per provider (e.g. `POST /projects/{projectId}/google-ads-connections`). The authoritative endpoint list, gating FGA relations, and payload shapes are in [api-catalog.md](api-catalog.md).
 
 ### Response Shape
 
-Credentials are never returned in API responses. The `credentials` field is replaced with a `has_credentials: boolean` flag.
+Credentials are never returned. The response exposes `has_credentials: boolean` in place of the encrypted column, and carries the `version` as an ETag.
 
 ```json
 {
   "id": "uuid",
   "project_id": "uuid",
-  "channel_type": "slack",
-  "channel_category": "community",
-  "label": "#kubecon-na-2025",
-  "account_id": "T01234",
+  "label": "TLF Main",
+  "account_id": "538170226",
+  "org_id": "208777",
   "has_credentials": true,
-  "metadata": {
-    "workspace_name": "CNCF",
-    "channel_ids": ["C01234", "C56789"],
-    "default_channel_id": "C01234"
-  },
   "status": "active",
-  "created_by": "uuid",
-  "created_at": "2026-06-29T00:00:00Z",
-  "updated_at": "2026-06-29T00:00:00Z"
+  "version": 3
 }
 ```
 
+### set_credential vs. update
+
+Rotating a credential is exposed as a dedicated `set_credential` action, not a `rotate` endpoint. "Rotate" would imply the service atomically generates a new secret, swaps it upstream at the provider, *and* stores it — which the ad platforms do not support. `set_credential` simply replaces the stored (encrypted) credential and is split out from the generic `PUT` update so that credential replacement and metadata edits are independently permissioned and audited.
+
 ## Security
 
-- Credentials column encrypted at rest using PostgreSQL pgcrypto or application-level encryption
-- Credentials never returned in API responses (replaced with `has_credentials` boolean)
-- Credential changes logged in audit table without storing the actual credential values
-- Connection test endpoint verifies credentials without exposing them
-- Rotation endpoint allows credential refresh without full connection update
+- Credentials encrypted at rest with **application-level AES-256-GCM**; key sourced from a Kubernetes secret via env var (referenced by the Helm chart). Not pgcrypto.
+- Credentials never returned in API responses (replaced with `has_credentials`).
+- `test` action verifies credentials against the provider without exposing them.
+- Change history and attribution are served by the Query Service, which indexes each connection on write.
