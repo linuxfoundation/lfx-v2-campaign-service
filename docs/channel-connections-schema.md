@@ -36,41 +36,122 @@ Each table carries `idx_<provider>_project_id ON (project_id)` and, where lookup
 
 ## Per-Provider Tables
 
-Provider-specific fields are shown as the columns that supplement the common shape. The `credentials` column always holds the encrypted blob; the *plaintext* credential shape it encrypts is documented per provider so the API contract is explicit.
+Each provider gets its own `CREATE TABLE`. Provider-specific config fields are first-class columns; `credentials` holds the app-encrypted blob, and the *plaintext* JSON shape it encrypts is documented above each table so the API contract is explicit. All tables carry the common columns (`id`, `project_id`, `label`, `account_id`, `credentials`, `status`, `version`, `created_at`, `updated_at`) shown in full for the first table and elided (`-- + common columns`) thereafter.
 
 ### google_ads_connections
-- Config columns: `login_customer_id TEXT`
-- `account_id` = customer ID (e.g. `8666746580`)
-- Encrypted credential shape: `{ refresh_token, client_id, client_secret, developer_token }`
+
+Encrypted credential shape: `{ refresh_token, client_id, client_secret, developer_token }`
+
+```sql
+CREATE TABLE google_ads_connections (
+    id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id         UUID        NOT NULL,            -- owned by project-service; no cross-service FK
+    label              TEXT        NOT NULL,
+    account_id         TEXT        NOT NULL,            -- customer ID, e.g. 8666746580
+    login_customer_id  TEXT,                            -- manager account for API access
+    credentials        BYTEA,                           -- AES-256-GCM ciphertext (app-encrypted)
+    status             TEXT        NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active','inactive','error','deleted')),
+    version            BIGINT      NOT NULL DEFAULT 1,  -- optimistic lock → ETag/If-Match
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_google_ads_connections_project_id ON google_ads_connections (project_id);
+CREATE INDEX idx_google_ads_connections_account   ON google_ads_connections (project_id, account_id);
+```
 
 ### linkedin_ads_connections
-- Config columns: `org_id TEXT NOT NULL`
-- `account_id` = ad account ID (e.g. `538170226`)
-- Encrypted credential shape: `{ access_token }`
+
+Encrypted credential shape: `{ access_token }`
+
+```sql
+CREATE TABLE linkedin_ads_connections (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id  TEXT NOT NULL,                          -- ad account ID, e.g. 538170226
+    org_id      TEXT NOT NULL,                          -- LinkedIn organization URN id, e.g. 208777
+    -- + common columns (project_id, label, credentials, status, version, created_at, updated_at)
+    label       TEXT NOT NULL
+);
+CREATE INDEX idx_linkedin_ads_connections_project_id ON linkedin_ads_connections (project_id);
+```
 
 ### meta_ads_connections
-- Config columns: `page_id TEXT`, `app_id TEXT`
-- `account_id` = ad account ID (e.g. `act_193556282970417`)
-- Encrypted credential shape: `{ access_token, app_secret }`
+
+Encrypted credential shape: `{ access_token, app_secret }`
+
+```sql
+CREATE TABLE meta_ads_connections (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id  TEXT NOT NULL,                          -- ad account ID, e.g. act_193556282970417
+    page_id     TEXT,
+    app_id      TEXT,
+    -- + common columns
+    label       TEXT NOT NULL
+);
+CREATE INDEX idx_meta_ads_connections_project_id ON meta_ads_connections (project_id);
+```
 
 ### reddit_ads_connections
-- `account_id` = advertiser ID (e.g. `t2_gv9wtbfa`)
-- Encrypted credential shape: `{ client_id, client_secret, refresh_token }`
+
+Encrypted credential shape: `{ client_id, client_secret, refresh_token }`
+
+```sql
+CREATE TABLE reddit_ads_connections (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id  TEXT NOT NULL,                          -- advertiser ID, e.g. t2_gv9wtbfa
+    -- + common columns
+    label       TEXT NOT NULL
+);
+CREATE INDEX idx_reddit_ads_connections_project_id ON reddit_ads_connections (project_id);
+```
 
 ### twitter_ads_connections
-- Config columns: `funding_instrument_id TEXT`
-- `account_id` = account ID (e.g. `8r7gb`)
-- Encrypted credential shape: `{ consumer_key, consumer_secret, access_token, access_token_secret }`
+
+Encrypted credential shape: `{ consumer_key, consumer_secret, access_token, access_token_secret }` (OAuth 1.0a)
+
+```sql
+CREATE TABLE twitter_ads_connections (
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id             TEXT NOT NULL,               -- account ID, e.g. 8r7gb
+    funding_instrument_id  TEXT,
+    -- + common columns
+    label                  TEXT NOT NULL
+);
+CREATE INDEX idx_twitter_ads_connections_project_id ON twitter_ads_connections (project_id);
+```
 
 ### microsoft_ads_connections
-- Config columns: `customer_id TEXT`
-- `account_id` = account ID
-- Encrypted credential shape: `{ client_id, client_secret, refresh_token, developer_token }`
+
+Encrypted credential shape: `{ client_id, client_secret, refresh_token, developer_token }`
+
+```sql
+CREATE TABLE microsoft_ads_connections (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id   TEXT NOT NULL,
+    customer_id  TEXT,
+    -- + common columns
+    label        TEXT NOT NULL
+);
+CREATE INDEX idx_microsoft_ads_connections_project_id ON microsoft_ads_connections (project_id);
+```
 
 ### hubspot_connections (email)
-- Config columns: `portal_id TEXT`, `sender_email TEXT`, `sender_name TEXT`, `brand_kit TEXT`
-- `account_id` = list/audience ID
-- Encrypted credential shape: `{ private_app_token }`
+
+Encrypted credential shape: `{ private_app_token }`
+
+```sql
+CREATE TABLE hubspot_connections (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id    TEXT NOT NULL,                        -- list/audience ID
+    portal_id     TEXT,
+    sender_email  TEXT,
+    sender_name   TEXT,
+    brand_kit     TEXT,
+    -- + common columns
+    label         TEXT NOT NULL
+);
+CREATE INDEX idx_hubspot_connections_project_id ON hubspot_connections (project_id);
+```
 
 > Organic/community channels (LinkedIn organic, X organic, Bluesky, Mastodon, YouTube, Slack, Discord) follow the same one-table-per-provider pattern and will be added as those integrations land. They are out of scope for the initial paid-platform migration and are not detailed here to keep this document focused on the decided target.
 
@@ -98,6 +179,79 @@ Non-secret platform account IDs currently configured in the Express BFF, retaine
 - **Reddit Ads** — TLF `t2_gv9wtbfa`
 - **X/Twitter Ads** — LF Events `8r7gb`
 
+## Campaign Tables
+
+Beyond connections, the service persists briefs and campaigns. Both carry the `version` iterator (ETag/If-Match). A **brief is the funnel unit** and holds the program type; a **brief is shared across channels**, so one brief has many `campaigns` rows (one per channel/platform), all sharing `brief_id`.
+
+### campaign_briefs
+
+```sql
+CREATE TABLE campaign_briefs (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id    UUID        NOT NULL,
+    program_type  TEXT        NOT NULL                 -- funnel context
+                  CHECK (program_type IN ('events','education','membership')),
+    event_slug    TEXT        NOT NULL,                -- UNIQUE with project_id
+    url           TEXT,
+    platforms     JSONB,                               -- selected channels for this brief
+    event_details JSONB,
+    copy          JSONB,
+    keywords      JSONB,
+    targeting     JSONB,
+    status        TEXT        NOT NULL DEFAULT 'draft'
+                  CHECK (status IN ('draft','approved','archived')),
+    version       BIGINT      NOT NULL DEFAULT 1,      -- ETag/If-Match
+    approved_by   JSONB,                               -- {name,email,username} or null
+    approved_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, event_slug)
+);
+CREATE INDEX idx_campaign_briefs_project_id ON campaign_briefs (project_id);
+```
+
+### campaigns
+
+```sql
+CREATE TABLE campaigns (
+    id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id           UUID        NOT NULL,
+    brief_id             UUID        NOT NULL REFERENCES campaign_briefs(id),  -- many campaigns per brief
+    job_id               UUID,                          -- creation job that produced this row
+    platform             TEXT        NOT NULL,          -- channel: google-ads / linkedin-ads / ...
+    platform_campaign_id TEXT,                          -- ID returned by the ad platform
+    campaign_name        TEXT        NOT NULL,
+    status               TEXT        NOT NULL,
+    budget_amount        NUMERIC(14,2),
+    budget_type          TEXT        CHECK (budget_type IN ('daily','lifetime')),
+    start_date           DATE,
+    end_date             DATE,
+    config_snapshot      JSONB,
+    result               JSONB,
+    version              BIGINT      NOT NULL DEFAULT 1, -- ETag/If-Match
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_campaigns_brief_id   ON campaigns (brief_id);
+CREATE INDEX idx_campaigns_project_id ON campaigns (project_id);
+```
+
+### campaign_jobs
+
+```sql
+CREATE TABLE campaign_jobs (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    brief_id   UUID        NOT NULL REFERENCES campaign_briefs(id),
+    status     TEXT        NOT NULL DEFAULT 'pending',  -- pending/running/completed/failed
+    result     JSONB,
+    error      TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ
+);
+CREATE INDEX idx_campaign_jobs_brief_id ON campaign_jobs (brief_id);
+```
+
 ## API
 
 Connection endpoints are nested under `/projects/{projectId}/…` and are strongly typed per provider (e.g. `POST /projects/{projectId}/google-ads-connections`). The authoritative endpoint list, gating FGA relations, and payload shapes are in [api-catalog.md](api-catalog.md).
@@ -119,9 +273,82 @@ Credentials are never returned. The response exposes `has_credentials: boolean` 
 }
 ```
 
+### Worked Request/Response Examples
+
+**Create a connection** (credentials in the request body; never echoed back):
+
+```http
+POST /projects/7f3.../linkedin-ads-connections
+Content-Type: application/json
+
+{ "label": "TLF Main", "account_id": "538170226", "org_id": "208777",
+  "credentials": { "access_token": "AQV..." } }
+```
+```http
+201 Created
+ETag: "1"
+
+{ "id": "a12...", "project_id": "7f3...", "label": "TLF Main",
+  "account_id": "538170226", "org_id": "208777",
+  "has_credentials": true, "status": "active", "version": 1 }
+```
+
+**Update config with optimistic concurrency** — the caller must present the current version:
+
+```http
+PUT /projects/7f3.../linkedin-ads-connections/a12...
+If-Match: "1"
+Content-Type: application/json
+
+{ "label": "TLF Main (renamed)", "account_id": "538170226", "org_id": "208777" }
+```
+```http
+200 OK
+ETag: "2"        # version incremented
+```
+- Missing `If-Match` → `428 Precondition Required`
+- Stale `If-Match` (version moved on) → `412 Precondition Failed` (re-fetch, retry)
+
+**Set credential** — separate from `PUT`; does not touch config, has its own permission/audit:
+
+```http
+POST /projects/7f3.../linkedin-ads-connections/a12.../set-credential
+Content-Type: application/json
+
+{ "credentials": { "access_token": "AQV...new..." } }
+```
+```http
+204 No Content
+```
+
 ### set_credential vs. update
 
-Rotating a credential is exposed as a dedicated `set_credential` action, not a `rotate` endpoint. "Rotate" would imply the service atomically generates a new secret, swaps it upstream at the provider, *and* stores it — which the ad platforms do not support. `set_credential` simply replaces the stored (encrypted) credential and is split out from the generic `PUT` update so that credential replacement and metadata edits are independently permissioned and audited.
+`set_credential` is a dedicated action, not a `rotate` endpoint. "Rotate" would imply the service atomically generates a new secret, swaps it upstream at the provider, *and* stores it — which the ad platforms do not support. `set_credential` simply replaces the stored (encrypted) credential and is split out from the generic `PUT` so credential replacement and config edits are independently permissioned and audited.
+
+## Authorization (RuleSet)
+
+Each write path is gated at the gateway by a Heimdall RuleSet referencing the `campaign_manager` relation on the `project` captured from the path; reads reference `marketing_auditor`. This mirrors the committee-service pattern (`openfga_check` authorizer + `create_jwt` finalizer that mints the service-audience JWT this service then validates). Example rule for creating a connection:
+
+```yaml
+- id: "rule:lfx:lfx-v2-campaign-service:linkedin-ads-connections:create"
+  match:
+    methods: [POST]
+    routes:
+      - path: /projects/:projectId/linkedin-ads-connections
+  execute:
+    - authenticator: oidc
+    {{- if .Values.openfga.enabled }}
+    - authorizer: openfga_check
+      config:
+        values:
+          relation: campaign_manager
+          object: "project:{{ "{{- .Request.URL.Captures.projectId -}}" }}"
+    {{- end }}
+    - finalizer: create_jwt
+      config:
+        values:
+          aud: {{ .Values.app.audience }}   # this service validates this JWT in-app
+```
 
 ## Security
 

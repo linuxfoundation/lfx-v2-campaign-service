@@ -6,6 +6,22 @@ The Campaign Service is the backend for LFX Self Serve marketing campaign operat
 
 The service supports the full campaign lifecycle: multi-platform campaign creation, real-time monitoring, and optimization actions. AI-powered brief generation currently runs in the Express BFF and will migrate to this service in a later phase.
 
+## Decisions & Rationale
+
+The key architectural decisions, stated up front so the sections below read as "how", not "whether":
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| D1 | **API Gateway-brokered platform service** (not NATS-RPC-from-SSR). | Full platform idioms — Heimdall/OpenFGA authz, Query Service indexing — adopted upfront rather than deferred. |
+| D2 | **No new FGA object types; only relations on `project`.** All API paths nest under `/projects/{projectId}/…`. | Per `entity-design.md`, only a top-level FGA type may be a root path. The three marketing relations (`marketing_ops`, `campaign_manager`, `marketing_auditor`) live on `project`. |
+| D3 | **Strongly-typed, one-table-and-one-collection per provider** (not a generic `channel_connections` + untyped `metadata`). | Credentials and config differ materially per provider (API key vs client_id/secret/refresh vs OAuth 1.0a pairs). Typed contracts are clearer to develop and validate against, especially for agents. |
+| D4 | **Brief is the funnel unit; campaigns are a collection subordinate to the brief.** `/projects/{p}/briefs/{b}/campaigns/{id}`. Program type is a field on the brief, not a resource. | A brief is **shared across channels** — one brief drives many channel campaigns, each a `campaigns` row with the same `brief_id`, discriminated by `platform`. So the brief is the natural parent; the funnel/program context is a brief attribute. |
+| D5 | **Query Service owns lists + revision/audit history.** No bespoke list or `*_audit` endpoints/tables. | The Query Service indexes every resource on write and maintains revision history per (re)index; reproducing it here would duplicate platform capability. |
+| D6 | **Optimistic concurrency via a `version` column on every resource table** → ETag / `If-Match` on `PUT`. Create and replace are separate. | Idiomatic per committee-service / 2026-05-CloudNativePG. Prevents lost updates; a caller must prove awareness of the current version to replace it. |
+| D7 | **Application-level AES-256-GCM credential encryption** (key from a k8s secret via env var), not pgcrypto. | pgcrypto targets digests/hashes; symmetric credential encryption is an app concern so the key never lives in the DB. Because creds are encrypted before storage, the storage backend choice is driven by query needs, not encryption. |
+
+Full schema (DDL for every table) is in [channel-connections-schema.md](channel-connections-schema.md); the endpoint catalog with per-endpoint FGA relations is in [api-catalog.md](api-catalog.md).
+
 ### User Personas
 
 - **Marketing Operations** — cross-foundation access to create, monitor, and optimize campaigns across all ad platforms
