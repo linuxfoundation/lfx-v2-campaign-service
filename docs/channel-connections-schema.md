@@ -137,7 +137,6 @@ Common columns + provider-specific:
 | `brand_kit` | `TEXT` | Per-project brand kit selector |
 
 `account_id` = list/audience ID. Encrypted credential shape: `{ private_app_token }`.
-```
 
 > Organic/community channels (LinkedIn organic, X organic, Bluesky, Mastodon, YouTube, Slack, Discord) follow the same one-table-per-provider pattern and will be added as those integrations land. They are out of scope for the initial paid-platform migration and are not detailed here to keep this document focused on the decided target.
 
