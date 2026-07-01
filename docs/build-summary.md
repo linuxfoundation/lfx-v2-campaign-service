@@ -340,7 +340,7 @@ sequenceDiagram
 flowchart TD
     subgraph create["Create Connection"]
         validate["Validate input"] --> encrypt["AES-256-GCM Encrypt(creds)"]
-        encrypt -->|'encrypted: base64...'| store["PostgreSQL credentials JSONB"]
+        encrypt -->|'AES-256-GCM ciphertext'| store["PostgreSQL credentials BYTEA"]
         store --> audit["Audit log (no creds)"]
     end
 

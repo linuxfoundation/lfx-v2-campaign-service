@@ -370,7 +370,7 @@ erDiagram
         JSONB targeting
         VARCHAR status "draft/approved/archived"
         BIGINT version "ETag/If-Match"
-        UUID approved_by
+        JSONB approved_by "{name,email,username}"
         TIMESTAMPTZ approved_at
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at

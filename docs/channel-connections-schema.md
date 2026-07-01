@@ -11,7 +11,7 @@ One project can have multiple connections of the same provider (e.g. separate Li
 1. **One typed table per provider.** `google_ads_connections`, `linkedin_ads_connections`, etc. Provider-specific credential and config fields are first-class columns (or a typed sub-object), not `metadata`.
 2. **Optimistic concurrency on every table.** Every table that maps to an LFX platform resource type carries a `version BIGINT` iterator. The DB handle implements optimistic locking: `UPDATE ... WHERE id = $1 AND version = $2`, incrementing `version` on success and returning `ErrPreconditionFailed` on mismatch. This powers the platform-idiomatic **ETag / `If-Match`** concurrency controls on PUTs. (Pattern mirrors committee-service; see [lfx-architecture-scratch/2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG).)
 3. **No cross-service FK on `project_id`.** Projects are owned by the project-service; like committee-service, `project_id` is a plain `UUID NOT NULL` (indexed), not a foreign key into a table this service owns.
-4. **Application-level credential encryption.** Credentials are encrypted by the application (AES-256-GCM) using a key sourced from a Kubernetes secret via an environment variable — *not* by pgcrypto. pgcrypto is oriented toward digests/hashes; symmetric credential encryption is an application concern so the key never lives in the database.
+4. **Application-level credential encryption.** Credentials are encrypted by the application (AES-256-GCM) using a key sourced from a Kubernetes secret via an environment variable — *not* by pgcrypto. pgcrypto can do symmetric encryption (`pgp_sym_encrypt`), but doing it in the database would require the key to be present at the DB layer; encrypting in the application keeps the key out of the database entirely (it lives only in the app's k8s secret). That key-custody boundary — not any capability gap in pgcrypto — is the reason for app-level encryption.
 5. **Attribution is served by Query Service.** `created_at`/`updated_at`/`created_by` audit and revision history are maintained by the Query Service on each (re)index; this schema does not attempt to reproduce a separate audit/revision store. Where a `created_by` value is retained inline for convenience, it captures the full actor (`name`, `email`, `username`) so historical records remain meaningful even after a user is removed.
 
 ## Common Columns
@@ -36,7 +36,25 @@ Each table carries `idx_<provider>_project_id ON (project_id)` and, where lookup
 
 ## Per-Provider Tables
 
-Each provider gets its own `CREATE TABLE`. Provider-specific config fields are first-class columns; `credentials` holds the app-encrypted blob, and the *plaintext* JSON shape it encrypts is documented above each table so the API contract is explicit. All tables carry the common columns (`id`, `project_id`, `label`, `account_id`, `credentials`, `status`, `version`, `created_at`, `updated_at`) shown in full for the first table and elided (`-- + common columns`) thereafter.
+Each provider gets its own table. To avoid repeating nine identical columns seven times, the shared columns are defined **once** below as a reusable fragment, and each provider table is shown as **the common fragment plus its provider-specific columns**. `account_id` and `label` are common (present on every table); the fragment below is the full base. The `credentials` column holds the app-encrypted blob; the *plaintext* JSON shape it encrypts is documented above each table so the API contract is explicit.
+
+**Common columns** (every connection table begins with these):
+
+```sql
+-- Reusable base for every *_connections table. gen_random_uuid() is built in on PG 13+ (target: PG 16).
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id   UUID        NOT NULL,                 -- owned by project-service; no cross-service FK
+    label        TEXT        NOT NULL,                 -- human label, e.g. "TLF Main"
+    account_id   TEXT        NOT NULL,                 -- provider account identifier
+    credentials  BYTEA,                                -- AES-256-GCM ciphertext (app-encrypted)
+    status       TEXT        NOT NULL DEFAULT 'active'
+                 CHECK (status IN ('active','inactive','error','deleted')),
+    version      BIGINT      NOT NULL DEFAULT 1,       -- optimistic lock → ETag/If-Match
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()    -- set by application on UPDATE (no DB trigger)
+```
+
+Each table also gets `CREATE INDEX idx_<table>_project_id ON <table> (project_id)`. `google_ads_connections` is shown in full as the worked example; the rest list only the provider-specific columns that extend the common fragment.
 
 ### google_ads_connections
 
@@ -44,113 +62,81 @@ Encrypted credential shape: `{ refresh_token, client_id, client_secret, develope
 
 ```sql
 CREATE TABLE google_ads_connections (
+    -- common columns (see above): id, project_id, label, account_id, credentials, status, version, created_at, updated_at
     id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id         UUID        NOT NULL,            -- owned by project-service; no cross-service FK
+    project_id         UUID        NOT NULL,
     label              TEXT        NOT NULL,
     account_id         TEXT        NOT NULL,            -- customer ID, e.g. 8666746580
-    login_customer_id  TEXT,                            -- manager account for API access
-    credentials        BYTEA,                           -- AES-256-GCM ciphertext (app-encrypted)
+    credentials        BYTEA,
     status             TEXT        NOT NULL DEFAULT 'active'
                        CHECK (status IN ('active','inactive','error','deleted')),
-    version            BIGINT      NOT NULL DEFAULT 1,  -- optimistic lock → ETag/If-Match
+    version            BIGINT      NOT NULL DEFAULT 1,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- provider-specific:
+    login_customer_id  TEXT                             -- manager account for API access
 );
 CREATE INDEX idx_google_ads_connections_project_id ON google_ads_connections (project_id);
-CREATE INDEX idx_google_ads_connections_account   ON google_ads_connections (project_id, account_id);
+CREATE INDEX idx_google_ads_connections_account    ON google_ads_connections (project_id, account_id);
 ```
 
 ### linkedin_ads_connections
 
-Encrypted credential shape: `{ access_token }`
+Common columns + provider-specific:
 
-```sql
-CREATE TABLE linkedin_ads_connections (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id  TEXT NOT NULL,                          -- ad account ID, e.g. 538170226
-    org_id      TEXT NOT NULL,                          -- LinkedIn organization URN id, e.g. 208777
-    -- + common columns (project_id, label, credentials, status, version, created_at, updated_at)
-    label       TEXT NOT NULL
-);
-CREATE INDEX idx_linkedin_ads_connections_project_id ON linkedin_ads_connections (project_id);
-```
+| Column | Type | Notes |
+|--------|------|-------|
+| `org_id` | `TEXT NOT NULL` | LinkedIn organization URN id, e.g. `208777` |
+
+`account_id` = ad account ID (e.g. `538170226`). Encrypted credential shape: `{ access_token }`.
 
 ### meta_ads_connections
 
-Encrypted credential shape: `{ access_token, app_secret }`
+Common columns + provider-specific:
 
-```sql
-CREATE TABLE meta_ads_connections (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id  TEXT NOT NULL,                          -- ad account ID, e.g. act_193556282970417
-    page_id     TEXT,
-    app_id      TEXT,
-    -- + common columns
-    label       TEXT NOT NULL
-);
-CREATE INDEX idx_meta_ads_connections_project_id ON meta_ads_connections (project_id);
-```
+| Column | Type | Notes |
+|--------|------|-------|
+| `page_id` | `TEXT` | Facebook page ID |
+| `app_id` | `TEXT` | Meta app ID |
+
+`account_id` = ad account ID (e.g. `act_193556282970417`). Encrypted credential shape: `{ access_token, app_secret }`.
 
 ### reddit_ads_connections
 
-Encrypted credential shape: `{ client_id, client_secret, refresh_token }`
-
-```sql
-CREATE TABLE reddit_ads_connections (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id  TEXT NOT NULL,                          -- advertiser ID, e.g. t2_gv9wtbfa
-    -- + common columns
-    label       TEXT NOT NULL
-);
-CREATE INDEX idx_reddit_ads_connections_project_id ON reddit_ads_connections (project_id);
-```
+Common columns only (no provider-specific columns). `account_id` = advertiser ID (e.g. `t2_gv9wtbfa`). Encrypted credential shape: `{ client_id, client_secret, refresh_token }`.
 
 ### twitter_ads_connections
 
-Encrypted credential shape: `{ consumer_key, consumer_secret, access_token, access_token_secret }` (OAuth 1.0a)
+Common columns + provider-specific:
 
-```sql
-CREATE TABLE twitter_ads_connections (
-    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id             TEXT NOT NULL,               -- account ID, e.g. 8r7gb
-    funding_instrument_id  TEXT,
-    -- + common columns
-    label                  TEXT NOT NULL
-);
-CREATE INDEX idx_twitter_ads_connections_project_id ON twitter_ads_connections (project_id);
-```
+| Column | Type | Notes |
+|--------|------|-------|
+| `funding_instrument_id` | `TEXT` | Funding instrument for the ad account |
+
+`account_id` = account ID (e.g. `8r7gb`). Encrypted credential shape: `{ consumer_key, consumer_secret, access_token, access_token_secret }` (OAuth 1.0a).
 
 ### microsoft_ads_connections
 
-Encrypted credential shape: `{ client_id, client_secret, refresh_token, developer_token }`
+Common columns + provider-specific:
 
-```sql
-CREATE TABLE microsoft_ads_connections (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id   TEXT NOT NULL,
-    customer_id  TEXT,
-    -- + common columns
-    label        TEXT NOT NULL
-);
-CREATE INDEX idx_microsoft_ads_connections_project_id ON microsoft_ads_connections (project_id);
-```
+| Column | Type | Notes |
+|--------|------|-------|
+| `customer_id` | `TEXT` | Microsoft Advertising customer ID |
+
+Encrypted credential shape: `{ client_id, client_secret, refresh_token, developer_token }`.
 
 ### hubspot_connections (email)
 
-Encrypted credential shape: `{ private_app_token }`
+Common columns + provider-specific:
 
-```sql
-CREATE TABLE hubspot_connections (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id    TEXT NOT NULL,                        -- list/audience ID
-    portal_id     TEXT,
-    sender_email  TEXT,
-    sender_name   TEXT,
-    brand_kit     TEXT,
-    -- + common columns
-    label         TEXT NOT NULL
-);
-CREATE INDEX idx_hubspot_connections_project_id ON hubspot_connections (project_id);
+| Column | Type | Notes |
+|--------|------|-------|
+| `portal_id` | `TEXT` | HubSpot portal/account ID |
+| `sender_email` | `TEXT` | Default sender address |
+| `sender_name` | `TEXT` | Default sender name |
+| `brand_kit` | `TEXT` | Per-project brand kit selector |
+
+`account_id` = list/audience ID. Encrypted credential shape: `{ private_app_token }`.
 ```
 
 > Organic/community channels (LinkedIn organic, X organic, Bluesky, Mastodon, YouTube, Slack, Discord) follow the same one-table-per-provider pattern and will be added as those integrations land. They are out of scope for the initial paid-platform migration and are not detailed here to keep this document focused on the decided target.
