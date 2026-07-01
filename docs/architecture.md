@@ -13,7 +13,7 @@ The key architectural decisions, stated up front so the sections below read as "
 | # | Decision | Rationale |
 |---|----------|-----------|
 | D1 | **API Gateway-brokered platform service** (not NATS-RPC-from-SSR). | Full platform idioms — Heimdall/OpenFGA authz, Query Service indexing — adopted upfront rather than deferred. |
-| D2 | **No new FGA object types; only relations on `project`.** All API paths nest under `/projects/{projectId}/…`. | Per `entity-design.md`, only a top-level FGA type may be a root path. The three marketing relations (`marketing_ops`, `campaign_manager`, `marketing_auditor`) live on `project`. |
+| D2 | **No new FGA object types; only relations on `project`.** All API paths nest under `/projects/{projectId}/…`, and **every endpoint is gated on `campaign_manager`** (reads and writes). | Per `entity-design.md`, only a top-level FGA type may be a root path. There is no read-only campaigns audience — `marketing_auditor` governs the separate Snowflake-backed Marketing Insights dashboard, not this service, so it appears in no ruleset here. |
 | D3 | **Strongly-typed, one-table-and-one-collection per provider** (not a generic `channel_connections` + untyped `metadata`). | Credentials and config differ materially per provider (API key vs client_id/secret/refresh vs OAuth 1.0a pairs). Typed contracts are clearer to develop and validate against, especially for agents. |
 | D4 | **Brief is the funnel unit; campaigns are a collection subordinate to the brief.** `/projects/{p}/briefs/{b}/campaigns/{id}`. Program type is a field on the brief, not a resource. | A brief is **shared across channels** — one brief drives many channel campaigns, each a `campaigns` row with the same `brief_id`, discriminated by `platform`. So the brief is the natural parent; the funnel/program context is a brief attribute. |
 | D5 | **Query Service owns lists + revision/audit history.** No bespoke list or `*_audit` endpoints/tables. | The Query Service indexes every resource on write and maintains revision history per (re)index; reproducing it here would duplicate platform capability. |
@@ -26,7 +26,7 @@ Full schema (DDL for every table) is in [channel-connections-schema.md](channel-
 
 - **Marketing Operations** — cross-foundation access to create, monitor, and optimize campaigns across all ad platforms
 - **Executive Directors** — foundation-scoped access to view campaign performance and marketing KPIs
-- **PR & Communications** — read-only access to marketing KPIs across all projects (via `marketing_auditor` role)
+- **PR & Communications** — read-only access to marketing KPIs via the separate Marketing Insights dashboard (`marketing_auditor` role). This audience does **not** access this service; there is no read-only campaigns view.
 
 ## System Context
 
@@ -283,23 +283,23 @@ Actions to adjust running campaigns.
 flowchart TD
     tlf["**TLF (parent)**\n\nGlobal Teams:\n- Marketing Ops\n- PR & Comms"]
 
-    tlf -->|"inherits marketing_auditor only"| cncf
-    tlf -->|"inherits marketing_auditor only"| lfai
+    cncf["**CNCF**\n\ncampaign_manager (this service):\n- CNCF ED\n- Marketing Ops"]
 
-    cncf["**CNCF**\n\ncampaign_manager:\n- CNCF ED\n- Marketing Ops\n\nmarketing_auditor:\n- CNCF ED\n- Marketing Ops\n- PR & Comms"]
+    lfai["**LF AI**\n\ncampaign_manager (this service):\n- LF AI ED\n- Marketing Ops"]
 
-    lfai["**LF AI**\n\ncampaign_manager:\n- LF AI ED\n- Marketing Ops\n\nmarketing_auditor:\n- LF AI ED\n- Marketing Ops\n- PR & Comms"]
+    tlf --> cncf
+    tlf --> lfai
 ```
 
 The service introduces **no new FGA object types** — only relations on the existing `project` type, defined in [`lfx-v2-helm/.../files/model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga#L36-L43):
 
-| Relation | Definition (model.fga) | Access | Inheritance |
-|----------|------------------------|--------|-------------|
-| `marketing_ops` | `[team#member] or marketing_ops from parent` | Cross-project campaign management (Marketing Ops team) | Cascades from parent |
-| `campaign_manager` | `executive_director or marketing_ops` | Full CRUD on briefs, campaigns, connections | Does NOT cascade from parent; scoped to the project it is granted on |
-| `marketing_auditor` | `[team#member] or executive_director or marketing_ops or marketing_auditor from parent` | Read-only marketing KPIs and campaign data | Cascades from parent (grant at root flows down) |
+| Relation | Definition (model.fga) | Used by this service? |
+|----------|------------------------|-----------------------|
+| `marketing_ops` | `[team#member] or marketing_ops from parent` | Indirectly — folded into `campaign_manager`. |
+| `campaign_manager` | `executive_director or marketing_ops` | **Yes — gates every endpoint** (reads and writes). Does NOT cascade from parent; scoped to the project it is granted on. |
+| `marketing_auditor` | `[team#member] or executive_director or marketing_ops or marketing_auditor from parent` | **No.** Applies to the separate Marketing Insights analytics dashboard (Snowflake-backed), which this service does not serve. Not referenced in any ruleset here. |
 
-Heimdall RuleSets gate write paths on `campaign_manager` and read paths on `marketing_auditor`, evaluated against the `{projectId}` in the path. Because these are project relations (not a new type), all API paths are nested under `/projects/{projectId}/…` (see [api-catalog.md](api-catalog.md#api-design-rules)).
+**Every endpoint in this service is gated on `campaign_manager`** — there is no read-only campaigns audience. The Campaigns page is only ever accessed by campaign managers, who both read and write; the platform-metrics reads are live ad-platform data (also campaign-manager scoped), distinct from the Snowflake-backed Marketing Insights dashboard that `marketing_auditor` governs. RuleSets are evaluated against the `{projectId}` in the path; because these are project relations (not a new type), all API paths nest under `/projects/{projectId}/…` (see [api-catalog.md](api-catalog.md#api-design-rules)).
 
 ### Indexer Resource Type Names
 
@@ -333,7 +333,7 @@ The Query Service maintains revision history on each (re)index, so listing and a
 
 1. **AI brief generation** — stays in the UI Express layer (SSE streaming via LiteLLM). Eventually moves to this service.
 2. **Authentication** — Heimdall at the gateway
-3. **Authorization** — OpenFGA (`campaign_manager` and `marketing_auditor` relations)
+3. **Authorization** — OpenFGA (`campaign_manager` relation gates every endpoint)
 4. **Frontend** — Angular components in lfx-v2-ui
 5. **Snowflake marketing KPIs** — read from the data lake via query service, not from this service
 6. **HubSpot UTM integration** — stays in the UI Express layer initially

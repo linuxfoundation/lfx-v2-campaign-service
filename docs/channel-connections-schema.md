@@ -327,7 +327,7 @@ Content-Type: application/json
 
 ## Authorization (RuleSet)
 
-Each write path is gated at the gateway by a Heimdall RuleSet referencing the `campaign_manager` relation on the `project` captured from the path; reads reference `marketing_auditor`. This mirrors the committee-service pattern (`openfga_check` authorizer + `create_jwt` finalizer that mints the service-audience JWT this service then validates). Example rule for creating a connection:
+Every path in this service — reads and writes — is gated at the gateway by a Heimdall RuleSet referencing the `campaign_manager` relation on the `project` captured from the path. (There is no read-only campaigns audience; `marketing_auditor` applies to the separate Snowflake-backed Marketing Insights dashboard, not this service.) This mirrors the committee-service pattern (`openfga_check` authorizer + `create_jwt` finalizer that mints the service-audience JWT this service then validates). Example rule for creating a connection:
 
 ```yaml
 - id: "rule:lfx:lfx-v2-campaign-service:linkedin-ads-connections:create"

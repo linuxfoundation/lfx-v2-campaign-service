@@ -7,11 +7,11 @@ Reference catalog of all campaign endpoints, platform account attributes, and da
 These rules apply to every endpoint below and reflect platform idioms (`entity-design.md`) rather than the shape of the existing Express BFF:
 
 1. **Everything is nested under a project.** No new top-level FGA types were introduced for this service — only new *relations against `project`*. Per `entity-design.md`, a resource may only be a root API path if it is a top-level FGA type. Consequently **every** campaign resource is nested under `/projects/{projectId}/…`. Briefs and campaigns are subordinate to a project (campaigns are further subordinate to a brief).
-2. **Every endpoint declares its gating FGA relation.** The service defines no new object types; it relies on the three marketing relations on `project` (defined in [`lfx-v2-helm/.../files/model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga#L36-L43)):
+2. **Every endpoint declares its gating FGA relation.** The service defines no new object types; it relies on the marketing relations on `project` (defined in [`lfx-v2-helm/.../files/model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga#L36-L43)):
    - **`marketing_ops`** — team members with cross-project campaign management.
    - **`campaign_manager`** = `executive_director or marketing_ops` — manages campaigns/briefs/connections for a project. Does *not* cascade from parent; scoped to the project it is granted on.
-   - **`marketing_auditor`** = read access to marketing dashboards and campaigns; cascades from parent projects.
-   The Heimdall RuleSet for each write path references `campaign_manager` on the `{projectId}`; read paths reference `marketing_auditor`.
+
+   **Every endpoint in this service is gated on `campaign_manager`** — both reads and writes. There is no read-only view of campaigns: the Campaigns page is only ever accessed by campaign managers, who both read and write. The `marketing_auditor` relation applies to the separate **Marketing Insights** analytics dashboard (Snowflake-backed), which is not served by this service, so it does **not** appear in any ruleset here.
 3. **Reads/lists/history come from the Query Service.** All of these resources are indexed into the Query Service. Per platform convention, consumers (UI, MCP) fetch **lists** and **revision/audit history** from the Query Service, which maintains revision history on each (re)index. This service therefore exposes **no dedicated list endpoints and no bespoke audit endpoints** — only the canonical item CRUD needed to mutate state. `GET` on a single item is retained for ETag retrieval prior to a conditional update.
 4. **Create and replace are separate; replace requires `If-Match`.** There is no "create-or-update" endpoint. A `PUT` (replace) requires an `If-Match: "<version>"` header carrying the current ETag; the caller must have fetched the current version first. Mismatches return `412 Precondition Failed`; a missing header returns `428 Precondition Required`. (Optimistic-locking pattern per [committee-service / 2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG).)
 5. **No bulk mutation endpoints.** Bulk status/budget changes are omitted: HTTP cannot cleanly express partial success/failure across a set, and a single bulk call cuts across per-target permission boundaries. Each mutation is scoped to one permission-evaluated target.
@@ -27,7 +27,7 @@ A brief is the funnel unit: it carries the **program** (`program_type` = events 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/briefs` | `campaign_manager` | JSON | Create a brief. |
-| GET | `/projects/{projectId}/briefs/{id}` | `marketing_auditor` | JSON | Get a brief (full copy, keywords, targeting); returns ETag. |
+| GET | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Get a brief (full copy, keywords, targeting); returns ETag. |
 | PUT | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Replace a brief (requires `If-Match`). |
 | POST | `/projects/{projectId}/briefs/{id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
 | POST | `/projects/{projectId}/briefs/{id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation. |
@@ -42,7 +42,7 @@ A campaign is subordinate to a brief. This is a **collection** under the brief (
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across selected platforms (async → `jobId`). Persists one execution record per platform. |
-| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `marketing_auditor` | JSON | Get one campaign execution; returns ETag. |
+| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Get one campaign execution; returns ETag. |
 | PUT | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Replace a campaign execution (requires `If-Match`). |
 | GET | `/projects/{projectId}/jobs/{jobId}` | `campaign_manager` | JSON | Poll campaign creation job status. |
 
@@ -54,9 +54,9 @@ Metrics are read-through from the ad platforms, scoped by project. There are no 
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| GET | `/projects/{projectId}/{provider}/metrics` | `marketing_auditor` | JSON | Campaign metrics for a provider (`days` param, default 14). `{provider}` ∈ `google-ads`, `linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`. |
-| GET | `/projects/{projectId}/google-ads/keywords` | `marketing_auditor` | JSON | Google Ads keyword performance (top 50 by impressions). |
-| GET | `/projects/{projectId}/google-ads/audience` | `marketing_auditor` | JSON | Audience demographics (age, gender, device). |
+| GET | `/projects/{projectId}/{provider}/metrics` | `campaign_manager` | JSON | Campaign metrics for a provider (`days` param, default 14). `{provider}` ∈ `google-ads`, `linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`. |
+| GET | `/projects/{projectId}/google-ads/keywords` | `campaign_manager` | JSON | Google Ads keyword performance (top 50 by impressions). |
+| GET | `/projects/{projectId}/google-ads/audience` | `campaign_manager` | JSON | Audience demographics (age, gender, device). |
 
 > Connected-account listings come from the Query Service (indexed from the connection tables), not from `/{provider}/accounts` endpoints.
 
@@ -64,7 +64,7 @@ Metrics are read-through from the ad platforms, scoped by project. There are no 
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| GET | `/projects/{projectId}/hubspot/utm` | `marketing_auditor` | JSON | Lookup HubSpot campaign by event name. |
+| GET | `/projects/{projectId}/hubspot/utm` | `campaign_manager` | JSON | Lookup HubSpot campaign by event name. |
 | POST | `/projects/{projectId}/hubspot/utm` | `campaign_manager` | JSON | Create a HubSpot campaign if not found. |
 
 ### Optimization
@@ -85,7 +85,7 @@ Connections are strongly typed per provider (see [channel-connections-schema.md]
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/google-ads-connections` | `campaign_manager` | JSON | Create a Google Ads connection. |
-| GET | `/projects/{projectId}/google-ads-connections/{id}` | `marketing_auditor` | JSON | Get a connection (credentials redacted); returns ETag. |
+| GET | `/projects/{projectId}/google-ads-connections/{id}` | `campaign_manager` | JSON | Get a connection (credentials redacted); returns ETag. |
 | PUT | `/projects/{projectId}/google-ads-connections/{id}` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
 | DELETE | `/projects/{projectId}/google-ads-connections/{id}` | `campaign_manager` | JSON | Remove a connection (soft delete). |
 | POST | `/projects/{projectId}/google-ads-connections/{id}/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
