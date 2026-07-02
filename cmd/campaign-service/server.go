@@ -14,8 +14,8 @@ import (
 	"os"
 	"sync"
 
-	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	svcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/server"
+	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/container"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/middleware"

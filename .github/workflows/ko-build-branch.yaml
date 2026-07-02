@@ -14,7 +14,7 @@ permissions:
 jobs:
   publish:
     name: Publish Container
-    if: false
+    if: ${{ github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,22 +30,22 @@ jobs:
       - name: Prepare container tag
         id: container_tag
         env:
-          HEAD_REF: ""
+          HEAD_REF: "${{ github.head_ref }}"
         run: |
           container_tag=$(echo "$HEAD_REF" | sed 's/[^_0-9a-zA-Z]/-/g' | cut -c -127)
           echo tag="$container_tag" >> "$GITHUB_OUTPUT"
       - name: Build campaign-service for PR
         env:
-          VERSION: 
+          VERSION: ${{ steps.container_tag.outputs.tag }}
+          GIT_COMMIT: ${{ github.sha }}
         run: |
           BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
-          GIT_COMMIT=""
-          GIT_COMMIT="${GIT_COMMIT:0:7}"
           export BUILD_TIME
+          GIT_COMMIT=${GIT_COMMIT:0:7}
           export GIT_COMMIT
           ko build github.com/linuxfoundation/lfx-v2-campaign-service/cmd/campaign-service \
             -B \
             --platform linux/amd64,linux/arm64 \
-            -t  \
-            -t  \
+            -t ${{ github.sha }} \
+            -t ${{ steps.container_tag.outputs.tag }} \
             --sbom spdx

@@ -21,6 +21,8 @@ HELM_VALUES_FILE=$(HELM_CHART_PATH)/values.local.yaml
 GO_VERSION := 1.24.2
 GOOS := linux
 GOARCH := amd64
+# Go source files, excluding generated code under gen/.
+GO_FILES := $(shell find . -type f -name '*.go' -not -path './gen/*')
 
 # Linting
 GOLANGCI_LINT_VERSION := v2.2.2
@@ -52,6 +54,22 @@ deps: ## Install dependencies
 apigen: deps #@ Generate API code using Goa
 	goa gen github.com/linuxfoundation/lfx-v2-campaign-service/design
 
+.PHONY: fmt
+fmt: ## Format Go code (gofmt + simplify)
+	@echo "Formatting code..."
+	@go fmt ./...
+	@gofmt -s -w $(GO_FILES)
+
+.PHONY: check-fmt
+check-fmt: ## Verify Go code is formatted (fails if not); used in CI
+	@echo "Checking code format..."
+	@if [ -n "$$(gofmt -l $(GO_FILES))" ]; then \
+		echo "The following files need formatting (run 'make fmt'):"; \
+		gofmt -l $(GO_FILES); \
+		exit 1; \
+	fi
+	@echo "==> Format OK"
+
 .PHONY: lint
 lint: ## Run golangci-lint (local Go linting)
 	@echo "Running golangci-lint..."
@@ -69,6 +87,15 @@ build: ## Build the application for local OS
 	go build \
 		-ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.gitCommit=$(GIT_COMMIT)" \
 		-o bin/$(APP_NAME) ./cmd/campaign-service/
+
+.PHONY: build-release
+build-release: ## Build a static release binary for Linux (distinct from the container image)
+	@echo "Building static release binary for $(GOOS)/$(GOARCH)..."
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
+		-trimpath \
+		-ldflags "-s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.gitCommit=$(GIT_COMMIT)" \
+		-o bin/$(APP_NAME) ./cmd/campaign-service/
+	@echo "==> Release binary: bin/$(APP_NAME)"
 
 .PHONY: run
 run: build ## Run the application for local development

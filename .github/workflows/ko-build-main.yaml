@@ -30,15 +30,15 @@ jobs:
       - name: Build and publish campaign-service image
         env:
           VERSION: development
+          GIT_COMMIT: ${{ github.sha }}
         run: |
           BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
-          GIT_COMMIT=""
-          GIT_COMMIT="${GIT_COMMIT:0:7}"
           export BUILD_TIME
+          GIT_COMMIT=${GIT_COMMIT:0:7}
           export GIT_COMMIT
           ko build github.com/linuxfoundation/lfx-v2-campaign-service/cmd/campaign-service \
             -B \
             --platform linux/amd64,linux/arm64 \
-            -t  \
+            -t ${{ github.sha }} \
             -t development \
             --sbom spdx

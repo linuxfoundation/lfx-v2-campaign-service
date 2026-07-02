@@ -1,0 +1,31 @@
+openapi: 3.0.3
+info:
+    title: LFX V2 - Campaign Service
+    description: A collection of service endpoints to support Marketing Operations campaign creation and management.
+    version: 0.0.1
+servers:
+    - url: http://localhost:80
+      description: Default server for lfx-v2-campaign-service
+paths: {}
+components:
+    schemas:
+        ServiceUnavailableError:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "503"
+                message:
+                    type: string
+                    description: Error message
+                    example: The service is unavailable.
+            example:
+                code: "503"
+                message: The service is unavailable.
+            required:
+                - code
+                - message
+tags:
+    - name: lfx-v2-campaign-service-svc
+      description: The campaign service supports Marketing Operations campaign creation and management.
