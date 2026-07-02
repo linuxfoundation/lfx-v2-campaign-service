@@ -49,7 +49,7 @@ components:
           example: "503"
         message:
           type: string
-          example: "service unavailable"
+          example: "The service is unavailable."
       required:
         - code
         - message
