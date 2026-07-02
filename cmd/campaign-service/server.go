@@ -75,7 +75,14 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	if cfg.Debug {
 		handler = debug.HTTP()(handler)
 	}
-	handler = otelhttp.NewHandler(handler, "lfx-v2-campaign-service")
+	handler = otelhttp.NewHandler(handler, "lfx-v2-campaign-service",
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			// Exclude health probes from tracing to avoid steady span
+			// volume from frequent liveness/readiness checks.
+			p := r.URL.Path
+			return p != "/healthz" && p != "/livez" && p != "/readyz"
+		}),
+	)
 
 	srv := &http.Server{
 		Addr:              cfg.ServerAddress(),

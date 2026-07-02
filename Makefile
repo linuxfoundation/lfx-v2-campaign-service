@@ -53,6 +53,9 @@ deps: ## Install dependencies
 .PHONY: apigen
 apigen: deps #@ Generate API code using Goa
 	goa gen github.com/linuxfoundation/lfx-v2-campaign-service/design
+	@echo "Copying OpenAPI specs into kodata for ko embedding..."
+	@mkdir -p cmd/campaign-service/kodata/gen/http
+	@cp gen/http/openapi.json gen/http/openapi.yaml gen/http/openapi3.json gen/http/openapi3.yaml cmd/campaign-service/kodata/gen/http/
 
 .PHONY: fmt
 fmt: ## Format Go code (gofmt + simplify)

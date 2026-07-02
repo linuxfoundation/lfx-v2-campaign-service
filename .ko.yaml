@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 builds:
   - id: campaign-service
-    dir: ./cmd
+    dir: ./cmd/campaign-service
     ldflags:
       - -X=main.version={{.Env.VERSION}}
       - -X=main.buildTime={{.Env.BUILD_TIME}}

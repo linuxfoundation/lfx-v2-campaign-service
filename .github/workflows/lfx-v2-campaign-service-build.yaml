@@ -29,6 +29,12 @@ jobs:
       - name: Generate service code
         run: make apigen
 
+      - name: Check formatting
+        run: make check-fmt
+
+      - name: Lint
+        run: make lint
+
       - name: Build
         run: make build
 
