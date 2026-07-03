@@ -9,6 +9,7 @@ import (
 
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
 // Container holds all application dependencies.
@@ -22,20 +23,15 @@ type Container struct {
 func NewContainer(cfg *config.Config) (*Container, error) {
 	slog.Info("initializing dependency container")
 
-	// TODO: initialize your infrastructure clients (auth, NATS, database, etc.)
-	// and pass them to your service implementation.
-	//
-	// Example:
-	//   authRepo, err := auth.NewAuthRepository(cfg.JWKSUrl, cfg.Issuer, cfg.Audience)
-	//   if err != nil { return nil, err }
-	//   natsConn, err := nats.Connect(cfg.NATSUrl)
-	//   if err != nil { return nil, err }
-	//   svc := service.NewService(authRepo, natsConn)
+	// TODO: initialize infrastructure clients (auth, NATS, database, etc.) and
+	// pass them to the campaign service. As dependencies are added, fold their
+	// health into service.CampaignService.ServiceReady.
+	campaignService := service.NewCampaignService()
 
 	slog.Info("dependency container initialized")
 	return &Container{
-		Config: cfg,
-		// Service: svc,
+		Config:  cfg,
+		Service: campaignService,
 	}, nil
 }
 
