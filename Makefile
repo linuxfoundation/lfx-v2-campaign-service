@@ -66,9 +66,9 @@ fmt: ## Format Go code (gofmt + simplify)
 .PHONY: check-fmt
 check-fmt: ## Verify Go code is formatted (fails if not); used in CI
 	@echo "Checking code format..."
-	@if [ -n "$$(gofmt -l $(GO_FILES))" ]; then \
+	@if [ -n "$$(gofmt -s -l $(GO_FILES))" ]; then \
 		echo "The following files need formatting (run 'make fmt'):"; \
-		gofmt -l $(GO_FILES); \
+		gofmt -s -l $(GO_FILES); \
 		exit 1; \
 	fi
 	@echo "==> Format OK"
