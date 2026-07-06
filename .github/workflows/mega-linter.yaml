@@ -37,7 +37,7 @@ jobs:
         env:
           # All available variables are described in documentation
           # https://megalinter.io/configuration/
-          GITHUB_TOKEN: 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Allow GITHUB_TOKEN for working around rate limits (aquasecurity/trivy#7668).
           REPOSITORY_TRIVY_UNSECURED_ENV_VARIABLES: GITHUB_TOKEN
           # Set the Go toolchain to auto so that megalinter uses the correct go version for the service.

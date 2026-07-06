@@ -40,6 +40,6 @@ SPELL_VALE_PRE_COMMANDS:
 API_SPECTRAL_FILTER_REGEX_EXCLUDE: "gen/"
 # Ignore YAML files with templating macros; these typically fail linting and/or
 # schema checking.
-FILTER_REGEX_EXCLUDE: '(templates/.*\.yml|templates/.*\.yaml|gen/.*)'
+FILTER_REGEX_EXCLUDE: '(templates/.*\.yml|templates/.*\.yaml|gen/.*|\.specify/.*)'
 KUBERNETES_DIRECTORY: charts/lfx-v2-campaign-service/templates
 KUBERNETES_HELM_ARGUMENTS: charts/lfx-v2-campaign-service
