@@ -380,7 +380,7 @@ erDiagram
         UUID id PK
         UUID project_id
         UUID brief_id FK "many campaigns share one brief"
-        UUID job_id FK
+        UUID job_id "soft ref to campaign_jobs; no FK (jobs are ephemeral, expire/purge)"
         VARCHAR platform "channel: google-ads/linkedin-ads/..."
         VARCHAR platform_campaign_id
         VARCHAR campaign_name
@@ -496,7 +496,7 @@ Campaign attribution to projects is based on the campaign naming convention:
 Program | Event Name | Region | Objective | Targeting | Ad Format | Project | Funnel | Date
 
 Example:
-Events | KubeCon NA 2025 | EMEA | Conversions | Intent | Search | CNCF | MoFU | 2025-06-01
+Events | KubeCon NA 2025 | EMEA | Conversions | Intent | Search | cncf | MoFU | 2025-06-01
 ```
 
 The data pipeline parses campaign names to attribute them to the correct foundation/project. No manual mapping entry needed once the naming convention is followed.
