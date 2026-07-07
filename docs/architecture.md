@@ -16,7 +16,7 @@ The key architectural decisions, stated up front so the sections below read as "
 | D2 | **No new FGA object types; only relations on `project`.** All API paths nest under `/projects/{projectId}/…`, and **every endpoint is gated on `campaign_manager`** (reads and writes). | Per [entity-design.md](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/docs/entity-design.md), only a top-level FGA type may be a root path. There is no read-only campaigns audience — `marketing_auditor` governs the separate Snowflake-backed Marketing Insights dashboard, not this service, so it appears in no ruleset here. |
 | D3 | **Strongly-typed, one-table-and-one-collection per provider** (not a generic `channel_connections` + untyped `metadata`). | Credentials and config differ materially per provider (API key vs client_id/secret/refresh vs OAuth 1.0a pairs). Typed contracts are clearer to develop and validate against, especially for agents. |
 | D4 | **Brief is the funnel unit; campaigns are a collection subordinate to the brief.** `/projects/{p}/briefs/{b}/campaigns/{id}`. Program type is a field on the brief, not a resource. | A brief is **shared across channels** — one brief drives many channel campaigns, each a `campaigns` row with the same `brief_id`, discriminated by `platform`. So the brief is the natural parent; the funnel/program context is a brief attribute. |
-| D5 | **Query Service owns lists + revision/audit history.** No bespoke list or `*_audit` endpoints/tables. | The Query Service indexes every resource on write and maintains revision history per (re)index; reproducing it here would duplicate platform capability. |
+| D5 | **Query Service owns lists + revision/audit history for briefs and campaigns.** No bespoke list or `*_audit` endpoints/tables. **Connections are not indexed** (singleton per project, no listing/inventory consumer). | The Query Service indexes indexed resources on write and maintains revision history per (re)index; reproducing it here would duplicate platform capability. Connections have no collection to list, so indexing them would add cost with no consumer. |
 | D6 | **Optimistic concurrency via a `version` column on every resource table** → ETag / `If-Match` on `PUT`. Create and replace are separate. | Idiomatic per committee-service / 2026-05-CloudNativePG. Prevents lost updates; a caller must prove awareness of the current version to replace it. |
 | D7 | **Application-level AES-256-GCM credential encryption** (key from a k8s secret via env var), not pgcrypto. | Key custody: pgcrypto can do symmetric encryption (`pgp_sym_encrypt`), but that would require the key at the DB layer; encrypting in the app keeps the key out of the database entirely. Because creds are encrypted before storage, the storage backend choice is driven by query needs, not encryption. |
 
@@ -303,21 +303,16 @@ The service introduces **no new FGA object types** — only relations on the exi
 
 ### Indexer Resource Type Names
 
-Every resource is indexed into the Query Service under a globally-unique type name (the platform maintains a single object namespace shared across services). This service declares:
+Resources that need cross-project listing or revision/audit history are indexed into the Query Service under a globally-unique type name (the platform maintains a single object namespace shared across services). This service declares:
 
 | Type name | Resource |
 |-----------|----------|
 | `campaign_brief` | Campaign brief |
 | `campaign` | Campaign execution (subordinate to a brief) |
-| `google_ads_connection` | Google Ads connection |
-| `linkedin_ads_connection` | LinkedIn Ads connection |
-| `meta_ads_connection` | Meta Ads connection |
-| `reddit_ads_connection` | Reddit Ads connection |
-| `twitter_ads_connection` | X/Twitter Ads connection |
-| `microsoft_ads_connection` | Microsoft Ads connection |
-| `hubspot_connection` | HubSpot (email) connection |
 
-The Query Service maintains revision history on each (re)index, so listing and audit/history are served from the Query Service rather than from bespoke endpoints in this service.
+The Query Service maintains revision history on each (re)index, so listing and audit/history for these are served from the Query Service rather than from bespoke endpoints in this service.
+
+**Connections are intentionally *not* indexed.** Now that a connection is a singleton per provider per project, there is no collection to list and no cross-project inventory use case (the UI reads a project's connection directly via `GET /projects/{id}/connection-{provider}`). Indexing them would add cost with no consumer, so the connection tables are not declared as indexer types and are not pushed to the Query Service.
 
 ## What the Service Owns
 
@@ -340,7 +335,7 @@ The Query Service maintains revision history on each (re)index, so listing and a
 
 ## Persistence
 
-Each resource that maps to an LFX platform type carries a `version BIGINT` iterator (ETag/If-Match). Connections are **typed per provider** — the diagram shows `google_ads_connections` as the representative; every provider has its own analogous table (see [channel-connections-schema.md](channel-connections-schema.md)). Revision history and attribution are served by the **Query Service** on each (re)index, so there are no bespoke `*_audit` tables.
+Each resource carries a `version BIGINT` iterator (ETag/If-Match). Connections are **typed per provider** — the diagram shows `google_ads_connections` as the representative; every provider has its own analogous table (see [channel-connections-schema.md](channel-connections-schema.md)). For **briefs and campaigns**, revision history and attribution are served by the **Query Service** on each (re)index, so there are no bespoke `*_audit` tables. **Connections are not indexed** (singleton per project, no listing/inventory consumer — see [Indexer Resource Type Names](#indexer-resource-type-names)); their `version` still powers ETag/If-Match on the connection `PUT`.
 
 ```mermaid
 erDiagram
@@ -475,7 +470,7 @@ Persistence uses **strongly-typed, one-table-per-provider** schemas rather than 
 
 Every table that maps to an LFX platform resource type carries a `version BIGINT` iterator that powers the platform-idiomatic **ETag / `If-Match`** optimistic-concurrency controls on `PUT`s (pattern per [2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG)). `project_id` is a plain indexed `UUID` (owned by the project-service; no cross-service FK). Credentials are encrypted at the application layer (AES-256-GCM) using a key from a Kubernetes secret — not pgcrypto.
 
-The full table definitions — per-provider connection tables **plus** `campaign_briefs` and `campaigns` — live in [channel-connections-schema.md](channel-connections-schema.md) and are not duplicated here. Attribution and revision history are served by the Query Service on each (re)index, so this service keeps no separate audit tables.
+The full table definitions — per-provider connection tables **plus** `campaign_briefs` and `campaigns` — live in [channel-connections-schema.md](channel-connections-schema.md) and are not duplicated here. For briefs and campaigns, attribution and revision history are served by the Query Service on each (re)index, so this service keeps no separate audit tables. Connection tables are not indexed (singleton per project; no listing consumer).
 
 ## Supported Platforms
 

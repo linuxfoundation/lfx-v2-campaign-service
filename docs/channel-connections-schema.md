@@ -35,7 +35,7 @@ Each provider gets its own table. To avoid repeating nine identical columns seve
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()    -- set by application on UPDATE (no DB trigger)
 ```
 
-The `UNIQUE` on `project_id` also serves as the lookup index (a `GET .../connection-{provider}` resolves the row by `project_id` alone). `id` remains the surrogate primary key so the row has a stable identity for indexing/attribution even though it is never referenced in an API path. `google_ads_connections` is shown in full as the worked example; the rest list only the provider-specific columns that extend the common fragment.
+The `UNIQUE` on `project_id` also serves as the lookup index (a `GET .../connection-{provider}` resolves the row by `project_id` alone). `id` remains the surrogate primary key so the row has a stable identity for attribution even though it is never referenced in an API path (connections are not indexed into the Query Service — see Security). `google_ads_connections` is shown in full as the worked example; the rest list only the provider-specific columns that extend the common fragment.
 
 ### google_ads_connections
 
@@ -328,4 +328,4 @@ Every path in this service — reads and writes — is gated at the gateway by a
 - Credentials encrypted at rest with **application-level AES-256-GCM**; key sourced from a Kubernetes secret via env var (referenced by the Helm chart). Not pgcrypto.
 - Credentials never returned in API responses (replaced with `has_credentials`).
 - `test` action verifies credentials against the provider without exposing them.
-- Change history and attribution are served by the Query Service, which indexes each connection on write.
+- Connections are **not** indexed into the Query Service — they are singleton per project with no cross-project listing consumer, so they are read directly via `GET /projects/{projectId}/connection-{provider}`. (Briefs and campaigns *are* indexed for listing/history; connections are not.) Inline `created_by` is retained on the connection row for attribution.
