@@ -8,6 +8,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
@@ -49,8 +50,15 @@ func Migrate(dsn string) error {
 	if err != nil {
 		return fmt.Errorf("open migration source: %w", err)
 	}
-	// golang-migrate expects the pgx5 driver via the "pgx5://" URL scheme.
-	m, err := migrate.NewWithSourceInstance("iofs", src, pgxURL(dsn))
+	// golang-migrate's pgx5 driver requires a URL-scheme DSN (pgx5://…). A
+	// keyword/DSN string ("host=… user=…") cannot be consumed here, so it is
+	// rejected with a clear error rather than silently failing driver
+	// selection. (pgxpool.New accepts both forms, but Migrate needs a URL.)
+	migrateURL, err := pgxURL(dsn)
+	if err != nil {
+		return err
+	}
+	m, err := migrate.NewWithSourceInstance("iofs", src, migrateURL)
 	if err != nil {
 		return fmt.Errorf("init migrator: %w", err)
 	}
@@ -62,15 +70,20 @@ func Migrate(dsn string) error {
 	return nil
 }
 
-// pgxURL ensures the DSN uses the pgx5 scheme golang-migrate's driver expects.
-// A standard "postgres://" or "postgresql://" DSN is rewritten to "pgx5://".
-func pgxURL(dsn string) string {
+// pgxURL converts a URL-scheme DSN to the "pgx5://" scheme golang-migrate's
+// driver expects. A "postgres://" / "postgresql://" DSN is rewritten; an
+// already-"pgx5://" DSN is passed through. A keyword DSN ("host=… user=…") has
+// no URL scheme golang-migrate can parse and is rejected with a clear error.
+func pgxURL(dsn string) (string, error) {
 	for _, prefix := range []string{"postgresql://", "postgres://"} {
-		if len(dsn) >= len(prefix) && dsn[:len(prefix)] == prefix {
-			return "pgx5://" + dsn[len(prefix):]
+		if strings.HasPrefix(dsn, prefix) {
+			return "pgx5://" + strings.TrimPrefix(dsn, prefix), nil
 		}
 	}
-	return dsn
+	if strings.HasPrefix(dsn, "pgx5://") {
+		return dsn, nil
+	}
+	return "", fmt.Errorf("DATABASE_URL must be a URL DSN (postgres://…) for migrations; keyword DSNs are not supported")
 }
 
 // ensure the pgx5 migrate driver is linked.
