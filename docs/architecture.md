@@ -349,6 +349,7 @@ erDiagram
         VARCHAR status
         BIGINT version "ETag/If-Match"
         JSONB created_by "{name,email,username} — inline (not indexed)"
+        JSONB updated_by "{name,email,username} — last modifier"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
     }
