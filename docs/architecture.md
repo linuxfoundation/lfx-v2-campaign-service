@@ -422,15 +422,16 @@ erDiagram
 
 ## Platform Connection Management
 
-Campaign managers can create, read, update, and remove connections to ad platforms and channels for a given project. Each foundation may have separate credentials per platform. One project can have multiple connections of the same type (e.g., multiple Slack workspaces, multiple Discord servers).
+Campaign managers can create, read, update, and remove connections to ad platforms for a given project. For the paid ad platforms in scope of this service, a connection is **singleton per provider per project** — a project holds at most one Google Ads / LinkedIn / Meta / Reddit / X connection (enforced by `UNIQUE (project_id)` on each provider table). Where the LF runs several accounts on one provider, those accounts belong to *different projects* (e.g. TLF vs LF Events), each with its own singleton connection; there is never more than one connection of a provider on a single project. See [channel-connections-schema.md](channel-connections-schema.md#account-multiplicity-lives-at-the-project-level).
 
 ### Account Tenancy
 
 | Tenancy | Platforms | Details |
 |---------|-----------|---------|
-| Shared across foundations | Google Ads, HubSpot | One manager account, campaigns scoped by naming convention |
-| Per-foundation | LinkedIn Ads, Meta Ads, Reddit, X/Twitter | Separate ad account per foundation |
-| Per-project (multiple allowed) | Slack, Discord, Email lists, Social accounts | Multiple connections of the same type per project |
+| Shared across foundations | Google Ads, HubSpot | One manager account; each using project stores its own singleton connection row pointing at the shared upstream account |
+| Per-foundation | LinkedIn Ads, Meta Ads, Reddit, X/Twitter | Separate ad account per foundation; one singleton connection per project |
+
+> **Future organic/communication channels** (Slack workspaces, Discord servers, social accounts) may legitimately need *multiple instances per project* — a shape the current singleton `UNIQUE (project_id)` per-provider tables do **not** accommodate. Those channels are out of scope for this paid-platform migration; when they land, their tables will drop the `UNIQUE (project_id)` constraint and their API will use a collection shape (`/projects/{id}/slack-connections/{id}`). This is called out so the singleton decision here is understood as scoped to paid ad platforms, not a claim about every future channel.
 
 ## Current Platform Accounts
 
@@ -453,7 +454,7 @@ Each platform has a different tenancy model. Some platforms use a single shared 
 | Reddit Ads | TLF | Account t2_gv9wtbfa |
 | X/Twitter Ads | LF Events | Account 8r7gb (funding instrument pending) |
 
-This distinction matters for the connection CRUD: Google Ads connections are typically one-per-org (shared), while LinkedIn/Meta connections are one-per-project (separate accounts). The per-provider connection tables support both models.
+This distinction matters for the connection CRUD, but it does **not** change the cardinality: every project has at most one connection per provider. Google Ads is a shared upstream account, so multiple projects' singleton connections may point at the same `account_id`; LinkedIn/Meta use separate accounts, so each project's singleton connection points at its own. Either way the API and schema are singleton per project (see [Platform Connection Management](#platform-connection-management)).
 
 ## Future: Organic & Communication Channels
 

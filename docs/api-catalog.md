@@ -24,6 +24,8 @@ Briefs are subordinate to a project. AI generation currently runs SSE-streamed i
 
 A brief is the funnel unit: it carries the **program** (`program_type` = events / education / membership) that sets the funnel context, and it is **shared across channels** — one brief drives many channel campaigns (see next section), each a row under the brief with the same `brief_id`. Program is a field on the brief, not a separate resource.
 
+**Platform selection lives on the campaign, not the brief.** A brief may carry a *suggested* default set of platforms (a planning hint used to pre-populate the campaign form), but the binding choice of which platforms to launch on — and each platform's configuration — is made at campaign-creation time. The generation strategy is driven by `program_type`, not by which channels a brief was drafted against, so a single approved brief can be launched on any subset of platforms.
+
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/briefs` | `campaign_manager` | JSON | Create a brief. |
@@ -37,35 +39,41 @@ A brief is the funnel unit: it carries the **program** (`program_type` = events 
 
 ### Campaign Creation (Implementation Phase)
 
-A campaign is subordinate to a brief. This is a **collection** under the brief (a brief may drive multiple campaigns across platforms). Creation is async and returns a job to poll.
+A campaign is subordinate to a brief. This is a **collection** under the brief (a brief may drive multiple campaigns across platforms). The `POST` body carries the **selected platforms** and their per-platform config (see `CampaignCreateRequest`). Creation is **asynchronous**: the upstream ad platforms take seconds-to-minutes to provision, so `POST` returns immediately with a `jobId` (a `JobCreateResponse`), and the caller polls `GET .../jobs/{jobId}` for a `JobPollResponse` until the job is terminal. One execution record is persisted per platform.
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across selected platforms (async → `jobId`). Persists one execution record per platform. |
+| POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across the platforms selected in the body (async → `JobCreateResponse` with `jobId`). Persists one execution record per platform. |
 | GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Get one campaign execution; returns ETag. |
 | PUT | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Replace a campaign execution (requires `If-Match`). |
-| GET | `/projects/{projectId}/jobs/{jobId}` | `campaign_manager` | JSON | Poll campaign creation job status. |
+| GET | `/projects/{projectId}/jobs/{jobId}` | `campaign_manager` | JSON | Poll campaign creation job status (`JobPollResponse`). |
 
 > Listing a project's or brief's campaigns, and per-campaign change history, are served by the Query Service.
 
 ### Monitoring (Insights Phase)
 
-Metrics are read-through from the ad platforms, scoped by project. There are no per-platform root paths; the provider is a path segment under the project.
+Metrics are read-through from the ad platforms, scoped by project. There are no per-platform root paths; the provider is a path segment under the project. Because a connection is singleton per project, `/{provider}/metrics` unambiguously means "metrics for **this project's** account on that provider" — there is no per-connection or per-campaign metrics path (a campaign's metrics are a row inside the provider response, keyed by `campaignId`).
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| GET | `/projects/{projectId}/{provider}/metrics` | `campaign_manager` | JSON | Campaign metrics for a provider (`days` param, default 14). `{provider}` ∈ `google-ads`, `linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`. |
+| GET | `/projects/{projectId}/{provider}/metrics` | `campaign_manager` | JSON | Campaign metrics for this project's account on the provider (`days` param, default 14). `{provider}` ∈ `google-ads`, `linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`. |
 | GET | `/projects/{projectId}/google-ads/keywords` | `campaign_manager` | JSON | Google Ads keyword performance (top 50 by impressions). |
 | GET | `/projects/{projectId}/google-ads/audience` | `campaign_manager` | JSON | Audience demographics (age, gender, device). |
+
+> **Umbrella roll-up (TLF across child foundations).** This service never aggregates across projects: `campaign_manager` does not cascade from parent to child (see rule 2), and each project owns only its own connection. A TLF-wide view of, say, all Google Ads spend is assembled by the **UI backend**, which fans out one `GET /projects/{child}/google-ads/metrics` per child foundation the caller has access to and sums the results. Keeping aggregation out of this service preserves the strict per-project permission boundary and avoids the service resolving project hierarchy.
 
 > Connected-account listings come from the Query Service (indexed from the connection tables), not from `/{provider}/accounts` endpoints.
 
 ### HubSpot UTM Integration
 
+HubSpot campaigns are an **LF-wide, global namespace** — HubSpot is a single foundation-wide instance, not partitioned by project. This service does **not** attempt to scope UTM search to a project: a lookup searches all HubSpot campaigns, and a created UTM is visible to campaign managers on every project. The `{projectId}` in the path exists **only to gate the permission lookup** (the caller must be a `campaign_manager` on *some* project to use the integration at all); it does not filter results.
+
+Lookup is a query by event name, passed as the `q` query parameter (fuzzy name match, scored — see [Platform-Specific Gotchas](#hubspot)). Because the namespace is global and cross-project, the UI **must caveat at create time** that a new UTM will be visible across foundations, so users do not put anything project-sensitive in a UTM name.
+
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| GET | `/projects/{projectId}/hubspot/utm` | `campaign_manager` | JSON | Lookup HubSpot campaign by event name. |
-| POST | `/projects/{projectId}/hubspot/utm` | `campaign_manager` | JSON | Create a HubSpot campaign if not found. |
+| GET | `/projects/{projectId}/hubspot/utm?q={eventName}` | `campaign_manager` | JSON | Look up a HubSpot campaign by event name across the **entire** LF HubSpot instance (global namespace; not scoped to the project). |
+| POST | `/projects/{projectId}/hubspot/utm` | `campaign_manager` | JSON | Create an LF-global HubSpot campaign if not found. **Visible to all projects' campaign managers** — the UI must warn before creating. |
 
 ### Optimization
 
@@ -78,20 +86,22 @@ Each optimization action is scoped to a single campaign under its brief and is i
 
 **Tentative** (later phases, same nesting + `campaign_manager` gating): budget adjust, bid-strategy change, per-keyword bid, ad/creative rotation, ad-copy edit, geo-target edit, audience edit, negative keywords, bid modifiers, scheduling, flight-date change. Cross-platform budget reallocation, if built, is modeled as a first-class per-project resource with its own single-target mutations — not a bulk endpoint.
 
-### Platform Connections (new — typed per provider)
+### Platform Connections (new — typed per provider, singleton per project)
 
-Connections are strongly typed per provider (see [channel-connections-schema.md](channel-connections-schema.md)); each provider is its own collection under the project. The table below shows the pattern for `google-ads`; every provider (`linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`, `microsoft-ads`, `hubspot`) exposes the identical shape with its own typed payload.
+A connection is **singleton per provider per project**: a project holds at most one connection of any given provider (one Google Ads account, one LinkedIn ad account, …). Multiplicity of accounts across the Linux Foundation lives at the **project** level, not inside a project — CNCF, OpenSearch, and TLF are each their own project, each owning its own single connection per provider. (TLF is both an umbrella over child-foundation projects *and* its own project with its own account; it owns only its own connection. Cross-foundation roll-up is a read concern handled by the UI backend — see the Monitoring note below — not by holding multiple connections on one project.)
+
+Because the connection is a singleton, there is **no service-generated `{id}` in the path** — the provider name *is* the identity within the project. Connections are strongly typed per provider (see [channel-connections-schema.md](channel-connections-schema.md)). The table below shows the pattern for `google`; every provider (`linkedin`, `meta`, `reddit`, `twitter`, `microsoft`, `hubspot`) exposes the identical shape with its own typed payload.
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| POST | `/projects/{projectId}/google-ads-connections` | `campaign_manager` | JSON | Create a Google Ads connection. |
-| GET | `/projects/{projectId}/google-ads-connections/{id}` | `campaign_manager` | JSON | Get a connection (credentials redacted); returns ETag. |
-| PUT | `/projects/{projectId}/google-ads-connections/{id}` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
-| DELETE | `/projects/{projectId}/google-ads-connections/{id}` | `campaign_manager` | JSON | Remove a connection (soft delete). |
-| POST | `/projects/{projectId}/google-ads-connections/{id}/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
-| POST | `/projects/{projectId}/google-ads-connections/{id}/set-credential` | `campaign_manager` | JSON | Replace the stored (encrypted) credential. Split out from `PUT` so credential replacement is independently permissioned/audited. Not "rotate" — the service does not generate/swap secrets upstream. |
+| POST | `/projects/{projectId}/connection-google` | `campaign_manager` | JSON | Create the project's Google Ads connection (`409 Conflict` if one already exists). |
+| GET | `/projects/{projectId}/connection-google` | `campaign_manager` | JSON | Get the connection (credentials redacted); returns ETag. |
+| PUT | `/projects/{projectId}/connection-google` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
+| DELETE | `/projects/{projectId}/connection-google` | `campaign_manager` | JSON | Remove the connection (soft delete). |
+| POST | `/projects/{projectId}/connection-google/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
+| POST | `/projects/{projectId}/connection-google/set-credential` | `campaign_manager` | JSON | Replace the stored (encrypted) credential. Split out from `PUT` so credential replacement is independently permissioned/audited. Not "rotate" — the service does not generate/swap secrets upstream. |
 
-> Listing a project's connections is served by the Query Service, which indexes each connection table on write.
+> Because the connection is a singleton, `GET /projects/{projectId}/connection-google` *is* the "list" — there is no separate collection listing. A cross-project inventory (which foundations have which providers connected) comes from the Query Service, which indexes each connection table on write.
 
 ---
 
@@ -196,9 +206,11 @@ The program type determines the AI brief generation strategy (copy tone, targeti
 
 Format: `Program | Base Name | Region | Objective | Targeting | Ad Format | Project | Funnel | Date`
 
-Example: `Events | KubeCon NA 2025 | EMEA | Conversions | Intent | Search | CNCF | MoFU | 2025-06-01`
+Example: `Events | KubeCon NA 2025 | EMEA | Conversions | Intent | Search | cncf | MoFU | 2025-06-01`
 
-Used by the data pipeline to attribute campaigns to the correct foundation/project.
+The **`Project`** segment must be the project's **canonical LFX slug** (the same value used as `{projectId}`/slug elsewhere in LFX — e.g. `cncf`, `opensearch`, `tlf`), **not** a display name or an ad-hoc abbreviation. This is what the data pipeline joins on to attribute a campaign to the correct foundation, so it must match the LFX project source-of-truth exactly and deterministically.
+
+> **Slug correctness caveat.** The correct slug is not always obvious from the display name — notably the Linux Foundation itself is `tlf`, *not* `LF` or `the-linux-foundation`. Campaigns are named by humans today, so historical/in-flight campaigns may carry an incorrect segment. Two mitigations: (1) when this service creates a campaign it should stamp the `Project` segment from the authenticated `{projectId}` rather than trusting free-text input, and (2) existing campaigns should be audited for slug drift before the naming segment is used as a hard join key. Until (2) is done, treat the segment as best-effort for legacy data.
 
 ---
 
@@ -239,7 +251,7 @@ displayDescriptions?: string[]
 displayBusinessName?: string
 displayCallToAction?: string
 geoTargets: string[]            — ISO country codes ['US', 'JP']
-project?: string
+project?: string                — Canonical LFX project slug (e.g. 'cncf', 'tlf'); used verbatim in the campaign-name Project segment. Should be derived from the authenticated {projectId}, not free-typed.
 driveFolderUrl?: string
 platforms?: CampaignPlatform[]
 linkedInConfig?: object         — LinkedIn-specific params
@@ -248,15 +260,29 @@ metaConfig?: object             — Meta-specific params
 twitterConfig?: object          — X/Twitter-specific params
 ```
 
-### CampaignCreateResponse (campaign creation result)
+### JobCreateResponse (returned immediately from `POST .../campaigns`)
+
+Campaign creation is asynchronous (see [Campaign Creation](#campaign-creation-implementation-phase)). The `POST` does not return campaign results; it returns a job handle to poll.
 
 ```
-success: boolean                — true if all platforms succeeded
-campaigns: CampaignCreateResult[] — Results per platform/type
+jobId: string                   — Poll GET /projects/{projectId}/jobs/{jobId}
+status: 'queued'                — Initial status; always 'queued' on create
+platforms: CampaignPlatform[]   — Platforms this job will create on (echoed from the request)
+```
+
+### JobPollResponse (returned from `GET .../jobs/{jobId}`)
+
+```
+jobId: string
+status: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
+                                — 'partial' = some platforms succeeded, some failed
+results: CampaignCreateResult[] — Per-platform results, populated as each platform completes
 errors: string[]                — Platform-specific errors if any
+startedAt: string               — ISO timestamp
+finishedAt?: string             — ISO timestamp, present once terminal
 ```
 
-### CampaignCreateResult (per-platform result)
+### CampaignCreateResult (per-platform result, embedded in JobPollResponse.results)
 
 ```
 platform: CampaignPlatform
@@ -270,11 +296,13 @@ campaignUrl: string             — Direct URL to platform UI
 steps: string[]                 — Step-by-step creation log
 ```
 
-### CampaignMonitorResponse (monitoring result)
+### CampaignMonitorResponse (returned from `GET .../{provider}/metrics`)
+
+The response body for a single project's single-provider metrics call. `accountTotals` sums only *this project's* account on this provider — cross-provider and cross-project (TLF umbrella) roll-ups are assembled by the UI backend, not here.
 
 ```
-campaigns: CampaignMetrics[]    — Per-campaign metrics
-accountTotals: AccountTotals    — Summed metrics across all campaigns
+campaigns: CampaignMetrics[]    — Per-campaign metrics (one row per campaign on this provider account)
+accountTotals: AccountTotals    — Summed metrics across this project's campaigns on this provider
 actionItems: ActionItem[]       — Pacing alerts and optimization suggestions
 pulledAt: string                — ISO timestamp of data fetch
 ```

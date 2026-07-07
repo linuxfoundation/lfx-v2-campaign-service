@@ -2,7 +2,7 @@
 
 Database schema for storing per-project connections to marketing platforms. Each supported provider is modeled as its **own strongly-typed resource** — both in the API (distinct sub-paths and payload contracts) and in the database (one table per provider). There is intentionally **no generic `connection` abstraction with an untyped `metadata` blob**: credentials and configuration differ materially between providers (an API key is not shaped like `client_id`/`secret`/`refresh_token` is not shaped like OAuth 1.0a consumer/access pairs), and folding that variance into untyped JSON produces a weak contract that is hard to develop and validate against — especially for agents.
 
-One project can have multiple connections of the same provider (e.g. separate LinkedIn ad accounts per sub-brand).
+A connection is **singleton per provider per project**: a project holds at most one connection of any given provider. This is enforced in the schema by a `UNIQUE (project_id)` constraint on each provider table. Account multiplicity across the Linux Foundation lives at the **project** level — CNCF, OpenSearch, and TLF are each their own project, each owning its own single account per provider — not inside a single project. (TLF is both an umbrella over child-foundation projects *and* its own project with its own account; it owns only its own connection. A TLF-wide view across child foundations is assembled by the UI backend fanning out per-project reads — see [api-catalog.md](api-catalog.md#monitoring-insights-phase) — never by holding multiple connections on one project.)
 
 > **Decision, not options.** This document describes the target design. See [architecture.md](architecture.md) for the full ER model and the FGA relations that gate each endpoint; API paths are catalogued in [api-catalog.md](api-catalog.md). To avoid duplication, the endpoint tables live in the API catalog and are linked, not repeated, here.
 
@@ -16,7 +16,7 @@ One project can have multiple connections of the same provider (e.g. separate Li
 
 ## Per-Provider Tables
 
-Each provider gets its own table. To avoid repeating nine identical columns seven times, the shared columns are defined **once** below as a reusable fragment, and each provider table is shown as **the common fragment plus its provider-specific columns**. `account_id` and `label` are common (present on every table); the fragment below is the full base. The `credentials` column holds the app-encrypted blob; the *plaintext* JSON shape it encrypts is documented above each table so the API contract is explicit.
+Each provider gets its own table. To avoid repeating nine identical columns seven times, the shared columns are defined **once** below as a reusable fragment, and each provider table is shown as **the common fragment plus its provider-specific columns**. `account_id` is common (present on every table); `label` is an optional friendly name (a project has only one connection per provider, so a label is no longer needed to disambiguate — it is retained purely as an operator convenience). The `credentials` column holds the app-encrypted blob; the *plaintext* JSON shape it encrypts is documented above each table so the API contract is explicit.
 
 **Common columns** (every connection table begins with these):
 
@@ -24,8 +24,8 @@ Each provider gets its own table. To avoid repeating nine identical columns seve
 -- Reusable base for every *_connections table.
 -- gen_random_uuid() is in PostgreSQL core since v13 (no pgcrypto extension required); target: PG 16.
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL,                 -- owned by project-service; no cross-service FK
-    label        TEXT        NOT NULL,                 -- human label, e.g. "TLF Main"
+    project_id   UUID        NOT NULL UNIQUE,          -- singleton: one connection per provider per project
+    label        TEXT,                                 -- optional friendly name, e.g. "TLF Main"
     account_id   TEXT        NOT NULL,                 -- provider account identifier
     credentials  BYTEA,                                -- AES-256-GCM ciphertext (app-encrypted)
     status       TEXT        NOT NULL DEFAULT 'active'
@@ -35,7 +35,7 @@ Each provider gets its own table. To avoid repeating nine identical columns seve
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()    -- set by application on UPDATE (no DB trigger)
 ```
 
-Each table also gets `CREATE INDEX idx_<table>_project_id ON <table> (project_id)` and, where lookups by account are needed, a non-unique `(project_id, account_id)` index (multiple connections per project are allowed). `google_ads_connections` is shown in full as the worked example; the rest list only the provider-specific columns that extend the common fragment.
+The `UNIQUE` on `project_id` also serves as the lookup index (a `GET .../connection-{provider}` resolves the row by `project_id` alone). `id` remains the surrogate primary key so the row has a stable identity for indexing/attribution even though it is never referenced in an API path. `google_ads_connections` is shown in full as the worked example; the rest list only the provider-specific columns that extend the common fragment.
 
 ### google_ads_connections
 
@@ -45,8 +45,8 @@ Encrypted credential shape: `{ refresh_token, client_id, client_secret, develope
 CREATE TABLE google_ads_connections (
     -- common columns (see above): id, project_id, label, account_id, credentials, status, version, created_at, updated_at
     id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id         UUID        NOT NULL,
-    label              TEXT        NOT NULL,
+    project_id         UUID        NOT NULL UNIQUE,     -- singleton: one Google Ads connection per project
+    label              TEXT,
     account_id         TEXT        NOT NULL,            -- customer ID, e.g. 8666746580
     credentials        BYTEA,
     status             TEXT        NOT NULL DEFAULT 'active'
@@ -57,8 +57,7 @@ CREATE TABLE google_ads_connections (
     -- provider-specific:
     login_customer_id  TEXT                             -- manager account for API access
 );
-CREATE INDEX idx_google_ads_connections_project_id ON google_ads_connections (project_id);
-CREATE INDEX idx_google_ads_connections_account    ON google_ads_connections (project_id, account_id);
+-- UNIQUE(project_id) above already indexes the by-project lookup; no separate index needed.
 ```
 
 ### linkedin_ads_connections
@@ -121,23 +120,26 @@ Common columns + provider-specific:
 
 > Organic/community channels (LinkedIn organic, X organic, Bluesky, Mastodon, YouTube, Slack, Discord) follow the same one-table-per-provider pattern and will be added as those integrations land. They are out of scope for the initial paid-platform migration and are not detailed here to keep this document focused on the decided target.
 
-## Multiple Connections Per Project
+## Account Multiplicity Lives at the Project Level
 
-A project can hold many connections of the same provider — e.g. TLF running two LinkedIn ad accounts:
+A single project holds **one** connection per provider (enforced by `UNIQUE (project_id)`). Where the Linux Foundation runs several accounts on the same provider, those accounts belong to **different projects**, each holding its own singleton connection:
 
 ```
-project: TLF
-  linkedin_ads | account 538170226 | "TLF Main"  | active
-  linkedin_ads | account 509430019 | "LF Events" | active
+project: tlf           linkedin_ads | account 538170226 | org 208777 | active
+project: lf-events     linkedin_ads | account 509430019 |           | active
 ```
+
+The current inventory below bears this out: the two LinkedIn accounts are TLF's and LF Events' — two distinct projects — not two accounts under one project. A TLF-umbrella view that spans child foundations is composed by the UI backend (per-project fan-out), not by attaching multiple connections to the TLF project. See [api-catalog.md](api-catalog.md#platform-connections-new--typed-per-provider-singleton-per-project).
 
 ## Current Account Inventory
 
-Non-secret platform account IDs currently configured in the Express BFF, retained here as a migration reference. Each provider has a different tenancy model — some share one account across foundations (campaigns separated by naming convention), others use separate accounts per foundation.
+Non-secret platform account IDs currently configured in the Express BFF, retained here as a migration reference. Each provider has a different tenancy model — some share one account across foundations (campaigns separated by naming convention), others use separate accounts per foundation. Under the singleton model, each row below maps to one project's connection.
 
 **Single shared account (all foundations):**
-- **Google Ads** — Manager `9746983954`, Customer `8666746580`; projects distinguished by campaign naming convention, not separate accounts.
-- **HubSpot** — single org-wide private app token; campaigns matched to projects by name.
+- **Google Ads** — Manager `9746983954`, Customer `8666746580`; foundations distinguished by campaign naming convention today, not separate accounts.
+- **HubSpot** — single org-wide private app token; campaigns matched to projects by name (see the global-namespace note in [api-catalog.md](api-catalog.md#hubspot-utm-integration)).
+
+> **Migration note (shared Google Ads / HubSpot).** Because Google Ads and HubSpot are today a single shared account across all foundations, the singleton `UNIQUE (project_id)` model implies each project that uses them stores its own connection row pointing at the *same* upstream `account_id`. That is intentional (the connection row scopes LFX permissions and per-project config, even when the upstream account is shared) — it is not a violation of the one-account-per-provider design at the upstream layer.
 
 **Separate accounts per foundation:**
 - **LinkedIn Ads** — TLF `538170226` (org `208777`), LF Events `509430019`
@@ -220,7 +222,7 @@ CREATE INDEX idx_campaign_jobs_brief_id ON campaign_jobs (brief_id);
 
 ## API
 
-Connection endpoints are nested under `/projects/{projectId}/…` and are strongly typed per provider (e.g. `POST /projects/{projectId}/google-ads-connections`). The authoritative endpoint list, gating FGA relations, and payload shapes are in [api-catalog.md](api-catalog.md).
+Connection endpoints are nested under `/projects/{projectId}/…` and are strongly typed per provider, one singleton per provider (e.g. `POST /projects/{projectId}/connection-google`). The authoritative endpoint list, gating FGA relations, and payload shapes are in [api-catalog.md](api-catalog.md).
 
 ### Response Shape
 
@@ -244,7 +246,7 @@ Credentials are never returned. The response exposes `has_credentials: boolean` 
 **Create a connection** (credentials in the request body; never echoed back):
 
 ```http
-POST /projects/7f3.../linkedin-ads-connections
+POST /projects/7f3.../connection-linkedin
 Content-Type: application/json
 
 { "label": "TLF Main", "account_id": "538170226", "org_id": "208777",
@@ -258,11 +260,12 @@ ETag: "1"
   "account_id": "538170226", "org_id": "208777",
   "has_credentials": true, "status": "active", "version": 1 }
 ```
+- A second `POST` for the same project+provider → `409 Conflict` (the connection is a singleton; use `PUT` to modify it).
 
-**Update config with optimistic concurrency** — the caller must present the current version:
+**Update config with optimistic concurrency** — the caller must present the current version. The connection is addressed by provider name alone (no `{id}` — it is the project's singleton):
 
 ```http
-PUT /projects/7f3.../linkedin-ads-connections/a12...
+PUT /projects/7f3.../connection-linkedin
 If-Match: "1"
 Content-Type: application/json
 
@@ -278,7 +281,7 @@ ETag: "2"        # version incremented
 **Set credential** — separate from `PUT`; does not touch config, has its own permission/audit:
 
 ```http
-POST /projects/7f3.../linkedin-ads-connections/a12.../set-credential
+POST /projects/7f3.../connection-linkedin/set-credential
 Content-Type: application/json
 
 { "credentials": { "access_token": "AQV...new..." } }
@@ -296,11 +299,11 @@ Content-Type: application/json
 Every path in this service — reads and writes — is gated at the gateway by a Heimdall RuleSet referencing the `campaign_manager` relation on the `project` captured from the path. (There is no read-only campaigns audience; `marketing_auditor` applies to the separate Snowflake-backed Marketing Insights dashboard, not this service.) This mirrors the committee-service pattern (`openfga_check` authorizer + `create_jwt` finalizer that mints the service-audience JWT this service then validates). Example rule for creating a connection:
 
 ```yaml
-- id: "rule:lfx:lfx-v2-campaign-service:linkedin-ads-connections:create"
+- id: "rule:lfx:lfx-v2-campaign-service:connection-linkedin:create"
   match:
     methods: [POST]
     routes:
-      - path: /projects/:projectId/linkedin-ads-connections
+      - path: /projects/:projectId/connection-linkedin
   execute:
     - authenticator: oidc
     {{- if .Values.openfga.enabled }}
