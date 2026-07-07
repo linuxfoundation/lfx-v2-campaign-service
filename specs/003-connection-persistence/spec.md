@@ -22,8 +22,10 @@ need CloudNativePG (LFXV2-2559).
 - **FR-002**: Provide `ConnectionReader` / `ConnectionWriter` port interfaces and
   domain sentinel errors (`ErrNotFound`, `ErrConflict`, `ErrPreconditionFailed`).
 - **FR-003**: Ship migrations creating one typed table per provider
-  (`google_ads_connections`, …) with the common columns, `UNIQUE(project_id)`
-  (singleton), inline `created_by`/`updated_by`, and provider-specific columns.
+  (`google_ads_connections`, …) with the common columns, a **partial unique
+  index** on `(project_id) WHERE status <> 'deleted'` (singleton, while allowing
+  reconnect after a soft delete), inline `created_by`/`updated_by`, and
+  provider-specific columns.
 - **FR-004**: Provide a pgx/v5 connection pool with a readiness check and an
   embedded golang-migrate runner.
 - **FR-005**: Implement a pgx-backed `ConnectionRepo` supporting Get, Create

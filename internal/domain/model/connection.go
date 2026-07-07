@@ -72,7 +72,8 @@ type Actor struct {
 // write-only credentials are never part of this read model.
 //
 // The singleton invariant (one connection per provider per project) is enforced
-// by a UNIQUE(project_id) constraint on each provider table.
+// by a partial unique index on (project_id) WHERE status <> 'deleted', so a
+// soft-deleted row no longer blocks re-creating the connection.
 type Connection struct {
 	ID        string
 	ProjectID string
