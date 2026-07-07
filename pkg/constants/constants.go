@@ -13,6 +13,11 @@ const (
 	EnvAudience = "JWT_AUDIENCE"
 	EnvIssuer   = "JWT_ISSUER"
 	EnvNATSURL  = "NATS_URL"
+	// EnvDatabaseURL is the PostgreSQL connection string (DSN).
+	EnvDatabaseURL = "DATABASE_URL"
+	// EnvCredentialEncryptionKey is the base64-encoded 32-byte AES-256 key used
+	// to encrypt connection credentials. Sourced from a Kubernetes secret.
+	EnvCredentialEncryptionKey = "CREDENTIAL_ENCRYPTION_KEY"
 )
 
 // Default configuration values. These mirror the defaults wired into the Helm
