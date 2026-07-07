@@ -31,6 +31,105 @@ type Service interface {
 	// so credential replacement is independently permissioned and audited. Not a
 	// rotate — the service does not generate or swap secrets upstream.
 	SetCredentialGoogleAds(context.Context, *SetCredentialGoogleAdsPayload) (err error)
+	// Create the project's LinkedIn Ads connection (singleton; 409 if one already
+	// exists).
+	CreateLinkedinAds(context.Context, *CreateLinkedinAdsPayload) (res *LinkedinAdsConnection, err error)
+	// Get the project's LinkedIn Ads connection (credentials redacted; returns
+	// ETag).
+	GetLinkedinAds(context.Context, *GetLinkedinAdsPayload) (res *LinkedinAdsConnection, err error)
+	// Replace the LinkedIn Ads connection config (requires If-Match; does not set
+	// credentials).
+	UpdateLinkedinAds(context.Context, *UpdateLinkedinAdsPayload) (res *LinkedinAdsConnection, err error)
+	// Soft-delete the project's LinkedIn Ads connection.
+	DeleteLinkedinAds(context.Context, *DeleteLinkedinAdsPayload) (err error)
+	// Verify the stored LinkedIn Ads credential against the provider.
+	TestLinkedinAds(context.Context, *TestLinkedinAdsPayload) (res *ConnectionTestResult, err error)
+	// Replace the stored (encrypted) LinkedIn Ads credential. Separate from update
+	// so credential replacement is independently permissioned and audited. Not a
+	// rotate — the service does not generate or swap secrets upstream.
+	SetCredentialLinkedinAds(context.Context, *SetCredentialLinkedinAdsPayload) (err error)
+	// Create the project's Meta Ads connection (singleton; 409 if one already
+	// exists).
+	CreateMetaAds(context.Context, *CreateMetaAdsPayload) (res *MetaAdsConnection, err error)
+	// Get the project's Meta Ads connection (credentials redacted; returns ETag).
+	GetMetaAds(context.Context, *GetMetaAdsPayload) (res *MetaAdsConnection, err error)
+	// Replace the Meta Ads connection config (requires If-Match; does not set
+	// credentials).
+	UpdateMetaAds(context.Context, *UpdateMetaAdsPayload) (res *MetaAdsConnection, err error)
+	// Soft-delete the project's Meta Ads connection.
+	DeleteMetaAds(context.Context, *DeleteMetaAdsPayload) (err error)
+	// Verify the stored Meta Ads credential against the provider.
+	TestMetaAds(context.Context, *TestMetaAdsPayload) (res *ConnectionTestResult, err error)
+	// Replace the stored (encrypted) Meta Ads credential. Separate from update so
+	// credential replacement is independently permissioned and audited. Not a
+	// rotate — the service does not generate or swap secrets upstream.
+	SetCredentialMetaAds(context.Context, *SetCredentialMetaAdsPayload) (err error)
+	// Create the project's Reddit Ads connection (singleton; 409 if one already
+	// exists).
+	CreateRedditAds(context.Context, *CreateRedditAdsPayload) (res *RedditAdsConnection, err error)
+	// Get the project's Reddit Ads connection (credentials redacted; returns ETag).
+	GetRedditAds(context.Context, *GetRedditAdsPayload) (res *RedditAdsConnection, err error)
+	// Replace the Reddit Ads connection config (requires If-Match; does not set
+	// credentials).
+	UpdateRedditAds(context.Context, *UpdateRedditAdsPayload) (res *RedditAdsConnection, err error)
+	// Soft-delete the project's Reddit Ads connection.
+	DeleteRedditAds(context.Context, *DeleteRedditAdsPayload) (err error)
+	// Verify the stored Reddit Ads credential against the provider.
+	TestRedditAds(context.Context, *TestRedditAdsPayload) (res *ConnectionTestResult, err error)
+	// Replace the stored (encrypted) Reddit Ads credential. Separate from update
+	// so credential replacement is independently permissioned and audited. Not a
+	// rotate — the service does not generate or swap secrets upstream.
+	SetCredentialRedditAds(context.Context, *SetCredentialRedditAdsPayload) (err error)
+	// Create the project's X/Twitter Ads connection (singleton; 409 if one already
+	// exists).
+	CreateTwitterAds(context.Context, *CreateTwitterAdsPayload) (res *TwitterAdsConnection, err error)
+	// Get the project's X/Twitter Ads connection (credentials redacted; returns
+	// ETag).
+	GetTwitterAds(context.Context, *GetTwitterAdsPayload) (res *TwitterAdsConnection, err error)
+	// Replace the X/Twitter Ads connection config (requires If-Match; does not set
+	// credentials).
+	UpdateTwitterAds(context.Context, *UpdateTwitterAdsPayload) (res *TwitterAdsConnection, err error)
+	// Soft-delete the project's X/Twitter Ads connection.
+	DeleteTwitterAds(context.Context, *DeleteTwitterAdsPayload) (err error)
+	// Verify the stored X/Twitter Ads credential against the provider.
+	TestTwitterAds(context.Context, *TestTwitterAdsPayload) (res *ConnectionTestResult, err error)
+	// Replace the stored (encrypted) X/Twitter Ads credential. Separate from
+	// update so credential replacement is independently permissioned and audited.
+	// Not a rotate — the service does not generate or swap secrets upstream.
+	SetCredentialTwitterAds(context.Context, *SetCredentialTwitterAdsPayload) (err error)
+	// Create the project's Microsoft Ads connection (singleton; 409 if one already
+	// exists).
+	CreateMicrosoftAds(context.Context, *CreateMicrosoftAdsPayload) (res *MicrosoftAdsConnection, err error)
+	// Get the project's Microsoft Ads connection (credentials redacted; returns
+	// ETag).
+	GetMicrosoftAds(context.Context, *GetMicrosoftAdsPayload) (res *MicrosoftAdsConnection, err error)
+	// Replace the Microsoft Ads connection config (requires If-Match; does not set
+	// credentials).
+	UpdateMicrosoftAds(context.Context, *UpdateMicrosoftAdsPayload) (res *MicrosoftAdsConnection, err error)
+	// Soft-delete the project's Microsoft Ads connection.
+	DeleteMicrosoftAds(context.Context, *DeleteMicrosoftAdsPayload) (err error)
+	// Verify the stored Microsoft Ads credential against the provider.
+	TestMicrosoftAds(context.Context, *TestMicrosoftAdsPayload) (res *ConnectionTestResult, err error)
+	// Replace the stored (encrypted) Microsoft Ads credential. Separate from
+	// update so credential replacement is independently permissioned and audited.
+	// Not a rotate — the service does not generate or swap secrets upstream.
+	SetCredentialMicrosoftAds(context.Context, *SetCredentialMicrosoftAdsPayload) (err error)
+	// Create the project's HubSpot connection (singleton; 409 if one already
+	// exists).
+	CreateHubspot(context.Context, *CreateHubspotPayload) (res *HubspotConnection, err error)
+	// Get the project's HubSpot connection (credentials redacted; returns ETag).
+	GetHubspot(context.Context, *GetHubspotPayload) (res *HubspotConnection, err error)
+	// Replace the HubSpot connection config (requires If-Match; does not set
+	// credentials).
+	UpdateHubspot(context.Context, *UpdateHubspotPayload) (res *HubspotConnection, err error)
+	// Soft-delete the project's HubSpot connection.
+	DeleteHubspot(context.Context, *DeleteHubspotPayload) (err error)
+	// Verify the stored HubSpot credential against the provider.
+	TestHubspot(context.Context, *TestHubspotPayload) (res *ConnectionTestResult, err error)
+	// Replace the stored (encrypted) HubSpot credential. Separate from update so
+	// credential replacement is independently permissioned and audited. Not a
+	// rotate — the service does not generate or swap secrets upstream.
+	SetCredentialHubspot(context.Context, *SetCredentialHubspotPayload) (err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -53,7 +152,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [6]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads"}
+var MethodNames = [42]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot"}
 
 // ConnectionTestResult is the result type of the
 // lfx-v2-campaign-service-connections service test-google-ads method.
@@ -75,9 +174,129 @@ type CreateGoogleAdsPayload struct {
 	Credentials *GoogleAdsCredentials
 }
 
+// CreateHubspotPayload is the payload type of the
+// lfx-v2-campaign-service-connections service create-hubspot method.
+type CreateHubspotPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Config      *HubspotConnectionConfig
+	Credentials *HubspotCredentials
+}
+
+// CreateLinkedinAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service create-linkedin-ads method.
+type CreateLinkedinAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Config      *LinkedinAdsConnectionConfig
+	Credentials *LinkedinAdsCredentials
+}
+
+// CreateMetaAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service create-meta-ads method.
+type CreateMetaAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Config      *MetaAdsConnectionConfig
+	Credentials *MetaAdsCredentials
+}
+
+// CreateMicrosoftAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service create-microsoft-ads method.
+type CreateMicrosoftAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Config      *MicrosoftAdsConnectionConfig
+	Credentials *MicrosoftAdsCredentials
+}
+
+// CreateRedditAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service create-reddit-ads method.
+type CreateRedditAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Config      *RedditAdsConnectionConfig
+	Credentials *RedditAdsCredentials
+}
+
+// CreateTwitterAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service create-twitter-ads method.
+type CreateTwitterAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Config      *TwitterAdsConnectionConfig
+	Credentials *TwitterAdsCredentials
+}
+
 // DeleteGoogleAdsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service delete-google-ads method.
 type DeleteGoogleAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// DeleteHubspotPayload is the payload type of the
+// lfx-v2-campaign-service-connections service delete-hubspot method.
+type DeleteHubspotPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// DeleteLinkedinAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service delete-linkedin-ads method.
+type DeleteLinkedinAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// DeleteMetaAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service delete-meta-ads method.
+type DeleteMetaAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// DeleteMicrosoftAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service delete-microsoft-ads method.
+type DeleteMicrosoftAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// DeleteRedditAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service delete-reddit-ads method.
+type DeleteRedditAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// DeleteTwitterAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service delete-twitter-ads method.
+type DeleteTwitterAdsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
@@ -93,6 +312,60 @@ type GetGoogleAdsPayload struct {
 	ProjectID string
 }
 
+// GetHubspotPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-hubspot method.
+type GetHubspotPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// GetLinkedinAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-linkedin-ads method.
+type GetLinkedinAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// GetMetaAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-meta-ads method.
+type GetMetaAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// GetMicrosoftAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads method.
+type GetMicrosoftAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// GetRedditAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-reddit-ads method.
+type GetRedditAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// GetTwitterAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-twitter-ads method.
+type GetTwitterAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
 // GoogleAdsConnection is the result type of the
 // lfx-v2-campaign-service-connections service create-google-ads method.
 type GoogleAdsConnection struct {
@@ -102,10 +375,8 @@ type GoogleAdsConnection struct {
 	ProjectID string
 	// Optional friendly name
 	Label *string
-	// Google Ads customer ID
+	// Provider account identifier
 	AccountID string
-	// Manager account used for API access
-	LoginCustomerID *string
 	// Whether an encrypted credential is stored
 	HasCredentials bool
 	// Connection status
@@ -114,6 +385,8 @@ type GoogleAdsConnection struct {
 	Version int64
 	// ETag header value (mirrors version)
 	Etag *string
+	// Manager account used for API access
+	LoginCustomerID *string
 }
 
 type GoogleAdsConnectionConfig struct {
@@ -137,6 +410,220 @@ type GoogleAdsCredentials struct {
 	DeveloperToken string
 }
 
+// HubspotConnection is the result type of the
+// lfx-v2-campaign-service-connections service create-hubspot method.
+type HubspotConnection struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string
+	// Owning project
+	ProjectID string
+	// Optional friendly name
+	Label *string
+	// Provider account identifier
+	AccountID string
+	// Whether an encrypted credential is stored
+	HasCredentials bool
+	// Connection status
+	Status string
+	// Optimistic-concurrency version
+	Version int64
+	// ETag header value (mirrors version)
+	Etag *string
+	// HubSpot portal/account ID
+	PortalID *string
+	// Default sender address
+	SenderEmail *string
+	// Default sender name
+	SenderName *string
+	// Per-project brand kit selector
+	BrandKit *string
+}
+
+type HubspotConnectionConfig struct {
+	// Optional friendly name
+	Label *string
+	// HubSpot list/audience ID
+	AccountID string
+	// HubSpot portal/account ID
+	PortalID *string
+	// Default sender address
+	SenderEmail *string
+	// Default sender name
+	SenderName *string
+	// Per-project brand kit selector
+	BrandKit *string
+}
+
+// HubSpot private app token. Write-only; never returned.
+type HubspotCredentials struct {
+	// HubSpot private app token
+	PrivateAppToken string
+}
+
+// LinkedinAdsConnection is the result type of the
+// lfx-v2-campaign-service-connections service create-linkedin-ads method.
+type LinkedinAdsConnection struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string
+	// Owning project
+	ProjectID string
+	// Optional friendly name
+	Label *string
+	// Provider account identifier
+	AccountID string
+	// Whether an encrypted credential is stored
+	HasCredentials bool
+	// Connection status
+	Status string
+	// Optimistic-concurrency version
+	Version int64
+	// ETag header value (mirrors version)
+	Etag *string
+	// LinkedIn organization URN id
+	OrgID *string
+}
+
+type LinkedinAdsConnectionConfig struct {
+	// Optional friendly name
+	Label *string
+	// LinkedIn ad account ID
+	AccountID string
+	// LinkedIn organization URN id
+	OrgID string
+}
+
+// LinkedIn Ads credential. Write-only; never returned.
+type LinkedinAdsCredentials struct {
+	// OAuth access token
+	AccessToken string
+}
+
+// MetaAdsConnection is the result type of the
+// lfx-v2-campaign-service-connections service create-meta-ads method.
+type MetaAdsConnection struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string
+	// Owning project
+	ProjectID string
+	// Optional friendly name
+	Label *string
+	// Provider account identifier
+	AccountID string
+	// Whether an encrypted credential is stored
+	HasCredentials bool
+	// Connection status
+	Status string
+	// Optimistic-concurrency version
+	Version int64
+	// ETag header value (mirrors version)
+	Etag *string
+	// Facebook page ID
+	PageID *string
+	// Meta app ID
+	AppID *string
+}
+
+type MetaAdsConnectionConfig struct {
+	// Optional friendly name
+	Label *string
+	// Meta ad account ID
+	AccountID string
+	// Facebook page ID
+	PageID *string
+	// Meta app ID
+	AppID *string
+}
+
+// Meta Ads credential. Write-only; never returned.
+type MetaAdsCredentials struct {
+	// Meta access token
+	AccessToken string
+	// Meta app secret
+	AppSecret string
+}
+
+// MicrosoftAdsConnection is the result type of the
+// lfx-v2-campaign-service-connections service create-microsoft-ads method.
+type MicrosoftAdsConnection struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string
+	// Owning project
+	ProjectID string
+	// Optional friendly name
+	Label *string
+	// Provider account identifier
+	AccountID string
+	// Whether an encrypted credential is stored
+	HasCredentials bool
+	// Connection status
+	Status string
+	// Optimistic-concurrency version
+	Version int64
+	// ETag header value (mirrors version)
+	Etag *string
+	// Microsoft Advertising customer ID
+	CustomerID *string
+}
+
+type MicrosoftAdsConnectionConfig struct {
+	// Optional friendly name
+	Label *string
+	// Microsoft Advertising account ID
+	AccountID string
+	// Microsoft Advertising customer ID
+	CustomerID *string
+}
+
+// Microsoft Advertising OAuth credential set. Write-only; never returned.
+type MicrosoftAdsCredentials struct {
+	// OAuth client id
+	ClientID string
+	// OAuth client secret
+	ClientSecret string
+	// OAuth refresh token
+	RefreshToken string
+	// Microsoft Advertising developer token
+	DeveloperToken string
+}
+
+// RedditAdsConnection is the result type of the
+// lfx-v2-campaign-service-connections service create-reddit-ads method.
+type RedditAdsConnection struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string
+	// Owning project
+	ProjectID string
+	// Optional friendly name
+	Label *string
+	// Provider account identifier
+	AccountID string
+	// Whether an encrypted credential is stored
+	HasCredentials bool
+	// Connection status
+	Status string
+	// Optimistic-concurrency version
+	Version int64
+	// ETag header value (mirrors version)
+	Etag *string
+}
+
+type RedditAdsConnectionConfig struct {
+	// Optional friendly name
+	Label *string
+	// Reddit advertiser ID
+	AccountID string
+}
+
+// Reddit Ads OAuth credential. Write-only; never returned.
+type RedditAdsCredentials struct {
+	// OAuth client id
+	ClientID string
+	// OAuth client secret
+	ClientSecret string
+	// OAuth refresh token
+	RefreshToken string
+}
+
 // SetCredentialGoogleAdsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service set-credential-google-ads method.
 type SetCredentialGoogleAdsPayload struct {
@@ -147,6 +634,69 @@ type SetCredentialGoogleAdsPayload struct {
 	Credentials *GoogleAdsCredentials
 }
 
+// SetCredentialHubspotPayload is the payload type of the
+// lfx-v2-campaign-service-connections service set-credential-hubspot method.
+type SetCredentialHubspotPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Credentials *HubspotCredentials
+}
+
+// SetCredentialLinkedinAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service set-credential-linkedin-ads
+// method.
+type SetCredentialLinkedinAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Credentials *LinkedinAdsCredentials
+}
+
+// SetCredentialMetaAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service set-credential-meta-ads method.
+type SetCredentialMetaAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Credentials *MetaAdsCredentials
+}
+
+// SetCredentialMicrosoftAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service set-credential-microsoft-ads
+// method.
+type SetCredentialMicrosoftAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Credentials *MicrosoftAdsCredentials
+}
+
+// SetCredentialRedditAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service set-credential-reddit-ads method.
+type SetCredentialRedditAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Credentials *RedditAdsCredentials
+}
+
+// SetCredentialTwitterAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service set-credential-twitter-ads
+// method.
+type SetCredentialTwitterAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID   string
+	Credentials *TwitterAdsCredentials
+}
+
 // TestGoogleAdsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service test-google-ads method.
 type TestGoogleAdsPayload struct {
@@ -154,6 +704,104 @@ type TestGoogleAdsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+// TestHubspotPayload is the payload type of the
+// lfx-v2-campaign-service-connections service test-hubspot method.
+type TestHubspotPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// TestLinkedinAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service test-linkedin-ads method.
+type TestLinkedinAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// TestMetaAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service test-meta-ads method.
+type TestMetaAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// TestMicrosoftAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service test-microsoft-ads method.
+type TestMicrosoftAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// TestRedditAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service test-reddit-ads method.
+type TestRedditAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// TestTwitterAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service test-twitter-ads method.
+type TestTwitterAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// TwitterAdsConnection is the result type of the
+// lfx-v2-campaign-service-connections service create-twitter-ads method.
+type TwitterAdsConnection struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string
+	// Owning project
+	ProjectID string
+	// Optional friendly name
+	Label *string
+	// Provider account identifier
+	AccountID string
+	// Whether an encrypted credential is stored
+	HasCredentials bool
+	// Connection status
+	Status string
+	// Optimistic-concurrency version
+	Version int64
+	// ETag header value (mirrors version)
+	Etag *string
+	// Funding instrument for the ad account
+	FundingInstrumentID *string
+}
+
+type TwitterAdsConnectionConfig struct {
+	// Optional friendly name
+	Label *string
+	// X/Twitter Ads account ID
+	AccountID string
+	// Funding instrument for the ad account
+	FundingInstrumentID *string
+}
+
+// X/Twitter Ads OAuth 1.0a credential set. Write-only; never returned.
+type TwitterAdsCredentials struct {
+	// OAuth 1.0a consumer key
+	ConsumerKey string
+	// OAuth 1.0a consumer secret
+	ConsumerSecret string
+	// OAuth 1.0a access token
+	AccessToken string
+	// OAuth 1.0a access token secret
+	AccessTokenSecret string
 }
 
 // UpdateGoogleAdsPayload is the payload type of the
@@ -166,6 +814,78 @@ type UpdateGoogleAdsPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
 	Config  *GoogleAdsConnectionConfig
+}
+
+// UpdateHubspotPayload is the payload type of the
+// lfx-v2-campaign-service-connections service update-hubspot method.
+type UpdateHubspotPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	Config  *HubspotConnectionConfig
+}
+
+// UpdateLinkedinAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service update-linkedin-ads method.
+type UpdateLinkedinAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	Config  *LinkedinAdsConnectionConfig
+}
+
+// UpdateMetaAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service update-meta-ads method.
+type UpdateMetaAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	Config  *MetaAdsConnectionConfig
+}
+
+// UpdateMicrosoftAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service update-microsoft-ads method.
+type UpdateMicrosoftAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	Config  *MicrosoftAdsConnectionConfig
+}
+
+// UpdateRedditAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service update-reddit-ads method.
+type UpdateRedditAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	Config  *RedditAdsConnectionConfig
+}
+
+// UpdateTwitterAdsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service update-twitter-ads method.
+type UpdateTwitterAdsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	Config  *TwitterAdsConnectionConfig
 }
 
 type BadRequestError struct {

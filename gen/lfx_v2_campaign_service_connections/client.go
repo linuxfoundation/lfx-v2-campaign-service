@@ -15,24 +15,96 @@ import (
 
 // Client is the "lfx-v2-campaign-service-connections" service client.
 type Client struct {
-	CreateGoogleAdsEndpoint        goa.Endpoint
-	GetGoogleAdsEndpoint           goa.Endpoint
-	UpdateGoogleAdsEndpoint        goa.Endpoint
-	DeleteGoogleAdsEndpoint        goa.Endpoint
-	TestGoogleAdsEndpoint          goa.Endpoint
-	SetCredentialGoogleAdsEndpoint goa.Endpoint
+	CreateGoogleAdsEndpoint           goa.Endpoint
+	GetGoogleAdsEndpoint              goa.Endpoint
+	UpdateGoogleAdsEndpoint           goa.Endpoint
+	DeleteGoogleAdsEndpoint           goa.Endpoint
+	TestGoogleAdsEndpoint             goa.Endpoint
+	SetCredentialGoogleAdsEndpoint    goa.Endpoint
+	CreateLinkedinAdsEndpoint         goa.Endpoint
+	GetLinkedinAdsEndpoint            goa.Endpoint
+	UpdateLinkedinAdsEndpoint         goa.Endpoint
+	DeleteLinkedinAdsEndpoint         goa.Endpoint
+	TestLinkedinAdsEndpoint           goa.Endpoint
+	SetCredentialLinkedinAdsEndpoint  goa.Endpoint
+	CreateMetaAdsEndpoint             goa.Endpoint
+	GetMetaAdsEndpoint                goa.Endpoint
+	UpdateMetaAdsEndpoint             goa.Endpoint
+	DeleteMetaAdsEndpoint             goa.Endpoint
+	TestMetaAdsEndpoint               goa.Endpoint
+	SetCredentialMetaAdsEndpoint      goa.Endpoint
+	CreateRedditAdsEndpoint           goa.Endpoint
+	GetRedditAdsEndpoint              goa.Endpoint
+	UpdateRedditAdsEndpoint           goa.Endpoint
+	DeleteRedditAdsEndpoint           goa.Endpoint
+	TestRedditAdsEndpoint             goa.Endpoint
+	SetCredentialRedditAdsEndpoint    goa.Endpoint
+	CreateTwitterAdsEndpoint          goa.Endpoint
+	GetTwitterAdsEndpoint             goa.Endpoint
+	UpdateTwitterAdsEndpoint          goa.Endpoint
+	DeleteTwitterAdsEndpoint          goa.Endpoint
+	TestTwitterAdsEndpoint            goa.Endpoint
+	SetCredentialTwitterAdsEndpoint   goa.Endpoint
+	CreateMicrosoftAdsEndpoint        goa.Endpoint
+	GetMicrosoftAdsEndpoint           goa.Endpoint
+	UpdateMicrosoftAdsEndpoint        goa.Endpoint
+	DeleteMicrosoftAdsEndpoint        goa.Endpoint
+	TestMicrosoftAdsEndpoint          goa.Endpoint
+	SetCredentialMicrosoftAdsEndpoint goa.Endpoint
+	CreateHubspotEndpoint             goa.Endpoint
+	GetHubspotEndpoint                goa.Endpoint
+	UpdateHubspotEndpoint             goa.Endpoint
+	DeleteHubspotEndpoint             goa.Endpoint
+	TestHubspotEndpoint               goa.Endpoint
+	SetCredentialHubspotEndpoint      goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot goa.Endpoint) *Client {
 	return &Client{
-		CreateGoogleAdsEndpoint:        createGoogleAds,
-		GetGoogleAdsEndpoint:           getGoogleAds,
-		UpdateGoogleAdsEndpoint:        updateGoogleAds,
-		DeleteGoogleAdsEndpoint:        deleteGoogleAds,
-		TestGoogleAdsEndpoint:          testGoogleAds,
-		SetCredentialGoogleAdsEndpoint: setCredentialGoogleAds,
+		CreateGoogleAdsEndpoint:           createGoogleAds,
+		GetGoogleAdsEndpoint:              getGoogleAds,
+		UpdateGoogleAdsEndpoint:           updateGoogleAds,
+		DeleteGoogleAdsEndpoint:           deleteGoogleAds,
+		TestGoogleAdsEndpoint:             testGoogleAds,
+		SetCredentialGoogleAdsEndpoint:    setCredentialGoogleAds,
+		CreateLinkedinAdsEndpoint:         createLinkedinAds,
+		GetLinkedinAdsEndpoint:            getLinkedinAds,
+		UpdateLinkedinAdsEndpoint:         updateLinkedinAds,
+		DeleteLinkedinAdsEndpoint:         deleteLinkedinAds,
+		TestLinkedinAdsEndpoint:           testLinkedinAds,
+		SetCredentialLinkedinAdsEndpoint:  setCredentialLinkedinAds,
+		CreateMetaAdsEndpoint:             createMetaAds,
+		GetMetaAdsEndpoint:                getMetaAds,
+		UpdateMetaAdsEndpoint:             updateMetaAds,
+		DeleteMetaAdsEndpoint:             deleteMetaAds,
+		TestMetaAdsEndpoint:               testMetaAds,
+		SetCredentialMetaAdsEndpoint:      setCredentialMetaAds,
+		CreateRedditAdsEndpoint:           createRedditAds,
+		GetRedditAdsEndpoint:              getRedditAds,
+		UpdateRedditAdsEndpoint:           updateRedditAds,
+		DeleteRedditAdsEndpoint:           deleteRedditAds,
+		TestRedditAdsEndpoint:             testRedditAds,
+		SetCredentialRedditAdsEndpoint:    setCredentialRedditAds,
+		CreateTwitterAdsEndpoint:          createTwitterAds,
+		GetTwitterAdsEndpoint:             getTwitterAds,
+		UpdateTwitterAdsEndpoint:          updateTwitterAds,
+		DeleteTwitterAdsEndpoint:          deleteTwitterAds,
+		TestTwitterAdsEndpoint:            testTwitterAds,
+		SetCredentialTwitterAdsEndpoint:   setCredentialTwitterAds,
+		CreateMicrosoftAdsEndpoint:        createMicrosoftAds,
+		GetMicrosoftAdsEndpoint:           getMicrosoftAds,
+		UpdateMicrosoftAdsEndpoint:        updateMicrosoftAds,
+		DeleteMicrosoftAdsEndpoint:        deleteMicrosoftAds,
+		TestMicrosoftAdsEndpoint:          testMicrosoftAds,
+		SetCredentialMicrosoftAdsEndpoint: setCredentialMicrosoftAds,
+		CreateHubspotEndpoint:             createHubspot,
+		GetHubspotEndpoint:                getHubspot,
+		UpdateHubspotEndpoint:             updateHubspot,
+		DeleteHubspotEndpoint:             deleteHubspot,
+		TestHubspotEndpoint:               testHubspot,
+		SetCredentialHubspotEndpoint:      setCredentialHubspot,
 	}
 }
 
@@ -126,5 +198,563 @@ func (c *Client) TestGoogleAds(ctx context.Context, p *TestGoogleAdsPayload) (re
 //   - error: internal error
 func (c *Client) SetCredentialGoogleAds(ctx context.Context, p *SetCredentialGoogleAdsPayload) (err error) {
 	_, err = c.SetCredentialGoogleAdsEndpoint(ctx, p)
+	return
+}
+
+// CreateLinkedinAds calls the "create-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// CreateLinkedinAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) CreateLinkedinAds(ctx context.Context, p *CreateLinkedinAdsPayload) (res *LinkedinAdsConnection, err error) {
+	var ires any
+	ires, err = c.CreateLinkedinAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*LinkedinAdsConnection), nil
+}
+
+// GetLinkedinAds calls the "get-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// GetLinkedinAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetLinkedinAds(ctx context.Context, p *GetLinkedinAdsPayload) (res *LinkedinAdsConnection, err error) {
+	var ires any
+	ires, err = c.GetLinkedinAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*LinkedinAdsConnection), nil
+}
+
+// UpdateLinkedinAds calls the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// UpdateLinkedinAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) UpdateLinkedinAds(ctx context.Context, p *UpdateLinkedinAdsPayload) (res *LinkedinAdsConnection, err error) {
+	var ires any
+	ires, err = c.UpdateLinkedinAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*LinkedinAdsConnection), nil
+}
+
+// DeleteLinkedinAds calls the "delete-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// DeleteLinkedinAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) DeleteLinkedinAds(ctx context.Context, p *DeleteLinkedinAdsPayload) (err error) {
+	_, err = c.DeleteLinkedinAdsEndpoint(ctx, p)
+	return
+}
+
+// TestLinkedinAds calls the "test-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// TestLinkedinAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) TestLinkedinAds(ctx context.Context, p *TestLinkedinAdsPayload) (res *ConnectionTestResult, err error) {
+	var ires any
+	ires, err = c.TestLinkedinAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ConnectionTestResult), nil
+}
+
+// SetCredentialLinkedinAds calls the "set-credential-linkedin-ads" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// SetCredentialLinkedinAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) SetCredentialLinkedinAds(ctx context.Context, p *SetCredentialLinkedinAdsPayload) (err error) {
+	_, err = c.SetCredentialLinkedinAdsEndpoint(ctx, p)
+	return
+}
+
+// CreateMetaAds calls the "create-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// CreateMetaAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) CreateMetaAds(ctx context.Context, p *CreateMetaAdsPayload) (res *MetaAdsConnection, err error) {
+	var ires any
+	ires, err = c.CreateMetaAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MetaAdsConnection), nil
+}
+
+// GetMetaAds calls the "get-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// GetMetaAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetMetaAds(ctx context.Context, p *GetMetaAdsPayload) (res *MetaAdsConnection, err error) {
+	var ires any
+	ires, err = c.GetMetaAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MetaAdsConnection), nil
+}
+
+// UpdateMetaAds calls the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// UpdateMetaAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) UpdateMetaAds(ctx context.Context, p *UpdateMetaAdsPayload) (res *MetaAdsConnection, err error) {
+	var ires any
+	ires, err = c.UpdateMetaAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MetaAdsConnection), nil
+}
+
+// DeleteMetaAds calls the "delete-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// DeleteMetaAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) DeleteMetaAds(ctx context.Context, p *DeleteMetaAdsPayload) (err error) {
+	_, err = c.DeleteMetaAdsEndpoint(ctx, p)
+	return
+}
+
+// TestMetaAds calls the "test-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// TestMetaAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) TestMetaAds(ctx context.Context, p *TestMetaAdsPayload) (res *ConnectionTestResult, err error) {
+	var ires any
+	ires, err = c.TestMetaAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ConnectionTestResult), nil
+}
+
+// SetCredentialMetaAds calls the "set-credential-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// SetCredentialMetaAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) SetCredentialMetaAds(ctx context.Context, p *SetCredentialMetaAdsPayload) (err error) {
+	_, err = c.SetCredentialMetaAdsEndpoint(ctx, p)
+	return
+}
+
+// CreateRedditAds calls the "create-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// CreateRedditAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) CreateRedditAds(ctx context.Context, p *CreateRedditAdsPayload) (res *RedditAdsConnection, err error) {
+	var ires any
+	ires, err = c.CreateRedditAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*RedditAdsConnection), nil
+}
+
+// GetRedditAds calls the "get-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// GetRedditAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetRedditAds(ctx context.Context, p *GetRedditAdsPayload) (res *RedditAdsConnection, err error) {
+	var ires any
+	ires, err = c.GetRedditAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*RedditAdsConnection), nil
+}
+
+// UpdateRedditAds calls the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// UpdateRedditAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) UpdateRedditAds(ctx context.Context, p *UpdateRedditAdsPayload) (res *RedditAdsConnection, err error) {
+	var ires any
+	ires, err = c.UpdateRedditAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*RedditAdsConnection), nil
+}
+
+// DeleteRedditAds calls the "delete-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// DeleteRedditAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) DeleteRedditAds(ctx context.Context, p *DeleteRedditAdsPayload) (err error) {
+	_, err = c.DeleteRedditAdsEndpoint(ctx, p)
+	return
+}
+
+// TestRedditAds calls the "test-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// TestRedditAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) TestRedditAds(ctx context.Context, p *TestRedditAdsPayload) (res *ConnectionTestResult, err error) {
+	var ires any
+	ires, err = c.TestRedditAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ConnectionTestResult), nil
+}
+
+// SetCredentialRedditAds calls the "set-credential-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// SetCredentialRedditAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) SetCredentialRedditAds(ctx context.Context, p *SetCredentialRedditAdsPayload) (err error) {
+	_, err = c.SetCredentialRedditAdsEndpoint(ctx, p)
+	return
+}
+
+// CreateTwitterAds calls the "create-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// CreateTwitterAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) CreateTwitterAds(ctx context.Context, p *CreateTwitterAdsPayload) (res *TwitterAdsConnection, err error) {
+	var ires any
+	ires, err = c.CreateTwitterAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*TwitterAdsConnection), nil
+}
+
+// GetTwitterAds calls the "get-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// GetTwitterAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetTwitterAds(ctx context.Context, p *GetTwitterAdsPayload) (res *TwitterAdsConnection, err error) {
+	var ires any
+	ires, err = c.GetTwitterAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*TwitterAdsConnection), nil
+}
+
+// UpdateTwitterAds calls the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// UpdateTwitterAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) UpdateTwitterAds(ctx context.Context, p *UpdateTwitterAdsPayload) (res *TwitterAdsConnection, err error) {
+	var ires any
+	ires, err = c.UpdateTwitterAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*TwitterAdsConnection), nil
+}
+
+// DeleteTwitterAds calls the "delete-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// DeleteTwitterAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) DeleteTwitterAds(ctx context.Context, p *DeleteTwitterAdsPayload) (err error) {
+	_, err = c.DeleteTwitterAdsEndpoint(ctx, p)
+	return
+}
+
+// TestTwitterAds calls the "test-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// TestTwitterAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) TestTwitterAds(ctx context.Context, p *TestTwitterAdsPayload) (res *ConnectionTestResult, err error) {
+	var ires any
+	ires, err = c.TestTwitterAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ConnectionTestResult), nil
+}
+
+// SetCredentialTwitterAds calls the "set-credential-twitter-ads" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// SetCredentialTwitterAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) SetCredentialTwitterAds(ctx context.Context, p *SetCredentialTwitterAdsPayload) (err error) {
+	_, err = c.SetCredentialTwitterAdsEndpoint(ctx, p)
+	return
+}
+
+// CreateMicrosoftAds calls the "create-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// CreateMicrosoftAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) CreateMicrosoftAds(ctx context.Context, p *CreateMicrosoftAdsPayload) (res *MicrosoftAdsConnection, err error) {
+	var ires any
+	ires, err = c.CreateMicrosoftAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MicrosoftAdsConnection), nil
+}
+
+// GetMicrosoftAds calls the "get-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// GetMicrosoftAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetMicrosoftAds(ctx context.Context, p *GetMicrosoftAdsPayload) (res *MicrosoftAdsConnection, err error) {
+	var ires any
+	ires, err = c.GetMicrosoftAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MicrosoftAdsConnection), nil
+}
+
+// UpdateMicrosoftAds calls the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// UpdateMicrosoftAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) UpdateMicrosoftAds(ctx context.Context, p *UpdateMicrosoftAdsPayload) (res *MicrosoftAdsConnection, err error) {
+	var ires any
+	ires, err = c.UpdateMicrosoftAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MicrosoftAdsConnection), nil
+}
+
+// DeleteMicrosoftAds calls the "delete-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// DeleteMicrosoftAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) DeleteMicrosoftAds(ctx context.Context, p *DeleteMicrosoftAdsPayload) (err error) {
+	_, err = c.DeleteMicrosoftAdsEndpoint(ctx, p)
+	return
+}
+
+// TestMicrosoftAds calls the "test-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// TestMicrosoftAds may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) TestMicrosoftAds(ctx context.Context, p *TestMicrosoftAdsPayload) (res *ConnectionTestResult, err error) {
+	var ires any
+	ires, err = c.TestMicrosoftAdsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ConnectionTestResult), nil
+}
+
+// SetCredentialMicrosoftAds calls the "set-credential-microsoft-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+// SetCredentialMicrosoftAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) SetCredentialMicrosoftAds(ctx context.Context, p *SetCredentialMicrosoftAdsPayload) (err error) {
+	_, err = c.SetCredentialMicrosoftAdsEndpoint(ctx, p)
+	return
+}
+
+// CreateHubspot calls the "create-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// CreateHubspot may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Conflict" (type *ConflictError): A connection already exists for this provider on the project
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) CreateHubspot(ctx context.Context, p *CreateHubspotPayload) (res *HubspotConnection, err error) {
+	var ires any
+	ires, err = c.CreateHubspotEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*HubspotConnection), nil
+}
+
+// GetHubspot calls the "get-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// GetHubspot may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetHubspot(ctx context.Context, p *GetHubspotPayload) (res *HubspotConnection, err error) {
+	var ires any
+	ires, err = c.GetHubspotEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*HubspotConnection), nil
+}
+
+// UpdateHubspot calls the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// UpdateHubspot may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) UpdateHubspot(ctx context.Context, p *UpdateHubspotPayload) (res *HubspotConnection, err error) {
+	var ires any
+	ires, err = c.UpdateHubspotEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*HubspotConnection), nil
+}
+
+// DeleteHubspot calls the "delete-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// DeleteHubspot may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) DeleteHubspot(ctx context.Context, p *DeleteHubspotPayload) (err error) {
+	_, err = c.DeleteHubspotEndpoint(ctx, p)
+	return
+}
+
+// TestHubspot calls the "test-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// TestHubspot may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) TestHubspot(ctx context.Context, p *TestHubspotPayload) (res *ConnectionTestResult, err error) {
+	var ires any
+	ires, err = c.TestHubspotEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ConnectionTestResult), nil
+}
+
+// SetCredentialHubspot calls the "set-credential-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// SetCredentialHubspot may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) SetCredentialHubspot(ctx context.Context, p *SetCredentialHubspotPayload) (err error) {
+	_, err = c.SetCredentialHubspotEndpoint(ctx, p)
 	return
 }

@@ -34,6 +34,138 @@ type SetCredentialGoogleAdsRequestBody struct {
 	Credentials *GoogleAdsCredentialsRequestBody `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
 }
 
+// CreateLinkedinAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP request body.
+type CreateLinkedinAdsRequestBody struct {
+	Config      *LinkedinAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+	Credentials *LinkedinAdsCredentialsRequestBody      `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// UpdateLinkedinAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP request body.
+type UpdateLinkedinAdsRequestBody struct {
+	Config *LinkedinAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// SetCredentialLinkedinAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
+// endpoint HTTP request body.
+type SetCredentialLinkedinAdsRequestBody struct {
+	Credentials *LinkedinAdsCredentialsRequestBody `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// CreateMetaAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP request body.
+type CreateMetaAdsRequestBody struct {
+	Config      *MetaAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+	Credentials *MetaAdsCredentialsRequestBody      `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// UpdateMetaAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP request body.
+type UpdateMetaAdsRequestBody struct {
+	Config *MetaAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// SetCredentialMetaAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
+// endpoint HTTP request body.
+type SetCredentialMetaAdsRequestBody struct {
+	Credentials *MetaAdsCredentialsRequestBody `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// CreateRedditAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP request body.
+type CreateRedditAdsRequestBody struct {
+	Config      *RedditAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+	Credentials *RedditAdsCredentialsRequestBody      `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// UpdateRedditAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP request body.
+type UpdateRedditAdsRequestBody struct {
+	Config *RedditAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// SetCredentialRedditAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
+// endpoint HTTP request body.
+type SetCredentialRedditAdsRequestBody struct {
+	Credentials *RedditAdsCredentialsRequestBody `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// CreateTwitterAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP request body.
+type CreateTwitterAdsRequestBody struct {
+	Config      *TwitterAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+	Credentials *TwitterAdsCredentialsRequestBody      `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// UpdateTwitterAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP request body.
+type UpdateTwitterAdsRequestBody struct {
+	Config *TwitterAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// SetCredentialTwitterAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
+// endpoint HTTP request body.
+type SetCredentialTwitterAdsRequestBody struct {
+	Credentials *TwitterAdsCredentialsRequestBody `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// CreateMicrosoftAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP request body.
+type CreateMicrosoftAdsRequestBody struct {
+	Config      *MicrosoftAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+	Credentials *MicrosoftAdsCredentialsRequestBody      `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// UpdateMicrosoftAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP request body.
+type UpdateMicrosoftAdsRequestBody struct {
+	Config *MicrosoftAdsConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// SetCredentialMicrosoftAdsRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
+// endpoint HTTP request body.
+type SetCredentialMicrosoftAdsRequestBody struct {
+	Credentials *MicrosoftAdsCredentialsRequestBody `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// CreateHubspotRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// request body.
+type CreateHubspotRequestBody struct {
+	Config      *HubspotConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+	Credentials *HubspotCredentialsRequestBody      `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
+// UpdateHubspotRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// request body.
+type UpdateHubspotRequestBody struct {
+	Config *HubspotConnectionConfigRequestBody `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// SetCredentialHubspotRequestBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
+// endpoint HTTP request body.
+type SetCredentialHubspotRequestBody struct {
+	Credentials *HubspotCredentialsRequestBody `form:"credentials,omitempty" json:"credentials,omitempty" xml:"credentials,omitempty"`
+}
+
 // CreateGoogleAdsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body.
@@ -44,16 +176,16 @@ type CreateGoogleAdsResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Google Ads customer ID
+	// Provider account identifier
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// Manager account used for API access
-	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
 	// Whether an encrypted credential is stored
 	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
 	// Connection status
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Manager account used for API access
+	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
 }
 
 // GetGoogleAdsResponseBody is the type of the
@@ -66,16 +198,16 @@ type GetGoogleAdsResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Google Ads customer ID
+	// Provider account identifier
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// Manager account used for API access
-	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
 	// Whether an encrypted credential is stored
 	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
 	// Connection status
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Manager account used for API access
+	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
 }
 
 // UpdateGoogleAdsResponseBody is the type of the
@@ -88,10 +220,198 @@ type UpdateGoogleAdsResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Google Ads customer ID
+	// Provider account identifier
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
 	// Manager account used for API access
 	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
+}
+
+// TestGoogleAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
+// HTTP response body.
+type TestGoogleAdsResponseBody struct {
+	// Whether the credential authenticated against the provider
+	OK bool `form:"ok" json:"ok" xml:"ok"`
+	// Human-readable detail
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateLinkedinAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP response body.
+type CreateLinkedinAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// LinkedIn organization URN id
+	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
+}
+
+// GetLinkedinAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
+// HTTP response body.
+type GetLinkedinAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// LinkedIn organization URN id
+	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
+}
+
+// UpdateLinkedinAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body.
+type UpdateLinkedinAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// LinkedIn organization URN id
+	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
+}
+
+// TestLinkedinAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
+// HTTP response body.
+type TestLinkedinAdsResponseBody struct {
+	// Whether the credential authenticated against the provider
+	OK bool `form:"ok" json:"ok" xml:"ok"`
+	// Human-readable detail
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateMetaAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP response body.
+type CreateMetaAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Facebook page ID
+	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`
+	// Meta app ID
+	AppID *string `form:"app_id,omitempty" json:"app_id,omitempty" xml:"app_id,omitempty"`
+}
+
+// GetMetaAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
+// response body.
+type GetMetaAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Facebook page ID
+	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`
+	// Meta app ID
+	AppID *string `form:"app_id,omitempty" json:"app_id,omitempty" xml:"app_id,omitempty"`
+}
+
+// UpdateMetaAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body.
+type UpdateMetaAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Facebook page ID
+	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`
+	// Meta app ID
+	AppID *string `form:"app_id,omitempty" json:"app_id,omitempty" xml:"app_id,omitempty"`
+}
+
+// TestMetaAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
+// response body.
+type TestMetaAdsResponseBody struct {
+	// Whether the credential authenticated against the provider
+	OK bool `form:"ok" json:"ok" xml:"ok"`
+	// Human-readable detail
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateRedditAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP response body.
+type CreateRedditAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// Whether an encrypted credential is stored
 	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
 	// Connection status
@@ -100,10 +420,296 @@ type UpdateGoogleAdsResponseBody struct {
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
 
-// TestGoogleAdsResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
+// GetRedditAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
+// response body.
+type GetRedditAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+}
+
+// UpdateRedditAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
 // HTTP response body.
-type TestGoogleAdsResponseBody struct {
+type UpdateRedditAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+}
+
+// TestRedditAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
+// HTTP response body.
+type TestRedditAdsResponseBody struct {
+	// Whether the credential authenticated against the provider
+	OK bool `form:"ok" json:"ok" xml:"ok"`
+	// Human-readable detail
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateTwitterAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP response body.
+type CreateTwitterAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Funding instrument for the ad account
+	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
+}
+
+// GetTwitterAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
+// HTTP response body.
+type GetTwitterAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Funding instrument for the ad account
+	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
+}
+
+// UpdateTwitterAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body.
+type UpdateTwitterAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Funding instrument for the ad account
+	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
+}
+
+// TestTwitterAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
+// HTTP response body.
+type TestTwitterAdsResponseBody struct {
+	// Whether the credential authenticated against the provider
+	OK bool `form:"ok" json:"ok" xml:"ok"`
+	// Human-readable detail
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateMicrosoftAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP response body.
+type CreateMicrosoftAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Microsoft Advertising customer ID
+	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
+}
+
+// GetMicrosoftAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
+// HTTP response body.
+type GetMicrosoftAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Microsoft Advertising customer ID
+	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
+}
+
+// UpdateMicrosoftAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body.
+type UpdateMicrosoftAdsResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// Microsoft Advertising customer ID
+	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
+}
+
+// TestMicrosoftAdsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
+// HTTP response body.
+type TestMicrosoftAdsResponseBody struct {
+	// Whether the credential authenticated against the provider
+	OK bool `form:"ok" json:"ok" xml:"ok"`
+	// Human-readable detail
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateHubspotResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// response body.
+type CreateHubspotResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// HubSpot portal/account ID
+	PortalID *string `form:"portal_id,omitempty" json:"portal_id,omitempty" xml:"portal_id,omitempty"`
+	// Default sender address
+	SenderEmail *string `form:"sender_email,omitempty" json:"sender_email,omitempty" xml:"sender_email,omitempty"`
+	// Default sender name
+	SenderName *string `form:"sender_name,omitempty" json:"sender_name,omitempty" xml:"sender_name,omitempty"`
+	// Per-project brand kit selector
+	BrandKit *string `form:"brand_kit,omitempty" json:"brand_kit,omitempty" xml:"brand_kit,omitempty"`
+}
+
+// GetHubspotResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
+// response body.
+type GetHubspotResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// HubSpot portal/account ID
+	PortalID *string `form:"portal_id,omitempty" json:"portal_id,omitempty" xml:"portal_id,omitempty"`
+	// Default sender address
+	SenderEmail *string `form:"sender_email,omitempty" json:"sender_email,omitempty" xml:"sender_email,omitempty"`
+	// Default sender name
+	SenderName *string `form:"sender_name,omitempty" json:"sender_name,omitempty" xml:"sender_name,omitempty"`
+	// Per-project brand kit selector
+	BrandKit *string `form:"brand_kit,omitempty" json:"brand_kit,omitempty" xml:"brand_kit,omitempty"`
+}
+
+// UpdateHubspotResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body.
+type UpdateHubspotResponseBody struct {
+	// Service-generated connection UUID (not used in paths)
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Provider account identifier
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Whether an encrypted credential is stored
+	HasCredentials bool `form:"has_credentials" json:"has_credentials" xml:"has_credentials"`
+	// Connection status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// HubSpot portal/account ID
+	PortalID *string `form:"portal_id,omitempty" json:"portal_id,omitempty" xml:"portal_id,omitempty"`
+	// Default sender address
+	SenderEmail *string `form:"sender_email,omitempty" json:"sender_email,omitempty" xml:"sender_email,omitempty"`
+	// Default sender name
+	SenderName *string `form:"sender_name,omitempty" json:"sender_name,omitempty" xml:"sender_name,omitempty"`
+	// Per-project brand kit selector
+	BrandKit *string `form:"brand_kit,omitempty" json:"brand_kit,omitempty" xml:"brand_kit,omitempty"`
+}
+
+// TestHubspotResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
+// response body.
+type TestHubspotResponseBody struct {
 	// Whether the credential authenticated against the provider
 	OK bool `form:"ok" json:"ok" xml:"ok"`
 	// Human-readable detail
@@ -294,6 +900,1110 @@ type SetCredentialGoogleAdsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateLinkedinAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type CreateLinkedinAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateLinkedinAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP response body for the "Conflict" error.
+type CreateLinkedinAdsConflictResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateLinkedinAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type CreateLinkedinAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateLinkedinAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type CreateLinkedinAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GetLinkedinAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GetLinkedinAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type GetLinkedinAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateLinkedinAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type UpdateLinkedinAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateLinkedinAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UpdateLinkedinAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateLinkedinAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UpdateLinkedinAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateLinkedinAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type UpdateLinkedinAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateLinkedinAdsPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "PreconditionFailed" error.
+type UpdateLinkedinAdsPreconditionFailedResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateLinkedinAdsPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
+// HTTP response body for the "PreconditionRequired" error.
+type UpdateLinkedinAdsPreconditionRequiredResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteLinkedinAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type DeleteLinkedinAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteLinkedinAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type DeleteLinkedinAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteLinkedinAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type DeleteLinkedinAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestLinkedinAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type TestLinkedinAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestLinkedinAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type TestLinkedinAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestLinkedinAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type TestLinkedinAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialLinkedinAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
+// endpoint HTTP response body for the "BadRequest" error.
+type SetCredentialLinkedinAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialLinkedinAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type SetCredentialLinkedinAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialLinkedinAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
+// endpoint HTTP response body for the "InternalServerError" error.
+type SetCredentialLinkedinAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialLinkedinAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
+// endpoint HTTP response body for the "NotFound" error.
+type SetCredentialLinkedinAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type CreateMetaAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateMetaAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP response body for the "Conflict" error.
+type CreateMetaAdsConflictResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type CreateMetaAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type CreateMetaAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetMetaAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetMetaAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
+// response body for the "NotFound" error.
+type GetMetaAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type UpdateMetaAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UpdateMetaAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UpdateMetaAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type UpdateMetaAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMetaAdsPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "PreconditionFailed" error.
+type UpdateMetaAdsPreconditionFailedResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMetaAdsPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
+// HTTP response body for the "PreconditionRequired" error.
+type UpdateMetaAdsPreconditionRequiredResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type DeleteMetaAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type DeleteMetaAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type DeleteMetaAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type TestMetaAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
+// response body for the "InternalServerError" error.
+type TestMetaAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
+// response body for the "NotFound" error.
+type TestMetaAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
+// endpoint HTTP response body for the "BadRequest" error.
+type SetCredentialMetaAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type SetCredentialMetaAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
+// endpoint HTTP response body for the "InternalServerError" error.
+type SetCredentialMetaAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
+// endpoint HTTP response body for the "NotFound" error.
+type SetCredentialMetaAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateRedditAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type CreateRedditAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateRedditAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP response body for the "Conflict" error.
+type CreateRedditAdsConflictResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateRedditAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type CreateRedditAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateRedditAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type CreateRedditAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetRedditAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetRedditAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
+// response body for the "NotFound" error.
+type GetRedditAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateRedditAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type UpdateRedditAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateRedditAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UpdateRedditAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateRedditAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UpdateRedditAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateRedditAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type UpdateRedditAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateRedditAdsPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "PreconditionFailed" error.
+type UpdateRedditAdsPreconditionFailedResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateRedditAdsPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
+// HTTP response body for the "PreconditionRequired" error.
+type UpdateRedditAdsPreconditionRequiredResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteRedditAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type DeleteRedditAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteRedditAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type DeleteRedditAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteRedditAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type DeleteRedditAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestRedditAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type TestRedditAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestRedditAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type TestRedditAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestRedditAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type TestRedditAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialRedditAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
+// endpoint HTTP response body for the "BadRequest" error.
+type SetCredentialRedditAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialRedditAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type SetCredentialRedditAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialRedditAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
+// endpoint HTTP response body for the "InternalServerError" error.
+type SetCredentialRedditAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialRedditAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
+// endpoint HTTP response body for the "NotFound" error.
+type SetCredentialRedditAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateTwitterAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type CreateTwitterAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateTwitterAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP response body for the "Conflict" error.
+type CreateTwitterAdsConflictResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateTwitterAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type CreateTwitterAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateTwitterAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type CreateTwitterAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GetTwitterAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GetTwitterAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type GetTwitterAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateTwitterAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type UpdateTwitterAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateTwitterAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UpdateTwitterAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateTwitterAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UpdateTwitterAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateTwitterAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type UpdateTwitterAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateTwitterAdsPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "PreconditionFailed" error.
+type UpdateTwitterAdsPreconditionFailedResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateTwitterAdsPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
+// HTTP response body for the "PreconditionRequired" error.
+type UpdateTwitterAdsPreconditionRequiredResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteTwitterAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type DeleteTwitterAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteTwitterAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type DeleteTwitterAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteTwitterAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type DeleteTwitterAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestTwitterAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type TestTwitterAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestTwitterAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type TestTwitterAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestTwitterAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type TestTwitterAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialTwitterAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
+// endpoint HTTP response body for the "BadRequest" error.
+type SetCredentialTwitterAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialTwitterAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type SetCredentialTwitterAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialTwitterAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
+// endpoint HTTP response body for the "InternalServerError" error.
+type SetCredentialTwitterAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialTwitterAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
+// endpoint HTTP response body for the "NotFound" error.
+type SetCredentialTwitterAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateMicrosoftAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP response body for the "BadRequest" error.
+type CreateMicrosoftAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateMicrosoftAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP response body for the "Conflict" error.
+type CreateMicrosoftAdsConflictResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateMicrosoftAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type CreateMicrosoftAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateMicrosoftAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
+// endpoint HTTP response body for the "InternalServerError" error.
+type CreateMicrosoftAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GetMicrosoftAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GetMicrosoftAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type GetMicrosoftAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMicrosoftAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "BadRequest" error.
+type UpdateMicrosoftAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMicrosoftAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type UpdateMicrosoftAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMicrosoftAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "InternalServerError" error.
+type UpdateMicrosoftAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMicrosoftAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "NotFound" error.
+type UpdateMicrosoftAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMicrosoftAdsPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "PreconditionFailed" error.
+type UpdateMicrosoftAdsPreconditionFailedResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateMicrosoftAdsPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
+// endpoint HTTP response body for the "PreconditionRequired" error.
+type UpdateMicrosoftAdsPreconditionRequiredResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteMicrosoftAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type DeleteMicrosoftAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteMicrosoftAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
+// endpoint HTTP response body for the "InternalServerError" error.
+type DeleteMicrosoftAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteMicrosoftAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
+// endpoint HTTP response body for the "NotFound" error.
+type DeleteMicrosoftAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestMicrosoftAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type TestMicrosoftAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestMicrosoftAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
+// HTTP response body for the "InternalServerError" error.
+type TestMicrosoftAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestMicrosoftAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
+// HTTP response body for the "NotFound" error.
+type TestMicrosoftAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMicrosoftAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
+// endpoint HTTP response body for the "BadRequest" error.
+type SetCredentialMicrosoftAdsBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMicrosoftAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type SetCredentialMicrosoftAdsServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMicrosoftAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
+// endpoint HTTP response body for the "InternalServerError" error.
+type SetCredentialMicrosoftAdsInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialMicrosoftAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
+// endpoint HTTP response body for the "NotFound" error.
+type SetCredentialMicrosoftAdsNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// response body for the "BadRequest" error.
+type CreateHubspotBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// response body for the "Conflict" error.
+type CreateHubspotConflictResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type CreateHubspotServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateHubspotInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
+// response body for the "InternalServerError" error.
+type CreateHubspotInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetHubspotServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetHubspotServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetHubspotInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetHubspotInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetHubspotNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
+// response body for the "NotFound" error.
+type GetHubspotNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateHubspotBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "BadRequest" error.
+type UpdateHubspotBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateHubspotServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type UpdateHubspotServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateHubspotInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "InternalServerError" error.
+type UpdateHubspotInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateHubspotNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "NotFound" error.
+type UpdateHubspotNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateHubspotPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "PreconditionFailed" error.
+type UpdateHubspotPreconditionFailedResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateHubspotPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
+// response body for the "PreconditionRequired" error.
+type UpdateHubspotPreconditionRequiredResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteHubspotServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type DeleteHubspotServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteHubspotInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
+// response body for the "InternalServerError" error.
+type DeleteHubspotInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteHubspotNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
+// response body for the "NotFound" error.
+type DeleteHubspotNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestHubspotServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type TestHubspotServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestHubspotInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
+// response body for the "InternalServerError" error.
+type TestHubspotInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// TestHubspotNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
+// response body for the "NotFound" error.
+type TestHubspotNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialHubspotBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
+// endpoint HTTP response body for the "BadRequest" error.
+type SetCredentialHubspotBadRequestResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialHubspotServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type SetCredentialHubspotServiceUnavailableResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialHubspotInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
+// endpoint HTTP response body for the "InternalServerError" error.
+type SetCredentialHubspotInternalServerErrorResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetCredentialHubspotNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
+// endpoint HTTP response body for the "NotFound" error.
+type SetCredentialHubspotNotFoundResponseBody struct {
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
 // body types.
 type GoogleAdsConnectionConfigRequestBody struct {
@@ -318,6 +2028,136 @@ type GoogleAdsCredentialsRequestBody struct {
 	DeveloperToken *string `form:"developer_token,omitempty" json:"developer_token,omitempty" xml:"developer_token,omitempty"`
 }
 
+// LinkedinAdsConnectionConfigRequestBody is used to define fields on request
+// body types.
+type LinkedinAdsConnectionConfigRequestBody struct {
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// LinkedIn ad account ID
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// LinkedIn organization URN id
+	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
+}
+
+// LinkedinAdsCredentialsRequestBody is used to define fields on request body
+// types.
+type LinkedinAdsCredentialsRequestBody struct {
+	// OAuth access token
+	AccessToken *string `form:"access_token,omitempty" json:"access_token,omitempty" xml:"access_token,omitempty"`
+}
+
+// MetaAdsConnectionConfigRequestBody is used to define fields on request body
+// types.
+type MetaAdsConnectionConfigRequestBody struct {
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Meta ad account ID
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// Facebook page ID
+	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`
+	// Meta app ID
+	AppID *string `form:"app_id,omitempty" json:"app_id,omitempty" xml:"app_id,omitempty"`
+}
+
+// MetaAdsCredentialsRequestBody is used to define fields on request body types.
+type MetaAdsCredentialsRequestBody struct {
+	// Meta access token
+	AccessToken *string `form:"access_token,omitempty" json:"access_token,omitempty" xml:"access_token,omitempty"`
+	// Meta app secret
+	AppSecret *string `form:"app_secret,omitempty" json:"app_secret,omitempty" xml:"app_secret,omitempty"`
+}
+
+// RedditAdsConnectionConfigRequestBody is used to define fields on request
+// body types.
+type RedditAdsConnectionConfigRequestBody struct {
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Reddit advertiser ID
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+}
+
+// RedditAdsCredentialsRequestBody is used to define fields on request body
+// types.
+type RedditAdsCredentialsRequestBody struct {
+	// OAuth client id
+	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
+	// OAuth client secret
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
+	// OAuth refresh token
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
+// TwitterAdsConnectionConfigRequestBody is used to define fields on request
+// body types.
+type TwitterAdsConnectionConfigRequestBody struct {
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// X/Twitter Ads account ID
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// Funding instrument for the ad account
+	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
+}
+
+// TwitterAdsCredentialsRequestBody is used to define fields on request body
+// types.
+type TwitterAdsCredentialsRequestBody struct {
+	// OAuth 1.0a consumer key
+	ConsumerKey *string `form:"consumer_key,omitempty" json:"consumer_key,omitempty" xml:"consumer_key,omitempty"`
+	// OAuth 1.0a consumer secret
+	ConsumerSecret *string `form:"consumer_secret,omitempty" json:"consumer_secret,omitempty" xml:"consumer_secret,omitempty"`
+	// OAuth 1.0a access token
+	AccessToken *string `form:"access_token,omitempty" json:"access_token,omitempty" xml:"access_token,omitempty"`
+	// OAuth 1.0a access token secret
+	AccessTokenSecret *string `form:"access_token_secret,omitempty" json:"access_token_secret,omitempty" xml:"access_token_secret,omitempty"`
+}
+
+// MicrosoftAdsConnectionConfigRequestBody is used to define fields on request
+// body types.
+type MicrosoftAdsConnectionConfigRequestBody struct {
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Microsoft Advertising account ID
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// Microsoft Advertising customer ID
+	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
+}
+
+// MicrosoftAdsCredentialsRequestBody is used to define fields on request body
+// types.
+type MicrosoftAdsCredentialsRequestBody struct {
+	// OAuth client id
+	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
+	// OAuth client secret
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
+	// OAuth refresh token
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+	// Microsoft Advertising developer token
+	DeveloperToken *string `form:"developer_token,omitempty" json:"developer_token,omitempty" xml:"developer_token,omitempty"`
+}
+
+// HubspotConnectionConfigRequestBody is used to define fields on request body
+// types.
+type HubspotConnectionConfigRequestBody struct {
+	// Optional friendly name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// HubSpot list/audience ID
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// HubSpot portal/account ID
+	PortalID *string `form:"portal_id,omitempty" json:"portal_id,omitempty" xml:"portal_id,omitempty"`
+	// Default sender address
+	SenderEmail *string `form:"sender_email,omitempty" json:"sender_email,omitempty" xml:"sender_email,omitempty"`
+	// Default sender name
+	SenderName *string `form:"sender_name,omitempty" json:"sender_name,omitempty" xml:"sender_name,omitempty"`
+	// Per-project brand kit selector
+	BrandKit *string `form:"brand_kit,omitempty" json:"brand_kit,omitempty" xml:"brand_kit,omitempty"`
+}
+
+// HubspotCredentialsRequestBody is used to define fields on request body types.
+type HubspotCredentialsRequestBody struct {
+	// HubSpot private app token
+	PrivateAppToken *string `form:"private_app_token,omitempty" json:"private_app_token,omitempty" xml:"private_app_token,omitempty"`
+}
+
 // NewCreateGoogleAdsResponseBody builds the HTTP response body from the result
 // of the "create-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -327,10 +2167,10 @@ func NewCreateGoogleAdsResponseBody(res *lfxv2campaignserviceconnections.GoogleA
 		ProjectID:       res.ProjectID,
 		Label:           res.Label,
 		AccountID:       res.AccountID,
-		LoginCustomerID: res.LoginCustomerID,
 		HasCredentials:  res.HasCredentials,
 		Status:          res.Status,
 		Version:         res.Version,
+		LoginCustomerID: res.LoginCustomerID,
 	}
 	return body
 }
@@ -344,10 +2184,10 @@ func NewGetGoogleAdsResponseBody(res *lfxv2campaignserviceconnections.GoogleAdsC
 		ProjectID:       res.ProjectID,
 		Label:           res.Label,
 		AccountID:       res.AccountID,
-		LoginCustomerID: res.LoginCustomerID,
 		HasCredentials:  res.HasCredentials,
 		Status:          res.Status,
 		Version:         res.Version,
+		LoginCustomerID: res.LoginCustomerID,
 	}
 	return body
 }
@@ -361,10 +2201,10 @@ func NewUpdateGoogleAdsResponseBody(res *lfxv2campaignserviceconnections.GoogleA
 		ProjectID:       res.ProjectID,
 		Label:           res.Label,
 		AccountID:       res.AccountID,
-		LoginCustomerID: res.LoginCustomerID,
 		HasCredentials:  res.HasCredentials,
 		Status:          res.Status,
 		Version:         res.Version,
+		LoginCustomerID: res.LoginCustomerID,
 	}
 	return body
 }
@@ -374,6 +2214,387 @@ func NewUpdateGoogleAdsResponseBody(res *lfxv2campaignserviceconnections.GoogleA
 // "lfx-v2-campaign-service-connections" service.
 func NewTestGoogleAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestGoogleAdsResponseBody {
 	body := &TestGoogleAdsResponseBody{
+		OK:      res.OK,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateLinkedinAdsResponseBody builds the HTTP response body from the
+// result of the "create-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateLinkedinAdsResponseBody(res *lfxv2campaignserviceconnections.LinkedinAdsConnection) *CreateLinkedinAdsResponseBody {
+	body := &CreateLinkedinAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		OrgID:          res.OrgID,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsResponseBody builds the HTTP response body from the result
+// of the "get-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsResponseBody(res *lfxv2campaignserviceconnections.LinkedinAdsConnection) *GetLinkedinAdsResponseBody {
+	body := &GetLinkedinAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		OrgID:          res.OrgID,
+	}
+	return body
+}
+
+// NewUpdateLinkedinAdsResponseBody builds the HTTP response body from the
+// result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsResponseBody(res *lfxv2campaignserviceconnections.LinkedinAdsConnection) *UpdateLinkedinAdsResponseBody {
+	body := &UpdateLinkedinAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		OrgID:          res.OrgID,
+	}
+	return body
+}
+
+// NewTestLinkedinAdsResponseBody builds the HTTP response body from the result
+// of the "test-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestLinkedinAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestLinkedinAdsResponseBody {
+	body := &TestLinkedinAdsResponseBody{
+		OK:      res.OK,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMetaAdsResponseBody builds the HTTP response body from the result
+// of the "create-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMetaAdsResponseBody(res *lfxv2campaignserviceconnections.MetaAdsConnection) *CreateMetaAdsResponseBody {
+	body := &CreateMetaAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		PageID:         res.PageID,
+		AppID:          res.AppID,
+	}
+	return body
+}
+
+// NewGetMetaAdsResponseBody builds the HTTP response body from the result of
+// the "get-meta-ads" endpoint of the "lfx-v2-campaign-service-connections"
+// service.
+func NewGetMetaAdsResponseBody(res *lfxv2campaignserviceconnections.MetaAdsConnection) *GetMetaAdsResponseBody {
+	body := &GetMetaAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		PageID:         res.PageID,
+		AppID:          res.AppID,
+	}
+	return body
+}
+
+// NewUpdateMetaAdsResponseBody builds the HTTP response body from the result
+// of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsResponseBody(res *lfxv2campaignserviceconnections.MetaAdsConnection) *UpdateMetaAdsResponseBody {
+	body := &UpdateMetaAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		PageID:         res.PageID,
+		AppID:          res.AppID,
+	}
+	return body
+}
+
+// NewTestMetaAdsResponseBody builds the HTTP response body from the result of
+// the "test-meta-ads" endpoint of the "lfx-v2-campaign-service-connections"
+// service.
+func NewTestMetaAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestMetaAdsResponseBody {
+	body := &TestMetaAdsResponseBody{
+		OK:      res.OK,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateRedditAdsResponseBody builds the HTTP response body from the result
+// of the "create-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsConnection) *CreateRedditAdsResponseBody {
+	body := &CreateRedditAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+	}
+	return body
+}
+
+// NewGetRedditAdsResponseBody builds the HTTP response body from the result of
+// the "get-reddit-ads" endpoint of the "lfx-v2-campaign-service-connections"
+// service.
+func NewGetRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsConnection) *GetRedditAdsResponseBody {
+	body := &GetRedditAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+	}
+	return body
+}
+
+// NewUpdateRedditAdsResponseBody builds the HTTP response body from the result
+// of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsConnection) *UpdateRedditAdsResponseBody {
+	body := &UpdateRedditAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+	}
+	return body
+}
+
+// NewTestRedditAdsResponseBody builds the HTTP response body from the result
+// of the "test-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestRedditAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestRedditAdsResponseBody {
+	body := &TestRedditAdsResponseBody{
+		OK:      res.OK,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateTwitterAdsResponseBody builds the HTTP response body from the
+// result of the "create-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateTwitterAdsResponseBody(res *lfxv2campaignserviceconnections.TwitterAdsConnection) *CreateTwitterAdsResponseBody {
+	body := &CreateTwitterAdsResponseBody{
+		ID:                  res.ID,
+		ProjectID:           res.ProjectID,
+		Label:               res.Label,
+		AccountID:           res.AccountID,
+		HasCredentials:      res.HasCredentials,
+		Status:              res.Status,
+		Version:             res.Version,
+		FundingInstrumentID: res.FundingInstrumentID,
+	}
+	return body
+}
+
+// NewGetTwitterAdsResponseBody builds the HTTP response body from the result
+// of the "get-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsResponseBody(res *lfxv2campaignserviceconnections.TwitterAdsConnection) *GetTwitterAdsResponseBody {
+	body := &GetTwitterAdsResponseBody{
+		ID:                  res.ID,
+		ProjectID:           res.ProjectID,
+		Label:               res.Label,
+		AccountID:           res.AccountID,
+		HasCredentials:      res.HasCredentials,
+		Status:              res.Status,
+		Version:             res.Version,
+		FundingInstrumentID: res.FundingInstrumentID,
+	}
+	return body
+}
+
+// NewUpdateTwitterAdsResponseBody builds the HTTP response body from the
+// result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsResponseBody(res *lfxv2campaignserviceconnections.TwitterAdsConnection) *UpdateTwitterAdsResponseBody {
+	body := &UpdateTwitterAdsResponseBody{
+		ID:                  res.ID,
+		ProjectID:           res.ProjectID,
+		Label:               res.Label,
+		AccountID:           res.AccountID,
+		HasCredentials:      res.HasCredentials,
+		Status:              res.Status,
+		Version:             res.Version,
+		FundingInstrumentID: res.FundingInstrumentID,
+	}
+	return body
+}
+
+// NewTestTwitterAdsResponseBody builds the HTTP response body from the result
+// of the "test-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestTwitterAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestTwitterAdsResponseBody {
+	body := &TestTwitterAdsResponseBody{
+		OK:      res.OK,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMicrosoftAdsResponseBody builds the HTTP response body from the
+// result of the "create-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMicrosoftAdsResponseBody(res *lfxv2campaignserviceconnections.MicrosoftAdsConnection) *CreateMicrosoftAdsResponseBody {
+	body := &CreateMicrosoftAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		CustomerID:     res.CustomerID,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsResponseBody builds the HTTP response body from the result
+// of the "get-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsResponseBody(res *lfxv2campaignserviceconnections.MicrosoftAdsConnection) *GetMicrosoftAdsResponseBody {
+	body := &GetMicrosoftAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		CustomerID:     res.CustomerID,
+	}
+	return body
+}
+
+// NewUpdateMicrosoftAdsResponseBody builds the HTTP response body from the
+// result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsResponseBody(res *lfxv2campaignserviceconnections.MicrosoftAdsConnection) *UpdateMicrosoftAdsResponseBody {
+	body := &UpdateMicrosoftAdsResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		CustomerID:     res.CustomerID,
+	}
+	return body
+}
+
+// NewTestMicrosoftAdsResponseBody builds the HTTP response body from the
+// result of the "test-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMicrosoftAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestMicrosoftAdsResponseBody {
+	body := &TestMicrosoftAdsResponseBody{
+		OK:      res.OK,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotResponseBody builds the HTTP response body from the result
+// of the "create-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotResponseBody(res *lfxv2campaignserviceconnections.HubspotConnection) *CreateHubspotResponseBody {
+	body := &CreateHubspotResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		PortalID:       res.PortalID,
+		SenderEmail:    res.SenderEmail,
+		SenderName:     res.SenderName,
+		BrandKit:       res.BrandKit,
+	}
+	return body
+}
+
+// NewGetHubspotResponseBody builds the HTTP response body from the result of
+// the "get-hubspot" endpoint of the "lfx-v2-campaign-service-connections"
+// service.
+func NewGetHubspotResponseBody(res *lfxv2campaignserviceconnections.HubspotConnection) *GetHubspotResponseBody {
+	body := &GetHubspotResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		PortalID:       res.PortalID,
+		SenderEmail:    res.SenderEmail,
+		SenderName:     res.SenderName,
+		BrandKit:       res.BrandKit,
+	}
+	return body
+}
+
+// NewUpdateHubspotResponseBody builds the HTTP response body from the result
+// of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotResponseBody(res *lfxv2campaignserviceconnections.HubspotConnection) *UpdateHubspotResponseBody {
+	body := &UpdateHubspotResponseBody{
+		ID:             res.ID,
+		ProjectID:      res.ProjectID,
+		Label:          res.Label,
+		AccountID:      res.AccountID,
+		HasCredentials: res.HasCredentials,
+		Status:         res.Status,
+		Version:        res.Version,
+		PortalID:       res.PortalID,
+		SenderEmail:    res.SenderEmail,
+		SenderName:     res.SenderName,
+		BrandKit:       res.BrandKit,
+	}
+	return body
+}
+
+// NewTestHubspotResponseBody builds the HTTP response body from the result of
+// the "test-hubspot" endpoint of the "lfx-v2-campaign-service-connections"
+// service.
+func NewTestHubspotResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestHubspotResponseBody {
+	body := &TestHubspotResponseBody{
 		OK:      res.OK,
 		Message: res.Message,
 	}
@@ -610,6 +2831,1386 @@ func NewSetCredentialGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconn
 	return body
 }
 
+// NewCreateLinkedinAdsBadRequestResponseBody builds the HTTP response body
+// from the result of the "create-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateLinkedinAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateLinkedinAdsBadRequestResponseBody {
+	body := &CreateLinkedinAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateLinkedinAdsConflictResponseBody builds the HTTP response body from
+// the result of the "create-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateLinkedinAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateLinkedinAdsConflictResponseBody {
+	body := &CreateLinkedinAdsConflictResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateLinkedinAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "create-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateLinkedinAdsServiceUnavailableResponseBody {
+	body := &CreateLinkedinAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateLinkedinAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "create-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateLinkedinAdsInternalServerErrorResponseBody {
+	body := &CreateLinkedinAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetLinkedinAdsServiceUnavailableResponseBody {
+	body := &GetLinkedinAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "get-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetLinkedinAdsInternalServerErrorResponseBody {
+	body := &GetLinkedinAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "get-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetLinkedinAdsNotFoundResponseBody {
+	body := &GetLinkedinAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateLinkedinAdsBadRequestResponseBody builds the HTTP response body
+// from the result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateLinkedinAdsBadRequestResponseBody {
+	body := &UpdateLinkedinAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateLinkedinAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateLinkedinAdsServiceUnavailableResponseBody {
+	body := &UpdateLinkedinAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateLinkedinAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateLinkedinAdsInternalServerErrorResponseBody {
+	body := &UpdateLinkedinAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateLinkedinAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateLinkedinAdsNotFoundResponseBody {
+	body := &UpdateLinkedinAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateLinkedinAdsPreconditionFailedResponseBody builds the HTTP response
+// body from the result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateLinkedinAdsPreconditionFailedResponseBody {
+	body := &UpdateLinkedinAdsPreconditionFailedResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateLinkedinAdsPreconditionRequiredResponseBody builds the HTTP
+// response body from the result of the "update-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateLinkedinAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateLinkedinAdsPreconditionRequiredResponseBody {
+	body := &UpdateLinkedinAdsPreconditionRequiredResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteLinkedinAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "delete-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteLinkedinAdsServiceUnavailableResponseBody {
+	body := &DeleteLinkedinAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteLinkedinAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "delete-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteLinkedinAdsInternalServerErrorResponseBody {
+	body := &DeleteLinkedinAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteLinkedinAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "delete-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteLinkedinAdsNotFoundResponseBody {
+	body := &DeleteLinkedinAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestLinkedinAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "test-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestLinkedinAdsServiceUnavailableResponseBody {
+	body := &TestLinkedinAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestLinkedinAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "test-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestLinkedinAdsInternalServerErrorResponseBody {
+	body := &TestLinkedinAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestLinkedinAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "test-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestLinkedinAdsNotFoundResponseBody {
+	body := &TestLinkedinAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialLinkedinAdsBadRequestResponseBody builds the HTTP response
+// body from the result of the "set-credential-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialLinkedinAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialLinkedinAdsBadRequestResponseBody {
+	body := &SetCredentialLinkedinAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialLinkedinAdsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "set-credential-linkedin-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialLinkedinAdsServiceUnavailableResponseBody {
+	body := &SetCredentialLinkedinAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialLinkedinAdsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "set-credential-linkedin-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialLinkedinAdsInternalServerErrorResponseBody {
+	body := &SetCredentialLinkedinAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialLinkedinAdsNotFoundResponseBody builds the HTTP response
+// body from the result of the "set-credential-linkedin-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialLinkedinAdsNotFoundResponseBody {
+	body := &SetCredentialLinkedinAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMetaAdsBadRequestResponseBody builds the HTTP response body from
+// the result of the "create-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateMetaAdsBadRequestResponseBody {
+	body := &CreateMetaAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMetaAdsConflictResponseBody builds the HTTP response body from the
+// result of the "create-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMetaAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateMetaAdsConflictResponseBody {
+	body := &CreateMetaAdsConflictResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMetaAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "create-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateMetaAdsServiceUnavailableResponseBody {
+	body := &CreateMetaAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMetaAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "create-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateMetaAdsInternalServerErrorResponseBody {
+	body := &CreateMetaAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "get-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMetaAdsServiceUnavailableResponseBody {
+	body := &GetMetaAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "get-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMetaAdsInternalServerErrorResponseBody {
+	body := &GetMetaAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "get-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMetaAdsNotFoundResponseBody {
+	body := &GetMetaAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMetaAdsBadRequestResponseBody builds the HTTP response body from
+// the result of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateMetaAdsBadRequestResponseBody {
+	body := &UpdateMetaAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMetaAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateMetaAdsServiceUnavailableResponseBody {
+	body := &UpdateMetaAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMetaAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateMetaAdsInternalServerErrorResponseBody {
+	body := &UpdateMetaAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMetaAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateMetaAdsNotFoundResponseBody {
+	body := &UpdateMetaAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMetaAdsPreconditionFailedResponseBody builds the HTTP response body
+// from the result of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateMetaAdsPreconditionFailedResponseBody {
+	body := &UpdateMetaAdsPreconditionFailedResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMetaAdsPreconditionRequiredResponseBody builds the HTTP response
+// body from the result of the "update-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMetaAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateMetaAdsPreconditionRequiredResponseBody {
+	body := &UpdateMetaAdsPreconditionRequiredResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteMetaAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "delete-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteMetaAdsServiceUnavailableResponseBody {
+	body := &DeleteMetaAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteMetaAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "delete-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteMetaAdsInternalServerErrorResponseBody {
+	body := &DeleteMetaAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteMetaAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "delete-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteMetaAdsNotFoundResponseBody {
+	body := &DeleteMetaAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestMetaAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "test-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestMetaAdsServiceUnavailableResponseBody {
+	body := &TestMetaAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestMetaAdsInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "test-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestMetaAdsInternalServerErrorResponseBody {
+	body := &TestMetaAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestMetaAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "test-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestMetaAdsNotFoundResponseBody {
+	body := &TestMetaAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMetaAdsBadRequestResponseBody builds the HTTP response body
+// from the result of the "set-credential-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialMetaAdsBadRequestResponseBody {
+	body := &SetCredentialMetaAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMetaAdsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "set-credential-meta-ads" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialMetaAdsServiceUnavailableResponseBody {
+	body := &SetCredentialMetaAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMetaAdsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "set-credential-meta-ads" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialMetaAdsInternalServerErrorResponseBody {
+	body := &SetCredentialMetaAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMetaAdsNotFoundResponseBody builds the HTTP response body
+// from the result of the "set-credential-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialMetaAdsNotFoundResponseBody {
+	body := &SetCredentialMetaAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateRedditAdsBadRequestResponseBody builds the HTTP response body from
+// the result of the "create-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateRedditAdsBadRequestResponseBody {
+	body := &CreateRedditAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateRedditAdsConflictResponseBody builds the HTTP response body from
+// the result of the "create-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateRedditAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateRedditAdsConflictResponseBody {
+	body := &CreateRedditAdsConflictResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateRedditAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "create-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateRedditAdsServiceUnavailableResponseBody {
+	body := &CreateRedditAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateRedditAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "create-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateRedditAdsInternalServerErrorResponseBody {
+	body := &CreateRedditAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetRedditAdsServiceUnavailableResponseBody {
+	body := &GetRedditAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetRedditAdsInternalServerErrorResponseBody {
+	body := &GetRedditAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "get-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetRedditAdsNotFoundResponseBody {
+	body := &GetRedditAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateRedditAdsBadRequestResponseBody builds the HTTP response body from
+// the result of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateRedditAdsBadRequestResponseBody {
+	body := &UpdateRedditAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateRedditAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateRedditAdsServiceUnavailableResponseBody {
+	body := &UpdateRedditAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateRedditAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateRedditAdsInternalServerErrorResponseBody {
+	body := &UpdateRedditAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateRedditAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateRedditAdsNotFoundResponseBody {
+	body := &UpdateRedditAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateRedditAdsPreconditionFailedResponseBody builds the HTTP response
+// body from the result of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateRedditAdsPreconditionFailedResponseBody {
+	body := &UpdateRedditAdsPreconditionFailedResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateRedditAdsPreconditionRequiredResponseBody builds the HTTP response
+// body from the result of the "update-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateRedditAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateRedditAdsPreconditionRequiredResponseBody {
+	body := &UpdateRedditAdsPreconditionRequiredResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteRedditAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "delete-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteRedditAdsServiceUnavailableResponseBody {
+	body := &DeleteRedditAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteRedditAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "delete-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteRedditAdsInternalServerErrorResponseBody {
+	body := &DeleteRedditAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteRedditAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "delete-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteRedditAdsNotFoundResponseBody {
+	body := &DeleteRedditAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestRedditAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "test-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestRedditAdsServiceUnavailableResponseBody {
+	body := &TestRedditAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestRedditAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "test-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestRedditAdsInternalServerErrorResponseBody {
+	body := &TestRedditAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestRedditAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "test-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestRedditAdsNotFoundResponseBody {
+	body := &TestRedditAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialRedditAdsBadRequestResponseBody builds the HTTP response
+// body from the result of the "set-credential-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialRedditAdsBadRequestResponseBody {
+	body := &SetCredentialRedditAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialRedditAdsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "set-credential-reddit-ads" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialRedditAdsServiceUnavailableResponseBody {
+	body := &SetCredentialRedditAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialRedditAdsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "set-credential-reddit-ads" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialRedditAdsInternalServerErrorResponseBody {
+	body := &SetCredentialRedditAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialRedditAdsNotFoundResponseBody builds the HTTP response body
+// from the result of the "set-credential-reddit-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialRedditAdsNotFoundResponseBody {
+	body := &SetCredentialRedditAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateTwitterAdsBadRequestResponseBody builds the HTTP response body from
+// the result of the "create-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateTwitterAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateTwitterAdsBadRequestResponseBody {
+	body := &CreateTwitterAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateTwitterAdsConflictResponseBody builds the HTTP response body from
+// the result of the "create-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateTwitterAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateTwitterAdsConflictResponseBody {
+	body := &CreateTwitterAdsConflictResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateTwitterAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "create-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateTwitterAdsServiceUnavailableResponseBody {
+	body := &CreateTwitterAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateTwitterAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "create-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateTwitterAdsInternalServerErrorResponseBody {
+	body := &CreateTwitterAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "get-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetTwitterAdsServiceUnavailableResponseBody {
+	body := &GetTwitterAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "get-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetTwitterAdsInternalServerErrorResponseBody {
+	body := &GetTwitterAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "get-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetTwitterAdsNotFoundResponseBody {
+	body := &GetTwitterAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateTwitterAdsBadRequestResponseBody builds the HTTP response body from
+// the result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateTwitterAdsBadRequestResponseBody {
+	body := &UpdateTwitterAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateTwitterAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateTwitterAdsServiceUnavailableResponseBody {
+	body := &UpdateTwitterAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateTwitterAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateTwitterAdsInternalServerErrorResponseBody {
+	body := &UpdateTwitterAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateTwitterAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateTwitterAdsNotFoundResponseBody {
+	body := &UpdateTwitterAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateTwitterAdsPreconditionFailedResponseBody builds the HTTP response
+// body from the result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateTwitterAdsPreconditionFailedResponseBody {
+	body := &UpdateTwitterAdsPreconditionFailedResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateTwitterAdsPreconditionRequiredResponseBody builds the HTTP response
+// body from the result of the "update-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateTwitterAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateTwitterAdsPreconditionRequiredResponseBody {
+	body := &UpdateTwitterAdsPreconditionRequiredResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteTwitterAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "delete-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteTwitterAdsServiceUnavailableResponseBody {
+	body := &DeleteTwitterAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteTwitterAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "delete-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteTwitterAdsInternalServerErrorResponseBody {
+	body := &DeleteTwitterAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteTwitterAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "delete-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteTwitterAdsNotFoundResponseBody {
+	body := &DeleteTwitterAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestTwitterAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "test-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestTwitterAdsServiceUnavailableResponseBody {
+	body := &TestTwitterAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestTwitterAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "test-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestTwitterAdsInternalServerErrorResponseBody {
+	body := &TestTwitterAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestTwitterAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "test-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestTwitterAdsNotFoundResponseBody {
+	body := &TestTwitterAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialTwitterAdsBadRequestResponseBody builds the HTTP response
+// body from the result of the "set-credential-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialTwitterAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialTwitterAdsBadRequestResponseBody {
+	body := &SetCredentialTwitterAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialTwitterAdsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "set-credential-twitter-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialTwitterAdsServiceUnavailableResponseBody {
+	body := &SetCredentialTwitterAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialTwitterAdsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "set-credential-twitter-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialTwitterAdsInternalServerErrorResponseBody {
+	body := &SetCredentialTwitterAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialTwitterAdsNotFoundResponseBody builds the HTTP response body
+// from the result of the "set-credential-twitter-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialTwitterAdsNotFoundResponseBody {
+	body := &SetCredentialTwitterAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMicrosoftAdsBadRequestResponseBody builds the HTTP response body
+// from the result of the "create-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateMicrosoftAdsBadRequestResponseBody {
+	body := &CreateMicrosoftAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMicrosoftAdsConflictResponseBody builds the HTTP response body from
+// the result of the "create-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMicrosoftAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateMicrosoftAdsConflictResponseBody {
+	body := &CreateMicrosoftAdsConflictResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMicrosoftAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "create-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateMicrosoftAdsServiceUnavailableResponseBody {
+	body := &CreateMicrosoftAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateMicrosoftAdsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "create-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateMicrosoftAdsInternalServerErrorResponseBody {
+	body := &CreateMicrosoftAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMicrosoftAdsServiceUnavailableResponseBody {
+	body := &GetMicrosoftAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "get-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMicrosoftAdsInternalServerErrorResponseBody {
+	body := &GetMicrosoftAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "get-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMicrosoftAdsNotFoundResponseBody {
+	body := &GetMicrosoftAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMicrosoftAdsBadRequestResponseBody builds the HTTP response body
+// from the result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateMicrosoftAdsBadRequestResponseBody {
+	body := &UpdateMicrosoftAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMicrosoftAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateMicrosoftAdsServiceUnavailableResponseBody {
+	body := &UpdateMicrosoftAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMicrosoftAdsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateMicrosoftAdsInternalServerErrorResponseBody {
+	body := &UpdateMicrosoftAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMicrosoftAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateMicrosoftAdsNotFoundResponseBody {
+	body := &UpdateMicrosoftAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMicrosoftAdsPreconditionFailedResponseBody builds the HTTP response
+// body from the result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateMicrosoftAdsPreconditionFailedResponseBody {
+	body := &UpdateMicrosoftAdsPreconditionFailedResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateMicrosoftAdsPreconditionRequiredResponseBody builds the HTTP
+// response body from the result of the "update-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateMicrosoftAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateMicrosoftAdsPreconditionRequiredResponseBody {
+	body := &UpdateMicrosoftAdsPreconditionRequiredResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteMicrosoftAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "delete-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteMicrosoftAdsServiceUnavailableResponseBody {
+	body := &DeleteMicrosoftAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteMicrosoftAdsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "delete-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteMicrosoftAdsInternalServerErrorResponseBody {
+	body := &DeleteMicrosoftAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteMicrosoftAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "delete-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteMicrosoftAdsNotFoundResponseBody {
+	body := &DeleteMicrosoftAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestMicrosoftAdsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "test-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestMicrosoftAdsServiceUnavailableResponseBody {
+	body := &TestMicrosoftAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestMicrosoftAdsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "test-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestMicrosoftAdsInternalServerErrorResponseBody {
+	body := &TestMicrosoftAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestMicrosoftAdsNotFoundResponseBody builds the HTTP response body from
+// the result of the "test-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestMicrosoftAdsNotFoundResponseBody {
+	body := &TestMicrosoftAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMicrosoftAdsBadRequestResponseBody builds the HTTP response
+// body from the result of the "set-credential-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialMicrosoftAdsBadRequestResponseBody {
+	body := &SetCredentialMicrosoftAdsBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMicrosoftAdsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "set-credential-microsoft-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialMicrosoftAdsServiceUnavailableResponseBody {
+	body := &SetCredentialMicrosoftAdsServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMicrosoftAdsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "set-credential-microsoft-ads" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialMicrosoftAdsInternalServerErrorResponseBody {
+	body := &SetCredentialMicrosoftAdsInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialMicrosoftAdsNotFoundResponseBody builds the HTTP response
+// body from the result of the "set-credential-microsoft-ads" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialMicrosoftAdsNotFoundResponseBody {
+	body := &SetCredentialMicrosoftAdsNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotBadRequestResponseBody builds the HTTP response body from
+// the result of the "create-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateHubspotBadRequestResponseBody {
+	body := &CreateHubspotBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotConflictResponseBody builds the HTTP response body from the
+// result of the "create-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateHubspotConflictResponseBody {
+	body := &CreateHubspotConflictResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "create-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateHubspotServiceUnavailableResponseBody {
+	body := &CreateHubspotServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateHubspotInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "create-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewCreateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateHubspotInternalServerErrorResponseBody {
+	body := &CreateHubspotInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetHubspotServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "get-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetHubspotServiceUnavailableResponseBody {
+	body := &GetHubspotServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetHubspotInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "get-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetHubspotInternalServerErrorResponseBody {
+	body := &GetHubspotInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetHubspotNotFoundResponseBody builds the HTTP response body from the
+// result of the "get-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetHubspotNotFoundResponseBody {
+	body := &GetHubspotNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateHubspotBadRequestResponseBody builds the HTTP response body from
+// the result of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateHubspotBadRequestResponseBody {
+	body := &UpdateHubspotBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateHubspotServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateHubspotServiceUnavailableResponseBody {
+	body := &UpdateHubspotServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateHubspotInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateHubspotInternalServerErrorResponseBody {
+	body := &UpdateHubspotInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateHubspotNotFoundResponseBody builds the HTTP response body from the
+// result of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateHubspotNotFoundResponseBody {
+	body := &UpdateHubspotNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateHubspotPreconditionFailedResponseBody builds the HTTP response body
+// from the result of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateHubspotPreconditionFailedResponseBody {
+	body := &UpdateHubspotPreconditionFailedResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateHubspotPreconditionRequiredResponseBody builds the HTTP response
+// body from the result of the "update-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewUpdateHubspotPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateHubspotPreconditionRequiredResponseBody {
+	body := &UpdateHubspotPreconditionRequiredResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteHubspotServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "delete-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteHubspotServiceUnavailableResponseBody {
+	body := &DeleteHubspotServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteHubspotInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "delete-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteHubspotInternalServerErrorResponseBody {
+	body := &DeleteHubspotInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteHubspotNotFoundResponseBody builds the HTTP response body from the
+// result of the "delete-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewDeleteHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteHubspotNotFoundResponseBody {
+	body := &DeleteHubspotNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestHubspotServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "test-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestHubspotServiceUnavailableResponseBody {
+	body := &TestHubspotServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestHubspotInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "test-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestHubspotInternalServerErrorResponseBody {
+	body := &TestHubspotInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewTestHubspotNotFoundResponseBody builds the HTTP response body from the
+// result of the "test-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewTestHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestHubspotNotFoundResponseBody {
+	body := &TestHubspotNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialHubspotBadRequestResponseBody builds the HTTP response body
+// from the result of the "set-credential-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialHubspotBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialHubspotBadRequestResponseBody {
+	body := &SetCredentialHubspotBadRequestResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialHubspotServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "set-credential-hubspot" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialHubspotServiceUnavailableResponseBody {
+	body := &SetCredentialHubspotServiceUnavailableResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialHubspotInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "set-credential-hubspot" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialHubspotInternalServerErrorResponseBody {
+	body := &SetCredentialHubspotInternalServerErrorResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetCredentialHubspotNotFoundResponseBody builds the HTTP response body
+// from the result of the "set-credential-hubspot" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSetCredentialHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialHubspotNotFoundResponseBody {
+	body := &SetCredentialHubspotNotFoundResponseBody{
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateGoogleAdsPayload builds a lfx-v2-campaign-service-connections
 // service create-google-ads endpoint payload.
 func NewCreateGoogleAdsPayload(body *CreateGoogleAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateGoogleAdsPayload {
@@ -676,6 +4277,400 @@ func NewSetCredentialGoogleAdsPayload(body *SetCredentialGoogleAdsRequestBody, p
 	return v
 }
 
+// NewCreateLinkedinAdsPayload builds a lfx-v2-campaign-service-connections
+// service create-linkedin-ads endpoint payload.
+func NewCreateLinkedinAdsPayload(body *CreateLinkedinAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateLinkedinAdsPayload {
+	v := &lfxv2campaignserviceconnections.CreateLinkedinAdsPayload{}
+	v.Config = unmarshalLinkedinAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsLinkedinAdsConnectionConfig(body.Config)
+	v.Credentials = unmarshalLinkedinAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsLinkedinAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetLinkedinAdsPayload builds a lfx-v2-campaign-service-connections
+// service get-linkedin-ads endpoint payload.
+func NewGetLinkedinAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.GetLinkedinAdsPayload {
+	v := &lfxv2campaignserviceconnections.GetLinkedinAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewUpdateLinkedinAdsPayload builds a lfx-v2-campaign-service-connections
+// service update-linkedin-ads endpoint payload.
+func NewUpdateLinkedinAdsPayload(body *UpdateLinkedinAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload {
+	v := &lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload{}
+	v.Config = unmarshalLinkedinAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsLinkedinAdsConnectionConfig(body.Config)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v
+}
+
+// NewDeleteLinkedinAdsPayload builds a lfx-v2-campaign-service-connections
+// service delete-linkedin-ads endpoint payload.
+func NewDeleteLinkedinAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.DeleteLinkedinAdsPayload {
+	v := &lfxv2campaignserviceconnections.DeleteLinkedinAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewTestLinkedinAdsPayload builds a lfx-v2-campaign-service-connections
+// service test-linkedin-ads endpoint payload.
+func NewTestLinkedinAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.TestLinkedinAdsPayload {
+	v := &lfxv2campaignserviceconnections.TestLinkedinAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSetCredentialLinkedinAdsPayload builds a
+// lfx-v2-campaign-service-connections service set-credential-linkedin-ads
+// endpoint payload.
+func NewSetCredentialLinkedinAdsPayload(body *SetCredentialLinkedinAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.SetCredentialLinkedinAdsPayload {
+	v := &lfxv2campaignserviceconnections.SetCredentialLinkedinAdsPayload{}
+	v.Credentials = unmarshalLinkedinAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsLinkedinAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewCreateMetaAdsPayload builds a lfx-v2-campaign-service-connections service
+// create-meta-ads endpoint payload.
+func NewCreateMetaAdsPayload(body *CreateMetaAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateMetaAdsPayload {
+	v := &lfxv2campaignserviceconnections.CreateMetaAdsPayload{}
+	v.Config = unmarshalMetaAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMetaAdsConnectionConfig(body.Config)
+	v.Credentials = unmarshalMetaAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsMetaAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetMetaAdsPayload builds a lfx-v2-campaign-service-connections service
+// get-meta-ads endpoint payload.
+func NewGetMetaAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.GetMetaAdsPayload {
+	v := &lfxv2campaignserviceconnections.GetMetaAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewUpdateMetaAdsPayload builds a lfx-v2-campaign-service-connections service
+// update-meta-ads endpoint payload.
+func NewUpdateMetaAdsPayload(body *UpdateMetaAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateMetaAdsPayload {
+	v := &lfxv2campaignserviceconnections.UpdateMetaAdsPayload{}
+	v.Config = unmarshalMetaAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMetaAdsConnectionConfig(body.Config)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v
+}
+
+// NewDeleteMetaAdsPayload builds a lfx-v2-campaign-service-connections service
+// delete-meta-ads endpoint payload.
+func NewDeleteMetaAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.DeleteMetaAdsPayload {
+	v := &lfxv2campaignserviceconnections.DeleteMetaAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewTestMetaAdsPayload builds a lfx-v2-campaign-service-connections service
+// test-meta-ads endpoint payload.
+func NewTestMetaAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.TestMetaAdsPayload {
+	v := &lfxv2campaignserviceconnections.TestMetaAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSetCredentialMetaAdsPayload builds a lfx-v2-campaign-service-connections
+// service set-credential-meta-ads endpoint payload.
+func NewSetCredentialMetaAdsPayload(body *SetCredentialMetaAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.SetCredentialMetaAdsPayload {
+	v := &lfxv2campaignserviceconnections.SetCredentialMetaAdsPayload{}
+	v.Credentials = unmarshalMetaAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsMetaAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewCreateRedditAdsPayload builds a lfx-v2-campaign-service-connections
+// service create-reddit-ads endpoint payload.
+func NewCreateRedditAdsPayload(body *CreateRedditAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateRedditAdsPayload {
+	v := &lfxv2campaignserviceconnections.CreateRedditAdsPayload{}
+	v.Config = unmarshalRedditAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsRedditAdsConnectionConfig(body.Config)
+	v.Credentials = unmarshalRedditAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsRedditAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetRedditAdsPayload builds a lfx-v2-campaign-service-connections service
+// get-reddit-ads endpoint payload.
+func NewGetRedditAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.GetRedditAdsPayload {
+	v := &lfxv2campaignserviceconnections.GetRedditAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewUpdateRedditAdsPayload builds a lfx-v2-campaign-service-connections
+// service update-reddit-ads endpoint payload.
+func NewUpdateRedditAdsPayload(body *UpdateRedditAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateRedditAdsPayload {
+	v := &lfxv2campaignserviceconnections.UpdateRedditAdsPayload{}
+	v.Config = unmarshalRedditAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsRedditAdsConnectionConfig(body.Config)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v
+}
+
+// NewDeleteRedditAdsPayload builds a lfx-v2-campaign-service-connections
+// service delete-reddit-ads endpoint payload.
+func NewDeleteRedditAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.DeleteRedditAdsPayload {
+	v := &lfxv2campaignserviceconnections.DeleteRedditAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewTestRedditAdsPayload builds a lfx-v2-campaign-service-connections service
+// test-reddit-ads endpoint payload.
+func NewTestRedditAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.TestRedditAdsPayload {
+	v := &lfxv2campaignserviceconnections.TestRedditAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSetCredentialRedditAdsPayload builds a
+// lfx-v2-campaign-service-connections service set-credential-reddit-ads
+// endpoint payload.
+func NewSetCredentialRedditAdsPayload(body *SetCredentialRedditAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.SetCredentialRedditAdsPayload {
+	v := &lfxv2campaignserviceconnections.SetCredentialRedditAdsPayload{}
+	v.Credentials = unmarshalRedditAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsRedditAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewCreateTwitterAdsPayload builds a lfx-v2-campaign-service-connections
+// service create-twitter-ads endpoint payload.
+func NewCreateTwitterAdsPayload(body *CreateTwitterAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateTwitterAdsPayload {
+	v := &lfxv2campaignserviceconnections.CreateTwitterAdsPayload{}
+	v.Config = unmarshalTwitterAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsTwitterAdsConnectionConfig(body.Config)
+	v.Credentials = unmarshalTwitterAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsTwitterAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetTwitterAdsPayload builds a lfx-v2-campaign-service-connections service
+// get-twitter-ads endpoint payload.
+func NewGetTwitterAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.GetTwitterAdsPayload {
+	v := &lfxv2campaignserviceconnections.GetTwitterAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewUpdateTwitterAdsPayload builds a lfx-v2-campaign-service-connections
+// service update-twitter-ads endpoint payload.
+func NewUpdateTwitterAdsPayload(body *UpdateTwitterAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateTwitterAdsPayload {
+	v := &lfxv2campaignserviceconnections.UpdateTwitterAdsPayload{}
+	v.Config = unmarshalTwitterAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsTwitterAdsConnectionConfig(body.Config)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v
+}
+
+// NewDeleteTwitterAdsPayload builds a lfx-v2-campaign-service-connections
+// service delete-twitter-ads endpoint payload.
+func NewDeleteTwitterAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.DeleteTwitterAdsPayload {
+	v := &lfxv2campaignserviceconnections.DeleteTwitterAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewTestTwitterAdsPayload builds a lfx-v2-campaign-service-connections
+// service test-twitter-ads endpoint payload.
+func NewTestTwitterAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.TestTwitterAdsPayload {
+	v := &lfxv2campaignserviceconnections.TestTwitterAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSetCredentialTwitterAdsPayload builds a
+// lfx-v2-campaign-service-connections service set-credential-twitter-ads
+// endpoint payload.
+func NewSetCredentialTwitterAdsPayload(body *SetCredentialTwitterAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.SetCredentialTwitterAdsPayload {
+	v := &lfxv2campaignserviceconnections.SetCredentialTwitterAdsPayload{}
+	v.Credentials = unmarshalTwitterAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsTwitterAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewCreateMicrosoftAdsPayload builds a lfx-v2-campaign-service-connections
+// service create-microsoft-ads endpoint payload.
+func NewCreateMicrosoftAdsPayload(body *CreateMicrosoftAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateMicrosoftAdsPayload {
+	v := &lfxv2campaignserviceconnections.CreateMicrosoftAdsPayload{}
+	v.Config = unmarshalMicrosoftAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMicrosoftAdsConnectionConfig(body.Config)
+	v.Credentials = unmarshalMicrosoftAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsMicrosoftAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetMicrosoftAdsPayload builds a lfx-v2-campaign-service-connections
+// service get-microsoft-ads endpoint payload.
+func NewGetMicrosoftAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.GetMicrosoftAdsPayload {
+	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewUpdateMicrosoftAdsPayload builds a lfx-v2-campaign-service-connections
+// service update-microsoft-ads endpoint payload.
+func NewUpdateMicrosoftAdsPayload(body *UpdateMicrosoftAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload {
+	v := &lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload{}
+	v.Config = unmarshalMicrosoftAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMicrosoftAdsConnectionConfig(body.Config)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v
+}
+
+// NewDeleteMicrosoftAdsPayload builds a lfx-v2-campaign-service-connections
+// service delete-microsoft-ads endpoint payload.
+func NewDeleteMicrosoftAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.DeleteMicrosoftAdsPayload {
+	v := &lfxv2campaignserviceconnections.DeleteMicrosoftAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewTestMicrosoftAdsPayload builds a lfx-v2-campaign-service-connections
+// service test-microsoft-ads endpoint payload.
+func NewTestMicrosoftAdsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.TestMicrosoftAdsPayload {
+	v := &lfxv2campaignserviceconnections.TestMicrosoftAdsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSetCredentialMicrosoftAdsPayload builds a
+// lfx-v2-campaign-service-connections service set-credential-microsoft-ads
+// endpoint payload.
+func NewSetCredentialMicrosoftAdsPayload(body *SetCredentialMicrosoftAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.SetCredentialMicrosoftAdsPayload {
+	v := &lfxv2campaignserviceconnections.SetCredentialMicrosoftAdsPayload{}
+	v.Credentials = unmarshalMicrosoftAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsMicrosoftAdsCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewCreateHubspotPayload builds a lfx-v2-campaign-service-connections service
+// create-hubspot endpoint payload.
+func NewCreateHubspotPayload(body *CreateHubspotRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateHubspotPayload {
+	v := &lfxv2campaignserviceconnections.CreateHubspotPayload{}
+	v.Config = unmarshalHubspotConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsHubspotConnectionConfig(body.Config)
+	v.Credentials = unmarshalHubspotCredentialsRequestBodyToLfxv2campaignserviceconnectionsHubspotCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetHubspotPayload builds a lfx-v2-campaign-service-connections service
+// get-hubspot endpoint payload.
+func NewGetHubspotPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.GetHubspotPayload {
+	v := &lfxv2campaignserviceconnections.GetHubspotPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewUpdateHubspotPayload builds a lfx-v2-campaign-service-connections service
+// update-hubspot endpoint payload.
+func NewUpdateHubspotPayload(body *UpdateHubspotRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateHubspotPayload {
+	v := &lfxv2campaignserviceconnections.UpdateHubspotPayload{}
+	v.Config = unmarshalHubspotConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsHubspotConnectionConfig(body.Config)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v
+}
+
+// NewDeleteHubspotPayload builds a lfx-v2-campaign-service-connections service
+// delete-hubspot endpoint payload.
+func NewDeleteHubspotPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.DeleteHubspotPayload {
+	v := &lfxv2campaignserviceconnections.DeleteHubspotPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewTestHubspotPayload builds a lfx-v2-campaign-service-connections service
+// test-hubspot endpoint payload.
+func NewTestHubspotPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.TestHubspotPayload {
+	v := &lfxv2campaignserviceconnections.TestHubspotPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSetCredentialHubspotPayload builds a lfx-v2-campaign-service-connections
+// service set-credential-hubspot endpoint payload.
+func NewSetCredentialHubspotPayload(body *SetCredentialHubspotRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.SetCredentialHubspotPayload {
+	v := &lfxv2campaignserviceconnections.SetCredentialHubspotPayload{}
+	v.Credentials = unmarshalHubspotCredentialsRequestBodyToLfxv2campaignserviceconnectionsHubspotCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // ValidateCreateGoogleAdsRequestBody runs the validations defined on
 // Create-Google-AdsRequestBody
 func ValidateCreateGoogleAdsRequestBody(body *CreateGoogleAdsRequestBody) (err error) {
@@ -726,6 +4721,306 @@ func ValidateSetCredentialGoogleAdsRequestBody(body *SetCredentialGoogleAdsReque
 	return
 }
 
+// ValidateCreateLinkedinAdsRequestBody runs the validations defined on
+// Create-Linkedin-AdsRequestBody
+func ValidateCreateLinkedinAdsRequestBody(body *CreateLinkedinAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateLinkedinAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateLinkedinAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateUpdateLinkedinAdsRequestBody runs the validations defined on
+// Update-Linkedin-AdsRequestBody
+func ValidateUpdateLinkedinAdsRequestBody(body *UpdateLinkedinAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateLinkedinAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateSetCredentialLinkedinAdsRequestBody runs the validations defined on
+// Set-Credential-Linkedin-AdsRequestBody
+func ValidateSetCredentialLinkedinAdsRequestBody(body *SetCredentialLinkedinAdsRequestBody) (err error) {
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateLinkedinAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCreateMetaAdsRequestBody runs the validations defined on
+// Create-Meta-AdsRequestBody
+func ValidateCreateMetaAdsRequestBody(body *CreateMetaAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateMetaAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateMetaAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateUpdateMetaAdsRequestBody runs the validations defined on
+// Update-Meta-AdsRequestBody
+func ValidateUpdateMetaAdsRequestBody(body *UpdateMetaAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateMetaAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateSetCredentialMetaAdsRequestBody runs the validations defined on
+// Set-Credential-Meta-AdsRequestBody
+func ValidateSetCredentialMetaAdsRequestBody(body *SetCredentialMetaAdsRequestBody) (err error) {
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateMetaAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCreateRedditAdsRequestBody runs the validations defined on
+// Create-Reddit-AdsRequestBody
+func ValidateCreateRedditAdsRequestBody(body *CreateRedditAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateRedditAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateRedditAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateUpdateRedditAdsRequestBody runs the validations defined on
+// Update-Reddit-AdsRequestBody
+func ValidateUpdateRedditAdsRequestBody(body *UpdateRedditAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateRedditAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateSetCredentialRedditAdsRequestBody runs the validations defined on
+// Set-Credential-Reddit-AdsRequestBody
+func ValidateSetCredentialRedditAdsRequestBody(body *SetCredentialRedditAdsRequestBody) (err error) {
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateRedditAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCreateTwitterAdsRequestBody runs the validations defined on
+// Create-Twitter-AdsRequestBody
+func ValidateCreateTwitterAdsRequestBody(body *CreateTwitterAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateTwitterAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateTwitterAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateUpdateTwitterAdsRequestBody runs the validations defined on
+// Update-Twitter-AdsRequestBody
+func ValidateUpdateTwitterAdsRequestBody(body *UpdateTwitterAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateTwitterAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateSetCredentialTwitterAdsRequestBody runs the validations defined on
+// Set-Credential-Twitter-AdsRequestBody
+func ValidateSetCredentialTwitterAdsRequestBody(body *SetCredentialTwitterAdsRequestBody) (err error) {
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateTwitterAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCreateMicrosoftAdsRequestBody runs the validations defined on
+// Create-Microsoft-AdsRequestBody
+func ValidateCreateMicrosoftAdsRequestBody(body *CreateMicrosoftAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateMicrosoftAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateMicrosoftAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateUpdateMicrosoftAdsRequestBody runs the validations defined on
+// Update-Microsoft-AdsRequestBody
+func ValidateUpdateMicrosoftAdsRequestBody(body *UpdateMicrosoftAdsRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateMicrosoftAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateSetCredentialMicrosoftAdsRequestBody runs the validations defined on
+// Set-Credential-Microsoft-AdsRequestBody
+func ValidateSetCredentialMicrosoftAdsRequestBody(body *SetCredentialMicrosoftAdsRequestBody) (err error) {
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateMicrosoftAdsCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCreateHubspotRequestBody runs the validations defined on
+// Create-HubspotRequestBody
+func ValidateCreateHubspotRequestBody(body *CreateHubspotRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateHubspotConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateHubspotCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateUpdateHubspotRequestBody runs the validations defined on
+// Update-HubspotRequestBody
+func ValidateUpdateHubspotRequestBody(body *UpdateHubspotRequestBody) (err error) {
+	if body.Config == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateHubspotConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateSetCredentialHubspotRequestBody runs the validations defined on
+// Set-Credential-HubspotRequestBody
+func ValidateSetCredentialHubspotRequestBody(body *SetCredentialHubspotRequestBody) (err error) {
+	if body.Credentials == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
+	}
+	if body.Credentials != nil {
+		if err2 := ValidateHubspotCredentialsRequestBody(body.Credentials); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
 // ValidateGoogleAdsConnectionConfigRequestBody runs the validations defined on
 // google-ads-connection-configRequestBody
 func ValidateGoogleAdsConnectionConfigRequestBody(body *GoogleAdsConnectionConfigRequestBody) (err error) {
@@ -749,6 +5044,144 @@ func ValidateGoogleAdsCredentialsRequestBody(body *GoogleAdsCredentialsRequestBo
 	}
 	if body.DeveloperToken == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("developer_token", "body"))
+	}
+	return
+}
+
+// ValidateLinkedinAdsConnectionConfigRequestBody runs the validations defined
+// on linkedin-ads-connection-configRequestBody
+func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionConfigRequestBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.OrgID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("org_id", "body"))
+	}
+	return
+}
+
+// ValidateLinkedinAdsCredentialsRequestBody runs the validations defined on
+// linkedin-ads-credentialsRequestBody
+func ValidateLinkedinAdsCredentialsRequestBody(body *LinkedinAdsCredentialsRequestBody) (err error) {
+	if body.AccessToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("access_token", "body"))
+	}
+	return
+}
+
+// ValidateMetaAdsConnectionConfigRequestBody runs the validations defined on
+// meta-ads-connection-configRequestBody
+func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigRequestBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	return
+}
+
+// ValidateMetaAdsCredentialsRequestBody runs the validations defined on
+// meta-ads-credentialsRequestBody
+func ValidateMetaAdsCredentialsRequestBody(body *MetaAdsCredentialsRequestBody) (err error) {
+	if body.AccessToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("access_token", "body"))
+	}
+	if body.AppSecret == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("app_secret", "body"))
+	}
+	return
+}
+
+// ValidateRedditAdsConnectionConfigRequestBody runs the validations defined on
+// reddit-ads-connection-configRequestBody
+func ValidateRedditAdsConnectionConfigRequestBody(body *RedditAdsConnectionConfigRequestBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	return
+}
+
+// ValidateRedditAdsCredentialsRequestBody runs the validations defined on
+// reddit-ads-credentialsRequestBody
+func ValidateRedditAdsCredentialsRequestBody(body *RedditAdsCredentialsRequestBody) (err error) {
+	if body.ClientID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_id", "body"))
+	}
+	if body.ClientSecret == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_secret", "body"))
+	}
+	if body.RefreshToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("refresh_token", "body"))
+	}
+	return
+}
+
+// ValidateTwitterAdsConnectionConfigRequestBody runs the validations defined
+// on twitter-ads-connection-configRequestBody
+func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionConfigRequestBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	return
+}
+
+// ValidateTwitterAdsCredentialsRequestBody runs the validations defined on
+// twitter-ads-credentialsRequestBody
+func ValidateTwitterAdsCredentialsRequestBody(body *TwitterAdsCredentialsRequestBody) (err error) {
+	if body.ConsumerKey == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("consumer_key", "body"))
+	}
+	if body.ConsumerSecret == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("consumer_secret", "body"))
+	}
+	if body.AccessToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("access_token", "body"))
+	}
+	if body.AccessTokenSecret == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("access_token_secret", "body"))
+	}
+	return
+}
+
+// ValidateMicrosoftAdsConnectionConfigRequestBody runs the validations defined
+// on microsoft-ads-connection-configRequestBody
+func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectionConfigRequestBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	return
+}
+
+// ValidateMicrosoftAdsCredentialsRequestBody runs the validations defined on
+// microsoft-ads-credentialsRequestBody
+func ValidateMicrosoftAdsCredentialsRequestBody(body *MicrosoftAdsCredentialsRequestBody) (err error) {
+	if body.ClientID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_id", "body"))
+	}
+	if body.ClientSecret == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_secret", "body"))
+	}
+	if body.RefreshToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("refresh_token", "body"))
+	}
+	if body.DeveloperToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("developer_token", "body"))
+	}
+	return
+}
+
+// ValidateHubspotConnectionConfigRequestBody runs the validations defined on
+// hubspot-connection-configRequestBody
+func ValidateHubspotConnectionConfigRequestBody(body *HubspotConnectionConfigRequestBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	return
+}
+
+// ValidateHubspotCredentialsRequestBody runs the validations defined on
+// hubspot-credentialsRequestBody
+func ValidateHubspotCredentialsRequestBody(body *HubspotCredentialsRequestBody) (err error) {
+	if body.PrivateAppToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("private_app_token", "body"))
 	}
 	return
 }

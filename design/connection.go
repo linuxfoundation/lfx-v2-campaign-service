@@ -9,14 +9,18 @@
 // List endpoint — the provider name is the identity within the project). See
 // docs/api-catalog.md and docs/channel-connections-schema.md.
 //
-// This file defines the API contract only. The stub service implementation
-// lives in internal/service/connection.go; persistence/encryption land in
-// LFXV2-2555/2556.
+// All seven paid providers (google-ads, linkedin-ads, meta-ads, reddit-ads,
+// twitter-ads, microsoft-ads, hubspot) are defined here. Each shares the six
+// endpoint shapes via connectionMethods and carries its own strongly-typed
+// credential/config/result. This file defines the API contract only; the stub
+// service implementation lives in internal/service/connection.go, and
+// persistence/encryption land in LFXV2-2555/2556.
 package design
 
 import (
 	//nolint:staticcheck // ST1001: the recommended way of using the goa DSL package is with the . import
 	. "goa.design/goa/v3/dsl"
+	"goa.design/goa/v3/eval"
 )
 
 // JWTAuth is the JWT security scheme. Tokens are issued by Heimdall at the
@@ -87,44 +91,6 @@ var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() 
 	Required("message")
 })
 
-// ─── Google Ads connection types ───
-
-// GoogleAdsCredentials is the plaintext credential shape a caller supplies. It
-// is encrypted at rest (AES-256-GCM) and never returned in a response.
-var GoogleAdsCredentials = Type("google-ads-credentials", func() {
-	Description("Google Ads OAuth credential set. Write-only; never returned.")
-	Attribute("refresh_token", String, "OAuth refresh token")
-	Attribute("client_id", String, "OAuth client id")
-	Attribute("client_secret", String, "OAuth client secret")
-	Attribute("developer_token", String, "Google Ads developer token")
-	Required("refresh_token", "client_id", "client_secret", "developer_token")
-})
-
-// GoogleAdsConnectionConfig is the mutable, non-credential configuration.
-var GoogleAdsConnectionConfig = Type("google-ads-connection-config", func() {
-	Attribute("label", String, "Optional friendly name", func() { Example("TLF Main") })
-	Attribute("account_id", String, "Google Ads customer ID", func() { Example("8666746580") })
-	Attribute("login_customer_id", String, "Manager account used for API access", func() { Example("9746983954") })
-	Required("account_id")
-})
-
-// GoogleAdsConnection is the response view. Credentials are redacted; a
-// has_credentials flag reports whether a credential is stored.
-var GoogleAdsConnection = Type("google-ads-connection", func() {
-	Attribute("id", String, "Service-generated connection UUID (not used in paths)")
-	Attribute("project_id", String, "Owning project")
-	Attribute("label", String, "Optional friendly name")
-	Attribute("account_id", String, "Google Ads customer ID")
-	Attribute("login_customer_id", String, "Manager account used for API access")
-	Attribute("has_credentials", Boolean, "Whether an encrypted credential is stored")
-	Attribute("status", String, "Connection status", func() {
-		Enum("active", "inactive", "error", "deleted")
-	})
-	Attribute("version", Int64, "Optimistic-concurrency version")
-	Attribute("etag", String, "ETag header value (mirrors version)")
-	Required("id", "project_id", "account_id", "has_credentials", "status", "version")
-})
-
 // TestResult is the outcome of verifying a credential against the provider.
 var TestResult = Type("connection-test-result", func() {
 	Attribute("ok", Boolean, "Whether the credential authenticated against the provider")
@@ -132,34 +98,54 @@ var TestResult = Type("connection-test-result", func() {
 	Required("ok")
 })
 
-// ─── Connection service ───
+// commonConnectionAttrs declares the response fields every provider connection
+// shares. Per-provider result types call this and then add provider-specific
+// config fields.
+func commonConnectionAttrs() {
+	Attribute("id", String, "Service-generated connection UUID (not used in paths)")
+	Attribute("project_id", String, "Owning project")
+	Attribute("label", String, "Optional friendly name")
+	Attribute("account_id", String, "Provider account identifier")
+	Attribute("has_credentials", Boolean, "Whether an encrypted credential is stored")
+	Attribute("status", String, "Connection status", func() {
+		Enum("active", "inactive", "error", "deleted")
+	})
+	Attribute("version", Int64, "Optimistic-concurrency version")
+	Attribute("etag", String, "ETag header value (mirrors version)")
+}
 
-var _ = Service("lfx-v2-campaign-service-connections", func() {
-	Description("Manage a project's singleton, per-provider ad-platform connections.")
+// commonConnectionRequired lists the always-required response fields.
+func commonConnectionRequired() {
+	Required("id", "project_id", "account_id", "has_credentials", "status", "version")
+}
 
-	Security(JWTAuth)
+// ─── Per-provider method helper ───
 
-	// Provider: google-ads. The remaining providers (linkedin-ads, meta-ads,
-	// reddit-ads, twitter-ads, microsoft-ads, hubspot) follow this exact shape
-	// with their own typed payloads and are added in the same file as a
-	// follow-up increment (tracked under LFXV2-2554).
-
-	Method("create-google-ads", func() {
-		Description("Create the project's Google Ads connection (singleton; 409 if one already exists).")
+// connectionMethods emits the six singleton endpoints for one provider under
+// /projects/{projectId}/connection-{key}. It is called once per provider with
+// that provider's typed config, credentials, and result types, so the six
+// endpoints stay identical in shape while payloads stay strongly typed.
+//
+// title is a human-readable provider name used in descriptions (e.g. "Google
+// Ads"). methodSuffix is the CamelCase suffix Goa turns into method names
+// (e.g. "GoogleAds" → CreateGoogleAds); it must be unique per provider.
+func connectionMethods(key, title, methodSuffix string, config, creds, result eval.Expression) {
+	Method("create-"+key, func() {
+		Description("Create the project's " + title + " connection (singleton; 409 if one already exists).")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("config", GoogleAdsConnectionConfig)
-			Attribute("credentials", GoogleAdsCredentials)
+			Attribute("config", config)
+			Attribute("credentials", creds)
 			Required("project_id", "config", "credentials")
 		})
-		Result(GoogleAdsConnection)
+		Result(result)
 		Error("BadRequest", BadRequestError, "Bad request")
 		Error("Conflict", ConflictError, "A connection already exists for this provider on the project")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
-			POST("/projects/{project_id}/connection-google-ads")
+			POST("/projects/{project_id}/connection-" + key)
 			Header("bearer_token:Authorization")
 			Response(StatusCreated, func() {
 				Header("etag:ETag")
@@ -171,19 +157,19 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
-	Method("get-google-ads", func() {
-		Description("Get the project's Google Ads connection (credentials redacted; returns ETag).")
+	Method("get-"+key, func() {
+		Description("Get the project's " + title + " connection (credentials redacted; returns ETag).")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
 			Required("project_id")
 		})
-		Result(GoogleAdsConnection)
+		Result(result)
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
-			GET("/projects/{project_id}/connection-google-ads")
+			GET("/projects/{project_id}/connection-" + key)
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() {
 				Header("etag:ETag")
@@ -194,16 +180,16 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
-	Method("update-google-ads", func() {
-		Description("Replace the Google Ads connection config (requires If-Match; does not set credentials).")
+	Method("update-"+key, func() {
+		Description("Replace the " + title + " connection config (requires If-Match; does not set credentials).")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
 			ifMatchAttr()
-			Attribute("config", GoogleAdsConnectionConfig)
+			Attribute("config", config)
 			Required("project_id", "config")
 		})
-		Result(GoogleAdsConnection)
+		Result(result)
 		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
@@ -211,7 +197,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
-			PUT("/projects/{project_id}/connection-google-ads")
+			PUT("/projects/{project_id}/connection-" + key)
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() {
@@ -226,8 +212,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
-	Method("delete-google-ads", func() {
-		Description("Soft-delete the project's Google Ads connection.")
+	Method("delete-"+key, func() {
+		Description("Soft-delete the project's " + title + " connection.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -237,7 +223,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
-			DELETE("/projects/{project_id}/connection-google-ads")
+			DELETE("/projects/{project_id}/connection-" + key)
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
 			Response("NotFound", StatusNotFound)
@@ -246,8 +232,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
-	Method("test-google-ads", func() {
-		Description("Verify the stored Google Ads credential against the provider.")
+	Method("test-"+key, func() {
+		Description("Verify the stored " + title + " credential against the provider.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -258,7 +244,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
-			POST("/projects/{project_id}/connection-google-ads/test")
+			POST("/projects/{project_id}/connection-" + key + "/test")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
@@ -267,12 +253,12 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
-	Method("set-credential-google-ads", func() {
-		Description("Replace the stored (encrypted) Google Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.")
+	Method("set-credential-"+key, func() {
+		Description("Replace the stored (encrypted) " + title + " credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("credentials", GoogleAdsCredentials)
+			Attribute("credentials", creds)
 			Required("project_id", "credentials")
 		})
 		Error("BadRequest", BadRequestError, "Bad request")
@@ -280,7 +266,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
-			POST("/projects/{project_id}/connection-google-ads/set-credential")
+			POST("/projects/{project_id}/connection-" + key + "/set-credential")
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
 			Response("BadRequest", StatusBadRequest)
@@ -289,4 +275,185 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
 	})
+}
+
+// ─── Google Ads ───
+
+var GoogleAdsCredentials = Type("google-ads-credentials", func() {
+	Description("Google Ads OAuth credential set. Write-only; never returned.")
+	Attribute("refresh_token", String, "OAuth refresh token")
+	Attribute("client_id", String, "OAuth client id")
+	Attribute("client_secret", String, "OAuth client secret")
+	Attribute("developer_token", String, "Google Ads developer token")
+	Required("refresh_token", "client_id", "client_secret", "developer_token")
+})
+
+var GoogleAdsConnectionConfig = Type("google-ads-connection-config", func() {
+	Attribute("label", String, "Optional friendly name", func() { Example("TLF Main") })
+	Attribute("account_id", String, "Google Ads customer ID", func() { Example("8666746580") })
+	Attribute("login_customer_id", String, "Manager account used for API access", func() { Example("9746983954") })
+	Required("account_id")
+})
+
+var GoogleAdsConnection = Type("google-ads-connection", func() {
+	commonConnectionAttrs()
+	Attribute("login_customer_id", String, "Manager account used for API access")
+	commonConnectionRequired()
+})
+
+// ─── LinkedIn Ads ───
+
+var LinkedInAdsCredentials = Type("linkedin-ads-credentials", func() {
+	Description("LinkedIn Ads credential. Write-only; never returned.")
+	Attribute("access_token", String, "OAuth access token")
+	Required("access_token")
+})
+
+var LinkedInAdsConnectionConfig = Type("linkedin-ads-connection-config", func() {
+	Attribute("label", String, "Optional friendly name")
+	Attribute("account_id", String, "LinkedIn ad account ID", func() { Example("538170226") })
+	Attribute("org_id", String, "LinkedIn organization URN id", func() { Example("208777") })
+	Required("account_id", "org_id")
+})
+
+var LinkedInAdsConnection = Type("linkedin-ads-connection", func() {
+	commonConnectionAttrs()
+	Attribute("org_id", String, "LinkedIn organization URN id")
+	commonConnectionRequired()
+})
+
+// ─── Meta Ads ───
+
+var MetaAdsCredentials = Type("meta-ads-credentials", func() {
+	Description("Meta Ads credential. Write-only; never returned.")
+	Attribute("access_token", String, "Meta access token")
+	Attribute("app_secret", String, "Meta app secret")
+	Required("access_token", "app_secret")
+})
+
+var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
+	Attribute("label", String, "Optional friendly name")
+	Attribute("account_id", String, "Meta ad account ID", func() { Example("act_193556282970417") })
+	Attribute("page_id", String, "Facebook page ID")
+	Attribute("app_id", String, "Meta app ID")
+	Required("account_id")
+})
+
+var MetaAdsConnection = Type("meta-ads-connection", func() {
+	commonConnectionAttrs()
+	Attribute("page_id", String, "Facebook page ID")
+	Attribute("app_id", String, "Meta app ID")
+	commonConnectionRequired()
+})
+
+// ─── Reddit Ads ───
+
+var RedditAdsCredentials = Type("reddit-ads-credentials", func() {
+	Description("Reddit Ads OAuth credential. Write-only; never returned.")
+	Attribute("client_id", String, "OAuth client id")
+	Attribute("client_secret", String, "OAuth client secret")
+	Attribute("refresh_token", String, "OAuth refresh token")
+	Required("client_id", "client_secret", "refresh_token")
+})
+
+var RedditAdsConnectionConfig = Type("reddit-ads-connection-config", func() {
+	Attribute("label", String, "Optional friendly name")
+	Attribute("account_id", String, "Reddit advertiser ID", func() { Example("t2_gv9wtbfa") })
+	Required("account_id")
+})
+
+var RedditAdsConnection = Type("reddit-ads-connection", func() {
+	commonConnectionAttrs()
+	commonConnectionRequired()
+})
+
+// ─── X / Twitter Ads (OAuth 1.0a) ───
+
+var TwitterAdsCredentials = Type("twitter-ads-credentials", func() {
+	Description("X/Twitter Ads OAuth 1.0a credential set. Write-only; never returned.")
+	Attribute("consumer_key", String, "OAuth 1.0a consumer key")
+	Attribute("consumer_secret", String, "OAuth 1.0a consumer secret")
+	Attribute("access_token", String, "OAuth 1.0a access token")
+	Attribute("access_token_secret", String, "OAuth 1.0a access token secret")
+	Required("consumer_key", "consumer_secret", "access_token", "access_token_secret")
+})
+
+var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
+	Attribute("label", String, "Optional friendly name")
+	Attribute("account_id", String, "X/Twitter Ads account ID", func() { Example("8r7gb") })
+	Attribute("funding_instrument_id", String, "Funding instrument for the ad account")
+	Required("account_id")
+})
+
+var TwitterAdsConnection = Type("twitter-ads-connection", func() {
+	commonConnectionAttrs()
+	Attribute("funding_instrument_id", String, "Funding instrument for the ad account")
+	commonConnectionRequired()
+})
+
+// ─── Microsoft Ads ───
+
+var MicrosoftAdsCredentials = Type("microsoft-ads-credentials", func() {
+	Description("Microsoft Advertising OAuth credential set. Write-only; never returned.")
+	Attribute("client_id", String, "OAuth client id")
+	Attribute("client_secret", String, "OAuth client secret")
+	Attribute("refresh_token", String, "OAuth refresh token")
+	Attribute("developer_token", String, "Microsoft Advertising developer token")
+	Required("client_id", "client_secret", "refresh_token", "developer_token")
+})
+
+var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func() {
+	Attribute("label", String, "Optional friendly name")
+	Attribute("account_id", String, "Microsoft Advertising account ID")
+	Attribute("customer_id", String, "Microsoft Advertising customer ID")
+	Required("account_id")
+})
+
+var MicrosoftAdsConnection = Type("microsoft-ads-connection", func() {
+	commonConnectionAttrs()
+	Attribute("customer_id", String, "Microsoft Advertising customer ID")
+	commonConnectionRequired()
+})
+
+// ─── HubSpot (email) ───
+
+var HubSpotCredentials = Type("hubspot-credentials", func() {
+	Description("HubSpot private app token. Write-only; never returned.")
+	Attribute("private_app_token", String, "HubSpot private app token")
+	Required("private_app_token")
+})
+
+var HubSpotConnectionConfig = Type("hubspot-connection-config", func() {
+	Attribute("label", String, "Optional friendly name")
+	Attribute("account_id", String, "HubSpot list/audience ID")
+	Attribute("portal_id", String, "HubSpot portal/account ID")
+	Attribute("sender_email", String, "Default sender address")
+	Attribute("sender_name", String, "Default sender name")
+	Attribute("brand_kit", String, "Per-project brand kit selector")
+	Required("account_id")
+})
+
+var HubSpotConnection = Type("hubspot-connection", func() {
+	commonConnectionAttrs()
+	Attribute("portal_id", String, "HubSpot portal/account ID")
+	Attribute("sender_email", String, "Default sender address")
+	Attribute("sender_name", String, "Default sender name")
+	Attribute("brand_kit", String, "Per-project brand kit selector")
+	commonConnectionRequired()
+})
+
+// ─── Connection service ───
+
+var _ = Service("lfx-v2-campaign-service-connections", func() {
+	Description("Manage a project's singleton, per-provider ad-platform connections.")
+
+	Security(JWTAuth)
+
+	connectionMethods("google-ads", "Google Ads", "GoogleAds", GoogleAdsConnectionConfig, GoogleAdsCredentials, GoogleAdsConnection)
+	connectionMethods("linkedin-ads", "LinkedIn Ads", "LinkedInAds", LinkedInAdsConnectionConfig, LinkedInAdsCredentials, LinkedInAdsConnection)
+	connectionMethods("meta-ads", "Meta Ads", "MetaAds", MetaAdsConnectionConfig, MetaAdsCredentials, MetaAdsConnection)
+	connectionMethods("reddit-ads", "Reddit Ads", "RedditAds", RedditAdsConnectionConfig, RedditAdsCredentials, RedditAdsConnection)
+	connectionMethods("twitter-ads", "X/Twitter Ads", "TwitterAds", TwitterAdsConnectionConfig, TwitterAdsCredentials, TwitterAdsConnection)
+	connectionMethods("microsoft-ads", "Microsoft Ads", "MicrosoftAds", MicrosoftAdsConnectionConfig, MicrosoftAdsCredentials, MicrosoftAdsConnection)
+	connectionMethods("hubspot", "HubSpot", "HubSpot", HubSpotConnectionConfig, HubSpotCredentials, HubSpotConnection)
 })

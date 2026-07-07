@@ -24,14 +24,14 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Velit earum et harum.\",\n         \"client_secret\": \"Corporis saepe quo.\",\n         \"developer_token\": \"Impedit aut quis sint tempora.\",\n         \"refresh_token\": \"Maiores velit et.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
+	return os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Recusandae nam autem dicta perspiciatis quod.\",\n         \"client_secret\": \"Quo voluptatem quas culpa omnis consequuntur iste.\",\n         \"developer_token\": \"Id magnam id nihil fugiat.\",\n         \"refresh_token\": \"Inventore quisquam laudantium velit.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-svc readyz" + "\n" +
 		""
 }
@@ -76,6 +76,174 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags.String("bearer-token", "", "")
 
+		lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags           = flag.NewFlagSet("create-linkedin-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsCreateLinkedinAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsCreateLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateLinkedinAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsGetLinkedinAdsFlags           = flag.NewFlagSet("get-linkedin-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsGetLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsGetLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsGetLinkedinAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsGetLinkedinAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags           = flag.NewFlagSet("update-linkedin-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("bearer-token", "", "")
+		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("if-match", "", "")
+
+		lfxV2CampaignServiceConnectionsDeleteLinkedinAdsFlags           = flag.NewFlagSet("delete-linkedin-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsDeleteLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsDeleteLinkedinAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsDeleteLinkedinAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsTestLinkedinAdsFlags           = flag.NewFlagSet("test-linkedin-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsTestLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsTestLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsTestLinkedinAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsTestLinkedinAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsFlags           = flag.NewFlagSet("set-credential-linkedin-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsBodyFlag        = lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsCreateMetaAdsFlags           = flag.NewFlagSet("create-meta-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsCreateMetaAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateMetaAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsCreateMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateMetaAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateMetaAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsGetMetaAdsFlags           = flag.NewFlagSet("get-meta-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsGetMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsGetMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsGetMetaAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsGetMetaAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags           = flag.NewFlagSet("update-meta-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsUpdateMetaAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsUpdateMetaAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("bearer-token", "", "")
+		lfxV2CampaignServiceConnectionsUpdateMetaAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("if-match", "", "")
+
+		lfxV2CampaignServiceConnectionsDeleteMetaAdsFlags           = flag.NewFlagSet("delete-meta-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsDeleteMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsDeleteMetaAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsDeleteMetaAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsTestMetaAdsFlags           = flag.NewFlagSet("test-meta-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsTestMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsTestMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsTestMetaAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsTestMetaAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsSetCredentialMetaAdsFlags           = flag.NewFlagSet("set-credential-meta-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSetCredentialMetaAdsBodyFlag        = lfxV2CampaignServiceConnectionsSetCredentialMetaAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsSetCredentialMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsSetCredentialMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsSetCredentialMetaAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsSetCredentialMetaAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsCreateRedditAdsFlags           = flag.NewFlagSet("create-reddit-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsCreateRedditAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateRedditAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsCreateRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateRedditAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateRedditAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsGetRedditAdsFlags           = flag.NewFlagSet("get-reddit-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsGetRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsGetRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsGetRedditAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsGetRedditAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags           = flag.NewFlagSet("update-reddit-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsUpdateRedditAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsUpdateRedditAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("bearer-token", "", "")
+		lfxV2CampaignServiceConnectionsUpdateRedditAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("if-match", "", "")
+
+		lfxV2CampaignServiceConnectionsDeleteRedditAdsFlags           = flag.NewFlagSet("delete-reddit-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsDeleteRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsDeleteRedditAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsDeleteRedditAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsTestRedditAdsFlags           = flag.NewFlagSet("test-reddit-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsTestRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsTestRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsTestRedditAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsTestRedditAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsSetCredentialRedditAdsFlags           = flag.NewFlagSet("set-credential-reddit-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSetCredentialRedditAdsBodyFlag        = lfxV2CampaignServiceConnectionsSetCredentialRedditAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsSetCredentialRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsSetCredentialRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsSetCredentialRedditAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsSetCredentialRedditAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags           = flag.NewFlagSet("create-twitter-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsCreateTwitterAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsCreateTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateTwitterAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsGetTwitterAdsFlags           = flag.NewFlagSet("get-twitter-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsGetTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsGetTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsGetTwitterAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsGetTwitterAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags           = flag.NewFlagSet("update-twitter-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsUpdateTwitterAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsUpdateTwitterAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("bearer-token", "", "")
+		lfxV2CampaignServiceConnectionsUpdateTwitterAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("if-match", "", "")
+
+		lfxV2CampaignServiceConnectionsDeleteTwitterAdsFlags           = flag.NewFlagSet("delete-twitter-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsDeleteTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsDeleteTwitterAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsDeleteTwitterAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsTestTwitterAdsFlags           = flag.NewFlagSet("test-twitter-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsTestTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsTestTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsTestTwitterAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsTestTwitterAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsFlags           = flag.NewFlagSet("set-credential-twitter-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsBodyFlag        = lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags           = flag.NewFlagSet("create-microsoft-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsGetMicrosoftAdsFlags           = flag.NewFlagSet("get-microsoft-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsGetMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsGetMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsGetMicrosoftAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsGetMicrosoftAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags           = flag.NewFlagSet("update-microsoft-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("bearer-token", "", "")
+		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("if-match", "", "")
+
+		lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsFlags           = flag.NewFlagSet("delete-microsoft-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsTestMicrosoftAdsFlags           = flag.NewFlagSet("test-microsoft-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsTestMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsTestMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsTestMicrosoftAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsTestMicrosoftAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsFlags           = flag.NewFlagSet("set-credential-microsoft-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsBodyFlag        = lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsCreateHubspotFlags           = flag.NewFlagSet("create-hubspot", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsCreateHubspotBodyFlag        = lfxV2CampaignServiceConnectionsCreateHubspotFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsCreateHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateHubspotBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateHubspotFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsGetHubspotFlags           = flag.NewFlagSet("get-hubspot", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsGetHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsGetHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsGetHubspotBearerTokenFlag = lfxV2CampaignServiceConnectionsGetHubspotFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsUpdateHubspotFlags           = flag.NewFlagSet("update-hubspot", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsUpdateHubspotBodyFlag        = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsUpdateHubspotBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("bearer-token", "", "")
+		lfxV2CampaignServiceConnectionsUpdateHubspotIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("if-match", "", "")
+
+		lfxV2CampaignServiceConnectionsDeleteHubspotFlags           = flag.NewFlagSet("delete-hubspot", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsDeleteHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsDeleteHubspotBearerTokenFlag = lfxV2CampaignServiceConnectionsDeleteHubspotFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsTestHubspotFlags           = flag.NewFlagSet("test-hubspot", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsTestHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsTestHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsTestHubspotBearerTokenFlag = lfxV2CampaignServiceConnectionsTestHubspotFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsSetCredentialHubspotFlags           = flag.NewFlagSet("set-credential-hubspot", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSetCredentialHubspotBodyFlag        = lfxV2CampaignServiceConnectionsSetCredentialHubspotFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsSetCredentialHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsSetCredentialHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsSetCredentialHubspotBearerTokenFlag = lfxV2CampaignServiceConnectionsSetCredentialHubspotFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceSvcFlags = flag.NewFlagSet("lfx-v2-campaign-service-svc", flag.ContinueOnError)
 
 		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
@@ -89,6 +257,42 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsDeleteGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsDeleteGoogleAdsUsage
 	lfxV2CampaignServiceConnectionsTestGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsTestGoogleAdsUsage
 	lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsUsage
+	lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags.Usage = lfxV2CampaignServiceConnectionsCreateLinkedinAdsUsage
+	lfxV2CampaignServiceConnectionsGetLinkedinAdsFlags.Usage = lfxV2CampaignServiceConnectionsGetLinkedinAdsUsage
+	lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.Usage = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsUsage
+	lfxV2CampaignServiceConnectionsDeleteLinkedinAdsFlags.Usage = lfxV2CampaignServiceConnectionsDeleteLinkedinAdsUsage
+	lfxV2CampaignServiceConnectionsTestLinkedinAdsFlags.Usage = lfxV2CampaignServiceConnectionsTestLinkedinAdsUsage
+	lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsUsage
+	lfxV2CampaignServiceConnectionsCreateMetaAdsFlags.Usage = lfxV2CampaignServiceConnectionsCreateMetaAdsUsage
+	lfxV2CampaignServiceConnectionsGetMetaAdsFlags.Usage = lfxV2CampaignServiceConnectionsGetMetaAdsUsage
+	lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.Usage = lfxV2CampaignServiceConnectionsUpdateMetaAdsUsage
+	lfxV2CampaignServiceConnectionsDeleteMetaAdsFlags.Usage = lfxV2CampaignServiceConnectionsDeleteMetaAdsUsage
+	lfxV2CampaignServiceConnectionsTestMetaAdsFlags.Usage = lfxV2CampaignServiceConnectionsTestMetaAdsUsage
+	lfxV2CampaignServiceConnectionsSetCredentialMetaAdsFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialMetaAdsUsage
+	lfxV2CampaignServiceConnectionsCreateRedditAdsFlags.Usage = lfxV2CampaignServiceConnectionsCreateRedditAdsUsage
+	lfxV2CampaignServiceConnectionsGetRedditAdsFlags.Usage = lfxV2CampaignServiceConnectionsGetRedditAdsUsage
+	lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.Usage = lfxV2CampaignServiceConnectionsUpdateRedditAdsUsage
+	lfxV2CampaignServiceConnectionsDeleteRedditAdsFlags.Usage = lfxV2CampaignServiceConnectionsDeleteRedditAdsUsage
+	lfxV2CampaignServiceConnectionsTestRedditAdsFlags.Usage = lfxV2CampaignServiceConnectionsTestRedditAdsUsage
+	lfxV2CampaignServiceConnectionsSetCredentialRedditAdsFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialRedditAdsUsage
+	lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags.Usage = lfxV2CampaignServiceConnectionsCreateTwitterAdsUsage
+	lfxV2CampaignServiceConnectionsGetTwitterAdsFlags.Usage = lfxV2CampaignServiceConnectionsGetTwitterAdsUsage
+	lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.Usage = lfxV2CampaignServiceConnectionsUpdateTwitterAdsUsage
+	lfxV2CampaignServiceConnectionsDeleteTwitterAdsFlags.Usage = lfxV2CampaignServiceConnectionsDeleteTwitterAdsUsage
+	lfxV2CampaignServiceConnectionsTestTwitterAdsFlags.Usage = lfxV2CampaignServiceConnectionsTestTwitterAdsUsage
+	lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsUsage
+	lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags.Usage = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsUsage
+	lfxV2CampaignServiceConnectionsGetMicrosoftAdsFlags.Usage = lfxV2CampaignServiceConnectionsGetMicrosoftAdsUsage
+	lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.Usage = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsUsage
+	lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsFlags.Usage = lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsUsage
+	lfxV2CampaignServiceConnectionsTestMicrosoftAdsFlags.Usage = lfxV2CampaignServiceConnectionsTestMicrosoftAdsUsage
+	lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsUsage
+	lfxV2CampaignServiceConnectionsCreateHubspotFlags.Usage = lfxV2CampaignServiceConnectionsCreateHubspotUsage
+	lfxV2CampaignServiceConnectionsGetHubspotFlags.Usage = lfxV2CampaignServiceConnectionsGetHubspotUsage
+	lfxV2CampaignServiceConnectionsUpdateHubspotFlags.Usage = lfxV2CampaignServiceConnectionsUpdateHubspotUsage
+	lfxV2CampaignServiceConnectionsDeleteHubspotFlags.Usage = lfxV2CampaignServiceConnectionsDeleteHubspotUsage
+	lfxV2CampaignServiceConnectionsTestHubspotFlags.Usage = lfxV2CampaignServiceConnectionsTestHubspotUsage
+	lfxV2CampaignServiceConnectionsSetCredentialHubspotFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialHubspotUsage
 
 	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
 	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
@@ -148,6 +352,114 @@ func ParseEndpoint(
 			case "set-credential-google-ads":
 				epf = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags
 
+			case "create-linkedin-ads":
+				epf = lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags
+
+			case "get-linkedin-ads":
+				epf = lfxV2CampaignServiceConnectionsGetLinkedinAdsFlags
+
+			case "update-linkedin-ads":
+				epf = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags
+
+			case "delete-linkedin-ads":
+				epf = lfxV2CampaignServiceConnectionsDeleteLinkedinAdsFlags
+
+			case "test-linkedin-ads":
+				epf = lfxV2CampaignServiceConnectionsTestLinkedinAdsFlags
+
+			case "set-credential-linkedin-ads":
+				epf = lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsFlags
+
+			case "create-meta-ads":
+				epf = lfxV2CampaignServiceConnectionsCreateMetaAdsFlags
+
+			case "get-meta-ads":
+				epf = lfxV2CampaignServiceConnectionsGetMetaAdsFlags
+
+			case "update-meta-ads":
+				epf = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags
+
+			case "delete-meta-ads":
+				epf = lfxV2CampaignServiceConnectionsDeleteMetaAdsFlags
+
+			case "test-meta-ads":
+				epf = lfxV2CampaignServiceConnectionsTestMetaAdsFlags
+
+			case "set-credential-meta-ads":
+				epf = lfxV2CampaignServiceConnectionsSetCredentialMetaAdsFlags
+
+			case "create-reddit-ads":
+				epf = lfxV2CampaignServiceConnectionsCreateRedditAdsFlags
+
+			case "get-reddit-ads":
+				epf = lfxV2CampaignServiceConnectionsGetRedditAdsFlags
+
+			case "update-reddit-ads":
+				epf = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags
+
+			case "delete-reddit-ads":
+				epf = lfxV2CampaignServiceConnectionsDeleteRedditAdsFlags
+
+			case "test-reddit-ads":
+				epf = lfxV2CampaignServiceConnectionsTestRedditAdsFlags
+
+			case "set-credential-reddit-ads":
+				epf = lfxV2CampaignServiceConnectionsSetCredentialRedditAdsFlags
+
+			case "create-twitter-ads":
+				epf = lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags
+
+			case "get-twitter-ads":
+				epf = lfxV2CampaignServiceConnectionsGetTwitterAdsFlags
+
+			case "update-twitter-ads":
+				epf = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags
+
+			case "delete-twitter-ads":
+				epf = lfxV2CampaignServiceConnectionsDeleteTwitterAdsFlags
+
+			case "test-twitter-ads":
+				epf = lfxV2CampaignServiceConnectionsTestTwitterAdsFlags
+
+			case "set-credential-twitter-ads":
+				epf = lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsFlags
+
+			case "create-microsoft-ads":
+				epf = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags
+
+			case "get-microsoft-ads":
+				epf = lfxV2CampaignServiceConnectionsGetMicrosoftAdsFlags
+
+			case "update-microsoft-ads":
+				epf = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags
+
+			case "delete-microsoft-ads":
+				epf = lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsFlags
+
+			case "test-microsoft-ads":
+				epf = lfxV2CampaignServiceConnectionsTestMicrosoftAdsFlags
+
+			case "set-credential-microsoft-ads":
+				epf = lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsFlags
+
+			case "create-hubspot":
+				epf = lfxV2CampaignServiceConnectionsCreateHubspotFlags
+
+			case "get-hubspot":
+				epf = lfxV2CampaignServiceConnectionsGetHubspotFlags
+
+			case "update-hubspot":
+				epf = lfxV2CampaignServiceConnectionsUpdateHubspotFlags
+
+			case "delete-hubspot":
+				epf = lfxV2CampaignServiceConnectionsDeleteHubspotFlags
+
+			case "test-hubspot":
+				epf = lfxV2CampaignServiceConnectionsTestHubspotFlags
+
+			case "set-credential-hubspot":
+				epf = lfxV2CampaignServiceConnectionsSetCredentialHubspotFlags
+
 			}
 
 		case "lfx-v2-campaign-service-svc":
@@ -201,6 +513,114 @@ func ParseEndpoint(
 			case "set-credential-google-ads":
 				endpoint = c.SetCredentialGoogleAds()
 				data, err = lfxv2campaignserviceconnectionsc.BuildSetCredentialGoogleAdsPayload(*lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsBodyFlag, *lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsBearerTokenFlag)
+			case "create-linkedin-ads":
+				endpoint = c.CreateLinkedinAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildCreateLinkedinAdsPayload(*lfxV2CampaignServiceConnectionsCreateLinkedinAdsBodyFlag, *lfxV2CampaignServiceConnectionsCreateLinkedinAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateLinkedinAdsBearerTokenFlag)
+			case "get-linkedin-ads":
+				endpoint = c.GetLinkedinAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildGetLinkedinAdsPayload(*lfxV2CampaignServiceConnectionsGetLinkedinAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsGetLinkedinAdsBearerTokenFlag)
+			case "update-linkedin-ads":
+				endpoint = c.UpdateLinkedinAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildUpdateLinkedinAdsPayload(*lfxV2CampaignServiceConnectionsUpdateLinkedinAdsBodyFlag, *lfxV2CampaignServiceConnectionsUpdateLinkedinAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsUpdateLinkedinAdsBearerTokenFlag, *lfxV2CampaignServiceConnectionsUpdateLinkedinAdsIfMatchFlag)
+			case "delete-linkedin-ads":
+				endpoint = c.DeleteLinkedinAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildDeleteLinkedinAdsPayload(*lfxV2CampaignServiceConnectionsDeleteLinkedinAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsDeleteLinkedinAdsBearerTokenFlag)
+			case "test-linkedin-ads":
+				endpoint = c.TestLinkedinAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildTestLinkedinAdsPayload(*lfxV2CampaignServiceConnectionsTestLinkedinAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsTestLinkedinAdsBearerTokenFlag)
+			case "set-credential-linkedin-ads":
+				endpoint = c.SetCredentialLinkedinAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSetCredentialLinkedinAdsPayload(*lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsBodyFlag, *lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsBearerTokenFlag)
+			case "create-meta-ads":
+				endpoint = c.CreateMetaAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildCreateMetaAdsPayload(*lfxV2CampaignServiceConnectionsCreateMetaAdsBodyFlag, *lfxV2CampaignServiceConnectionsCreateMetaAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateMetaAdsBearerTokenFlag)
+			case "get-meta-ads":
+				endpoint = c.GetMetaAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildGetMetaAdsPayload(*lfxV2CampaignServiceConnectionsGetMetaAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsGetMetaAdsBearerTokenFlag)
+			case "update-meta-ads":
+				endpoint = c.UpdateMetaAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildUpdateMetaAdsPayload(*lfxV2CampaignServiceConnectionsUpdateMetaAdsBodyFlag, *lfxV2CampaignServiceConnectionsUpdateMetaAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsUpdateMetaAdsBearerTokenFlag, *lfxV2CampaignServiceConnectionsUpdateMetaAdsIfMatchFlag)
+			case "delete-meta-ads":
+				endpoint = c.DeleteMetaAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildDeleteMetaAdsPayload(*lfxV2CampaignServiceConnectionsDeleteMetaAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsDeleteMetaAdsBearerTokenFlag)
+			case "test-meta-ads":
+				endpoint = c.TestMetaAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildTestMetaAdsPayload(*lfxV2CampaignServiceConnectionsTestMetaAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsTestMetaAdsBearerTokenFlag)
+			case "set-credential-meta-ads":
+				endpoint = c.SetCredentialMetaAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSetCredentialMetaAdsPayload(*lfxV2CampaignServiceConnectionsSetCredentialMetaAdsBodyFlag, *lfxV2CampaignServiceConnectionsSetCredentialMetaAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsSetCredentialMetaAdsBearerTokenFlag)
+			case "create-reddit-ads":
+				endpoint = c.CreateRedditAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildCreateRedditAdsPayload(*lfxV2CampaignServiceConnectionsCreateRedditAdsBodyFlag, *lfxV2CampaignServiceConnectionsCreateRedditAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateRedditAdsBearerTokenFlag)
+			case "get-reddit-ads":
+				endpoint = c.GetRedditAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildGetRedditAdsPayload(*lfxV2CampaignServiceConnectionsGetRedditAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsGetRedditAdsBearerTokenFlag)
+			case "update-reddit-ads":
+				endpoint = c.UpdateRedditAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildUpdateRedditAdsPayload(*lfxV2CampaignServiceConnectionsUpdateRedditAdsBodyFlag, *lfxV2CampaignServiceConnectionsUpdateRedditAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsUpdateRedditAdsBearerTokenFlag, *lfxV2CampaignServiceConnectionsUpdateRedditAdsIfMatchFlag)
+			case "delete-reddit-ads":
+				endpoint = c.DeleteRedditAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildDeleteRedditAdsPayload(*lfxV2CampaignServiceConnectionsDeleteRedditAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsDeleteRedditAdsBearerTokenFlag)
+			case "test-reddit-ads":
+				endpoint = c.TestRedditAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildTestRedditAdsPayload(*lfxV2CampaignServiceConnectionsTestRedditAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsTestRedditAdsBearerTokenFlag)
+			case "set-credential-reddit-ads":
+				endpoint = c.SetCredentialRedditAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSetCredentialRedditAdsPayload(*lfxV2CampaignServiceConnectionsSetCredentialRedditAdsBodyFlag, *lfxV2CampaignServiceConnectionsSetCredentialRedditAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsSetCredentialRedditAdsBearerTokenFlag)
+			case "create-twitter-ads":
+				endpoint = c.CreateTwitterAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildCreateTwitterAdsPayload(*lfxV2CampaignServiceConnectionsCreateTwitterAdsBodyFlag, *lfxV2CampaignServiceConnectionsCreateTwitterAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateTwitterAdsBearerTokenFlag)
+			case "get-twitter-ads":
+				endpoint = c.GetTwitterAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildGetTwitterAdsPayload(*lfxV2CampaignServiceConnectionsGetTwitterAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsGetTwitterAdsBearerTokenFlag)
+			case "update-twitter-ads":
+				endpoint = c.UpdateTwitterAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildUpdateTwitterAdsPayload(*lfxV2CampaignServiceConnectionsUpdateTwitterAdsBodyFlag, *lfxV2CampaignServiceConnectionsUpdateTwitterAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsUpdateTwitterAdsBearerTokenFlag, *lfxV2CampaignServiceConnectionsUpdateTwitterAdsIfMatchFlag)
+			case "delete-twitter-ads":
+				endpoint = c.DeleteTwitterAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildDeleteTwitterAdsPayload(*lfxV2CampaignServiceConnectionsDeleteTwitterAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsDeleteTwitterAdsBearerTokenFlag)
+			case "test-twitter-ads":
+				endpoint = c.TestTwitterAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildTestTwitterAdsPayload(*lfxV2CampaignServiceConnectionsTestTwitterAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsTestTwitterAdsBearerTokenFlag)
+			case "set-credential-twitter-ads":
+				endpoint = c.SetCredentialTwitterAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSetCredentialTwitterAdsPayload(*lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsBodyFlag, *lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsBearerTokenFlag)
+			case "create-microsoft-ads":
+				endpoint = c.CreateMicrosoftAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildCreateMicrosoftAdsPayload(*lfxV2CampaignServiceConnectionsCreateMicrosoftAdsBodyFlag, *lfxV2CampaignServiceConnectionsCreateMicrosoftAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateMicrosoftAdsBearerTokenFlag)
+			case "get-microsoft-ads":
+				endpoint = c.GetMicrosoftAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildGetMicrosoftAdsPayload(*lfxV2CampaignServiceConnectionsGetMicrosoftAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsGetMicrosoftAdsBearerTokenFlag)
+			case "update-microsoft-ads":
+				endpoint = c.UpdateMicrosoftAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildUpdateMicrosoftAdsPayload(*lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsBodyFlag, *lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsBearerTokenFlag, *lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsIfMatchFlag)
+			case "delete-microsoft-ads":
+				endpoint = c.DeleteMicrosoftAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildDeleteMicrosoftAdsPayload(*lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsBearerTokenFlag)
+			case "test-microsoft-ads":
+				endpoint = c.TestMicrosoftAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildTestMicrosoftAdsPayload(*lfxV2CampaignServiceConnectionsTestMicrosoftAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsTestMicrosoftAdsBearerTokenFlag)
+			case "set-credential-microsoft-ads":
+				endpoint = c.SetCredentialMicrosoftAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSetCredentialMicrosoftAdsPayload(*lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsBodyFlag, *lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsBearerTokenFlag)
+			case "create-hubspot":
+				endpoint = c.CreateHubspot()
+				data, err = lfxv2campaignserviceconnectionsc.BuildCreateHubspotPayload(*lfxV2CampaignServiceConnectionsCreateHubspotBodyFlag, *lfxV2CampaignServiceConnectionsCreateHubspotProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateHubspotBearerTokenFlag)
+			case "get-hubspot":
+				endpoint = c.GetHubspot()
+				data, err = lfxv2campaignserviceconnectionsc.BuildGetHubspotPayload(*lfxV2CampaignServiceConnectionsGetHubspotProjectIDFlag, *lfxV2CampaignServiceConnectionsGetHubspotBearerTokenFlag)
+			case "update-hubspot":
+				endpoint = c.UpdateHubspot()
+				data, err = lfxv2campaignserviceconnectionsc.BuildUpdateHubspotPayload(*lfxV2CampaignServiceConnectionsUpdateHubspotBodyFlag, *lfxV2CampaignServiceConnectionsUpdateHubspotProjectIDFlag, *lfxV2CampaignServiceConnectionsUpdateHubspotBearerTokenFlag, *lfxV2CampaignServiceConnectionsUpdateHubspotIfMatchFlag)
+			case "delete-hubspot":
+				endpoint = c.DeleteHubspot()
+				data, err = lfxv2campaignserviceconnectionsc.BuildDeleteHubspotPayload(*lfxV2CampaignServiceConnectionsDeleteHubspotProjectIDFlag, *lfxV2CampaignServiceConnectionsDeleteHubspotBearerTokenFlag)
+			case "test-hubspot":
+				endpoint = c.TestHubspot()
+				data, err = lfxv2campaignserviceconnectionsc.BuildTestHubspotPayload(*lfxV2CampaignServiceConnectionsTestHubspotProjectIDFlag, *lfxV2CampaignServiceConnectionsTestHubspotBearerTokenFlag)
+			case "set-credential-hubspot":
+				endpoint = c.SetCredentialHubspot()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSetCredentialHubspotPayload(*lfxV2CampaignServiceConnectionsSetCredentialHubspotBodyFlag, *lfxV2CampaignServiceConnectionsSetCredentialHubspotProjectIDFlag, *lfxV2CampaignServiceConnectionsSetCredentialHubspotBearerTokenFlag)
 			}
 		case "lfx-v2-campaign-service-svc":
 			c := lfxv2campaignservicesvcc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -231,6 +651,42 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    delete-google-ads: Soft-delete the project's Google Ads connection.`)
 	fmt.Fprintln(os.Stderr, `    test-google-ads: Verify the stored Google Ads credential against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-google-ads: Replace the stored (encrypted) Google Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+	fmt.Fprintln(os.Stderr, `    create-linkedin-ads: Create the project's LinkedIn Ads connection (singleton; 409 if one already exists).`)
+	fmt.Fprintln(os.Stderr, `    get-linkedin-ads: Get the project's LinkedIn Ads connection (credentials redacted; returns ETag).`)
+	fmt.Fprintln(os.Stderr, `    update-linkedin-ads: Replace the LinkedIn Ads connection config (requires If-Match; does not set credentials).`)
+	fmt.Fprintln(os.Stderr, `    delete-linkedin-ads: Soft-delete the project's LinkedIn Ads connection.`)
+	fmt.Fprintln(os.Stderr, `    test-linkedin-ads: Verify the stored LinkedIn Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    set-credential-linkedin-ads: Replace the stored (encrypted) LinkedIn Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+	fmt.Fprintln(os.Stderr, `    create-meta-ads: Create the project's Meta Ads connection (singleton; 409 if one already exists).`)
+	fmt.Fprintln(os.Stderr, `    get-meta-ads: Get the project's Meta Ads connection (credentials redacted; returns ETag).`)
+	fmt.Fprintln(os.Stderr, `    update-meta-ads: Replace the Meta Ads connection config (requires If-Match; does not set credentials).`)
+	fmt.Fprintln(os.Stderr, `    delete-meta-ads: Soft-delete the project's Meta Ads connection.`)
+	fmt.Fprintln(os.Stderr, `    test-meta-ads: Verify the stored Meta Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    set-credential-meta-ads: Replace the stored (encrypted) Meta Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+	fmt.Fprintln(os.Stderr, `    create-reddit-ads: Create the project's Reddit Ads connection (singleton; 409 if one already exists).`)
+	fmt.Fprintln(os.Stderr, `    get-reddit-ads: Get the project's Reddit Ads connection (credentials redacted; returns ETag).`)
+	fmt.Fprintln(os.Stderr, `    update-reddit-ads: Replace the Reddit Ads connection config (requires If-Match; does not set credentials).`)
+	fmt.Fprintln(os.Stderr, `    delete-reddit-ads: Soft-delete the project's Reddit Ads connection.`)
+	fmt.Fprintln(os.Stderr, `    test-reddit-ads: Verify the stored Reddit Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    set-credential-reddit-ads: Replace the stored (encrypted) Reddit Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+	fmt.Fprintln(os.Stderr, `    create-twitter-ads: Create the project's X/Twitter Ads connection (singleton; 409 if one already exists).`)
+	fmt.Fprintln(os.Stderr, `    get-twitter-ads: Get the project's X/Twitter Ads connection (credentials redacted; returns ETag).`)
+	fmt.Fprintln(os.Stderr, `    update-twitter-ads: Replace the X/Twitter Ads connection config (requires If-Match; does not set credentials).`)
+	fmt.Fprintln(os.Stderr, `    delete-twitter-ads: Soft-delete the project's X/Twitter Ads connection.`)
+	fmt.Fprintln(os.Stderr, `    test-twitter-ads: Verify the stored X/Twitter Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    set-credential-twitter-ads: Replace the stored (encrypted) X/Twitter Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+	fmt.Fprintln(os.Stderr, `    create-microsoft-ads: Create the project's Microsoft Ads connection (singleton; 409 if one already exists).`)
+	fmt.Fprintln(os.Stderr, `    get-microsoft-ads: Get the project's Microsoft Ads connection (credentials redacted; returns ETag).`)
+	fmt.Fprintln(os.Stderr, `    update-microsoft-ads: Replace the Microsoft Ads connection config (requires If-Match; does not set credentials).`)
+	fmt.Fprintln(os.Stderr, `    delete-microsoft-ads: Soft-delete the project's Microsoft Ads connection.`)
+	fmt.Fprintln(os.Stderr, `    test-microsoft-ads: Verify the stored Microsoft Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    set-credential-microsoft-ads: Replace the stored (encrypted) Microsoft Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+	fmt.Fprintln(os.Stderr, `    create-hubspot: Create the project's HubSpot connection (singleton; 409 if one already exists).`)
+	fmt.Fprintln(os.Stderr, `    get-hubspot: Get the project's HubSpot connection (credentials redacted; returns ETag).`)
+	fmt.Fprintln(os.Stderr, `    update-hubspot: Replace the HubSpot connection config (requires If-Match; does not set credentials).`)
+	fmt.Fprintln(os.Stderr, `    delete-hubspot: Soft-delete the project's HubSpot connection.`)
+	fmt.Fprintln(os.Stderr, `    test-hubspot: Verify the stored HubSpot credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    set-credential-hubspot: Replace the stored (encrypted) HubSpot credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-connections COMMAND --help\n", os.Args[0])
@@ -254,7 +710,7 @@ func lfxV2CampaignServiceConnectionsCreateGoogleAdsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Velit earum et harum.\",\n         \"client_secret\": \"Corporis saepe quo.\",\n         \"developer_token\": \"Impedit aut quis sint tempora.\",\n         \"refresh_token\": \"Maiores velit et.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Recusandae nam autem dicta perspiciatis quod.\",\n         \"client_secret\": \"Quo voluptatem quas culpa omnis consequuntur iste.\",\n         \"developer_token\": \"Id magnam id nihil fugiat.\",\n         \"refresh_token\": \"Inventore quisquam laudantium velit.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsGetGoogleAdsUsage() {
@@ -360,7 +816,775 @@ func lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-google-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Velit earum et harum.\",\n         \"client_secret\": \"Corporis saepe quo.\",\n         \"developer_token\": \"Impedit aut quis sint tempora.\",\n         \"refresh_token\": \"Maiores velit et.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-google-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Recusandae nam autem dicta perspiciatis quod.\",\n         \"client_secret\": \"Quo voluptatem quas culpa omnis consequuntur iste.\",\n         \"developer_token\": \"Id magnam id nihil fugiat.\",\n         \"refresh_token\": \"Inventore quisquam laudantium velit.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsCreateLinkedinAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections create-linkedin-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create the project's LinkedIn Ads connection (singleton; 409 if one already exists).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-linkedin-ads --body '{\n      \"config\": {\n         \"account_id\": \"538170226\",\n         \"label\": \"Fugit voluptatem.\",\n         \"org_id\": \"208777\"\n      },\n      \"credentials\": {\n         \"access_token\": \"Amet necessitatibus corrupti quaerat molestiae maiores.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsGetLinkedinAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-linkedin-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Get the project's LinkedIn Ads connection (credentials redacted; returns ETag).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-linkedin-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsUpdateLinkedinAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections update-linkedin-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprint(os.Stderr, " -if-match STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the LinkedIn Ads connection config (requires If-Match; does not set credentials).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -if-match STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-linkedin-ads --body '{\n      \"config\": {\n         \"account_id\": \"538170226\",\n         \"label\": \"Fugit voluptatem.\",\n         \"org_id\": \"208777\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+}
+
+func lfxV2CampaignServiceConnectionsDeleteLinkedinAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections delete-linkedin-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Soft-delete the project's LinkedIn Ads connection.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections delete-linkedin-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsTestLinkedinAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections test-linkedin-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Verify the stored LinkedIn Ads credential against the provider.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections test-linkedin-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections set-credential-linkedin-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the stored (encrypted) LinkedIn Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-linkedin-ads --body '{\n      \"credentials\": {\n         \"access_token\": \"Amet necessitatibus corrupti quaerat molestiae maiores.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsCreateMetaAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections create-meta-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create the project's Meta Ads connection (singleton; 409 if one already exists).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-meta-ads --body '{\n      \"config\": {\n         \"account_id\": \"act_193556282970417\",\n         \"app_id\": \"Eligendi vero temporibus.\",\n         \"label\": \"Non maiores quae sed quia.\",\n         \"page_id\": \"Facilis eum ipsam.\"\n      },\n      \"credentials\": {\n         \"access_token\": \"Soluta quas voluptas minus possimus quos praesentium.\",\n         \"app_secret\": \"Repudiandae consequatur fuga dolores.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsGetMetaAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-meta-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Get the project's Meta Ads connection (credentials redacted; returns ETag).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-meta-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsUpdateMetaAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections update-meta-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprint(os.Stderr, " -if-match STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the Meta Ads connection config (requires If-Match; does not set credentials).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -if-match STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-meta-ads --body '{\n      \"config\": {\n         \"account_id\": \"act_193556282970417\",\n         \"app_id\": \"Eligendi vero temporibus.\",\n         \"label\": \"Non maiores quae sed quia.\",\n         \"page_id\": \"Facilis eum ipsam.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+}
+
+func lfxV2CampaignServiceConnectionsDeleteMetaAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections delete-meta-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Soft-delete the project's Meta Ads connection.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections delete-meta-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsTestMetaAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections test-meta-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Verify the stored Meta Ads credential against the provider.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections test-meta-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSetCredentialMetaAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections set-credential-meta-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the stored (encrypted) Meta Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-meta-ads --body '{\n      \"credentials\": {\n         \"access_token\": \"Soluta quas voluptas minus possimus quos praesentium.\",\n         \"app_secret\": \"Repudiandae consequatur fuga dolores.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsCreateRedditAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections create-reddit-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create the project's Reddit Ads connection (singleton; 409 if one already exists).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-reddit-ads --body '{\n      \"config\": {\n         \"account_id\": \"t2_gv9wtbfa\",\n         \"label\": \"Ut est nobis aspernatur.\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Fugit qui tempora commodi reiciendis sit alias.\",\n         \"client_secret\": \"Ea enim quidem odio et sequi consequatur.\",\n         \"refresh_token\": \"Provident itaque.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsGetRedditAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-reddit-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Get the project's Reddit Ads connection (credentials redacted; returns ETag).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-reddit-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsUpdateRedditAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections update-reddit-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprint(os.Stderr, " -if-match STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the Reddit Ads connection config (requires If-Match; does not set credentials).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -if-match STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-reddit-ads --body '{\n      \"config\": {\n         \"account_id\": \"t2_gv9wtbfa\",\n         \"label\": \"Ut est nobis aspernatur.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+}
+
+func lfxV2CampaignServiceConnectionsDeleteRedditAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections delete-reddit-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Soft-delete the project's Reddit Ads connection.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections delete-reddit-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsTestRedditAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections test-reddit-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Verify the stored Reddit Ads credential against the provider.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections test-reddit-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSetCredentialRedditAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections set-credential-reddit-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the stored (encrypted) Reddit Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-reddit-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Fugit qui tempora commodi reiciendis sit alias.\",\n         \"client_secret\": \"Ea enim quidem odio et sequi consequatur.\",\n         \"refresh_token\": \"Provident itaque.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsCreateTwitterAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections create-twitter-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create the project's X/Twitter Ads connection (singleton; 409 if one already exists).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-twitter-ads --body '{\n      \"config\": {\n         \"account_id\": \"8r7gb\",\n         \"funding_instrument_id\": \"Eveniet dicta numquam doloremque.\",\n         \"label\": \"Ea velit et assumenda recusandae enim.\"\n      },\n      \"credentials\": {\n         \"access_token\": \"Ipsum quia ad a.\",\n         \"access_token_secret\": \"Veritatis omnis excepturi.\",\n         \"consumer_key\": \"Cumque libero.\",\n         \"consumer_secret\": \"Id incidunt qui et ratione sit quaerat.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsGetTwitterAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-twitter-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Get the project's X/Twitter Ads connection (credentials redacted; returns ETag).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-twitter-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsUpdateTwitterAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections update-twitter-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprint(os.Stderr, " -if-match STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the X/Twitter Ads connection config (requires If-Match; does not set credentials).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -if-match STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-twitter-ads --body '{\n      \"config\": {\n         \"account_id\": \"8r7gb\",\n         \"funding_instrument_id\": \"Eveniet dicta numquam doloremque.\",\n         \"label\": \"Ea velit et assumenda recusandae enim.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+}
+
+func lfxV2CampaignServiceConnectionsDeleteTwitterAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections delete-twitter-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Soft-delete the project's X/Twitter Ads connection.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections delete-twitter-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsTestTwitterAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections test-twitter-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Verify the stored X/Twitter Ads credential against the provider.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections test-twitter-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections set-credential-twitter-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the stored (encrypted) X/Twitter Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-twitter-ads --body '{\n      \"credentials\": {\n         \"access_token\": \"Ipsum quia ad a.\",\n         \"access_token_secret\": \"Veritatis omnis excepturi.\",\n         \"consumer_key\": \"Cumque libero.\",\n         \"consumer_secret\": \"Id incidunt qui et ratione sit quaerat.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsCreateMicrosoftAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections create-microsoft-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create the project's Microsoft Ads connection (singleton; 409 if one already exists).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-microsoft-ads --body '{\n      \"config\": {\n         \"account_id\": \"Sint qui praesentium ea praesentium magni.\",\n         \"customer_id\": \"Iure dolore et et aut nam.\",\n         \"label\": \"Consequuntur neque mollitia quia.\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Voluptates odit consequatur quis.\",\n         \"client_secret\": \"Est voluptatum enim earum et doloribus.\",\n         \"developer_token\": \"Id ducimus eius et laboriosam omnis vitae.\",\n         \"refresh_token\": \"Ea consequatur et ut.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsGetMicrosoftAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-microsoft-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Get the project's Microsoft Ads connection (credentials redacted; returns ETag).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-microsoft-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections update-microsoft-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprint(os.Stderr, " -if-match STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the Microsoft Ads connection config (requires If-Match; does not set credentials).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -if-match STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-microsoft-ads --body '{\n      \"config\": {\n         \"account_id\": \"Sint qui praesentium ea praesentium magni.\",\n         \"customer_id\": \"Iure dolore et et aut nam.\",\n         \"label\": \"Consequuntur neque mollitia quia.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+}
+
+func lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections delete-microsoft-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Soft-delete the project's Microsoft Ads connection.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections delete-microsoft-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsTestMicrosoftAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections test-microsoft-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Verify the stored Microsoft Ads credential against the provider.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections test-microsoft-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections set-credential-microsoft-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the stored (encrypted) Microsoft Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-microsoft-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Voluptates odit consequatur quis.\",\n         \"client_secret\": \"Est voluptatum enim earum et doloribus.\",\n         \"developer_token\": \"Id ducimus eius et laboriosam omnis vitae.\",\n         \"refresh_token\": \"Ea consequatur et ut.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsCreateHubspotUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections create-hubspot", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create the project's HubSpot connection (singleton; 409 if one already exists).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-hubspot --body '{\n      \"config\": {\n         \"account_id\": \"Temporibus voluptas inventore sit omnis.\",\n         \"brand_kit\": \"Quis facere sint totam sapiente.\",\n         \"label\": \"Sint nihil.\",\n         \"portal_id\": \"Expedita veniam beatae autem.\",\n         \"sender_email\": \"Placeat enim.\",\n         \"sender_name\": \"Nesciunt asperiores et est.\"\n      },\n      \"credentials\": {\n         \"private_app_token\": \"Numquam ut nesciunt voluptas.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsGetHubspotUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-hubspot", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Get the project's HubSpot connection (credentials redacted; returns ETag).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-hubspot --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsUpdateHubspotUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections update-hubspot", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprint(os.Stderr, " -if-match STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the HubSpot connection config (requires If-Match; does not set credentials).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -if-match STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-hubspot --body '{\n      \"config\": {\n         \"account_id\": \"Temporibus voluptas inventore sit omnis.\",\n         \"brand_kit\": \"Quis facere sint totam sapiente.\",\n         \"label\": \"Sint nihil.\",\n         \"portal_id\": \"Expedita veniam beatae autem.\",\n         \"sender_email\": \"Placeat enim.\",\n         \"sender_name\": \"Nesciunt asperiores et est.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+}
+
+func lfxV2CampaignServiceConnectionsDeleteHubspotUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections delete-hubspot", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Soft-delete the project's HubSpot connection.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections delete-hubspot --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsTestHubspotUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections test-hubspot", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Verify the stored HubSpot credential against the provider.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections test-hubspot --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSetCredentialHubspotUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections set-credential-hubspot", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the stored (encrypted) HubSpot credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-hubspot --body '{\n      \"credentials\": {\n         \"private_app_token\": \"Numquam ut nesciunt voluptas.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceSvcUsage displays the usage of the
