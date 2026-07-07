@@ -12,4 +12,633 @@ produces:
     - application/json
     - application/xml
     - application/gob
-paths: {}
+paths:
+    /projects/{project_id}/connection-google-ads:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-google-ads lfx-v2-campaign-service-connections
+            description: Get the project's Google Ads connection (credentials redacted; returns ETag).
+            operationId: lfx-v2-campaign-service-connections#get-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/GoogleAdsConnection'
+                        required:
+                            - id
+                            - project_id
+                            - account_id
+                            - has_credentials
+                            - status
+                            - version
+                    headers:
+                        ETag:
+                            description: ETag header value (mirrors version)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+        put:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: update-google-ads lfx-v2-campaign-service-connections
+            description: Replace the Google Ads connection config (requires If-Match; does not set credentials).
+            operationId: lfx-v2-campaign-service-connections#update-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+                - name: If-Match
+                  in: header
+                  description: If-Match header carrying the current ETag/version
+                  required: false
+                  type: string
+                - name: Update-Google-AdsRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/LfxV2CampaignServiceConnectionsUpdateGoogleAdsRequestBody'
+                    required:
+                        - config
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/GoogleAdsConnection'
+                        required:
+                            - id
+                            - project_id
+                            - account_id
+                            - has_credentials
+                            - status
+                            - version
+                    headers:
+                        ETag:
+                            description: ETag header value (mirrors version)
+                            type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - message
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - message
+                "412":
+                    description: Precondition Failed response.
+                    schema:
+                        $ref: '#/definitions/PreconditionFailedError'
+                        required:
+                            - message
+                "428":
+                    description: Precondition Required response.
+                    schema:
+                        $ref: '#/definitions/PreconditionRequiredError'
+                        required:
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+        post:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: create-google-ads lfx-v2-campaign-service-connections
+            description: Create the project's Google Ads connection (singleton; 409 if one already exists).
+            operationId: lfx-v2-campaign-service-connections#create-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+                - name: Create-Google-AdsRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody'
+                    required:
+                        - config
+                        - credentials
+            responses:
+                "201":
+                    description: Created response.
+                    schema:
+                        $ref: '#/definitions/GoogleAdsConnection'
+                        required:
+                            - id
+                            - project_id
+                            - account_id
+                            - has_credentials
+                            - status
+                            - version
+                    headers:
+                        ETag:
+                            description: ETag header value (mirrors version)
+                            type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - message
+                "409":
+                    description: Conflict response.
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+        delete:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: delete-google-ads lfx-v2-campaign-service-connections
+            description: Soft-delete the project's Google Ads connection.
+            operationId: lfx-v2-campaign-service-connections#delete-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "204":
+                    description: No Content response.
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-google-ads/set-credential:
+        post:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: set-credential-google-ads lfx-v2-campaign-service-connections
+            description: Replace the stored (encrypted) Google Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.
+            operationId: lfx-v2-campaign-service-connections#set-credential-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+                - name: Set-Credential-Google-AdsRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody'
+                    required:
+                        - credentials
+            responses:
+                "204":
+                    description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - message
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-google-ads/test:
+        post:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: test-google-ads lfx-v2-campaign-service-connections
+            description: Verify the stored Google Ads credential against the provider.
+            operationId: lfx-v2-campaign-service-connections#test-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/ConnectionTestResult'
+                        required:
+                            - ok
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+definitions:
+    BadRequestError:
+        title: BadRequestError
+        type: object
+        properties:
+            message:
+                type: string
+                description: Error message
+                example: The request was invalid.
+        description: Bad request
+        example:
+            message: The request was invalid.
+        required:
+            - message
+    ConflictError:
+        title: ConflictError
+        type: object
+        properties:
+            message:
+                type: string
+                description: Error message
+                example: A connection for this provider already exists on the project.
+        description: A connection already exists for this provider on the project
+        example:
+            message: A connection for this provider already exists on the project.
+        required:
+            - message
+    ConnServiceUnavailableError:
+        title: ConnServiceUnavailableError
+        type: object
+        properties:
+            message:
+                type: string
+                description: Error message
+                example: The service is unavailable.
+        description: Service unavailable
+        example:
+            message: The service is unavailable.
+        required:
+            - message
+    ConnectionTestResult:
+        title: ConnectionTestResult
+        type: object
+        properties:
+            message:
+                type: string
+                description: Human-readable detail
+                example: Similique omnis.
+            ok:
+                type: boolean
+                description: Whether the credential authenticated against the provider
+                example: true
+        example:
+            message: Aut laborum voluptatem est molestiae.
+            ok: true
+        required:
+            - ok
+    GoogleAdsConnection:
+        title: GoogleAdsConnection
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: Google Ads customer ID
+                example: Ullam cum at molestiae mollitia maxime sapiente.
+            has_credentials:
+                type: boolean
+                description: Whether an encrypted credential is stored
+                example: true
+            id:
+                type: string
+                description: Service-generated connection UUID (not used in paths)
+                example: Quis id sint.
+            label:
+                type: string
+                description: Optional friendly name
+                example: Soluta libero animi dignissimos.
+            login_customer_id:
+                type: string
+                description: Manager account used for API access
+                example: Maiores omnis distinctio ratione ratione.
+            project_id:
+                type: string
+                description: Owning project
+                example: Sit ex explicabo at cupiditate et.
+            status:
+                type: string
+                description: Connection status
+                example: deleted
+                enum:
+                    - active
+                    - inactive
+                    - error
+                    - deleted
+            version:
+                type: integer
+                description: Optimistic-concurrency version
+                example: 7204103165427859220
+                format: int64
+        example:
+            account_id: Minima nisi voluptas est accusantium soluta sed.
+            has_credentials: false
+            id: Sed nesciunt.
+            label: Sit recusandae.
+            login_customer_id: Quo atque repellat vitae odio.
+            project_id: Rerum ratione labore at maxime vel.
+            status: deleted
+            version: 8475667433402574070
+        required:
+            - id
+            - project_id
+            - account_id
+            - has_credentials
+            - status
+            - version
+    GoogleAdsConnectionConfig:
+        title: GoogleAdsConnectionConfig
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: Google Ads customer ID
+                example: "8666746580"
+            label:
+                type: string
+                description: Optional friendly name
+                example: TLF Main
+            login_customer_id:
+                type: string
+                description: Manager account used for API access
+                example: "9746983954"
+        example:
+            account_id: "8666746580"
+            label: TLF Main
+            login_customer_id: "9746983954"
+        required:
+            - account_id
+    GoogleAdsCredentials:
+        title: GoogleAdsCredentials
+        type: object
+        properties:
+            client_id:
+                type: string
+                description: OAuth client id
+                example: Reiciendis voluptas dolor.
+            client_secret:
+                type: string
+                description: OAuth client secret
+                example: Asperiores cum.
+            developer_token:
+                type: string
+                description: Google Ads developer token
+                example: Ut exercitationem.
+            refresh_token:
+                type: string
+                description: OAuth refresh token
+                example: Et mollitia libero ipsam eos eligendi ex.
+        description: Google Ads OAuth credential set. Write-only; never returned.
+        example:
+            client_id: Modi rem voluptatem.
+            client_secret: Dicta autem ratione sit nam.
+            developer_token: Voluptas repellendus in corporis doloribus.
+            refresh_token: Enim accusamus natus ut officiis praesentium ullam.
+        required:
+            - refresh_token
+            - client_id
+            - client_secret
+            - developer_token
+    InternalServerError:
+        title: InternalServerError
+        type: object
+        properties:
+            message:
+                type: string
+                description: Error message
+                example: An internal server error occurred.
+        description: Internal server error
+        example:
+            message: An internal server error occurred.
+        required:
+            - message
+    LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody:
+        title: LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody
+        type: object
+        properties:
+            config:
+                $ref: '#/definitions/GoogleAdsConnectionConfig'
+            credentials:
+                $ref: '#/definitions/GoogleAdsCredentials'
+        example:
+            config:
+                account_id: "8666746580"
+                label: TLF Main
+                login_customer_id: "9746983954"
+            credentials:
+                client_id: Velit earum et harum.
+                client_secret: Corporis saepe quo.
+                developer_token: Impedit aut quis sint tempora.
+                refresh_token: Maiores velit et.
+        required:
+            - config
+            - credentials
+    LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody:
+        title: LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody
+        type: object
+        properties:
+            credentials:
+                $ref: '#/definitions/GoogleAdsCredentials'
+        example:
+            credentials:
+                client_id: Velit earum et harum.
+                client_secret: Corporis saepe quo.
+                developer_token: Impedit aut quis sint tempora.
+                refresh_token: Maiores velit et.
+        required:
+            - credentials
+    LfxV2CampaignServiceConnectionsUpdateGoogleAdsRequestBody:
+        title: LfxV2CampaignServiceConnectionsUpdateGoogleAdsRequestBody
+        type: object
+        properties:
+            config:
+                $ref: '#/definitions/GoogleAdsConnectionConfig'
+        example:
+            config:
+                account_id: "8666746580"
+                label: TLF Main
+                login_customer_id: "9746983954"
+        required:
+            - config
+    NotFoundError:
+        title: NotFoundError
+        type: object
+        properties:
+            message:
+                type: string
+                description: Error message
+                example: The connection was not found.
+        description: Resource not found
+        example:
+            message: The connection was not found.
+        required:
+            - message
+    PreconditionFailedError:
+        title: PreconditionFailedError
+        type: object
+        properties:
+            message:
+                type: string
+                description: Error message
+                example: The supplied ETag does not match the current version.
+        description: ETag mismatch
+        example:
+            message: The supplied ETag does not match the current version.
+        required:
+            - message
+    PreconditionRequiredError:
+        title: PreconditionRequiredError
+        type: object
+        properties:
+            message:
+                type: string
+                description: Error message
+                example: An If-Match header is required.
+        description: If-Match header required
+        example:
+            message: An If-Match header is required.
+        required:
+            - message
+securityDefinitions:
+    jwt_header_Authorization:
+        type: apiKey
+        description: JWT issued by Heimdall; audience is this service.
+        name: Authorization
+        in: header

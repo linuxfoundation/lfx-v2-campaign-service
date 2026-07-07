@@ -6,9 +6,837 @@ info:
 servers:
     - url: http://localhost:80
       description: Default server for lfx-v2-campaign-service
-paths: {}
+paths:
+    /projects/{project_id}/connection-google-ads:
+        delete:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: delete-google-ads lfx-v2-campaign-service-connections
+            description: Soft-delete the project's Google Ads connection.
+            operationId: lfx-v2-campaign-service-connections#delete-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "204":
+                    description: No Content response.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                message: The connection was not found.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-google-ads lfx-v2-campaign-service-connections
+            description: Get the project's Google Ads connection (credentials redacted; returns ETag).
+            operationId: lfx-v2-campaign-service-connections#get-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    headers:
+                        ETag:
+                            description: ETag header value (mirrors version)
+                            schema:
+                                type: string
+                                description: ETag header value (mirrors version)
+                                example: Tempora aut incidunt incidunt dolorem eaque et.
+                            example: Quis repellat tenetur.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GoogleAdsConnection3'
+                            example:
+                                account_id: Minima possimus et sint nostrum necessitatibus necessitatibus.
+                                has_credentials: false
+                                id: Laudantium inventore animi.
+                                label: Voluptatem est repellat nam praesentium.
+                                login_customer_id: Quia saepe quod.
+                                project_id: Sed doloribus odit.
+                                status: error
+                                version: 1188149324146280812
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                message: The connection was not found.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+        post:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: create-google-ads lfx-v2-campaign-service-connections
+            description: Create the project's Google Ads connection (singleton; 409 if one already exists).
+            operationId: lfx-v2-campaign-service-connections#create-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateGoogleAdsRequestBody'
+                        example:
+                            config:
+                                account_id: "8666746580"
+                                label: TLF Main
+                                login_customer_id: "9746983954"
+                            credentials:
+                                client_id: Velit earum et harum.
+                                client_secret: Corporis saepe quo.
+                                developer_token: Impedit aut quis sint tempora.
+                                refresh_token: Maiores velit et.
+            responses:
+                "201":
+                    description: Created response.
+                    headers:
+                        ETag:
+                            description: ETag header value (mirrors version)
+                            schema:
+                                type: string
+                                description: ETag header value (mirrors version)
+                                example: Est est id repellat quod deleniti cupiditate.
+                            example: Et quam veritatis consequatur sed.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GoogleAdsConnection2'
+                            example:
+                                account_id: Illo delectus tempora officiis culpa.
+                                has_credentials: true
+                                id: Repellendus numquam sint voluptate eaque.
+                                label: Id quidem et eius.
+                                login_customer_id: Eius minima eaque.
+                                project_id: Nulla autem tempore.
+                                status: error
+                                version: 381186655266390100
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                message: The request was invalid.
+                "409":
+                    description: 'Conflict: A connection already exists for this provider on the project'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                message: A connection for this provider already exists on the project.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+        put:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: update-google-ads lfx-v2-campaign-service-connections
+            description: Replace the Google Ads connection config (requires If-Match; does not set credentials).
+            operationId: lfx-v2-campaign-service-connections#update-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: If-Match
+                  in: header
+                  description: If-Match header carrying the current ETag/version
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: If-Match header carrying the current ETag/version
+                    example: "3"
+                  example: "3"
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpdateGoogleAdsRequestBody'
+                        example:
+                            config:
+                                account_id: "8666746580"
+                                label: TLF Main
+                                login_customer_id: "9746983954"
+            responses:
+                "200":
+                    description: OK response.
+                    headers:
+                        ETag:
+                            description: ETag header value (mirrors version)
+                            schema:
+                                type: string
+                                description: ETag header value (mirrors version)
+                                example: Molestiae numquam dolorum natus laudantium quisquam voluptas.
+                            example: Ut officiis earum in autem.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GoogleAdsConnection4'
+                            example:
+                                account_id: Deserunt quos saepe iusto eaque dolore ducimus.
+                                has_credentials: false
+                                id: Repellendus reiciendis quod aut non cum eum.
+                                label: Velit unde.
+                                login_customer_id: Aut provident qui.
+                                project_id: Quae ratione.
+                                status: error
+                                version: 7173288206389269267
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                message: The request was invalid.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                message: The connection was not found.
+                "412":
+                    description: 'PreconditionFailed: ETag mismatch'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PreconditionFailedError'
+                            example:
+                                message: The supplied ETag does not match the current version.
+                "428":
+                    description: 'PreconditionRequired: If-Match header required'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PreconditionRequiredError'
+                            example:
+                                message: An If-Match header is required.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-google-ads/set-credential:
+        post:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: set-credential-google-ads lfx-v2-campaign-service-connections
+            description: Replace the stored (encrypted) Google Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.
+            operationId: lfx-v2-campaign-service-connections#set-credential-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/SetCredentialGoogleAdsRequestBody'
+                        example:
+                            credentials:
+                                client_id: Velit earum et harum.
+                                client_secret: Corporis saepe quo.
+                                developer_token: Impedit aut quis sint tempora.
+                                refresh_token: Maiores velit et.
+            responses:
+                "204":
+                    description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                message: The request was invalid.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                message: The connection was not found.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-google-ads/test:
+        post:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: test-google-ads lfx-v2-campaign-service-connections
+            description: Verify the stored Google Ads credential against the provider.
+            operationId: lfx-v2-campaign-service-connections#test-google-ads
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnectionTestResult'
+                            example:
+                                message: Sequi sapiente fugiat eos nihil omnis qui.
+                                ok: false
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                message: The connection was not found.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
 components:
     schemas:
+        BadRequestError:
+            type: object
+            properties:
+                message:
+                    type: string
+                    description: Error message
+                    example: The request was invalid.
+            example:
+                message: The request was invalid.
+            required:
+                - message
+        ConflictError:
+            type: object
+            properties:
+                message:
+                    type: string
+                    description: Error message
+                    example: A connection for this provider already exists on the project.
+            example:
+                message: A connection for this provider already exists on the project.
+            required:
+                - message
+        ConnServiceUnavailableError:
+            type: object
+            properties:
+                message:
+                    type: string
+                    description: Error message
+                    example: The service is unavailable.
+            example:
+                message: The service is unavailable.
+            required:
+                - message
+        ConnectionTestResult:
+            type: object
+            properties:
+                message:
+                    type: string
+                    description: Human-readable detail
+                    example: Id aut expedita quod omnis.
+                ok:
+                    type: boolean
+                    description: Whether the credential authenticated against the provider
+                    example: true
+            example:
+                message: Excepturi qui dolorem perferendis repellendus quisquam harum.
+                ok: true
+            required:
+                - ok
+        CreateGoogleAdsRequestBody:
+            type: object
+            properties:
+                config:
+                    $ref: '#/components/schemas/GoogleAdsConnectionConfig'
+                credentials:
+                    $ref: '#/components/schemas/GoogleAdsCredentials'
+            example:
+                config:
+                    account_id: "8666746580"
+                    label: TLF Main
+                    login_customer_id: "9746983954"
+                credentials:
+                    client_id: Velit earum et harum.
+                    client_secret: Corporis saepe quo.
+                    developer_token: Impedit aut quis sint tempora.
+                    refresh_token: Maiores velit et.
+            required:
+                - config
+                - credentials
+        GoogleAdsConnection:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: Google Ads customer ID
+                    example: Perspiciatis soluta distinctio.
+                etag:
+                    type: string
+                    description: ETag header value (mirrors version)
+                    example: Eum eum quia vero fugit.
+                has_credentials:
+                    type: boolean
+                    description: Whether an encrypted credential is stored
+                    example: false
+                id:
+                    type: string
+                    description: Service-generated connection UUID (not used in paths)
+                    example: Natus officia eveniet aliquam.
+                label:
+                    type: string
+                    description: Optional friendly name
+                    example: Facilis cupiditate necessitatibus.
+                login_customer_id:
+                    type: string
+                    description: Manager account used for API access
+                    example: Non perferendis quod porro quaerat.
+                project_id:
+                    type: string
+                    description: Owning project
+                    example: Soluta voluptatem quibusdam eum error ut distinctio.
+                status:
+                    type: string
+                    description: Connection status
+                    example: deleted
+                    enum:
+                        - active
+                        - inactive
+                        - error
+                        - deleted
+                version:
+                    type: integer
+                    description: Optimistic-concurrency version
+                    example: 724783444861304391
+                    format: int64
+            example:
+                account_id: Incidunt quia quidem quasi expedita.
+                etag: Est quidem animi aut voluptatem.
+                has_credentials: false
+                id: Hic eius ut veniam ut sit quia.
+                label: Ratione illo nulla inventore dignissimos.
+                login_customer_id: Similique magnam eligendi praesentium blanditiis.
+                project_id: Voluptatem doloribus sed omnis nihil sit est.
+                status: active
+                version: 2640520922569052830
+            required:
+                - id
+                - project_id
+                - account_id
+                - has_credentials
+                - status
+                - version
+        GoogleAdsConnection2:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: Google Ads customer ID
+                    example: Inventore quisquam laudantium velit.
+                has_credentials:
+                    type: boolean
+                    description: Whether an encrypted credential is stored
+                    example: false
+                id:
+                    type: string
+                    description: Service-generated connection UUID (not used in paths)
+                    example: Quis ut praesentium.
+                label:
+                    type: string
+                    description: Optional friendly name
+                    example: Unde sed consectetur doloribus voluptatum excepturi inventore.
+                login_customer_id:
+                    type: string
+                    description: Manager account used for API access
+                    example: Recusandae nam autem dicta perspiciatis quod.
+                project_id:
+                    type: string
+                    description: Owning project
+                    example: Dolorum tenetur error corrupti et tenetur quod.
+                status:
+                    type: string
+                    description: Connection status
+                    example: inactive
+                    enum:
+                        - active
+                        - inactive
+                        - error
+                        - deleted
+                version:
+                    type: integer
+                    description: Optimistic-concurrency version
+                    example: 8856610520857600091
+                    format: int64
+            example:
+                account_id: Harum laborum est adipisci sint.
+                has_credentials: true
+                id: Culpa omnis consequuntur iste sint id magnam.
+                label: Odit nesciunt rerum est in in.
+                login_customer_id: Est impedit et tempore provident.
+                project_id: Nihil fugiat.
+                status: inactive
+                version: 9083553662620858752
+            required:
+                - id
+                - project_id
+                - account_id
+                - has_credentials
+                - status
+                - version
+        GoogleAdsConnection3:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: Google Ads customer ID
+                    example: Qui iste qui fugit minima autem libero.
+                has_credentials:
+                    type: boolean
+                    description: Whether an encrypted credential is stored
+                    example: false
+                id:
+                    type: string
+                    description: Service-generated connection UUID (not used in paths)
+                    example: Corrupti reprehenderit et non totam perspiciatis.
+                label:
+                    type: string
+                    description: Optional friendly name
+                    example: Voluptatibus architecto velit velit quas.
+                login_customer_id:
+                    type: string
+                    description: Manager account used for API access
+                    example: Id esse adipisci sed adipisci eveniet.
+                project_id:
+                    type: string
+                    description: Owning project
+                    example: Voluptatem porro quis.
+                status:
+                    type: string
+                    description: Connection status
+                    example: inactive
+                    enum:
+                        - active
+                        - inactive
+                        - error
+                        - deleted
+                version:
+                    type: integer
+                    description: Optimistic-concurrency version
+                    example: 5739979872368510091
+                    format: int64
+            example:
+                account_id: Dignissimos non ut sed.
+                has_credentials: false
+                id: Eum commodi autem expedita dolorem atque vitae.
+                label: Quis molestias ut.
+                login_customer_id: Deleniti quam.
+                project_id: Molestiae deleniti et mollitia in laborum vel.
+                status: inactive
+                version: 8010931949021898983
+            required:
+                - id
+                - project_id
+                - account_id
+                - has_credentials
+                - status
+                - version
+        GoogleAdsConnection4:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: Google Ads customer ID
+                    example: Similique autem non deserunt ab itaque.
+                has_credentials:
+                    type: boolean
+                    description: Whether an encrypted credential is stored
+                    example: false
+                id:
+                    type: string
+                    description: Service-generated connection UUID (not used in paths)
+                    example: Totam ex ut.
+                label:
+                    type: string
+                    description: Optional friendly name
+                    example: Nostrum nulla.
+                login_customer_id:
+                    type: string
+                    description: Manager account used for API access
+                    example: Numquam tenetur fugit voluptatem asperiores amet.
+                project_id:
+                    type: string
+                    description: Owning project
+                    example: Asperiores aut.
+                status:
+                    type: string
+                    description: Connection status
+                    example: deleted
+                    enum:
+                        - active
+                        - inactive
+                        - error
+                        - deleted
+                version:
+                    type: integer
+                    description: Optimistic-concurrency version
+                    example: 2325377718569892700
+                    format: int64
+            example:
+                account_id: Est quos.
+                has_credentials: false
+                id: Maiores ut ut non autem tempora esse.
+                label: Molestiae at rerum delectus tempora culpa.
+                login_customer_id: Totam quasi vero.
+                project_id: Aperiam sunt eum.
+                status: error
+                version: 2086671994798543080
+            required:
+                - id
+                - project_id
+                - account_id
+                - has_credentials
+                - status
+                - version
+        GoogleAdsConnectionConfig:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: Google Ads customer ID
+                    example: "8666746580"
+                label:
+                    type: string
+                    description: Optional friendly name
+                    example: TLF Main
+                login_customer_id:
+                    type: string
+                    description: Manager account used for API access
+                    example: "9746983954"
+            example:
+                account_id: "8666746580"
+                label: TLF Main
+                login_customer_id: "9746983954"
+            required:
+                - account_id
+        GoogleAdsCredentials:
+            type: object
+            properties:
+                client_id:
+                    type: string
+                    description: OAuth client id
+                    example: Quis quae.
+                client_secret:
+                    type: string
+                    description: OAuth client secret
+                    example: Fugiat repudiandae aut.
+                developer_token:
+                    type: string
+                    description: Google Ads developer token
+                    example: Quaerat magni.
+                refresh_token:
+                    type: string
+                    description: OAuth refresh token
+                    example: Labore consectetur quia earum quo.
+            description: Google Ads OAuth credential set. Write-only; never returned.
+            example:
+                client_id: Eum est neque aliquam adipisci.
+                client_secret: Vero impedit placeat repellendus qui.
+                developer_token: Distinctio voluptatem excepturi officiis quisquam illo earum.
+                refresh_token: Quibusdam nisi.
+            required:
+                - refresh_token
+                - client_id
+                - client_secret
+                - developer_token
+        InternalServerError:
+            type: object
+            properties:
+                message:
+                    type: string
+                    description: Error message
+                    example: An internal server error occurred.
+            example:
+                message: An internal server error occurred.
+            required:
+                - message
+        NotFoundError:
+            type: object
+            properties:
+                message:
+                    type: string
+                    description: Error message
+                    example: The connection was not found.
+            example:
+                message: The connection was not found.
+            required:
+                - message
+        PreconditionFailedError:
+            type: object
+            properties:
+                message:
+                    type: string
+                    description: Error message
+                    example: The supplied ETag does not match the current version.
+            example:
+                message: The supplied ETag does not match the current version.
+            required:
+                - message
+        PreconditionRequiredError:
+            type: object
+            properties:
+                message:
+                    type: string
+                    description: Error message
+                    example: An If-Match header is required.
+            example:
+                message: An If-Match header is required.
+            required:
+                - message
         ServiceUnavailableError:
             type: object
             properties:
@@ -26,6 +854,38 @@ components:
             required:
                 - code
                 - message
+        SetCredentialGoogleAdsRequestBody:
+            type: object
+            properties:
+                credentials:
+                    $ref: '#/components/schemas/GoogleAdsCredentials'
+            example:
+                credentials:
+                    client_id: Velit earum et harum.
+                    client_secret: Corporis saepe quo.
+                    developer_token: Impedit aut quis sint tempora.
+                    refresh_token: Maiores velit et.
+            required:
+                - credentials
+        UpdateGoogleAdsRequestBody:
+            type: object
+            properties:
+                config:
+                    $ref: '#/components/schemas/GoogleAdsConnectionConfig'
+            example:
+                config:
+                    account_id: "8666746580"
+                    label: TLF Main
+                    login_customer_id: "9746983954"
+            required:
+                - config
+    securitySchemes:
+        jwt_header_Authorization:
+            type: http
+            description: JWT issued by Heimdall; audience is this service.
+            scheme: bearer
 tags:
     - name: lfx-v2-campaign-service-svc
       description: The campaign service supports Marketing Operations campaign creation and management.
+    - name: lfx-v2-campaign-service-connections
+      description: Manage a project's singleton, per-provider ad-platform connections.

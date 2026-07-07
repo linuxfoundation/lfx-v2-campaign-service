@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 
+	lfxv2campaignserviceconnectionsc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/client"
 	lfxv2campaignservicesvcc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/client"
 	goahttp "goa.design/goa/v3/http"
 	goa "goa.design/goa/v3/pkg"
@@ -23,13 +24,15 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "lfx-v2-campaign-service-svc readyz" + "\n" +
+	return os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Velit earum et harum.\",\n         \"client_secret\": \"Corporis saepe quo.\",\n         \"developer_token\": \"Impedit aut quis sint tempora.\",\n         \"refresh_token\": \"Maiores velit et.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
+		os.Args[0] + " " + "lfx-v2-campaign-service-svc readyz" + "\n" +
 		""
 }
 
@@ -43,12 +46,50 @@ func ParseEndpoint(
 	restore bool,
 ) (goa.Endpoint, any, error) {
 	var (
+		lfxV2CampaignServiceConnectionsFlags = flag.NewFlagSet("lfx-v2-campaign-service-connections", flag.ContinueOnError)
+
+		lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags           = flag.NewFlagSet("create-google-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsCreateGoogleAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsCreateGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsGetGoogleAdsFlags           = flag.NewFlagSet("get-google-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsGetGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsGetGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsGetGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsGetGoogleAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags           = flag.NewFlagSet("update-google-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsUpdateGoogleAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsUpdateGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("bearer-token", "", "")
+		lfxV2CampaignServiceConnectionsUpdateGoogleAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("if-match", "", "")
+
+		lfxV2CampaignServiceConnectionsDeleteGoogleAdsFlags           = flag.NewFlagSet("delete-google-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsDeleteGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsDeleteGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsDeleteGoogleAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsTestGoogleAdsFlags           = flag.NewFlagSet("test-google-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsTestGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsTestGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsTestGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsTestGoogleAdsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags           = flag.NewFlagSet("set-credential-google-ads", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsBodyFlag        = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags.String("body", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceSvcFlags = flag.NewFlagSet("lfx-v2-campaign-service-svc", flag.ContinueOnError)
 
 		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
 
 		lfxV2CampaignServiceSvcLivezFlags = flag.NewFlagSet("livez", flag.ExitOnError)
 	)
+	lfxV2CampaignServiceConnectionsFlags.Usage = lfxV2CampaignServiceConnectionsUsage
+	lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsCreateGoogleAdsUsage
+	lfxV2CampaignServiceConnectionsGetGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsGetGoogleAdsUsage
+	lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsUpdateGoogleAdsUsage
+	lfxV2CampaignServiceConnectionsDeleteGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsDeleteGoogleAdsUsage
+	lfxV2CampaignServiceConnectionsTestGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsTestGoogleAdsUsage
+	lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsUsage
+
 	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
 	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
 	lfxV2CampaignServiceSvcLivezFlags.Usage = lfxV2CampaignServiceSvcLivezUsage
@@ -68,6 +109,8 @@ func ParseEndpoint(
 	{
 		svcn = flag.Arg(0)
 		switch svcn {
+		case "lfx-v2-campaign-service-connections":
+			svcf = lfxV2CampaignServiceConnectionsFlags
 		case "lfx-v2-campaign-service-svc":
 			svcf = lfxV2CampaignServiceSvcFlags
 		default:
@@ -85,6 +128,28 @@ func ParseEndpoint(
 	{
 		epn = svcf.Arg(0)
 		switch svcn {
+		case "lfx-v2-campaign-service-connections":
+			switch epn {
+			case "create-google-ads":
+				epf = lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags
+
+			case "get-google-ads":
+				epf = lfxV2CampaignServiceConnectionsGetGoogleAdsFlags
+
+			case "update-google-ads":
+				epf = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags
+
+			case "delete-google-ads":
+				epf = lfxV2CampaignServiceConnectionsDeleteGoogleAdsFlags
+
+			case "test-google-ads":
+				epf = lfxV2CampaignServiceConnectionsTestGoogleAdsFlags
+
+			case "set-credential-google-ads":
+				epf = lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsFlags
+
+			}
+
 		case "lfx-v2-campaign-service-svc":
 			switch epn {
 			case "readyz":
@@ -115,6 +180,28 @@ func ParseEndpoint(
 	)
 	{
 		switch svcn {
+		case "lfx-v2-campaign-service-connections":
+			c := lfxv2campaignserviceconnectionsc.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "create-google-ads":
+				endpoint = c.CreateGoogleAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildCreateGoogleAdsPayload(*lfxV2CampaignServiceConnectionsCreateGoogleAdsBodyFlag, *lfxV2CampaignServiceConnectionsCreateGoogleAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateGoogleAdsBearerTokenFlag)
+			case "get-google-ads":
+				endpoint = c.GetGoogleAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildGetGoogleAdsPayload(*lfxV2CampaignServiceConnectionsGetGoogleAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsGetGoogleAdsBearerTokenFlag)
+			case "update-google-ads":
+				endpoint = c.UpdateGoogleAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildUpdateGoogleAdsPayload(*lfxV2CampaignServiceConnectionsUpdateGoogleAdsBodyFlag, *lfxV2CampaignServiceConnectionsUpdateGoogleAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsUpdateGoogleAdsBearerTokenFlag, *lfxV2CampaignServiceConnectionsUpdateGoogleAdsIfMatchFlag)
+			case "delete-google-ads":
+				endpoint = c.DeleteGoogleAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildDeleteGoogleAdsPayload(*lfxV2CampaignServiceConnectionsDeleteGoogleAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsDeleteGoogleAdsBearerTokenFlag)
+			case "test-google-ads":
+				endpoint = c.TestGoogleAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildTestGoogleAdsPayload(*lfxV2CampaignServiceConnectionsTestGoogleAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsTestGoogleAdsBearerTokenFlag)
+			case "set-credential-google-ads":
+				endpoint = c.SetCredentialGoogleAds()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSetCredentialGoogleAdsPayload(*lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsBodyFlag, *lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsProjectIDFlag, *lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsBearerTokenFlag)
+			}
 		case "lfx-v2-campaign-service-svc":
 			c := lfxv2campaignservicesvcc.NewClient(scheme, host, doer, enc, dec, restore)
 			switch epn {
@@ -130,6 +217,150 @@ func ParseEndpoint(
 	}
 
 	return endpoint, data, nil
+}
+
+// lfxV2CampaignServiceConnectionsUsage displays the usage of the
+// lfx-v2-campaign-service-connections command and its subcommands.
+func lfxV2CampaignServiceConnectionsUsage() {
+	fmt.Fprintln(os.Stderr, `Manage a project's singleton, per-provider ad-platform connections.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] lfx-v2-campaign-service-connections COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    create-google-ads: Create the project's Google Ads connection (singleton; 409 if one already exists).`)
+	fmt.Fprintln(os.Stderr, `    get-google-ads: Get the project's Google Ads connection (credentials redacted; returns ETag).`)
+	fmt.Fprintln(os.Stderr, `    update-google-ads: Replace the Google Ads connection config (requires If-Match; does not set credentials).`)
+	fmt.Fprintln(os.Stderr, `    delete-google-ads: Soft-delete the project's Google Ads connection.`)
+	fmt.Fprintln(os.Stderr, `    test-google-ads: Verify the stored Google Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    set-credential-google-ads: Replace the stored (encrypted) Google Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-connections COMMAND --help\n", os.Args[0])
+}
+func lfxV2CampaignServiceConnectionsCreateGoogleAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections create-google-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create the project's Google Ads connection (singleton; 409 if one already exists).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Velit earum et harum.\",\n         \"client_secret\": \"Corporis saepe quo.\",\n         \"developer_token\": \"Impedit aut quis sint tempora.\",\n         \"refresh_token\": \"Maiores velit et.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsGetGoogleAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-google-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Get the project's Google Ads connection (credentials redacted; returns ETag).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-google-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsUpdateGoogleAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections update-google-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprint(os.Stderr, " -if-match STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the Google Ads connection config (requires If-Match; does not set credentials).`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -if-match STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+}
+
+func lfxV2CampaignServiceConnectionsDeleteGoogleAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections delete-google-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Soft-delete the project's Google Ads connection.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections delete-google-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsTestGoogleAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections test-google-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Verify the stored Google Ads credential against the provider.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections test-google-ads --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections set-credential-google-ads", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace the stored (encrypted) Google Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-google-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Velit earum et harum.\",\n         \"client_secret\": \"Corporis saepe quo.\",\n         \"developer_token\": \"Impedit aut quis sint tempora.\",\n         \"refresh_token\": \"Maiores velit et.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceSvcUsage displays the usage of the
