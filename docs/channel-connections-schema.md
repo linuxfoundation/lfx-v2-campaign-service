@@ -12,7 +12,7 @@ A connection is **singleton per provider per project**: a project holds at most 
 2. **Optimistic concurrency on every table.** Every table that maps to an LFX platform resource type carries a `version BIGINT` iterator. The DB handle implements optimistic locking: `UPDATE ... WHERE id = $1 AND version = $2`, incrementing `version` on success and returning `ErrPreconditionFailed` on mismatch. This powers the platform-idiomatic **ETag / `If-Match`** concurrency controls on PUTs. (Pattern mirrors committee-service; see [lfx-architecture-scratch/2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG).)
 3. **No cross-service FK on `project_id`.** Projects are owned by the project-service; like committee-service, `project_id` is a plain `UUID NOT NULL` (indexed), not a foreign key into a table this service owns.
 4. **Application-level credential encryption.** Credentials are encrypted by the application (AES-256-GCM) using a key sourced from a Kubernetes secret via an environment variable — *not* by pgcrypto. pgcrypto can do symmetric encryption (`pgp_sym_encrypt`), but doing it in the database would require the key to be present at the DB layer; encrypting in the application keeps the key out of the database entirely (it lives only in the app's k8s secret). That key-custody boundary — not any capability gap in pgcrypto — is the reason for app-level encryption.
-5. **Attribution is served by Query Service.** `created_at`/`updated_at`/`created_by` audit and revision history are maintained by the Query Service on each (re)index; this schema does not attempt to reproduce a separate audit/revision store. Where a `created_by` value is retained inline for convenience, it captures the full actor (`name`, `email`, `username`) so historical records remain meaningful even after a user is removed.
+5. **Attribution.** For **indexed** resources (briefs, campaigns), `created_by` audit and revision history are maintained by the Query Service on each (re)index; this schema does not reproduce a separate audit/revision store for them. **Connections are not indexed** (see [Security](#security)), so their attribution lives **only** in the inline `created_by JSONB` column on the connection row — it captures the full actor (`name`, `email`, `username`) so the record stays meaningful even after a user is removed. In all cases the inline `created_by` captures the full actor rather than a bare id.
 
 ## Per-Provider Tables
 
@@ -31,6 +31,9 @@ Each provider gets its own table. To avoid repeating nine identical columns seve
     status       TEXT        NOT NULL DEFAULT 'active'
                  CHECK (status IN ('active','inactive','error','deleted')),
     version      BIGINT      NOT NULL DEFAULT 1,       -- optimistic lock → ETag/If-Match
+    created_by   JSONB,                                -- {name,email,username} — inline attribution
+                                                       --   (connections are NOT indexed, so this is
+                                                       --   the sole attribution source; see Security)
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()    -- set by application on UPDATE (no DB trigger)
 ```
@@ -52,6 +55,7 @@ CREATE TABLE google_ads_connections (
     status             TEXT        NOT NULL DEFAULT 'active'
                        CHECK (status IN ('active','inactive','error','deleted')),
     version            BIGINT      NOT NULL DEFAULT 1,
+    created_by         JSONB,                           -- {name,email,username} — inline attribution
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- provider-specific:

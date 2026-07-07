@@ -49,7 +49,7 @@ flowchart TD
         subgraph campaigns-group["Campaigns Service (preferred)"]
             campaigns["Campaigns service\n(Golang)"]
             campaigns-db[("Postgres\n(stores briefs, shared-tenant mappings, etc)")]
-            google-ads-helper["Google Ads TypeScript<br >helper (optional)"]
+            google-ads-helper["Google Ads TypeScript<br />helper (optional)"]
             campaigns --> campaigns-db
         end
 

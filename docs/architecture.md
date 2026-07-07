@@ -71,7 +71,7 @@ flowchart TD
         subgraph campaigns-group["Campaigns Service (preferred)"]
             campaigns["Campaigns service\n(Golang)"]
             campaigns-db[("Postgres\n(stores briefs, shared-tenant mappings, etc)")]
-            google-ads-helper["Google Ads TypeScript<br >helper (optional)"]
+            google-ads-helper["Google Ads TypeScript<br />helper (optional)"]
             campaigns --> campaigns-db
         end
 
@@ -348,6 +348,7 @@ erDiagram
         BYTEA credentials "app AES-256-GCM"
         VARCHAR status
         BIGINT version "ETag/If-Match"
+        JSONB created_by "{name,email,username} — inline (not indexed)"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
     }
