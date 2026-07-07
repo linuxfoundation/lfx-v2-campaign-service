@@ -54,41 +54,44 @@ func ifMatchAttr() {
 	})
 }
 
-// ─── Standard error types (mirrors committee-service) ───
+// ─── Standard error types ───
+//
+// Each carries both code and message, matching the service-level
+// ServiceUnavailableError in design/design.go so the API's error schemas are
+// consistent across the OpenAPI document.
+
+func errorAttrs(codeExample, msgExample string) {
+	Attribute("code", String, "HTTP status code", func() { Example(codeExample) })
+	Attribute("message", String, "Error message", func() { Example(msgExample) })
+	Required("code", "message")
+}
 
 var BadRequestError = Type("bad-request-error", func() {
-	Attribute("message", String, "Error message", func() { Example("The request was invalid.") })
-	Required("message")
+	errorAttrs("400", "The request was invalid.")
 })
 
 var NotFoundError = Type("not-found-error", func() {
-	Attribute("message", String, "Error message", func() { Example("The connection was not found.") })
-	Required("message")
+	errorAttrs("404", "The connection was not found.")
 })
 
 var ConflictError = Type("conflict-error", func() {
-	Attribute("message", String, "Error message", func() { Example("A connection for this provider already exists on the project.") })
-	Required("message")
+	errorAttrs("409", "A connection for this provider already exists on the project.")
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {
-	Attribute("message", String, "Error message", func() { Example("The supplied ETag does not match the current version.") })
-	Required("message")
+	errorAttrs("412", "The supplied ETag does not match the current version.")
 })
 
 var PreconditionRequiredError = Type("precondition-required-error", func() {
-	Attribute("message", String, "Error message", func() { Example("An If-Match header is required.") })
-	Required("message")
+	errorAttrs("428", "An If-Match header is required.")
 })
 
 var InternalServerError = Type("internal-server-error", func() {
-	Attribute("message", String, "Error message", func() { Example("An internal server error occurred.") })
-	Required("message")
+	errorAttrs("500", "An internal server error occurred.")
 })
 
 var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() {
-	Attribute("message", String, "Error message", func() { Example("The service is unavailable.") })
-	Required("message")
+	errorAttrs("503", "The service is unavailable.")
 })
 
 // TestResult is the outcome of verifying a credential against the provider.
@@ -114,9 +117,10 @@ func commonConnectionAttrs() {
 	Attribute("etag", String, "ETag header value (mirrors version)")
 }
 
-// commonConnectionRequired lists the always-required response fields.
+// commonConnectionRequired lists the always-required response fields. etag is
+// required so implementations cannot accidentally omit it (FR-004/FR-005).
 func commonConnectionRequired() {
-	Required("id", "project_id", "account_id", "has_credentials", "status", "version")
+	Required("id", "project_id", "account_id", "has_credentials", "status", "version", "etag")
 }
 
 // ─── Per-provider method helper ───
@@ -127,9 +131,9 @@ func commonConnectionRequired() {
 // endpoints stay identical in shape while payloads stay strongly typed.
 //
 // title is a human-readable provider name used in descriptions (e.g. "Google
-// Ads"). methodSuffix is the CamelCase suffix Goa turns into method names
-// (e.g. "GoogleAds" → CreateGoogleAds); it must be unique per provider.
-func connectionMethods(key, title, methodSuffix string, config, creds, result eval.Expression) {
+// Ads"). Goa derives the generated method names from the method keys
+// (create-{key} → CreateGoogleAds, etc.), so no explicit suffix is needed.
+func connectionMethods(key, title string, config, creds, result eval.Expression) {
 	Method("create-"+key, func() {
 		Description("Create the project's " + title + " connection (singleton; 409 if one already exists).")
 		Payload(func() {
@@ -187,7 +191,7 @@ func connectionMethods(key, title, methodSuffix string, config, creds, result ev
 			projectIDAttr()
 			ifMatchAttr()
 			Attribute("config", config)
-			Required("project_id", "config")
+			Required("project_id", "if_match", "config")
 		})
 		Result(result)
 		Error("BadRequest", BadRequestError, "Bad request")
@@ -449,11 +453,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 
 	Security(JWTAuth)
 
-	connectionMethods("google-ads", "Google Ads", "GoogleAds", GoogleAdsConnectionConfig, GoogleAdsCredentials, GoogleAdsConnection)
-	connectionMethods("linkedin-ads", "LinkedIn Ads", "LinkedInAds", LinkedInAdsConnectionConfig, LinkedInAdsCredentials, LinkedInAdsConnection)
-	connectionMethods("meta-ads", "Meta Ads", "MetaAds", MetaAdsConnectionConfig, MetaAdsCredentials, MetaAdsConnection)
-	connectionMethods("reddit-ads", "Reddit Ads", "RedditAds", RedditAdsConnectionConfig, RedditAdsCredentials, RedditAdsConnection)
-	connectionMethods("twitter-ads", "X/Twitter Ads", "TwitterAds", TwitterAdsConnectionConfig, TwitterAdsCredentials, TwitterAdsConnection)
-	connectionMethods("microsoft-ads", "Microsoft Ads", "MicrosoftAds", MicrosoftAdsConnectionConfig, MicrosoftAdsCredentials, MicrosoftAdsConnection)
-	connectionMethods("hubspot", "HubSpot", "HubSpot", HubSpotConnectionConfig, HubSpotCredentials, HubSpotConnection)
+	connectionMethods("google-ads", "Google Ads", GoogleAdsConnectionConfig, GoogleAdsCredentials, GoogleAdsConnection)
+	connectionMethods("linkedin-ads", "LinkedIn Ads", LinkedInAdsConnectionConfig, LinkedInAdsCredentials, LinkedInAdsConnection)
+	connectionMethods("meta-ads", "Meta Ads", MetaAdsConnectionConfig, MetaAdsCredentials, MetaAdsConnection)
+	connectionMethods("reddit-ads", "Reddit Ads", RedditAdsConnectionConfig, RedditAdsCredentials, RedditAdsConnection)
+	connectionMethods("twitter-ads", "X/Twitter Ads", TwitterAdsConnectionConfig, TwitterAdsCredentials, TwitterAdsConnection)
+	connectionMethods("microsoft-ads", "Microsoft Ads", MicrosoftAdsConnectionConfig, MicrosoftAdsCredentials, MicrosoftAdsConnection)
+	connectionMethods("hubspot", "HubSpot", HubSpotConnectionConfig, HubSpotCredentials, HubSpotConnection)
 })

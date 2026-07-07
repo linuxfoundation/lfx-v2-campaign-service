@@ -52,18 +52,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -89,7 +92,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: false
+                  required: true
                   type: string
                 - name: Update-Google-AdsRequestBody
                   in: body
@@ -119,36 +122,42 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "412":
                     description: Precondition Failed response.
                     schema:
                         $ref: '#/definitions/PreconditionFailedError'
                         required:
+                            - code
                             - message
                 "428":
                     description: Precondition Required response.
                     schema:
                         $ref: '#/definitions/PreconditionRequiredError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -200,24 +209,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "409":
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -248,18 +261,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -298,24 +314,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -351,18 +371,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -407,18 +430,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -444,7 +470,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: false
+                  required: true
                   type: string
                 - name: Update-HubspotRequestBody
                   in: body
@@ -474,36 +500,42 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "412":
                     description: Precondition Failed response.
                     schema:
                         $ref: '#/definitions/PreconditionFailedError'
                         required:
+                            - code
                             - message
                 "428":
                     description: Precondition Required response.
                     schema:
                         $ref: '#/definitions/PreconditionRequiredError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -555,24 +587,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "409":
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -603,18 +639,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -653,24 +692,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -706,18 +749,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -762,18 +808,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -799,7 +848,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: false
+                  required: true
                   type: string
                 - name: Update-Linkedin-AdsRequestBody
                   in: body
@@ -829,36 +878,42 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "412":
                     description: Precondition Failed response.
                     schema:
                         $ref: '#/definitions/PreconditionFailedError'
                         required:
+                            - code
                             - message
                 "428":
                     description: Precondition Required response.
                     schema:
                         $ref: '#/definitions/PreconditionRequiredError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -910,24 +965,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "409":
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -958,18 +1017,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1008,24 +1070,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1061,18 +1127,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1117,18 +1186,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1154,7 +1226,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: false
+                  required: true
                   type: string
                 - name: Update-Meta-AdsRequestBody
                   in: body
@@ -1184,36 +1256,42 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "412":
                     description: Precondition Failed response.
                     schema:
                         $ref: '#/definitions/PreconditionFailedError'
                         required:
+                            - code
                             - message
                 "428":
                     description: Precondition Required response.
                     schema:
                         $ref: '#/definitions/PreconditionRequiredError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1265,24 +1343,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "409":
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1313,18 +1395,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1363,24 +1448,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1416,18 +1505,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1472,18 +1564,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1509,7 +1604,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: false
+                  required: true
                   type: string
                 - name: Update-Microsoft-AdsRequestBody
                   in: body
@@ -1539,36 +1634,42 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "412":
                     description: Precondition Failed response.
                     schema:
                         $ref: '#/definitions/PreconditionFailedError'
                         required:
+                            - code
                             - message
                 "428":
                     description: Precondition Required response.
                     schema:
                         $ref: '#/definitions/PreconditionRequiredError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1620,24 +1721,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "409":
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1668,18 +1773,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1718,24 +1826,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1771,18 +1883,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1827,18 +1942,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1864,7 +1982,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: false
+                  required: true
                   type: string
                 - name: Update-Reddit-AdsRequestBody
                   in: body
@@ -1894,36 +2012,42 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "412":
                     description: Precondition Failed response.
                     schema:
                         $ref: '#/definitions/PreconditionFailedError'
                         required:
+                            - code
                             - message
                 "428":
                     description: Precondition Required response.
                     schema:
                         $ref: '#/definitions/PreconditionRequiredError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -1975,24 +2099,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "409":
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2023,18 +2151,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2073,24 +2204,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2126,18 +2261,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2182,18 +2320,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2219,7 +2360,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: false
+                  required: true
                   type: string
                 - name: Update-Twitter-AdsRequestBody
                   in: body
@@ -2249,36 +2390,42 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "412":
                     description: Precondition Failed response.
                     schema:
                         $ref: '#/definitions/PreconditionFailedError'
                         required:
+                            - code
                             - message
                 "428":
                     description: Precondition Required response.
                     schema:
                         $ref: '#/definitions/PreconditionRequiredError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2330,24 +2477,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "409":
                     description: Conflict response.
                     schema:
                         $ref: '#/definitions/ConflictError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2378,18 +2529,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2428,24 +2582,28 @@ paths:
                     schema:
                         $ref: '#/definitions/BadRequestError'
                         required:
+                            - code
                             - message
                 "404":
                     description: Not Found response.
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2481,18 +2639,21 @@ paths:
                     schema:
                         $ref: '#/definitions/NotFoundError'
                         required:
+                            - code
                             - message
                 "500":
                     description: Internal Server Error response.
                     schema:
                         $ref: '#/definitions/InternalServerError'
                         required:
+                            - code
                             - message
                 "503":
                     description: Service Unavailable response.
                     schema:
                         $ref: '#/definitions/ConnServiceUnavailableError'
                         required:
+                            - code
                             - message
             schemes:
                 - http
@@ -2503,40 +2664,58 @@ definitions:
         title: BadRequestError
         type: object
         properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "400"
             message:
                 type: string
                 description: Error message
                 example: The request was invalid.
         description: Bad request
         example:
+            code: "400"
             message: The request was invalid.
         required:
+            - code
             - message
     ConflictError:
         title: ConflictError
         type: object
         properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "409"
             message:
                 type: string
                 description: Error message
                 example: A connection for this provider already exists on the project.
         description: A connection already exists for this provider on the project
         example:
+            code: "409"
             message: A connection for this provider already exists on the project.
         required:
+            - code
             - message
     ConnServiceUnavailableError:
         title: ConnServiceUnavailableError
         type: object
         properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "503"
             message:
                 type: string
                 description: Error message
                 example: The service is unavailable.
         description: Service unavailable
         example:
+            code: "503"
             message: The service is unavailable.
         required:
+            - code
             - message
     ConnectionTestResult:
         title: ConnectionTestResult
@@ -2793,14 +2972,20 @@ definitions:
         title: InternalServerError
         type: object
         properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "500"
             message:
                 type: string
                 description: Error message
                 example: An internal server error occurred.
         description: Internal server error
         example:
+            code: "500"
             message: An internal server error occurred.
         required:
+            - code
             - message
     LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody:
         title: LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody
@@ -3444,40 +3629,58 @@ definitions:
         title: NotFoundError
         type: object
         properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "404"
             message:
                 type: string
                 description: Error message
                 example: The connection was not found.
         description: Resource not found
         example:
+            code: "404"
             message: The connection was not found.
         required:
+            - code
             - message
     PreconditionFailedError:
         title: PreconditionFailedError
         type: object
         properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "412"
             message:
                 type: string
                 description: Error message
                 example: The supplied ETag does not match the current version.
         description: ETag mismatch
         example:
+            code: "412"
             message: The supplied ETag does not match the current version.
         required:
+            - code
             - message
     PreconditionRequiredError:
         title: PreconditionRequiredError
         type: object
         properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "428"
             message:
                 type: string
                 description: Error message
                 example: An If-Match header is required.
         description: If-Match header required
         example:
+            code: "428"
             message: An If-Match header is required.
         required:
+            - code
             - message
     RedditAdsConnection:
         title: RedditAdsConnection

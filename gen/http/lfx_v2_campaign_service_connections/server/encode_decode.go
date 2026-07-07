@@ -26,9 +26,7 @@ func EncodeCreateGoogleAdsResponse(encoder func(context.Context, http.ResponseWr
 		res, _ := v.(*lfxv2campaignserviceconnections.GoogleAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewCreateGoogleAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusCreated)
 		return enc.Encode(body)
 	}
@@ -158,9 +156,7 @@ func EncodeGetGoogleAdsResponse(encoder func(context.Context, http.ResponseWrite
 		res, _ := v.(*lfxv2campaignserviceconnections.GoogleAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewGetGoogleAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -257,9 +253,7 @@ func EncodeUpdateGoogleAdsResponse(encoder func(context.Context, http.ResponseWr
 		res, _ := v.(*lfxv2campaignserviceconnections.GoogleAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewUpdateGoogleAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -293,7 +287,7 @@ func DecodeUpdateGoogleAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     *string
+			ifMatch     string
 
 			params = mux.Vars(r)
 		)
@@ -302,9 +296,12 @@ func DecodeUpdateGoogleAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatchRaw := r.Header.Get("If-Match")
-		if ifMatchRaw != "" {
-			ifMatch = &ifMatchRaw
+		ifMatch = r.Header.Get("If-Match")
+		if ifMatch == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateGoogleAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -736,9 +733,7 @@ func EncodeCreateLinkedinAdsResponse(encoder func(context.Context, http.Response
 		res, _ := v.(*lfxv2campaignserviceconnections.LinkedinAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewCreateLinkedinAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusCreated)
 		return enc.Encode(body)
 	}
@@ -868,9 +863,7 @@ func EncodeGetLinkedinAdsResponse(encoder func(context.Context, http.ResponseWri
 		res, _ := v.(*lfxv2campaignserviceconnections.LinkedinAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewGetLinkedinAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -967,9 +960,7 @@ func EncodeUpdateLinkedinAdsResponse(encoder func(context.Context, http.Response
 		res, _ := v.(*lfxv2campaignserviceconnections.LinkedinAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewUpdateLinkedinAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -1003,7 +994,7 @@ func DecodeUpdateLinkedinAdsRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     *string
+			ifMatch     string
 
 			params = mux.Vars(r)
 		)
@@ -1012,9 +1003,12 @@ func DecodeUpdateLinkedinAdsRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatchRaw := r.Header.Get("If-Match")
-		if ifMatchRaw != "" {
-			ifMatch = &ifMatchRaw
+		ifMatch = r.Header.Get("If-Match")
+		if ifMatch == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateLinkedinAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -1447,9 +1441,7 @@ func EncodeCreateMetaAdsResponse(encoder func(context.Context, http.ResponseWrit
 		res, _ := v.(*lfxv2campaignserviceconnections.MetaAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewCreateMetaAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusCreated)
 		return enc.Encode(body)
 	}
@@ -1579,9 +1571,7 @@ func EncodeGetMetaAdsResponse(encoder func(context.Context, http.ResponseWriter)
 		res, _ := v.(*lfxv2campaignserviceconnections.MetaAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewGetMetaAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -1678,9 +1668,7 @@ func EncodeUpdateMetaAdsResponse(encoder func(context.Context, http.ResponseWrit
 		res, _ := v.(*lfxv2campaignserviceconnections.MetaAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewUpdateMetaAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -1714,7 +1702,7 @@ func DecodeUpdateMetaAdsRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     *string
+			ifMatch     string
 
 			params = mux.Vars(r)
 		)
@@ -1723,9 +1711,12 @@ func DecodeUpdateMetaAdsRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatchRaw := r.Header.Get("If-Match")
-		if ifMatchRaw != "" {
-			ifMatch = &ifMatchRaw
+		ifMatch = r.Header.Get("If-Match")
+		if ifMatch == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateMetaAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -2156,9 +2147,7 @@ func EncodeCreateRedditAdsResponse(encoder func(context.Context, http.ResponseWr
 		res, _ := v.(*lfxv2campaignserviceconnections.RedditAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewCreateRedditAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusCreated)
 		return enc.Encode(body)
 	}
@@ -2288,9 +2277,7 @@ func EncodeGetRedditAdsResponse(encoder func(context.Context, http.ResponseWrite
 		res, _ := v.(*lfxv2campaignserviceconnections.RedditAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewGetRedditAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -2387,9 +2374,7 @@ func EncodeUpdateRedditAdsResponse(encoder func(context.Context, http.ResponseWr
 		res, _ := v.(*lfxv2campaignserviceconnections.RedditAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewUpdateRedditAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -2423,7 +2408,7 @@ func DecodeUpdateRedditAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     *string
+			ifMatch     string
 
 			params = mux.Vars(r)
 		)
@@ -2432,9 +2417,12 @@ func DecodeUpdateRedditAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatchRaw := r.Header.Get("If-Match")
-		if ifMatchRaw != "" {
-			ifMatch = &ifMatchRaw
+		ifMatch = r.Header.Get("If-Match")
+		if ifMatch == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateRedditAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -2866,9 +2854,7 @@ func EncodeCreateTwitterAdsResponse(encoder func(context.Context, http.ResponseW
 		res, _ := v.(*lfxv2campaignserviceconnections.TwitterAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewCreateTwitterAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusCreated)
 		return enc.Encode(body)
 	}
@@ -2998,9 +2984,7 @@ func EncodeGetTwitterAdsResponse(encoder func(context.Context, http.ResponseWrit
 		res, _ := v.(*lfxv2campaignserviceconnections.TwitterAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewGetTwitterAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -3097,9 +3081,7 @@ func EncodeUpdateTwitterAdsResponse(encoder func(context.Context, http.ResponseW
 		res, _ := v.(*lfxv2campaignserviceconnections.TwitterAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewUpdateTwitterAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -3133,7 +3115,7 @@ func DecodeUpdateTwitterAdsRequest(mux goahttp.Muxer, decoder func(*http.Request
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     *string
+			ifMatch     string
 
 			params = mux.Vars(r)
 		)
@@ -3142,9 +3124,12 @@ func DecodeUpdateTwitterAdsRequest(mux goahttp.Muxer, decoder func(*http.Request
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatchRaw := r.Header.Get("If-Match")
-		if ifMatchRaw != "" {
-			ifMatch = &ifMatchRaw
+		ifMatch = r.Header.Get("If-Match")
+		if ifMatch == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateTwitterAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -3576,9 +3561,7 @@ func EncodeCreateMicrosoftAdsResponse(encoder func(context.Context, http.Respons
 		res, _ := v.(*lfxv2campaignserviceconnections.MicrosoftAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewCreateMicrosoftAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusCreated)
 		return enc.Encode(body)
 	}
@@ -3708,9 +3691,7 @@ func EncodeGetMicrosoftAdsResponse(encoder func(context.Context, http.ResponseWr
 		res, _ := v.(*lfxv2campaignserviceconnections.MicrosoftAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewGetMicrosoftAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -3807,9 +3788,7 @@ func EncodeUpdateMicrosoftAdsResponse(encoder func(context.Context, http.Respons
 		res, _ := v.(*lfxv2campaignserviceconnections.MicrosoftAdsConnection)
 		enc := encoder(ctx, w)
 		body := NewUpdateMicrosoftAdsResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -3843,7 +3822,7 @@ func DecodeUpdateMicrosoftAdsRequest(mux goahttp.Muxer, decoder func(*http.Reque
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     *string
+			ifMatch     string
 
 			params = mux.Vars(r)
 		)
@@ -3852,9 +3831,12 @@ func DecodeUpdateMicrosoftAdsRequest(mux goahttp.Muxer, decoder func(*http.Reque
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatchRaw := r.Header.Get("If-Match")
-		if ifMatchRaw != "" {
-			ifMatch = &ifMatchRaw
+		ifMatch = r.Header.Get("If-Match")
+		if ifMatch == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateMicrosoftAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -4288,9 +4270,7 @@ func EncodeCreateHubspotResponse(encoder func(context.Context, http.ResponseWrit
 		res, _ := v.(*lfxv2campaignserviceconnections.HubspotConnection)
 		enc := encoder(ctx, w)
 		body := NewCreateHubspotResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusCreated)
 		return enc.Encode(body)
 	}
@@ -4420,9 +4400,7 @@ func EncodeGetHubspotResponse(encoder func(context.Context, http.ResponseWriter)
 		res, _ := v.(*lfxv2campaignserviceconnections.HubspotConnection)
 		enc := encoder(ctx, w)
 		body := NewGetHubspotResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -4519,9 +4497,7 @@ func EncodeUpdateHubspotResponse(encoder func(context.Context, http.ResponseWrit
 		res, _ := v.(*lfxv2campaignserviceconnections.HubspotConnection)
 		enc := encoder(ctx, w)
 		body := NewUpdateHubspotResponseBody(res)
-		if res.Etag != nil {
-			w.Header().Set("Etag", *res.Etag)
-		}
+		w.Header().Set("Etag", res.Etag)
 		w.WriteHeader(http.StatusOK)
 		return enc.Encode(body)
 	}
@@ -4555,7 +4531,7 @@ func DecodeUpdateHubspotRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     *string
+			ifMatch     string
 
 			params = mux.Vars(r)
 		)
@@ -4564,9 +4540,12 @@ func DecodeUpdateHubspotRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatchRaw := r.Header.Get("If-Match")
-		if ifMatchRaw != "" {
-			ifMatch = &ifMatchRaw
+		ifMatch = r.Header.Get("If-Match")
+		if ifMatch == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateHubspotPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {

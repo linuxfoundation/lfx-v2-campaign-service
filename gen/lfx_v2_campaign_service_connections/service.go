@@ -384,7 +384,7 @@ type GoogleAdsConnection struct {
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
-	Etag *string
+	Etag string
 	// Manager account used for API access
 	LoginCustomerID *string
 }
@@ -428,7 +428,7 @@ type HubspotConnection struct {
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
-	Etag *string
+	Etag string
 	// HubSpot portal/account ID
 	PortalID *string
 	// Default sender address
@@ -478,7 +478,7 @@ type LinkedinAdsConnection struct {
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
-	Etag *string
+	Etag string
 	// LinkedIn organization URN id
 	OrgID *string
 }
@@ -516,7 +516,7 @@ type MetaAdsConnection struct {
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
-	Etag *string
+	Etag string
 	// Facebook page ID
 	PageID *string
 	// Meta app ID
@@ -560,7 +560,7 @@ type MicrosoftAdsConnection struct {
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
-	Etag *string
+	Etag string
 	// Microsoft Advertising customer ID
 	CustomerID *string
 }
@@ -604,7 +604,7 @@ type RedditAdsConnection struct {
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
-	Etag *string
+	Etag string
 }
 
 type RedditAdsConnectionConfig struct {
@@ -778,7 +778,7 @@ type TwitterAdsConnection struct {
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
-	Etag *string
+	Etag string
 	// Funding instrument for the ad account
 	FundingInstrumentID *string
 }
@@ -812,7 +812,7 @@ type UpdateGoogleAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch *string
+	IfMatch string
 	Config  *GoogleAdsConnectionConfig
 }
 
@@ -824,7 +824,7 @@ type UpdateHubspotPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch *string
+	IfMatch string
 	Config  *HubspotConnectionConfig
 }
 
@@ -836,7 +836,7 @@ type UpdateLinkedinAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch *string
+	IfMatch string
 	Config  *LinkedinAdsConnectionConfig
 }
 
@@ -848,7 +848,7 @@ type UpdateMetaAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch *string
+	IfMatch string
 	Config  *MetaAdsConnectionConfig
 }
 
@@ -860,7 +860,7 @@ type UpdateMicrosoftAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch *string
+	IfMatch string
 	Config  *MicrosoftAdsConnectionConfig
 }
 
@@ -872,7 +872,7 @@ type UpdateRedditAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch *string
+	IfMatch string
 	Config  *RedditAdsConnectionConfig
 }
 
@@ -884,41 +884,55 @@ type UpdateTwitterAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch *string
+	IfMatch string
 	Config  *TwitterAdsConnectionConfig
 }
 
 type BadRequestError struct {
+	// HTTP status code
+	Code string
 	// Error message
 	Message string
 }
 
 type ConflictError struct {
+	// HTTP status code
+	Code string
 	// Error message
 	Message string
 }
 
 type ConnServiceUnavailableError struct {
+	// HTTP status code
+	Code string
 	// Error message
 	Message string
 }
 
 type InternalServerError struct {
+	// HTTP status code
+	Code string
 	// Error message
 	Message string
 }
 
 type NotFoundError struct {
+	// HTTP status code
+	Code string
 	// Error message
 	Message string
 }
 
 type PreconditionFailedError struct {
+	// HTTP status code
+	Code string
 	// Error message
 	Message string
 }
 
 type PreconditionRequiredError struct {
+	// HTTP status code
+	Code string
 	// Error message
 	Message string
 }

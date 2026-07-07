@@ -17,6 +17,7 @@ import (
 
 	lfxv2campaignserviceconnections "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	goahttp "goa.design/goa/v3/http"
+	goa "goa.design/goa/v3/pkg"
 )
 
 // BuildCreateGoogleAdsRequest instantiates a HTTP request object with method
@@ -108,11 +109,15 @@ func DecodeCreateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-google-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-google-ads", err)
 			}
 			res := NewCreateGoogleAdsGoogleAdsConnectionCreated(&body, etag)
 			return res, nil
@@ -262,11 +267,15 @@ func DecodeGetGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads", err)
 			}
 			res := NewGetGoogleAdsGoogleAdsConnectionOK(&body, etag)
 			return res, nil
@@ -361,8 +370,8 @@ func EncodeUpdateGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 				req.Header.Set("Authorization", head)
 			}
 		}
-		if p.IfMatch != nil {
-			head := *p.IfMatch
+		{
+			head := p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateGoogleAdsRequestBody(p)
@@ -414,11 +423,15 @@ func DecodeUpdateGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-google-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-google-ads", err)
 			}
 			res := NewUpdateGoogleAdsGoogleAdsConnectionOK(&body, etag)
 			return res, nil
@@ -996,11 +1009,15 @@ func DecodeCreateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-linkedin-ads", err)
 			}
 			res := NewCreateLinkedinAdsLinkedinAdsConnectionCreated(&body, etag)
 			return res, nil
@@ -1150,11 +1167,15 @@ func DecodeGetLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, 
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
 			}
 			res := NewGetLinkedinAdsLinkedinAdsConnectionOK(&body, etag)
 			return res, nil
@@ -1249,8 +1270,8 @@ func EncodeUpdateLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 				req.Header.Set("Authorization", head)
 			}
 		}
-		if p.IfMatch != nil {
-			head := *p.IfMatch
+		{
+			head := p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateLinkedinAdsRequestBody(p)
@@ -1302,11 +1323,15 @@ func DecodeUpdateLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-linkedin-ads", err)
 			}
 			res := NewUpdateLinkedinAdsLinkedinAdsConnectionOK(&body, etag)
 			return res, nil
@@ -1885,11 +1910,15 @@ func DecodeCreateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-meta-ads", err)
 			}
 			res := NewCreateMetaAdsMetaAdsConnectionCreated(&body, etag)
 			return res, nil
@@ -2039,11 +2068,15 @@ func DecodeGetMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, rest
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
 			}
 			res := NewGetMetaAdsMetaAdsConnectionOK(&body, etag)
 			return res, nil
@@ -2138,8 +2171,8 @@ func EncodeUpdateMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 				req.Header.Set("Authorization", head)
 			}
 		}
-		if p.IfMatch != nil {
-			head := *p.IfMatch
+		{
+			head := p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateMetaAdsRequestBody(p)
@@ -2190,11 +2223,15 @@ func DecodeUpdateMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-meta-ads", err)
 			}
 			res := NewUpdateMetaAdsMetaAdsConnectionOK(&body, etag)
 			return res, nil
@@ -2771,11 +2808,15 @@ func DecodeCreateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-reddit-ads", err)
 			}
 			res := NewCreateRedditAdsRedditAdsConnectionCreated(&body, etag)
 			return res, nil
@@ -2925,11 +2966,15 @@ func DecodeGetRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
 			}
 			res := NewGetRedditAdsRedditAdsConnectionOK(&body, etag)
 			return res, nil
@@ -3024,8 +3069,8 @@ func EncodeUpdateRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 				req.Header.Set("Authorization", head)
 			}
 		}
-		if p.IfMatch != nil {
-			head := *p.IfMatch
+		{
+			head := p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateRedditAdsRequestBody(p)
@@ -3077,11 +3122,15 @@ func DecodeUpdateRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-reddit-ads", err)
 			}
 			res := NewUpdateRedditAdsRedditAdsConnectionOK(&body, etag)
 			return res, nil
@@ -3659,11 +3708,15 @@ func DecodeCreateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-twitter-ads", err)
 			}
 			res := NewCreateTwitterAdsTwitterAdsConnectionCreated(&body, etag)
 			return res, nil
@@ -3813,11 +3866,15 @@ func DecodeGetTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
 			}
 			res := NewGetTwitterAdsTwitterAdsConnectionOK(&body, etag)
 			return res, nil
@@ -3912,8 +3969,8 @@ func EncodeUpdateTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 				req.Header.Set("Authorization", head)
 			}
 		}
-		if p.IfMatch != nil {
-			head := *p.IfMatch
+		{
+			head := p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateTwitterAdsRequestBody(p)
@@ -3965,11 +4022,15 @@ func DecodeUpdateTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-twitter-ads", err)
 			}
 			res := NewUpdateTwitterAdsTwitterAdsConnectionOK(&body, etag)
 			return res, nil
@@ -4547,11 +4608,15 @@ func DecodeCreateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-microsoft-ads", err)
 			}
 			res := NewCreateMicrosoftAdsMicrosoftAdsConnectionCreated(&body, etag)
 			return res, nil
@@ -4702,11 +4767,15 @@ func DecodeGetMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
 			}
 			res := NewGetMicrosoftAdsMicrosoftAdsConnectionOK(&body, etag)
 			return res, nil
@@ -4801,8 +4870,8 @@ func EncodeUpdateMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 				req.Header.Set("Authorization", head)
 			}
 		}
-		if p.IfMatch != nil {
-			head := *p.IfMatch
+		{
+			head := p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateMicrosoftAdsRequestBody(p)
@@ -4854,11 +4923,15 @@ func DecodeUpdateMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-microsoft-ads", err)
 			}
 			res := NewUpdateMicrosoftAdsMicrosoftAdsConnectionOK(&body, etag)
 			return res, nil
@@ -5437,11 +5510,15 @@ func DecodeCreateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "create-hubspot", err)
 			}
 			res := NewCreateHubspotHubspotConnectionCreated(&body, etag)
 			return res, nil
@@ -5591,11 +5668,15 @@ func DecodeGetHubspotResponse(decoder func(*http.Response) goahttp.Decoder, rest
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-hubspot", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-hubspot", err)
 			}
 			res := NewGetHubspotHubspotConnectionOK(&body, etag)
 			return res, nil
@@ -5690,8 +5771,8 @@ func EncodeUpdateHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 				req.Header.Set("Authorization", head)
 			}
 		}
-		if p.IfMatch != nil {
-			head := *p.IfMatch
+		{
+			head := p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateHubspotRequestBody(p)
@@ -5742,11 +5823,15 @@ func DecodeUpdateHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-hubspot", err)
 			}
 			var (
-				etag *string
+				etag string
 			)
 			etagRaw := resp.Header.Get("Etag")
-			if etagRaw != "" {
-				etag = &etagRaw
+			if etagRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("etag", "header"))
+			}
+			etag = etagRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "update-hubspot", err)
 			}
 			res := NewUpdateHubspotHubspotConnectionOK(&body, etag)
 			return res, nil

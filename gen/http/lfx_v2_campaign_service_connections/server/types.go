@@ -720,6 +720,8 @@ type TestHubspotResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type CreateGoogleAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -728,6 +730,8 @@ type CreateGoogleAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "Conflict" error.
 type CreateGoogleAdsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -736,6 +740,8 @@ type CreateGoogleAdsConflictResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type CreateGoogleAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -744,6 +750,8 @@ type CreateGoogleAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type CreateGoogleAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -752,6 +760,8 @@ type CreateGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type GetGoogleAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -760,6 +770,8 @@ type GetGoogleAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "InternalServerError" error.
 type GetGoogleAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -768,6 +780,8 @@ type GetGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -776,6 +790,8 @@ type GetGoogleAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type UpdateGoogleAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -784,6 +800,8 @@ type UpdateGoogleAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type UpdateGoogleAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -792,6 +810,8 @@ type UpdateGoogleAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type UpdateGoogleAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -800,6 +820,8 @@ type UpdateGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -808,6 +830,8 @@ type UpdateGoogleAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
 // HTTP response body for the "PreconditionFailed" error.
 type UpdateGoogleAdsPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -816,6 +840,8 @@ type UpdateGoogleAdsPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-google-ads" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type UpdateGoogleAdsPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -824,6 +850,8 @@ type UpdateGoogleAdsPreconditionRequiredResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type DeleteGoogleAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -832,6 +860,8 @@ type DeleteGoogleAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type DeleteGoogleAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -840,6 +870,8 @@ type DeleteGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -848,6 +880,8 @@ type DeleteGoogleAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type TestGoogleAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -856,6 +890,8 @@ type TestGoogleAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type TestGoogleAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -864,6 +900,8 @@ type TestGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type TestGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -872,6 +910,8 @@ type TestGoogleAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "BadRequest" error.
 type SetCredentialGoogleAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -880,6 +920,8 @@ type SetCredentialGoogleAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type SetCredentialGoogleAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -888,6 +930,8 @@ type SetCredentialGoogleAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type SetCredentialGoogleAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -896,6 +940,8 @@ type SetCredentialGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-google-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -904,6 +950,8 @@ type SetCredentialGoogleAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type CreateLinkedinAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -912,6 +960,8 @@ type CreateLinkedinAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
 // HTTP response body for the "Conflict" error.
 type CreateLinkedinAdsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -920,6 +970,8 @@ type CreateLinkedinAdsConflictResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type CreateLinkedinAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -928,6 +980,8 @@ type CreateLinkedinAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-linkedin-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type CreateLinkedinAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -936,6 +990,8 @@ type CreateLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type GetLinkedinAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -944,6 +1000,8 @@ type GetLinkedinAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type GetLinkedinAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -952,6 +1010,8 @@ type GetLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -960,6 +1020,8 @@ type GetLinkedinAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type UpdateLinkedinAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -968,6 +1030,8 @@ type UpdateLinkedinAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type UpdateLinkedinAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -976,6 +1040,8 @@ type UpdateLinkedinAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type UpdateLinkedinAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -984,6 +1050,8 @@ type UpdateLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -992,6 +1060,8 @@ type UpdateLinkedinAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
 // HTTP response body for the "PreconditionFailed" error.
 type UpdateLinkedinAdsPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1000,6 +1070,8 @@ type UpdateLinkedinAdsPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-linkedin-ads" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type UpdateLinkedinAdsPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1008,6 +1080,8 @@ type UpdateLinkedinAdsPreconditionRequiredResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type DeleteLinkedinAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1016,6 +1090,8 @@ type DeleteLinkedinAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type DeleteLinkedinAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1024,6 +1100,8 @@ type DeleteLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1032,6 +1110,8 @@ type DeleteLinkedinAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type TestLinkedinAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1040,6 +1120,8 @@ type TestLinkedinAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type TestLinkedinAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1048,6 +1130,8 @@ type TestLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type TestLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1056,6 +1140,8 @@ type TestLinkedinAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "BadRequest" error.
 type SetCredentialLinkedinAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1064,6 +1150,8 @@ type SetCredentialLinkedinAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type SetCredentialLinkedinAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1072,6 +1160,8 @@ type SetCredentialLinkedinAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type SetCredentialLinkedinAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1080,6 +1170,8 @@ type SetCredentialLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-linkedin-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1088,6 +1180,8 @@ type SetCredentialLinkedinAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type CreateMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1096,6 +1190,8 @@ type CreateMetaAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
 // HTTP response body for the "Conflict" error.
 type CreateMetaAdsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1104,6 +1200,8 @@ type CreateMetaAdsConflictResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type CreateMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1112,6 +1210,8 @@ type CreateMetaAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-meta-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type CreateMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1120,6 +1220,8 @@ type CreateMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type GetMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1128,6 +1230,8 @@ type GetMetaAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "InternalServerError" error.
 type GetMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1136,6 +1240,8 @@ type GetMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1144,6 +1250,8 @@ type GetMetaAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type UpdateMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1152,6 +1260,8 @@ type UpdateMetaAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type UpdateMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1160,6 +1270,8 @@ type UpdateMetaAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type UpdateMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1168,6 +1280,8 @@ type UpdateMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1176,6 +1290,8 @@ type UpdateMetaAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
 // HTTP response body for the "PreconditionFailed" error.
 type UpdateMetaAdsPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1184,6 +1300,8 @@ type UpdateMetaAdsPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-meta-ads" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type UpdateMetaAdsPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1192,6 +1310,8 @@ type UpdateMetaAdsPreconditionRequiredResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type DeleteMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1200,6 +1320,8 @@ type DeleteMetaAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type DeleteMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1208,6 +1330,8 @@ type DeleteMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1216,6 +1340,8 @@ type DeleteMetaAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type TestMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1224,6 +1350,8 @@ type TestMetaAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
 // response body for the "InternalServerError" error.
 type TestMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1232,6 +1360,8 @@ type TestMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type TestMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1240,6 +1370,8 @@ type TestMetaAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "BadRequest" error.
 type SetCredentialMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1248,6 +1380,8 @@ type SetCredentialMetaAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type SetCredentialMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1256,6 +1390,8 @@ type SetCredentialMetaAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type SetCredentialMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1264,6 +1400,8 @@ type SetCredentialMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-meta-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1272,6 +1410,8 @@ type SetCredentialMetaAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type CreateRedditAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1280,6 +1420,8 @@ type CreateRedditAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
 // HTTP response body for the "Conflict" error.
 type CreateRedditAdsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1288,6 +1430,8 @@ type CreateRedditAdsConflictResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type CreateRedditAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1296,6 +1440,8 @@ type CreateRedditAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-reddit-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type CreateRedditAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1304,6 +1450,8 @@ type CreateRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type GetRedditAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1312,6 +1460,8 @@ type GetRedditAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "InternalServerError" error.
 type GetRedditAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1320,6 +1470,8 @@ type GetRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "NotFound" error.
 type GetRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1328,6 +1480,8 @@ type GetRedditAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type UpdateRedditAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1336,6 +1490,8 @@ type UpdateRedditAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type UpdateRedditAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1344,6 +1500,8 @@ type UpdateRedditAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type UpdateRedditAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1352,6 +1510,8 @@ type UpdateRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1360,6 +1520,8 @@ type UpdateRedditAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
 // HTTP response body for the "PreconditionFailed" error.
 type UpdateRedditAdsPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1368,6 +1530,8 @@ type UpdateRedditAdsPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-reddit-ads" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type UpdateRedditAdsPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1376,6 +1540,8 @@ type UpdateRedditAdsPreconditionRequiredResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type DeleteRedditAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1384,6 +1550,8 @@ type DeleteRedditAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type DeleteRedditAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1392,6 +1560,8 @@ type DeleteRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1400,6 +1570,8 @@ type DeleteRedditAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type TestRedditAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1408,6 +1580,8 @@ type TestRedditAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type TestRedditAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1416,6 +1590,8 @@ type TestRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type TestRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1424,6 +1600,8 @@ type TestRedditAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "BadRequest" error.
 type SetCredentialRedditAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1432,6 +1610,8 @@ type SetCredentialRedditAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type SetCredentialRedditAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1440,6 +1620,8 @@ type SetCredentialRedditAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type SetCredentialRedditAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1448,6 +1630,8 @@ type SetCredentialRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-reddit-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1456,6 +1640,8 @@ type SetCredentialRedditAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type CreateTwitterAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1464,6 +1650,8 @@ type CreateTwitterAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
 // HTTP response body for the "Conflict" error.
 type CreateTwitterAdsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1472,6 +1660,8 @@ type CreateTwitterAdsConflictResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type CreateTwitterAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1480,6 +1670,8 @@ type CreateTwitterAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-twitter-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type CreateTwitterAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1488,6 +1680,8 @@ type CreateTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type GetTwitterAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1496,6 +1690,8 @@ type GetTwitterAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type GetTwitterAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1504,6 +1700,8 @@ type GetTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1512,6 +1710,8 @@ type GetTwitterAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
 // HTTP response body for the "BadRequest" error.
 type UpdateTwitterAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1520,6 +1720,8 @@ type UpdateTwitterAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type UpdateTwitterAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1528,6 +1730,8 @@ type UpdateTwitterAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type UpdateTwitterAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1536,6 +1740,8 @@ type UpdateTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type UpdateTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1544,6 +1750,8 @@ type UpdateTwitterAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
 // HTTP response body for the "PreconditionFailed" error.
 type UpdateTwitterAdsPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1552,6 +1760,8 @@ type UpdateTwitterAdsPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-twitter-ads" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type UpdateTwitterAdsPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1560,6 +1770,8 @@ type UpdateTwitterAdsPreconditionRequiredResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type DeleteTwitterAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1568,6 +1780,8 @@ type DeleteTwitterAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type DeleteTwitterAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1576,6 +1790,8 @@ type DeleteTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1584,6 +1800,8 @@ type DeleteTwitterAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type TestTwitterAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1592,6 +1810,8 @@ type TestTwitterAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type TestTwitterAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1600,6 +1820,8 @@ type TestTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type TestTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1608,6 +1830,8 @@ type TestTwitterAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "BadRequest" error.
 type SetCredentialTwitterAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1616,6 +1840,8 @@ type SetCredentialTwitterAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type SetCredentialTwitterAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1624,6 +1850,8 @@ type SetCredentialTwitterAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type SetCredentialTwitterAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1632,6 +1860,8 @@ type SetCredentialTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-twitter-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1640,6 +1870,8 @@ type SetCredentialTwitterAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
 // endpoint HTTP response body for the "BadRequest" error.
 type CreateMicrosoftAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1648,6 +1880,8 @@ type CreateMicrosoftAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
 // endpoint HTTP response body for the "Conflict" error.
 type CreateMicrosoftAdsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1656,6 +1890,8 @@ type CreateMicrosoftAdsConflictResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type CreateMicrosoftAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1664,6 +1900,8 @@ type CreateMicrosoftAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-microsoft-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type CreateMicrosoftAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1672,6 +1910,8 @@ type CreateMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type GetMicrosoftAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1680,6 +1920,8 @@ type GetMicrosoftAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type GetMicrosoftAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1688,6 +1930,8 @@ type GetMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type GetMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1696,6 +1940,8 @@ type GetMicrosoftAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
 // endpoint HTTP response body for the "BadRequest" error.
 type UpdateMicrosoftAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1704,6 +1950,8 @@ type UpdateMicrosoftAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type UpdateMicrosoftAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1712,6 +1960,8 @@ type UpdateMicrosoftAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type UpdateMicrosoftAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1720,6 +1970,8 @@ type UpdateMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type UpdateMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1728,6 +1980,8 @@ type UpdateMicrosoftAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
 // endpoint HTTP response body for the "PreconditionFailed" error.
 type UpdateMicrosoftAdsPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1736,6 +1990,8 @@ type UpdateMicrosoftAdsPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-microsoft-ads"
 // endpoint HTTP response body for the "PreconditionRequired" error.
 type UpdateMicrosoftAdsPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1744,6 +2000,8 @@ type UpdateMicrosoftAdsPreconditionRequiredResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type DeleteMicrosoftAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1752,6 +2010,8 @@ type DeleteMicrosoftAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type DeleteMicrosoftAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1760,6 +2020,8 @@ type DeleteMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type DeleteMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1768,6 +2030,8 @@ type DeleteMicrosoftAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
 type TestMicrosoftAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1776,6 +2040,8 @@ type TestMicrosoftAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
 // HTTP response body for the "InternalServerError" error.
 type TestMicrosoftAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1784,6 +2050,8 @@ type TestMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type TestMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1792,6 +2060,8 @@ type TestMicrosoftAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "BadRequest" error.
 type SetCredentialMicrosoftAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1800,6 +2070,8 @@ type SetCredentialMicrosoftAdsBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type SetCredentialMicrosoftAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1808,6 +2080,8 @@ type SetCredentialMicrosoftAdsServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "InternalServerError" error.
 type SetCredentialMicrosoftAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1816,6 +2090,8 @@ type SetCredentialMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1824,6 +2100,8 @@ type SetCredentialMicrosoftAdsNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
 // response body for the "BadRequest" error.
 type CreateHubspotBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1832,6 +2110,8 @@ type CreateHubspotBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
 // response body for the "Conflict" error.
 type CreateHubspotConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1840,6 +2120,8 @@ type CreateHubspotConflictResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type CreateHubspotServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1848,6 +2130,8 @@ type CreateHubspotServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "create-hubspot" endpoint HTTP
 // response body for the "InternalServerError" error.
 type CreateHubspotInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1856,6 +2140,8 @@ type CreateHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type GetHubspotServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1864,6 +2150,8 @@ type GetHubspotServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "InternalServerError" error.
 type GetHubspotInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1872,6 +2160,8 @@ type GetHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type GetHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1880,6 +2170,8 @@ type GetHubspotNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
 // response body for the "BadRequest" error.
 type UpdateHubspotBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1888,6 +2180,8 @@ type UpdateHubspotBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type UpdateHubspotServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1896,6 +2190,8 @@ type UpdateHubspotServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
 // response body for the "InternalServerError" error.
 type UpdateHubspotInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1904,6 +2200,8 @@ type UpdateHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type UpdateHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1912,6 +2210,8 @@ type UpdateHubspotNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
 // response body for the "PreconditionFailed" error.
 type UpdateHubspotPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1920,6 +2220,8 @@ type UpdateHubspotPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "update-hubspot" endpoint HTTP
 // response body for the "PreconditionRequired" error.
 type UpdateHubspotPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1928,6 +2230,8 @@ type UpdateHubspotPreconditionRequiredResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type DeleteHubspotServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1936,6 +2240,8 @@ type DeleteHubspotServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "InternalServerError" error.
 type DeleteHubspotInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1944,6 +2250,8 @@ type DeleteHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type DeleteHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1952,6 +2260,8 @@ type DeleteHubspotNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type TestHubspotServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1960,6 +2270,8 @@ type TestHubspotServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
 // response body for the "InternalServerError" error.
 type TestHubspotInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1968,6 +2280,8 @@ type TestHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type TestHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1976,6 +2290,8 @@ type TestHubspotNotFoundResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "BadRequest" error.
 type SetCredentialHubspotBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1984,6 +2300,8 @@ type SetCredentialHubspotBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type SetCredentialHubspotServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -1992,6 +2310,8 @@ type SetCredentialHubspotServiceUnavailableResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "InternalServerError" error.
 type SetCredentialHubspotInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -2000,6 +2320,8 @@ type SetCredentialHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "set-credential-hubspot"
 // endpoint HTTP response body for the "NotFound" error.
 type SetCredentialHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
 }
@@ -2606,6 +2928,7 @@ func NewTestHubspotResponseBody(res *lfxv2campaignserviceconnections.ConnectionT
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateGoogleAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateGoogleAdsBadRequestResponseBody {
 	body := &CreateGoogleAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2616,6 +2939,7 @@ func NewCreateGoogleAdsBadRequestResponseBody(res *lfxv2campaignserviceconnectio
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateGoogleAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateGoogleAdsConflictResponseBody {
 	body := &CreateGoogleAdsConflictResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2626,6 +2950,7 @@ func NewCreateGoogleAdsConflictResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateGoogleAdsServiceUnavailableResponseBody {
 	body := &CreateGoogleAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2636,6 +2961,7 @@ func NewCreateGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateGoogleAdsInternalServerErrorResponseBody {
 	body := &CreateGoogleAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2646,6 +2972,7 @@ func NewCreateGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewGetGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetGoogleAdsServiceUnavailableResponseBody {
 	body := &GetGoogleAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2656,6 +2983,7 @@ func NewGetGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconn
 // "lfx-v2-campaign-service-connections" service.
 func NewGetGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetGoogleAdsInternalServerErrorResponseBody {
 	body := &GetGoogleAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2666,6 +2994,7 @@ func NewGetGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewGetGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetGoogleAdsNotFoundResponseBody {
 	body := &GetGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2676,6 +3005,7 @@ func NewGetGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.No
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateGoogleAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateGoogleAdsBadRequestResponseBody {
 	body := &UpdateGoogleAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2686,6 +3016,7 @@ func NewUpdateGoogleAdsBadRequestResponseBody(res *lfxv2campaignserviceconnectio
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateGoogleAdsServiceUnavailableResponseBody {
 	body := &UpdateGoogleAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2696,6 +3027,7 @@ func NewUpdateGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateGoogleAdsInternalServerErrorResponseBody {
 	body := &UpdateGoogleAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2706,6 +3038,7 @@ func NewUpdateGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateGoogleAdsNotFoundResponseBody {
 	body := &UpdateGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2716,6 +3049,7 @@ func NewUpdateGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateGoogleAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateGoogleAdsPreconditionFailedResponseBody {
 	body := &UpdateGoogleAdsPreconditionFailedResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2726,6 +3060,7 @@ func NewUpdateGoogleAdsPreconditionFailedResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateGoogleAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateGoogleAdsPreconditionRequiredResponseBody {
 	body := &UpdateGoogleAdsPreconditionRequiredResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2736,6 +3071,7 @@ func NewUpdateGoogleAdsPreconditionRequiredResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteGoogleAdsServiceUnavailableResponseBody {
 	body := &DeleteGoogleAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2746,6 +3082,7 @@ func NewDeleteGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteGoogleAdsInternalServerErrorResponseBody {
 	body := &DeleteGoogleAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2756,6 +3093,7 @@ func NewDeleteGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteGoogleAdsNotFoundResponseBody {
 	body := &DeleteGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2766,6 +3104,7 @@ func NewDeleteGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewTestGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestGoogleAdsServiceUnavailableResponseBody {
 	body := &TestGoogleAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2776,6 +3115,7 @@ func NewTestGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewTestGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestGoogleAdsInternalServerErrorResponseBody {
 	body := &TestGoogleAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2786,6 +3126,7 @@ func NewTestGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewTestGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestGoogleAdsNotFoundResponseBody {
 	body := &TestGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2796,6 +3137,7 @@ func NewTestGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialGoogleAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialGoogleAdsBadRequestResponseBody {
 	body := &SetCredentialGoogleAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2806,6 +3148,7 @@ func NewSetCredentialGoogleAdsBadRequestResponseBody(res *lfxv2campaignserviceco
 // the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialGoogleAdsServiceUnavailableResponseBody {
 	body := &SetCredentialGoogleAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2816,6 +3159,7 @@ func NewSetCredentialGoogleAdsServiceUnavailableResponseBody(res *lfxv2campaigns
 // the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialGoogleAdsInternalServerErrorResponseBody {
 	body := &SetCredentialGoogleAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2826,6 +3170,7 @@ func NewSetCredentialGoogleAdsInternalServerErrorResponseBody(res *lfxv2campaign
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialGoogleAdsNotFoundResponseBody {
 	body := &SetCredentialGoogleAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2836,6 +3181,7 @@ func NewSetCredentialGoogleAdsNotFoundResponseBody(res *lfxv2campaignserviceconn
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateLinkedinAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateLinkedinAdsBadRequestResponseBody {
 	body := &CreateLinkedinAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2846,6 +3192,7 @@ func NewCreateLinkedinAdsBadRequestResponseBody(res *lfxv2campaignserviceconnect
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateLinkedinAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateLinkedinAdsConflictResponseBody {
 	body := &CreateLinkedinAdsConflictResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2856,6 +3203,7 @@ func NewCreateLinkedinAdsConflictResponseBody(res *lfxv2campaignserviceconnectio
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateLinkedinAdsServiceUnavailableResponseBody {
 	body := &CreateLinkedinAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2866,6 +3214,7 @@ func NewCreateLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateLinkedinAdsInternalServerErrorResponseBody {
 	body := &CreateLinkedinAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2876,6 +3225,7 @@ func NewCreateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewGetLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetLinkedinAdsServiceUnavailableResponseBody {
 	body := &GetLinkedinAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2886,6 +3236,7 @@ func NewGetLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewGetLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetLinkedinAdsInternalServerErrorResponseBody {
 	body := &GetLinkedinAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2896,6 +3247,7 @@ func NewGetLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewGetLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetLinkedinAdsNotFoundResponseBody {
 	body := &GetLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2906,6 +3258,7 @@ func NewGetLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateLinkedinAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateLinkedinAdsBadRequestResponseBody {
 	body := &UpdateLinkedinAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2916,6 +3269,7 @@ func NewUpdateLinkedinAdsBadRequestResponseBody(res *lfxv2campaignserviceconnect
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateLinkedinAdsServiceUnavailableResponseBody {
 	body := &UpdateLinkedinAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2926,6 +3280,7 @@ func NewUpdateLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateLinkedinAdsInternalServerErrorResponseBody {
 	body := &UpdateLinkedinAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2936,6 +3291,7 @@ func NewUpdateLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateLinkedinAdsNotFoundResponseBody {
 	body := &UpdateLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2946,6 +3302,7 @@ func NewUpdateLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnectio
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateLinkedinAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateLinkedinAdsPreconditionFailedResponseBody {
 	body := &UpdateLinkedinAdsPreconditionFailedResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2956,6 +3313,7 @@ func NewUpdateLinkedinAdsPreconditionFailedResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateLinkedinAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateLinkedinAdsPreconditionRequiredResponseBody {
 	body := &UpdateLinkedinAdsPreconditionRequiredResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2966,6 +3324,7 @@ func NewUpdateLinkedinAdsPreconditionRequiredResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteLinkedinAdsServiceUnavailableResponseBody {
 	body := &DeleteLinkedinAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2976,6 +3335,7 @@ func NewDeleteLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteLinkedinAdsInternalServerErrorResponseBody {
 	body := &DeleteLinkedinAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2986,6 +3346,7 @@ func NewDeleteLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteLinkedinAdsNotFoundResponseBody {
 	body := &DeleteLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -2996,6 +3357,7 @@ func NewDeleteLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnectio
 // "lfx-v2-campaign-service-connections" service.
 func NewTestLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestLinkedinAdsServiceUnavailableResponseBody {
 	body := &TestLinkedinAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3006,6 +3368,7 @@ func NewTestLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewTestLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestLinkedinAdsInternalServerErrorResponseBody {
 	body := &TestLinkedinAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3016,6 +3379,7 @@ func NewTestLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewTestLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestLinkedinAdsNotFoundResponseBody {
 	body := &TestLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3026,6 +3390,7 @@ func NewTestLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialLinkedinAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialLinkedinAdsBadRequestResponseBody {
 	body := &SetCredentialLinkedinAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3036,6 +3401,7 @@ func NewSetCredentialLinkedinAdsBadRequestResponseBody(res *lfxv2campaignservice
 // of the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialLinkedinAdsServiceUnavailableResponseBody {
 	body := &SetCredentialLinkedinAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3046,6 +3412,7 @@ func NewSetCredentialLinkedinAdsServiceUnavailableResponseBody(res *lfxv2campaig
 // of the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialLinkedinAdsInternalServerErrorResponseBody {
 	body := &SetCredentialLinkedinAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3056,6 +3423,7 @@ func NewSetCredentialLinkedinAdsInternalServerErrorResponseBody(res *lfxv2campai
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialLinkedinAdsNotFoundResponseBody {
 	body := &SetCredentialLinkedinAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3066,6 +3434,7 @@ func NewSetCredentialLinkedinAdsNotFoundResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateMetaAdsBadRequestResponseBody {
 	body := &CreateMetaAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3076,6 +3445,7 @@ func NewCreateMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateMetaAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateMetaAdsConflictResponseBody {
 	body := &CreateMetaAdsConflictResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3086,6 +3456,7 @@ func NewCreateMetaAdsConflictResponseBody(res *lfxv2campaignserviceconnections.C
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateMetaAdsServiceUnavailableResponseBody {
 	body := &CreateMetaAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3096,6 +3467,7 @@ func NewCreateMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateMetaAdsInternalServerErrorResponseBody {
 	body := &CreateMetaAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3106,6 +3478,7 @@ func NewCreateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMetaAdsServiceUnavailableResponseBody {
 	body := &GetMetaAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3116,6 +3489,7 @@ func NewGetMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnec
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMetaAdsInternalServerErrorResponseBody {
 	body := &GetMetaAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3126,6 +3500,7 @@ func NewGetMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconne
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMetaAdsNotFoundResponseBody {
 	body := &GetMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3136,6 +3511,7 @@ func NewGetMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotF
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateMetaAdsBadRequestResponseBody {
 	body := &UpdateMetaAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3146,6 +3522,7 @@ func NewUpdateMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateMetaAdsServiceUnavailableResponseBody {
 	body := &UpdateMetaAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3156,6 +3533,7 @@ func NewUpdateMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateMetaAdsInternalServerErrorResponseBody {
 	body := &UpdateMetaAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3166,6 +3544,7 @@ func NewUpdateMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateMetaAdsNotFoundResponseBody {
 	body := &UpdateMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3176,6 +3555,7 @@ func NewUpdateMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMetaAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateMetaAdsPreconditionFailedResponseBody {
 	body := &UpdateMetaAdsPreconditionFailedResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3186,6 +3566,7 @@ func NewUpdateMetaAdsPreconditionFailedResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMetaAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateMetaAdsPreconditionRequiredResponseBody {
 	body := &UpdateMetaAdsPreconditionRequiredResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3196,6 +3577,7 @@ func NewUpdateMetaAdsPreconditionRequiredResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteMetaAdsServiceUnavailableResponseBody {
 	body := &DeleteMetaAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3206,6 +3588,7 @@ func NewDeleteMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteMetaAdsInternalServerErrorResponseBody {
 	body := &DeleteMetaAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3216,6 +3599,7 @@ func NewDeleteMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteMetaAdsNotFoundResponseBody {
 	body := &DeleteMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3226,6 +3610,7 @@ func NewDeleteMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 // "lfx-v2-campaign-service-connections" service.
 func NewTestMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestMetaAdsServiceUnavailableResponseBody {
 	body := &TestMetaAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3236,6 +3621,7 @@ func NewTestMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconne
 // "lfx-v2-campaign-service-connections" service.
 func NewTestMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestMetaAdsInternalServerErrorResponseBody {
 	body := &TestMetaAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3246,6 +3632,7 @@ func NewTestMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconn
 // "lfx-v2-campaign-service-connections" service.
 func NewTestMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestMetaAdsNotFoundResponseBody {
 	body := &TestMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3256,6 +3643,7 @@ func NewTestMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.Not
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialMetaAdsBadRequestResponseBody {
 	body := &SetCredentialMetaAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3266,6 +3654,7 @@ func NewSetCredentialMetaAdsBadRequestResponseBody(res *lfxv2campaignserviceconn
 // the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialMetaAdsServiceUnavailableResponseBody {
 	body := &SetCredentialMetaAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3276,6 +3665,7 @@ func NewSetCredentialMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignser
 // the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialMetaAdsInternalServerErrorResponseBody {
 	body := &SetCredentialMetaAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3286,6 +3676,7 @@ func NewSetCredentialMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignse
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialMetaAdsNotFoundResponseBody {
 	body := &SetCredentialMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3296,6 +3687,7 @@ func NewSetCredentialMetaAdsNotFoundResponseBody(res *lfxv2campaignserviceconnec
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateRedditAdsBadRequestResponseBody {
 	body := &CreateRedditAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3306,6 +3698,7 @@ func NewCreateRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceconnectio
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateRedditAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateRedditAdsConflictResponseBody {
 	body := &CreateRedditAdsConflictResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3316,6 +3709,7 @@ func NewCreateRedditAdsConflictResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateRedditAdsServiceUnavailableResponseBody {
 	body := &CreateRedditAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3326,6 +3720,7 @@ func NewCreateRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateRedditAdsInternalServerErrorResponseBody {
 	body := &CreateRedditAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3336,6 +3731,7 @@ func NewCreateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewGetRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetRedditAdsServiceUnavailableResponseBody {
 	body := &GetRedditAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3346,6 +3742,7 @@ func NewGetRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconn
 // "lfx-v2-campaign-service-connections" service.
 func NewGetRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetRedditAdsInternalServerErrorResponseBody {
 	body := &GetRedditAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3356,6 +3753,7 @@ func NewGetRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewGetRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetRedditAdsNotFoundResponseBody {
 	body := &GetRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3366,6 +3764,7 @@ func NewGetRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.No
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateRedditAdsBadRequestResponseBody {
 	body := &UpdateRedditAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3376,6 +3775,7 @@ func NewUpdateRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceconnectio
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateRedditAdsServiceUnavailableResponseBody {
 	body := &UpdateRedditAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3386,6 +3786,7 @@ func NewUpdateRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateRedditAdsInternalServerErrorResponseBody {
 	body := &UpdateRedditAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3396,6 +3797,7 @@ func NewUpdateRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateRedditAdsNotFoundResponseBody {
 	body := &UpdateRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3406,6 +3808,7 @@ func NewUpdateRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateRedditAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateRedditAdsPreconditionFailedResponseBody {
 	body := &UpdateRedditAdsPreconditionFailedResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3416,6 +3819,7 @@ func NewUpdateRedditAdsPreconditionFailedResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateRedditAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateRedditAdsPreconditionRequiredResponseBody {
 	body := &UpdateRedditAdsPreconditionRequiredResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3426,6 +3830,7 @@ func NewUpdateRedditAdsPreconditionRequiredResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteRedditAdsServiceUnavailableResponseBody {
 	body := &DeleteRedditAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3436,6 +3841,7 @@ func NewDeleteRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteRedditAdsInternalServerErrorResponseBody {
 	body := &DeleteRedditAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3446,6 +3852,7 @@ func NewDeleteRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteRedditAdsNotFoundResponseBody {
 	body := &DeleteRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3456,6 +3863,7 @@ func NewDeleteRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewTestRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestRedditAdsServiceUnavailableResponseBody {
 	body := &TestRedditAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3466,6 +3874,7 @@ func NewTestRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewTestRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestRedditAdsInternalServerErrorResponseBody {
 	body := &TestRedditAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3476,6 +3885,7 @@ func NewTestRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewTestRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestRedditAdsNotFoundResponseBody {
 	body := &TestRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3486,6 +3896,7 @@ func NewTestRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialRedditAdsBadRequestResponseBody {
 	body := &SetCredentialRedditAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3496,6 +3907,7 @@ func NewSetCredentialRedditAdsBadRequestResponseBody(res *lfxv2campaignserviceco
 // the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialRedditAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialRedditAdsServiceUnavailableResponseBody {
 	body := &SetCredentialRedditAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3506,6 +3918,7 @@ func NewSetCredentialRedditAdsServiceUnavailableResponseBody(res *lfxv2campaigns
 // the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialRedditAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialRedditAdsInternalServerErrorResponseBody {
 	body := &SetCredentialRedditAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3516,6 +3929,7 @@ func NewSetCredentialRedditAdsInternalServerErrorResponseBody(res *lfxv2campaign
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialRedditAdsNotFoundResponseBody {
 	body := &SetCredentialRedditAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3526,6 +3940,7 @@ func NewSetCredentialRedditAdsNotFoundResponseBody(res *lfxv2campaignserviceconn
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateTwitterAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateTwitterAdsBadRequestResponseBody {
 	body := &CreateTwitterAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3536,6 +3951,7 @@ func NewCreateTwitterAdsBadRequestResponseBody(res *lfxv2campaignserviceconnecti
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateTwitterAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateTwitterAdsConflictResponseBody {
 	body := &CreateTwitterAdsConflictResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3546,6 +3962,7 @@ func NewCreateTwitterAdsConflictResponseBody(res *lfxv2campaignserviceconnection
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateTwitterAdsServiceUnavailableResponseBody {
 	body := &CreateTwitterAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3556,6 +3973,7 @@ func NewCreateTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateTwitterAdsInternalServerErrorResponseBody {
 	body := &CreateTwitterAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3566,6 +3984,7 @@ func NewCreateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewGetTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetTwitterAdsServiceUnavailableResponseBody {
 	body := &GetTwitterAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3576,6 +3995,7 @@ func NewGetTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewGetTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetTwitterAdsInternalServerErrorResponseBody {
 	body := &GetTwitterAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3586,6 +4006,7 @@ func NewGetTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewGetTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetTwitterAdsNotFoundResponseBody {
 	body := &GetTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3596,6 +4017,7 @@ func NewGetTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateTwitterAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateTwitterAdsBadRequestResponseBody {
 	body := &UpdateTwitterAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3606,6 +4028,7 @@ func NewUpdateTwitterAdsBadRequestResponseBody(res *lfxv2campaignserviceconnecti
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateTwitterAdsServiceUnavailableResponseBody {
 	body := &UpdateTwitterAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3616,6 +4039,7 @@ func NewUpdateTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateTwitterAdsInternalServerErrorResponseBody {
 	body := &UpdateTwitterAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3626,6 +4050,7 @@ func NewUpdateTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateTwitterAdsNotFoundResponseBody {
 	body := &UpdateTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3636,6 +4061,7 @@ func NewUpdateTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnection
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateTwitterAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateTwitterAdsPreconditionFailedResponseBody {
 	body := &UpdateTwitterAdsPreconditionFailedResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3646,6 +4072,7 @@ func NewUpdateTwitterAdsPreconditionFailedResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateTwitterAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateTwitterAdsPreconditionRequiredResponseBody {
 	body := &UpdateTwitterAdsPreconditionRequiredResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3656,6 +4083,7 @@ func NewUpdateTwitterAdsPreconditionRequiredResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteTwitterAdsServiceUnavailableResponseBody {
 	body := &DeleteTwitterAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3666,6 +4094,7 @@ func NewDeleteTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteTwitterAdsInternalServerErrorResponseBody {
 	body := &DeleteTwitterAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3676,6 +4105,7 @@ func NewDeleteTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteTwitterAdsNotFoundResponseBody {
 	body := &DeleteTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3686,6 +4116,7 @@ func NewDeleteTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnection
 // "lfx-v2-campaign-service-connections" service.
 func NewTestTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestTwitterAdsServiceUnavailableResponseBody {
 	body := &TestTwitterAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3696,6 +4127,7 @@ func NewTestTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewTestTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestTwitterAdsInternalServerErrorResponseBody {
 	body := &TestTwitterAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3706,6 +4138,7 @@ func NewTestTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewTestTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestTwitterAdsNotFoundResponseBody {
 	body := &TestTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3716,6 +4149,7 @@ func NewTestTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialTwitterAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialTwitterAdsBadRequestResponseBody {
 	body := &SetCredentialTwitterAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3726,6 +4160,7 @@ func NewSetCredentialTwitterAdsBadRequestResponseBody(res *lfxv2campaignservicec
 // of the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialTwitterAdsServiceUnavailableResponseBody {
 	body := &SetCredentialTwitterAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3736,6 +4171,7 @@ func NewSetCredentialTwitterAdsServiceUnavailableResponseBody(res *lfxv2campaign
 // of the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialTwitterAdsInternalServerErrorResponseBody {
 	body := &SetCredentialTwitterAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3746,6 +4182,7 @@ func NewSetCredentialTwitterAdsInternalServerErrorResponseBody(res *lfxv2campaig
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialTwitterAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialTwitterAdsNotFoundResponseBody {
 	body := &SetCredentialTwitterAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3756,6 +4193,7 @@ func NewSetCredentialTwitterAdsNotFoundResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateMicrosoftAdsBadRequestResponseBody {
 	body := &CreateMicrosoftAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3766,6 +4204,7 @@ func NewCreateMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignserviceconnec
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateMicrosoftAdsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateMicrosoftAdsConflictResponseBody {
 	body := &CreateMicrosoftAdsConflictResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3776,6 +4215,7 @@ func NewCreateMicrosoftAdsConflictResponseBody(res *lfxv2campaignserviceconnecti
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateMicrosoftAdsServiceUnavailableResponseBody {
 	body := &CreateMicrosoftAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3786,6 +4226,7 @@ func NewCreateMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateMicrosoftAdsInternalServerErrorResponseBody {
 	body := &CreateMicrosoftAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3796,6 +4237,7 @@ func NewCreateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMicrosoftAdsServiceUnavailableResponseBody {
 	body := &GetMicrosoftAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3806,6 +4248,7 @@ func NewGetMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMicrosoftAdsInternalServerErrorResponseBody {
 	body := &GetMicrosoftAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3816,6 +4259,7 @@ func NewGetMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMicrosoftAdsNotFoundResponseBody {
 	body := &GetMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3826,6 +4270,7 @@ func NewGetMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateMicrosoftAdsBadRequestResponseBody {
 	body := &UpdateMicrosoftAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3836,6 +4281,7 @@ func NewUpdateMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignserviceconnec
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateMicrosoftAdsServiceUnavailableResponseBody {
 	body := &UpdateMicrosoftAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3846,6 +4292,7 @@ func NewUpdateMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateMicrosoftAdsInternalServerErrorResponseBody {
 	body := &UpdateMicrosoftAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3856,6 +4303,7 @@ func NewUpdateMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateMicrosoftAdsNotFoundResponseBody {
 	body := &UpdateMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3866,6 +4314,7 @@ func NewUpdateMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnecti
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMicrosoftAdsPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateMicrosoftAdsPreconditionFailedResponseBody {
 	body := &UpdateMicrosoftAdsPreconditionFailedResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3876,6 +4325,7 @@ func NewUpdateMicrosoftAdsPreconditionFailedResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateMicrosoftAdsPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateMicrosoftAdsPreconditionRequiredResponseBody {
 	body := &UpdateMicrosoftAdsPreconditionRequiredResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3886,6 +4336,7 @@ func NewUpdateMicrosoftAdsPreconditionRequiredResponseBody(res *lfxv2campaignser
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteMicrosoftAdsServiceUnavailableResponseBody {
 	body := &DeleteMicrosoftAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3896,6 +4347,7 @@ func NewDeleteMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteMicrosoftAdsInternalServerErrorResponseBody {
 	body := &DeleteMicrosoftAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3906,6 +4358,7 @@ func NewDeleteMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteMicrosoftAdsNotFoundResponseBody {
 	body := &DeleteMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3916,6 +4369,7 @@ func NewDeleteMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnecti
 // "lfx-v2-campaign-service-connections" service.
 func NewTestMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestMicrosoftAdsServiceUnavailableResponseBody {
 	body := &TestMicrosoftAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3926,6 +4380,7 @@ func NewTestMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-connections" service.
 func NewTestMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestMicrosoftAdsInternalServerErrorResponseBody {
 	body := &TestMicrosoftAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3936,6 +4391,7 @@ func NewTestMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-connections" service.
 func NewTestMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestMicrosoftAdsNotFoundResponseBody {
 	body := &TestMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3946,6 +4402,7 @@ func NewTestMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnection
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialMicrosoftAdsBadRequestResponseBody {
 	body := &SetCredentialMicrosoftAdsBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3956,6 +4413,7 @@ func NewSetCredentialMicrosoftAdsBadRequestResponseBody(res *lfxv2campaignservic
 // of the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialMicrosoftAdsServiceUnavailableResponseBody {
 	body := &SetCredentialMicrosoftAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3966,6 +4424,7 @@ func NewSetCredentialMicrosoftAdsServiceUnavailableResponseBody(res *lfxv2campai
 // of the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialMicrosoftAdsInternalServerErrorResponseBody {
 	body := &SetCredentialMicrosoftAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3976,6 +4435,7 @@ func NewSetCredentialMicrosoftAdsInternalServerErrorResponseBody(res *lfxv2campa
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialMicrosoftAdsNotFoundResponseBody {
 	body := &SetCredentialMicrosoftAdsNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3986,6 +4446,7 @@ func NewSetCredentialMicrosoftAdsNotFoundResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateHubspotBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *CreateHubspotBadRequestResponseBody {
 	body := &CreateHubspotBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -3996,6 +4457,7 @@ func NewCreateHubspotBadRequestResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateHubspotConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *CreateHubspotConflictResponseBody {
 	body := &CreateHubspotConflictResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4006,6 +4468,7 @@ func NewCreateHubspotConflictResponseBody(res *lfxv2campaignserviceconnections.C
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *CreateHubspotServiceUnavailableResponseBody {
 	body := &CreateHubspotServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4016,6 +4479,7 @@ func NewCreateHubspotServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *CreateHubspotInternalServerErrorResponseBody {
 	body := &CreateHubspotInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4026,6 +4490,7 @@ func NewCreateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewGetHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetHubspotServiceUnavailableResponseBody {
 	body := &GetHubspotServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4036,6 +4501,7 @@ func NewGetHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnec
 // "lfx-v2-campaign-service-connections" service.
 func NewGetHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetHubspotInternalServerErrorResponseBody {
 	body := &GetHubspotInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4046,6 +4512,7 @@ func NewGetHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconne
 // "lfx-v2-campaign-service-connections" service.
 func NewGetHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetHubspotNotFoundResponseBody {
 	body := &GetHubspotNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4056,6 +4523,7 @@ func NewGetHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotF
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateHubspotBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *UpdateHubspotBadRequestResponseBody {
 	body := &UpdateHubspotBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4066,6 +4534,7 @@ func NewUpdateHubspotBadRequestResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *UpdateHubspotServiceUnavailableResponseBody {
 	body := &UpdateHubspotServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4076,6 +4545,7 @@ func NewUpdateHubspotServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *UpdateHubspotInternalServerErrorResponseBody {
 	body := &UpdateHubspotInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4086,6 +4556,7 @@ func NewUpdateHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *UpdateHubspotNotFoundResponseBody {
 	body := &UpdateHubspotNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4096,6 +4567,7 @@ func NewUpdateHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateHubspotPreconditionFailedResponseBody(res *lfxv2campaignserviceconnections.PreconditionFailedError) *UpdateHubspotPreconditionFailedResponseBody {
 	body := &UpdateHubspotPreconditionFailedResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4106,6 +4578,7 @@ func NewUpdateHubspotPreconditionFailedResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateHubspotPreconditionRequiredResponseBody(res *lfxv2campaignserviceconnections.PreconditionRequiredError) *UpdateHubspotPreconditionRequiredResponseBody {
 	body := &UpdateHubspotPreconditionRequiredResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4116,6 +4589,7 @@ func NewUpdateHubspotPreconditionRequiredResponseBody(res *lfxv2campaignservicec
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *DeleteHubspotServiceUnavailableResponseBody {
 	body := &DeleteHubspotServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4126,6 +4600,7 @@ func NewDeleteHubspotServiceUnavailableResponseBody(res *lfxv2campaignservicecon
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *DeleteHubspotInternalServerErrorResponseBody {
 	body := &DeleteHubspotInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4136,6 +4611,7 @@ func NewDeleteHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceco
 // "lfx-v2-campaign-service-connections" service.
 func NewDeleteHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *DeleteHubspotNotFoundResponseBody {
 	body := &DeleteHubspotNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4146,6 +4622,7 @@ func NewDeleteHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.N
 // "lfx-v2-campaign-service-connections" service.
 func NewTestHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *TestHubspotServiceUnavailableResponseBody {
 	body := &TestHubspotServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4156,6 +4633,7 @@ func NewTestHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconne
 // "lfx-v2-campaign-service-connections" service.
 func NewTestHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *TestHubspotInternalServerErrorResponseBody {
 	body := &TestHubspotInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4166,6 +4644,7 @@ func NewTestHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconn
 // "lfx-v2-campaign-service-connections" service.
 func NewTestHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *TestHubspotNotFoundResponseBody {
 	body := &TestHubspotNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4176,6 +4655,7 @@ func NewTestHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.Not
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialHubspotBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SetCredentialHubspotBadRequestResponseBody {
 	body := &SetCredentialHubspotBadRequestResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4186,6 +4666,7 @@ func NewSetCredentialHubspotBadRequestResponseBody(res *lfxv2campaignserviceconn
 // the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialHubspotServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SetCredentialHubspotServiceUnavailableResponseBody {
 	body := &SetCredentialHubspotServiceUnavailableResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4196,6 +4677,7 @@ func NewSetCredentialHubspotServiceUnavailableResponseBody(res *lfxv2campaignser
 // the "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialHubspotInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SetCredentialHubspotInternalServerErrorResponseBody {
 	body := &SetCredentialHubspotInternalServerErrorResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4206,6 +4688,7 @@ func NewSetCredentialHubspotInternalServerErrorResponseBody(res *lfxv2campaignse
 // "lfx-v2-campaign-service-connections" service.
 func NewSetCredentialHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SetCredentialHubspotNotFoundResponseBody {
 	body := &SetCredentialHubspotNotFoundResponseBody{
+		Code:    res.Code,
 		Message: res.Message,
 	}
 	return body
@@ -4235,7 +4718,7 @@ func NewGetGoogleAdsPayload(projectID string, bearerToken *string) *lfxv2campaig
 
 // NewUpdateGoogleAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-google-ads endpoint payload.
-func NewUpdateGoogleAdsPayload(body *UpdateGoogleAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateGoogleAdsPayload {
+func NewUpdateGoogleAdsPayload(body *UpdateGoogleAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateGoogleAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateGoogleAdsPayload{}
 	v.Config = unmarshalGoogleAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsGoogleAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4301,7 +4784,7 @@ func NewGetLinkedinAdsPayload(projectID string, bearerToken *string) *lfxv2campa
 
 // NewUpdateLinkedinAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-linkedin-ads endpoint payload.
-func NewUpdateLinkedinAdsPayload(body *UpdateLinkedinAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload {
+func NewUpdateLinkedinAdsPayload(body *UpdateLinkedinAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload{}
 	v.Config = unmarshalLinkedinAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsLinkedinAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4367,7 +4850,7 @@ func NewGetMetaAdsPayload(projectID string, bearerToken *string) *lfxv2campaigns
 
 // NewUpdateMetaAdsPayload builds a lfx-v2-campaign-service-connections service
 // update-meta-ads endpoint payload.
-func NewUpdateMetaAdsPayload(body *UpdateMetaAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateMetaAdsPayload {
+func NewUpdateMetaAdsPayload(body *UpdateMetaAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateMetaAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateMetaAdsPayload{}
 	v.Config = unmarshalMetaAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMetaAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4432,7 +4915,7 @@ func NewGetRedditAdsPayload(projectID string, bearerToken *string) *lfxv2campaig
 
 // NewUpdateRedditAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-reddit-ads endpoint payload.
-func NewUpdateRedditAdsPayload(body *UpdateRedditAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateRedditAdsPayload {
+func NewUpdateRedditAdsPayload(body *UpdateRedditAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateRedditAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateRedditAdsPayload{}
 	v.Config = unmarshalRedditAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsRedditAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4498,7 +4981,7 @@ func NewGetTwitterAdsPayload(projectID string, bearerToken *string) *lfxv2campai
 
 // NewUpdateTwitterAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-twitter-ads endpoint payload.
-func NewUpdateTwitterAdsPayload(body *UpdateTwitterAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateTwitterAdsPayload {
+func NewUpdateTwitterAdsPayload(body *UpdateTwitterAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateTwitterAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateTwitterAdsPayload{}
 	v.Config = unmarshalTwitterAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsTwitterAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4564,7 +5047,7 @@ func NewGetMicrosoftAdsPayload(projectID string, bearerToken *string) *lfxv2camp
 
 // NewUpdateMicrosoftAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-microsoft-ads endpoint payload.
-func NewUpdateMicrosoftAdsPayload(body *UpdateMicrosoftAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload {
+func NewUpdateMicrosoftAdsPayload(body *UpdateMicrosoftAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload{}
 	v.Config = unmarshalMicrosoftAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMicrosoftAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4630,7 +5113,7 @@ func NewGetHubspotPayload(projectID string, bearerToken *string) *lfxv2campaigns
 
 // NewUpdateHubspotPayload builds a lfx-v2-campaign-service-connections service
 // update-hubspot endpoint payload.
-func NewUpdateHubspotPayload(body *UpdateHubspotRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateHubspotPayload {
+func NewUpdateHubspotPayload(body *UpdateHubspotRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateHubspotPayload {
 	v := &lfxv2campaignserviceconnections.UpdateHubspotPayload{}
 	v.Config = unmarshalHubspotConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsHubspotConnectionConfig(body.Config)
 	v.ProjectID = projectID

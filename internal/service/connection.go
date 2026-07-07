@@ -38,7 +38,7 @@ func NewConnectionService() *ConnectionService {
 // errNotImplemented is the placeholder returned by every stub method until the
 // persistence layer (LFXV2-2556) is wired in.
 func errNotImplemented() error {
-	return &conn.InternalServerError{Message: "connection endpoints are not implemented yet (LFXV2-2556)"}
+	return &conn.InternalServerError{Code: "500", Message: "connection endpoints are not implemented yet (LFXV2-2556)"}
 }
 
 // JWTAuth authorizes a request. The Heimdall gateway has already validated the
