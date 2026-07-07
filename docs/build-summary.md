@@ -316,8 +316,8 @@ sequenceDiagram
     T->>T: Heimdall → OpenFGA check
     T->>G: ✓ authorized
     G->>S: decoded + validated payload
-    S->>PG: Create job row (status: PENDING)
-    S-->>C: 202 Accepted {jobId}
+    S->>PG: Create job row (status: queued)
+    S-->>C: 202 Accepted {jobId, status: queued}
 
     Note over S,P: Async goroutine (context.WithoutCancel)
 
@@ -325,11 +325,11 @@ sequenceDiagram
     O->>P: errgroup.SetLimit(5)
     P-->>O: results per platform
     O->>PG: Persist executions (one per platform, each with job_id)
-    O->>PG: Update job → COMPLETED (or FAILED)
+    O->>PG: Update job → succeeded / partial / failed
 
     C->>G: GET /jobs/{id}
     G->>PG: Read job status
-    PG-->>C: {status: COMPLETED, results: [...]}
+    PG-->>C: {status: succeeded, results: [...]}
 ```
 
 ---

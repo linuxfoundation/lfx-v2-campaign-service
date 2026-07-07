@@ -210,7 +210,11 @@ CREATE INDEX idx_campaigns_project_id ON campaigns (project_id);
 CREATE TABLE campaign_jobs (
     id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     brief_id   UUID        NOT NULL REFERENCES campaign_briefs(id),
-    status     TEXT        NOT NULL DEFAULT 'pending',  -- pending/running/completed/failed
+    status     TEXT        NOT NULL DEFAULT 'queued'
+               CHECK (status IN ('queued','running','succeeded','partial','failed')),
+                                               -- 'partial' = some platforms succeeded, some failed.
+                                               -- Single vocabulary shared with the API contract
+                                               -- (JobCreateResponse/JobPollResponse in api-catalog.md).
     result     JSONB,
     error      TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -222,7 +226,7 @@ CREATE INDEX idx_campaign_jobs_brief_id ON campaign_jobs (brief_id);
 
 ## API
 
-Connection endpoints are nested under `/projects/{projectId}/…` and are strongly typed per provider, one singleton per provider (e.g. `POST /projects/{projectId}/connection-google`). The authoritative endpoint list, gating FGA relations, and payload shapes are in [api-catalog.md](api-catalog.md).
+Connection endpoints are nested under `/projects/{projectId}/…` and are strongly typed per provider, one singleton per provider (e.g. `POST /projects/{projectId}/connection-google-ads`). The authoritative endpoint list, gating FGA relations, and payload shapes are in [api-catalog.md](api-catalog.md).
 
 ### Response Shape
 
@@ -246,7 +250,7 @@ Credentials are never returned. The response exposes `has_credentials: boolean` 
 **Create a connection** (credentials in the request body; never echoed back):
 
 ```http
-POST /projects/7f3.../connection-linkedin
+POST /projects/7f3.../connection-linkedin-ads
 Content-Type: application/json
 
 { "label": "TLF Main", "account_id": "538170226", "org_id": "208777",
@@ -265,7 +269,7 @@ ETag: "1"
 **Update config with optimistic concurrency** — the caller must present the current version. The connection is addressed by provider name alone (no `{id}` — it is the project's singleton):
 
 ```http
-PUT /projects/7f3.../connection-linkedin
+PUT /projects/7f3.../connection-linkedin-ads
 If-Match: "1"
 Content-Type: application/json
 
@@ -281,7 +285,7 @@ ETag: "2"        # version incremented
 **Set credential** — separate from `PUT`; does not touch config, has its own permission/audit:
 
 ```http
-POST /projects/7f3.../connection-linkedin/set-credential
+POST /projects/7f3.../connection-linkedin-ads/set-credential
 Content-Type: application/json
 
 { "credentials": { "access_token": "AQV...new..." } }
@@ -299,11 +303,11 @@ Content-Type: application/json
 Every path in this service — reads and writes — is gated at the gateway by a Heimdall RuleSet referencing the `campaign_manager` relation on the `project` captured from the path. (There is no read-only campaigns audience; `marketing_auditor` applies to the separate Snowflake-backed Marketing Insights dashboard, not this service.) This mirrors the committee-service pattern (`openfga_check` authorizer + `create_jwt` finalizer that mints the service-audience JWT this service then validates). Example rule for creating a connection:
 
 ```yaml
-- id: "rule:lfx:lfx-v2-campaign-service:connection-linkedin:create"
+- id: "rule:lfx:lfx-v2-campaign-service:connection-linkedin-ads:create"
   match:
     methods: [POST]
     routes:
-      - path: /projects/:projectId/connection-linkedin
+      - path: /projects/:projectId/connection-linkedin-ads
   execute:
     - authenticator: oidc
     {{- if .Values.openfga.enabled }}

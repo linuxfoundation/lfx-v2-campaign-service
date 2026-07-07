@@ -90,18 +90,18 @@ Each optimization action is scoped to a single campaign under its brief and is i
 
 A connection is **singleton per provider per project**: a project holds at most one connection of any given provider (one Google Ads account, one LinkedIn ad account, …). Multiplicity of accounts across the Linux Foundation lives at the **project** level, not inside a project — CNCF, OpenSearch, and TLF are each their own project, each owning its own single connection per provider. (TLF is both an umbrella over child-foundation projects *and* its own project with its own account; it owns only its own connection. Cross-foundation roll-up is a read concern handled by the UI backend — see the Monitoring note below — not by holding multiple connections on one project.)
 
-Because the connection is a singleton, there is **no service-generated `{id}` in the path** — the provider name *is* the identity within the project. Connections are strongly typed per provider (see [channel-connections-schema.md](channel-connections-schema.md)). The table below shows the pattern for `google`; every provider (`linkedin`, `meta`, `reddit`, `twitter`, `microsoft`, `hubspot`) exposes the identical shape with its own typed payload.
+Because the connection is a singleton, there is **no service-generated `{id}` in the path** — the provider name *is* the identity within the project. The path token is the **same provider key used everywhere else in this service** (`google-ads`, `linkedin-ads`, …, and `hubspot` for the non-ads provider), so the mapping is consistent end-to-end: path `connection-google-ads` → indexer type `google_ads_connection` → table `google_ads_connections`. Connections are strongly typed per provider (see [channel-connections-schema.md](channel-connections-schema.md)). The table below shows the pattern for `google-ads`; every provider (`linkedin-ads`, `meta-ads`, `reddit-ads`, `twitter-ads`, `microsoft-ads`, `hubspot`) exposes the identical shape with its own typed payload.
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| POST | `/projects/{projectId}/connection-google` | `campaign_manager` | JSON | Create the project's Google Ads connection (`409 Conflict` if one already exists). |
-| GET | `/projects/{projectId}/connection-google` | `campaign_manager` | JSON | Get the connection (credentials redacted); returns ETag. |
-| PUT | `/projects/{projectId}/connection-google` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
-| DELETE | `/projects/{projectId}/connection-google` | `campaign_manager` | JSON | Remove the connection (soft delete). |
-| POST | `/projects/{projectId}/connection-google/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
-| POST | `/projects/{projectId}/connection-google/set-credential` | `campaign_manager` | JSON | Replace the stored (encrypted) credential. Split out from `PUT` so credential replacement is independently permissioned/audited. Not "rotate" — the service does not generate/swap secrets upstream. |
+| POST | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Create the project's Google Ads connection (`409 Conflict` if one already exists). |
+| GET | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Get the connection (credentials redacted); returns ETag. |
+| PUT | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
+| DELETE | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Remove the connection (soft delete). |
+| POST | `/projects/{projectId}/connection-google-ads/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
+| POST | `/projects/{projectId}/connection-google-ads/set-credential` | `campaign_manager` | JSON | Replace the stored (encrypted) credential. Split out from `PUT` so credential replacement is independently permissioned/audited. Not "rotate" — the service does not generate/swap secrets upstream. |
 
-> Because the connection is a singleton, `GET /projects/{projectId}/connection-google` *is* the "list" — there is no separate collection listing. A cross-project inventory (which foundations have which providers connected) comes from the Query Service, which indexes each connection table on write.
+> Because the connection is a singleton, `GET /projects/{projectId}/connection-google-ads` *is* the "list" — there is no separate collection listing. A cross-project inventory (which foundations have which providers connected) comes from the Query Service, which indexes each connection table on write.
 
 ---
 
