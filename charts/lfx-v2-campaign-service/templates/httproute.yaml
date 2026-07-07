@@ -8,36 +8,35 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   parentRefs:
-  - group: gateway.networking.k8s.io
-    kind: Gateway
-    name: {{ .Values.traefik.gateway.name }}
-    namespace: {{ .Values.traefik.gateway.namespace }}
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.traefik.gateway.name }}
+      namespace: {{ .Values.traefik.gateway.namespace }}
   hostnames:
-  - "lfx-api.{{ .Values.lfx.domain }}"
+    - "lfx-api.{{ .Values.lfx.domain }}"
   rules:
-  # Main application endpoints (with authentication)
-  # TODO: Adjust paths as needed for your service
-  - matches:
-    - path:
-        type: Exact
-        value: /surveys
-    - path:
-        type: PathPrefix
-        value: /surveys/
-    - path:
-        type: PathPrefix
-        value: /_survey/
-    {{- if .Values.heimdall.enabled }}
-    filters:
-    - type: ExtensionRef
-      extensionRef:
-        group: traefik.io
-        kind: Middleware
-        name: heimdall-forward-body
-    {{- end }}
-    backendRefs:
-    - group: ''
-      kind: Service
-      name: {{ .Chart.Name }}
-      port: {{ .Values.service.port }}
-      weight: 1
+    # Main application endpoints (with authentication)
+    - matches:
+      - path:
+          type: Exact
+          value: /campaigns
+      - path:
+          type: PathPrefix
+          value: /campaigns/
+      - path:
+          type: PathPrefix
+          value: /_campaign/
+      {{- if .Values.heimdall.enabled }}
+      filters:
+      - type: ExtensionRef
+        extensionRef:
+          group: traefik.io
+          kind: Middleware
+          name: heimdall-forward-body
+      {{- end }}
+      backendRefs:
+      - group: ''
+        kind: Service
+        name: {{ .Chart.Name }}
+        port: {{ .Values.service.port }}
+        weight: 1
