@@ -28,15 +28,15 @@ spec:
           value: /_campaign/
       {{- if .Values.heimdall.enabled }}
       filters:
-      - type: ExtensionRef
-        extensionRef:
-          group: traefik.io
-          kind: Middleware
-          name: heimdall-forward-body
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: heimdall-forward-body
       {{- end }}
       backendRefs:
-      - group: ''
-        kind: Service
-        name: {{ .Chart.Name }}
-        port: {{ .Values.service.port }}
-        weight: 1
+        - group: ''
+          kind: Service
+          name: {{ .Chart.Name }}
+          port: {{ .Values.service.port }}
+          weight: 1
