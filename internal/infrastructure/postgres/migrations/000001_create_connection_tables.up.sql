@@ -1,8 +1,8 @@
 -- Copyright The Linux Foundation and each contributor to LFX.
 -- SPDX-License-Identifier: MIT
 
--- Per-provider connection tables. Each is singleton per project (UNIQUE
--- (project_id)); connections are NOT indexed into the Query Service, so
+-- Per-provider connection tables. Each is singleton per project (a partial UNIQUE index
+-- (project_id) WHERE status <> deleted); connections are NOT indexed into the Query Service, so
 -- attribution lives inline in created_by / updated_by. Credentials are stored
 -- as AES-256-GCM ciphertext, encrypted at the application layer.
 --
@@ -10,7 +10,7 @@
 
 CREATE TABLE IF NOT EXISTS google_ads_connections (
     id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id         UUID        NOT NULL UNIQUE,
+    project_id         UUID        NOT NULL,
     label              TEXT,
     account_id         TEXT        NOT NULL,
     credentials        BYTEA,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS google_ads_connections (
 
 CREATE TABLE IF NOT EXISTS linkedin_ads_connections (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL UNIQUE,
+    project_id   UUID        NOT NULL,
     label        TEXT,
     account_id   TEXT        NOT NULL,
     credentials  BYTEA,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS linkedin_ads_connections (
 
 CREATE TABLE IF NOT EXISTS meta_ads_connections (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL UNIQUE,
+    project_id   UUID        NOT NULL,
     label        TEXT,
     account_id   TEXT        NOT NULL,
     credentials  BYTEA,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS meta_ads_connections (
 
 CREATE TABLE IF NOT EXISTS reddit_ads_connections (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL UNIQUE,
+    project_id   UUID        NOT NULL,
     label        TEXT,
     account_id   TEXT        NOT NULL,
     credentials  BYTEA,
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS reddit_ads_connections (
 
 CREATE TABLE IF NOT EXISTS twitter_ads_connections (
     id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id             UUID        NOT NULL UNIQUE,
+    project_id             UUID        NOT NULL,
     label                  TEXT,
     account_id             TEXT        NOT NULL,
     credentials            BYTEA,
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS twitter_ads_connections (
 
 CREATE TABLE IF NOT EXISTS microsoft_ads_connections (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL UNIQUE,
+    project_id   UUID        NOT NULL,
     label        TEXT,
     account_id   TEXT        NOT NULL,
     credentials  BYTEA,
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS microsoft_ads_connections (
 
 CREATE TABLE IF NOT EXISTS hubspot_connections (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id    UUID        NOT NULL UNIQUE,
+    project_id    UUID        NOT NULL,
     label         TEXT,
     account_id    TEXT        NOT NULL,
     credentials   BYTEA,
@@ -128,3 +128,14 @@ CREATE TABLE IF NOT EXISTS hubspot_connections (
     sender_name   TEXT,
     brand_kit     TEXT
 );
+
+-- Singleton is enforced by a PARTIAL unique index that ignores soft-deleted
+-- rows, so a project can reconnect a provider after disconnecting (a
+-- soft-deleted row no longer blocks a new Create).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_google_ads_connections_project    ON google_ads_connections    (project_id) WHERE status <> 'deleted';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_linkedin_ads_connections_project  ON linkedin_ads_connections  (project_id) WHERE status <> 'deleted';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_meta_ads_connections_project      ON meta_ads_connections      (project_id) WHERE status <> 'deleted';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_reddit_ads_connections_project    ON reddit_ads_connections    (project_id) WHERE status <> 'deleted';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_twitter_ads_connections_project   ON twitter_ads_connections   (project_id) WHERE status <> 'deleted';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_microsoft_ads_connections_project ON microsoft_ads_connections (project_id) WHERE status <> 'deleted';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hubspot_connections_project       ON hubspot_connections       (project_id) WHERE status <> 'deleted';

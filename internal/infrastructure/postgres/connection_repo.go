@@ -72,7 +72,7 @@ func (r *ConnectionRepo) Get(ctx context.Context, projectID string, provider mod
 }
 
 // Create inserts the project's connection. Returns domain.ErrConflict if one
-// already exists (UNIQUE(project_id) violation).
+// already exists (partial unique index on project_id WHERE status <> 'deleted').
 func (r *ConnectionRepo) Create(ctx context.Context, c *model.Connection) (*model.Connection, error) {
 	if !c.Provider.Valid() {
 		return nil, fmt.Errorf("unknown provider %q", c.Provider)
