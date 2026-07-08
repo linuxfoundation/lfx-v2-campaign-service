@@ -41,13 +41,15 @@ committee/project structure:
 - **OpenAPI paths** (`/_campaigns/openapi.json|.yaml|3.json|3.yaml`, GET/HEAD):
   `oidc` + `anonymous_authenticator` (+ `oidc_contextualizer` when enabled) →
   `authorizer: allow_all` → `finalizer: create_jwt` with `aud: {{ .Values.app.audience }}`.
-- **`/campaigns` application routes**: `oidc` + `anonymous_authenticator`
-  (+ contextualizer) → authorization step → `create_jwt`. For the authorization step, gate
-  on `.Values.openfga.enabled`: when enabled use `openfga_check` with the appropriate
-  relation/object; when disabled (`allow_all`, local dev only), matching committee's
-  pattern. Where campaign-service's FGA object/relation model is not yet defined, use
-  `allow_all` under an explicit, commented placeholder rule per route until the FGA
-  contract is authored — documented as intentional (FR-007), not left empty.
+- **`/campaigns` application routes** (shipped fail-closed placeholder): because
+  campaign-service's FGA object/relation model is not yet defined, these rules use `oidc`
+  only — **no** `anonymous_authenticator` fallback, so a valid token is genuinely required —
+  (+ `oidc_contextualizer` when enabled) → an unconditional `allow_all` authorizer (any
+  authenticated subject; NOT fine-grained authz) → `create_jwt` with
+  `aud: {{ .Values.app.audience }}`. This is documented as intentional (FR-007), not left
+  empty. TODO(LFXV2-2558): once the campaigns API + FGA model are defined, re-add
+  `anonymous_authenticator` together with `openfga_check` (relation/object) — the pairing
+  matters, since `openfga_check` is what rejects the anonymous subject in committee's pattern.
 
 **Rationale**: The HTTPRoute attaches the `heimdall-forward-body` middleware
 (forwardAuth → Heimdall) to `/campaigns`, `/campaigns/`, and `/_campaigns/`. With
