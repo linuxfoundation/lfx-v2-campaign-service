@@ -72,11 +72,11 @@ reference services define one rule per routed path; campaign must too.
 `{{- if hasKey $config "value" }}` (committee's pattern), keeping `else if $config.valueFrom`.
 
 **Rationale**: The current truthiness guard silently drops any env var whose `value` is
-empty/false/zero. In campaign's own `values.yaml` this affects
-`JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL: value: ''` and the `ITX_*: value: ""` entries —
-they render as neither `value` nor `valueFrom`, producing a bare `- name: FOO` (invalid /
-surprising). `hasKey` renders an explicit `value: ""`, which Kubernetes accepts and which
-matches the committee reference exactly. This is a correctness + conformance fix.
+empty/false/zero. In campaign's own `values.yaml` this affects entries such as
+`JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL: value: ''` — they render as neither `value` nor
+`valueFrom`, producing a bare `- name: FOO` (invalid / surprising). `hasKey` renders an
+explicit `value: ""`, which Kubernetes accepts and which matches the committee reference
+exactly. This is a correctness + conformance fix.
 
 **Alternatives considered**: Removing the empty-string placeholders from values instead —
 rejected; the placeholders document intended env vars and the standard is to render them
@@ -188,10 +188,9 @@ violates immutability requirement for pre-prod/prod.
    annotation).
 2. Wire secret-backed env vars via `app.environment.<VAR>.valueFrom.secretKeyRef` pointing
    at the `lfx-v2-campaign-service-secrets` secret **only for the keys that actually exist**
-   and are consumed by the app. The prime candidate is `ITX_CLIENT_PRIVATE_KEY` (flagged in
-   `values.yaml` as "should be set via Kubernetes secrets"). If the ITX integration/keys
-   are not yet active, leave the `ExternalSecret` provisioned-but-unconsumed and document
-   that secret wiring is completed when the secret keys are defined (DevOps handoff).
+   and are consumed by the app. The current service surface requires no secret-backed env
+   var, so leave the `ExternalSecret` provisioned-but-unconsumed and document that secret
+   wiring is completed when/if secret keys are defined (DevOps handoff).
 3. Optionally add `serviceAccount.create: true` for explicitness (the chart already
    defaults it true, so this is cosmetic parity with committee) and
    `topologySpreadConstraints` (only after R5 adds chart support) for prod HA parity.

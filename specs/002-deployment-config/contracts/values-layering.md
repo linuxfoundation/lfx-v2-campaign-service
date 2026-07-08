@@ -25,7 +25,7 @@ annotations:
 # R8 additions when secret keys are known:
 # app:
 #   environment:
-#     ITX_CLIENT_PRIVATE_KEY:
+#     <ENV_VAR_NAME>:
 #       valueFrom:
 #         secretKeyRef:
 #           name: lfx-v2-campaign-service-secrets

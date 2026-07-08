@@ -201,24 +201,6 @@ app:
     REPOSITORY_SOURCE:
       value: nats
 
-    # ITX Proxy Configuration
-    ITX_BASE_URL:
-      value: ""
-
-    ITX_CLIENT_ID:
-      value: ""
-
-    # ITX_CLIENT_PRIVATE_KEY is the private key for ITX proxy authentication
-    # WARNING: Do not commit actual credentials to this file - should be set via Kubernetes secrets using valueFrom
-    ITX_CLIENT_PRIVATE_KEY:
-      value: ""
-
-    ITX_AUTH0_DOMAIN:
-      value: ""
-
-    ITX_AUDIENCE:
-      value: ""
-
     EVENTING_ENABLED:
       value: "true"
 
