@@ -2,7 +2,7 @@
 -- SPDX-License-Identifier: MIT
 
 -- Per-provider connection tables. Each is singleton per project (a partial UNIQUE index
--- (project_id) WHERE status <> deleted); connections are NOT indexed into the Query Service, so
+-- (project_id) WHERE status <> 'deleted'); connections are NOT indexed into the Query Service, so
 -- attribution lives inline in created_by / updated_by. Credentials are stored
 -- as AES-256-GCM ciphertext, encrypted at the application layer.
 --
