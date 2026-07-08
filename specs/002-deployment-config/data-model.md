@@ -43,7 +43,7 @@ default, dev, staging, and prod value combinations; MegaLinter Kubernetes/Helm p
 |---|---|
 | `spec.rules` | MUST be non-empty; one rule per HTTPRoute-routed path group (R2) |
 | openapi rule | `allow_all` authorizer + `create_jwt` finalizer (`aud: app.audience`) |
-| `/campaigns` rule(s) | Shipped (fail-closed placeholder): `oidc` only (no `anonymous_authenticator`, so a valid token is required) (+ contextualizer) → unconditional `allow_all` → `create_jwt`. TODO(LFXV2-2558): once the campaigns API + FGA model exist, re-add `anonymous_authenticator` and replace `allow_all` with `openfga_check` (relation/object) so the anonymous subject is rejected by the FGA check |
+| `/campaigns` rule(s) | Shipped (fail-closed placeholder): `oidc` only (no `anonymous_authenticator`, so a valid token is required) (+ contextualizer) → unconditional `deny_all` (rejects all requests; endpoints not built yet) → `create_jwt`. TODO(LFXV2-2558): once the campaigns API + FGA model exist, re-add `anonymous_authenticator` and replace `deny_all` with `openfga_check` (relation/object) |
 | rule `id` convention | `rule:lfx:lfx-v2-campaign-service:<resource>:<action>` |
 
 **Invariant**: every path in `httproute.yaml` that passes through the heimdall middleware

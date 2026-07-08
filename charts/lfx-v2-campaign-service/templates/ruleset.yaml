@@ -38,15 +38,14 @@ spec:
               aud: {{ .Values.app.audience }}
 
     # Campaigns collection/item. The campaigns API is not yet implemented; these
-    # rules keep the gateway-routed paths deployable and fail-closed today: `oidc`
-    # is the only authenticator (no `anonymous_authenticator` fallback), so a
-    # request without a valid token is rejected rather than allowed through.
-    # `allow_all` then permits any authenticated subject — it is NOT fine-grained
-    # authorization.
+    # rules keep the gateway-routed paths deployable but fully locked down today:
+    # `oidc` is the only authenticator (no `anonymous_authenticator` fallback) and
+    # `deny_all` rejects every request — even a valid, authenticated subject —
+    # since there are no endpoints to serve yet.
     # TODO(LFXV2-2558): once the campaigns API and its OpenFGA object/relation
-    # model are defined, add `anonymous_authenticator` back and replace `allow_all`
-    # with per-endpoint `openfga_check` authorizers (relation + object), so the
-    # anonymous subject is rejected by the FGA check (the reference-service pattern).
+    # model are defined, add `anonymous_authenticator` back and replace `deny_all`
+    # with per-endpoint `openfga_check` authorizers (relation + object) so access
+    # is granted per the FGA model (the reference-service pattern).
     - id: "rule:lfx:lfx-v2-campaign-service:campaigns:collection"
       allow_encoded_slashes: 'off'
       match:
@@ -60,7 +59,7 @@ spec:
         {{- if .Values.app.use_oidc_contextualizer }}
         - contextualizer: oidc_contextualizer
         {{- end }}
-        - authorizer: allow_all
+        - authorizer: deny_all
         - finalizer: create_jwt
           config:
             values:
@@ -81,7 +80,7 @@ spec:
         {{- if .Values.app.use_oidc_contextualizer }}
         - contextualizer: oidc_contextualizer
         {{- end }}
-        - authorizer: allow_all
+        - authorizer: deny_all
         - finalizer: create_jwt
           config:
             values:

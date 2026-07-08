@@ -44,11 +44,11 @@ committee/project structure:
 - **`/campaigns` application routes** (shipped fail-closed placeholder): because
   campaign-service's FGA object/relation model is not yet defined, these rules use `oidc`
   only — **no** `anonymous_authenticator` fallback, so a valid token is genuinely required —
-  (+ `oidc_contextualizer` when enabled) → an unconditional `allow_all` authorizer (any
-  authenticated subject; NOT fine-grained authz) → `create_jwt` with
-  `aud: {{ .Values.app.audience }}`. This is documented as intentional (FR-007), not left
-  empty. TODO(LFXV2-2558): once the campaigns API + FGA model are defined, re-add
-  `anonymous_authenticator` together with `openfga_check` (relation/object) — the pairing
+  (+ `oidc_contextualizer` when enabled) → an unconditional `deny_all` authorizer (rejects
+  every request, even an authenticated subject, since no endpoints are built yet) →
+  `create_jwt` with `aud: {{ .Values.app.audience }}`. This is documented as intentional
+  (FR-007), not left empty. TODO(LFXV2-2558): once the campaigns API + FGA model are defined,
+  re-add `anonymous_authenticator` together with `openfga_check` (relation/object) — the pairing
   matters, since `openfga_check` is what rejects the anonymous subject in committee's pattern.
 
 **Rationale**: The HTTPRoute attaches the `heimdall-forward-body` middleware
@@ -236,4 +236,4 @@ changing it would touch every file for no benefit.
 | OTEL sampling env vars | `OTEL_TRACES_SAMPLE_RATIO` (campaign, original) vs `OTEL_TRACES_SAMPLER`/`_ARG` (committee, OTel spec) | **Resolved (LFXV2-2558):** campaign's Go OTEL code + chart were aligned to the spec-standard `OTEL_TRACES_SAMPLER`/`OTEL_TRACES_SAMPLER_ARG` with a `parentbased_traceidratio` default (honors upstream parent sampling). No OTEL deviation remains. |
 | NATS chart resources | None | No NATS client wired yet (R4). |
 | Umbrella disable entry | Omitted | Campaign not in `lfx-v2-helm` umbrella yet (R9). |
-| Ruleset FGA relations | Placeholder `allow_all` per route where FGA model undefined | Campaign FGA contract not yet authored; keeps chart deployable + documented (R2). |
+| Ruleset FGA relations | Placeholder `deny_all` per `/campaigns` route where FGA model undefined | Campaign FGA contract not yet authored; endpoints unbuilt, so lock down (deny) while keeping the chart deployable + documented (R2). |
