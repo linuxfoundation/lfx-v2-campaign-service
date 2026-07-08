@@ -37,12 +37,16 @@ spec:
             values:
               aud: {{ .Values.app.audience }}
 
-    # Campaigns collection. The campaigns API is not yet implemented; these rules
-    # keep the gateway-routed paths authenticated and deployable today.
-    # TODO(LFXV2-2558): replace `allow_all` with per-endpoint `openfga_check`
-    # authorizers (relation + object) once the campaigns API and its OpenFGA
-    # object/relation model are defined. Requests still require a valid OIDC token
-    # via the authenticators above.
+    # Campaigns collection/item. The campaigns API is not yet implemented; these
+    # rules keep the gateway-routed paths deployable and fail-closed today: `oidc`
+    # is the only authenticator (no `anonymous_authenticator` fallback), so a
+    # request without a valid token is rejected rather than allowed through.
+    # `allow_all` then permits any authenticated subject — it is NOT fine-grained
+    # authorization.
+    # TODO(LFXV2-2558): once the campaigns API and its OpenFGA object/relation
+    # model are defined, add `anonymous_authenticator` back and replace `allow_all`
+    # with per-endpoint `openfga_check` authorizers (relation + object), so the
+    # anonymous subject is rejected by the FGA check (the reference-service pattern).
     - id: "rule:lfx:lfx-v2-campaign-service:campaigns:collection"
       allow_encoded_slashes: 'off'
       match:
@@ -53,7 +57,6 @@ spec:
           - path: /campaigns
       execute:
         - authenticator: oidc
-        - authenticator: anonymous_authenticator
         {{- if .Values.app.use_oidc_contextualizer }}
         - contextualizer: oidc_contextualizer
         {{- end }}
@@ -75,7 +78,6 @@ spec:
           - path: /campaigns/:uid
       execute:
         - authenticator: oidc
-        - authenticator: anonymous_authenticator
         {{- if .Values.app.use_oidc_contextualizer }}
         - contextualizer: oidc_contextualizer
         {{- end }}

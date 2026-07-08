@@ -256,7 +256,7 @@ hostname.
   more secure convention (e.g. committee-service's map-based environment variables and
   service-account/IRSA usage) is preferred because campaign-service uses external secrets.
 - Campaign-service consumes secrets from the external secret provider, so it follows the
-  committee-service pattern (ServiceStore + ExternalSecret + service-account workload
+  committee-service pattern (SecretStore + ExternalSecret + service-account workload
   identity) rather than the simpler project-service pattern.
 - The canonical namespace for campaign-service is `lfx-v2-campaign-service`, matching the
   campaign chart's existing convention, applied consistently across both repositories.
