@@ -30,7 +30,9 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ .Values.serviceAccount.name | default .Chart.Name }}
+      {{- end }}
       containers:
         - name: app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -40,7 +42,11 @@ spec:
           env:
           {{- range $name, $config := .Values.app.environment }}
           - name: {{ $name }}
-            {{- if $config.value }}
+            {{- /*
+                Use hasKey (not truthiness) so a deliberate `value: ""` renders as an
+                explicit empty string rather than collapsing to a bare `- name: FOO`.
+            */}}
+            {{- if hasKey $config "value" }}
             value: {{ $config.value | quote }}
             {{- else if $config.valueFrom }}
             valueFrom:
@@ -80,10 +86,15 @@ spec:
           - name: OTEL_TRACES_EXPORTER
             value: {{ $otelTracesExporter | quote }}
           {{- end }}
-          {{- $otelTracesSampleRatio := .Values.app.otel.tracesSampleRatio | toString | trim }}
-          {{- if ne $otelTracesSampleRatio "" }}
-          - name: OTEL_TRACES_SAMPLE_RATIO
-            value: {{ $otelTracesSampleRatio | quote }}
+          {{- $otelTracesSampler := .Values.app.otel.tracesSampler | toString | trim }}
+          {{- if ne $otelTracesSampler "" }}
+          - name: OTEL_TRACES_SAMPLER
+            value: {{ $otelTracesSampler | quote }}
+          {{- end }}
+          {{- $otelTracesSamplerArg := .Values.app.otel.tracesSamplerArg | toString | trim }}
+          {{- if ne $otelTracesSamplerArg "" }}
+          - name: OTEL_TRACES_SAMPLER_ARG
+            value: {{ $otelTracesSamplerArg | quote }}
           {{- end }}
           {{- $otelMetricsExporter := .Values.app.otel.metricsExporter | toString | trim }}
           {{- if ne $otelMetricsExporter "" }}
@@ -125,3 +136,7 @@ spec:
               port: web
             failureThreshold: 30
             periodSeconds: 1
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
