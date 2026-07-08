@@ -22,8 +22,14 @@ const KeySize = 32
 // ErrKeySize is returned when the configured key is not 32 bytes.
 var ErrKeySize = fmt.Errorf("encryption key must be %d bytes (AES-256)", KeySize)
 
-// ErrCiphertextTooShort is returned when a ciphertext is too short to contain a nonce.
+// ErrCiphertextTooShort is returned when a ciphertext is too short to contain a
+// nonce — a malformed-input / data error (map to 422, not 500).
 var ErrCiphertextTooShort = errors.New("ciphertext too short")
+
+// ErrDecryptionFailed is returned when GCM authentication fails — tampered data
+// or a wrong/rotated key. This is an infrastructure/security condition (map to
+// 500 and alert ops), distinct from a malformed-input error.
+var ErrDecryptionFailed = errors.New("decryption authentication failed")
 
 // AESGCM implements domain.Encryptor using AES-256-GCM. The nonce is randomly
 // generated per message and prepended to the ciphertext.
@@ -76,7 +82,9 @@ func (a *AESGCM) Decrypt(sealed []byte) ([]byte, error) {
 	nonce, ciphertext := sealed[:ns], sealed[ns:]
 	plaintext, err := a.aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("open: %w", err)
+		// GCM open failure = authentication failure (tamper / wrong key), not a
+		// format error. Wrap the sentinel so callers can map it to 500 + alert.
+		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
 	}
 	return plaintext, nil
 }

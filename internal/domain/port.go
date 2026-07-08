@@ -27,9 +27,11 @@ type ConnectionWriter interface {
 	// ErrNotFound if absent, ErrPreconditionFailed on version mismatch.
 	Update(ctx context.Context, c *model.Connection, expectedVersion int64) (*model.Connection, error)
 
-	// SetCredential replaces only the encrypted credential blob. Separate from
-	// Update so credential replacement is independently permissioned/audited.
-	SetCredential(ctx context.Context, projectID string, provider model.Provider, ciphertext []byte, by *model.Actor) error
+	// SetCredential replaces only the encrypted credential blob and bumps the
+	// version. Separate from Update so credential replacement is independently
+	// permissioned/audited. Returns the updated connection so the handler can
+	// emit the new ETag (otherwise the client's next If-Match would be stale).
+	SetCredential(ctx context.Context, projectID string, provider model.Provider, ciphertext []byte, by *model.Actor) (*model.Connection, error)
 
 	// Delete soft-deletes the connection (status = deleted).
 	Delete(ctx context.Context, projectID string, provider model.Provider) error

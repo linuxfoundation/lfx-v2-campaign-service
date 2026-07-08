@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"testing"
 )
 
@@ -73,5 +74,28 @@ func TestAESGCM_DecryptRejectsShortInput(t *testing.T) {
 	enc, _ := NewAESGCM(newTestKey(t))
 	if _, err := enc.Decrypt([]byte("short")); err != ErrCiphertextTooShort {
 		t.Fatalf("expected ErrCiphertextTooShort, got %v", err)
+	}
+}
+
+func TestAESGCM_DecryptTamperedIsAuthFailure(t *testing.T) {
+	enc, _ := NewAESGCM(newTestKey(t))
+	ct, _ := enc.Encrypt([]byte("secret"))
+	ct[len(ct)-1] ^= 0xFF // flip a byte in the ciphertext body
+	_, err := enc.Decrypt(ct)
+	if !errors.Is(err, ErrDecryptionFailed) {
+		t.Fatalf("expected ErrDecryptionFailed for tampered ciphertext, got %v", err)
+	}
+	// And it must NOT be classified as a format error.
+	if errors.Is(err, ErrCiphertextTooShort) {
+		t.Fatal("tampered ciphertext misclassified as a format error")
+	}
+}
+
+func TestAESGCM_DecryptWrongKeyIsAuthFailure(t *testing.T) {
+	enc1, _ := NewAESGCM(newTestKey(t))
+	enc2, _ := NewAESGCM(newTestKey(t))
+	ct, _ := enc1.Encrypt([]byte("secret"))
+	if _, err := enc2.Decrypt(ct); !errors.Is(err, ErrDecryptionFailed) {
+		t.Fatalf("expected ErrDecryptionFailed for wrong key, got %v", err)
 	}
 }

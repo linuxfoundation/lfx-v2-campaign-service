@@ -31,7 +31,10 @@ func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 		return nil, fmt.Errorf("open pgx pool: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
+		// Close in the background so a failed ping returns immediately rather
+		// than blocking startup while the pool drains (an unreachable DB in k8s
+		// can otherwise wedge boot until the liveness probe restarts the pod).
+		go pool.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 	return &Pool{Pool: pool}, nil

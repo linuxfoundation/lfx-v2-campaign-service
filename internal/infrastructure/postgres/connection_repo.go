@@ -29,6 +29,25 @@ var providerConfigColumns = map[model.Provider][]string{
 	model.ProviderHubSpot:      {"portal_id", "sender_email", "sender_name", "brand_kit"},
 }
 
+// connectionCommonCols are the shared columns every provider table selects, in
+// the fixed order scanConnection expects. Defined once so Get/Create/Update
+// can't drift out of alignment with the scan.
+var connectionCommonCols = []string{
+	"id", "project_id", "label", "account_id", "credentials",
+	"status", "version", "created_by", "updated_by", "created_at", "updated_at",
+}
+
+// connectionSelectCols returns the full column list (common + provider-specific)
+// for a provider, in scan order. Single source of truth for the SELECT/RETURNING
+// column set across Get, Create, and Update.
+func connectionSelectCols(provider model.Provider) []string {
+	cfg := providerConfigColumns[provider]
+	cols := make([]string, 0, len(connectionCommonCols)+len(cfg))
+	cols = append(cols, connectionCommonCols...)
+	cols = append(cols, cfg...)
+	return cols
+}
+
 // ConnectionRepo is a pgx-backed implementation of domain.ConnectionRepository.
 // It works across every provider table by keying on provider.Table() and the
 // provider's config-column allowlist.
@@ -50,10 +69,7 @@ func (r *ConnectionRepo) Get(ctx context.Context, projectID string, provider mod
 		return nil, fmt.Errorf("unknown provider %q", provider)
 	}
 	cfgCols := providerConfigColumns[provider]
-	cols := append([]string{
-		"id", "project_id", "label", "account_id", "credentials",
-		"status", "version", "created_by", "updated_by", "created_at", "updated_at",
-	}, cfgCols...)
+	cols := connectionSelectCols(provider)
 
 	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
@@ -95,10 +111,7 @@ func (r *ConnectionRepo) Create(ctx context.Context, c *model.Connection) (*mode
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 	}
 
-	retCols := append([]string{
-		"id", "project_id", "label", "account_id", "credentials",
-		"status", "version", "created_by", "updated_by", "created_at", "updated_at",
-	}, cfgCols...)
+	retCols := connectionSelectCols(c.Provider)
 
 	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
@@ -148,23 +161,31 @@ func (r *ConnectionRepo) Update(ctx context.Context, c *model.Connection, expect
 		return nil, fmt.Errorf("update connection: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		// Distinguish missing from stale version.
-		if _, gerr := r.Get(ctx, c.ProjectID, c.Provider); errors.Is(gerr, domain.ErrNotFound) {
+		// Distinguish missing from stale version. Surface a transient Get error
+		// rather than masking it as a precondition failure (which would make the
+		// caller retry with a fresh ETag instead of backing off on a server error).
+		_, gerr := r.Get(ctx, c.ProjectID, c.Provider)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
 			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
 		}
-		return nil, domain.ErrPreconditionFailed
 	}
 	return r.Get(ctx, c.ProjectID, c.Provider)
 }
 
-// SetCredential replaces only the encrypted credential blob and bumps version.
-func (r *ConnectionRepo) SetCredential(ctx context.Context, projectID string, provider model.Provider, ciphertext []byte, by *model.Actor) error {
+// SetCredential replaces only the encrypted credential blob and bumps version,
+// returning the updated connection so the handler can emit the new ETag.
+func (r *ConnectionRepo) SetCredential(ctx context.Context, projectID string, provider model.Provider, ciphertext []byte, by *model.Actor) (*model.Connection, error) {
 	if !provider.Valid() {
-		return fmt.Errorf("unknown provider %q", provider)
+		return nil, fmt.Errorf("unknown provider %q", provider)
 	}
 	updatedBy, err := marshalActor(by)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	//nolint:gosec // table name comes from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
@@ -174,12 +195,12 @@ func (r *ConnectionRepo) SetCredential(ctx context.Context, projectID string, pr
 	)
 	tag, err := r.db.Exec(ctx, q, ciphertext, updatedBy, projectID)
 	if err != nil {
-		return fmt.Errorf("set credential: %w", err)
+		return nil, fmt.Errorf("set credential: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
+		return nil, domain.ErrNotFound
 	}
-	return nil
+	return r.Get(ctx, projectID, provider)
 }
 
 // Delete soft-deletes the connection.
@@ -226,12 +247,18 @@ func scanConnection(row pgx.Row, provider model.Provider, cfgCols []string) (*mo
 	if label != nil {
 		c.Label = *label
 	}
-	if a, err := unmarshalActor(createdBy); err == nil {
-		c.CreatedBy = a
+	// Surface corrupt actor JSON rather than silently returning a nil audit
+	// trail, which would hide data corruption until a downstream nil deref.
+	cb, err := unmarshalActor(createdBy)
+	if err != nil {
+		return nil, fmt.Errorf("scan connection: unmarshal created_by: %w", err)
 	}
-	if a, err := unmarshalActor(updatedBy); err == nil {
-		c.UpdatedBy = a
+	c.CreatedBy = cb
+	ub, err := unmarshalActor(updatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("scan connection: unmarshal updated_by: %w", err)
 	}
+	c.UpdatedBy = ub
 	c.ProviderConfig = make(map[string]string, len(cfgCols))
 	for i, col := range cfgCols {
 		if cfgVals[i] != nil {
