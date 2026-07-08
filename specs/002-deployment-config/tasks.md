@@ -112,7 +112,7 @@ immutable image tag, ArgoCD reports Synced/Healthy, and the prod gateway returns
 **⚠️ External gate**: Requires successful staging validation (US2) (research R7).
 
 - [ ] T017 [US3] Add the `lfx-v2-campaign-service` OCI list element to `apps/prod/lfx-v2-applications.yaml` (same shape as staging; chart version may match staging or a later validated version) per `contracts/applicationset-entry.md` (FR-014) (argocd repo)
-- [ ] T018 [US3] Activate `values/prod/lfx-v2-campaign-service.yaml` (currently all commented): set pinned `image.tag: <PINNED_APP_VERSION>`, `lfx.domain: v2.cluster.lfx.dev`, `namespace: lfx-v2-campaign-service`, `app.use_oidc_contextualizer: false`, OTEL sampler (`tracesSampleRatio: "1.0"`), prod resources, and prod IRSA role `arn:aws:iam::372256339901:role/lfx-v2-campaign-service` (FR-016, FR-017) (argocd repo)
+- [ ] T018 [US3] Activate `values/prod/lfx-v2-campaign-service.yaml` (currently all commented): set pinned `image.tag: <PINNED_APP_VERSION>`, `lfx.domain: v2.cluster.lfx.dev`, `namespace: lfx-v2-campaign-service`, `app.use_oidc_contextualizer: false`, OTEL sampler (`tracesSampler: "parentbased_traceidratio"`, `tracesSamplerArg: "1.0"`), prod resources, and prod IRSA role `arn:aws:iam::372256339901:role/lfx-v2-campaign-service` (FR-016, FR-017) (argocd repo)
 - [ ] T019 [US3] Validate prod per quickstart US3: ArgoCD Synced/Healthy and prod gateway `/_campaigns/openapi.json` returns 200 (SC-003, SC-004) (prod cluster)
 
 **Checkpoint**: campaign-service is deployed across all three environments.

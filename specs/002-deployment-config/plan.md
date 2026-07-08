@@ -161,8 +161,9 @@ README.md                          # SHOULD: add campaign row to service table (
 `lfx-v2-campaign-service/charts/`; GitOps registration in `lfx-v2-argocd/{apps,values,
 custom-resources}`. The committee-service configuration is the authoritative template to
 diff against, since campaign-service shares its ExternalSecret + IRSA + map-based-env
-profile. Deviations that are intentional (e.g. campaign's OTEL `tracesSampleRatio` var
-scheme vs committee's `tracesSampler`/`tracesSamplerArg`) are recorded in research.md.
+profile. Campaign-service's OTEL sampling was aligned to the OTel-spec
+`tracesSampler`/`tracesSamplerArg` scheme (matching committee-service) so no OTEL
+env-var deviation remains; the history is recorded in research.md.
 
 ## Complexity Tracking
 

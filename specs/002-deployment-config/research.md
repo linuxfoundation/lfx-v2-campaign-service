@@ -232,7 +232,7 @@ changing it would touch every file for no benefit.
 
 | Area | Campaign choice | Why intentional |
 |---|---|---|
-| OTEL sampling env vars | `OTEL_TRACES_SAMPLE_RATIO` (campaign) vs `OTEL_TRACES_SAMPLER`/`_ARG` (committee) | Campaign's Go OTEL code reads `OTEL_TRACES_SAMPLE_RATIO`; chart matches its own code (FR-011). No change. |
+| OTEL sampling env vars | `OTEL_TRACES_SAMPLE_RATIO` (campaign, original) vs `OTEL_TRACES_SAMPLER`/`_ARG` (committee, OTel spec) | **Resolved (LFXV2-2558):** campaign's Go OTEL code + chart were aligned to the spec-standard `OTEL_TRACES_SAMPLER`/`OTEL_TRACES_SAMPLER_ARG` with a `parentbased_traceidratio` default (honors upstream parent sampling). No OTEL deviation remains. |
 | NATS chart resources | None | No NATS client wired yet (R4). |
 | Umbrella disable entry | Omitted | Campaign not in `lfx-v2-helm` umbrella yet (R9). |
 | Ruleset FGA relations | Placeholder `allow_all` per route where FGA model undefined | Campaign FGA contract not yet authored; keeps chart deployable + documented (R2). |

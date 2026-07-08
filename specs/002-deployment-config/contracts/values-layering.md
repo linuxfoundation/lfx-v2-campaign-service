@@ -46,7 +46,7 @@ lfx:
 app:
   use_oidc_contextualizer: false
   extraEnv: [ { name: HOST_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } } ]
-  otel: { endpoint: "http://$(HOST_IP):4317", insecure: "true", tracesExporter: "otlp", tracesSampleRatio: "0.2" }
+  otel: { endpoint: "http://$(HOST_IP):4317", insecure: "true", tracesExporter: "otlp", tracesSampler: "parentbased_traceidratio", tracesSamplerArg: "0.2" }
 image:
   tag: "development"
   pullPolicy: Always
@@ -67,7 +67,7 @@ lfx:
   namespace: lfx-v2-campaign-service
 app:
   extraEnv: [ { name: HOST_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } } ]
-  otel: { endpoint: "http://$(HOST_IP):4317", insecure: "true", tracesExporter: "otlp", tracesSampleRatio: "0.2" }
+  otel: { endpoint: "http://$(HOST_IP):4317", insecure: "true", tracesExporter: "otlp", tracesSampler: "parentbased_traceidratio", tracesSamplerArg: "0.2" }
   # environment: { ... staging-specific vars if/when the app needs them ... }
 serviceAccount:
   annotations: { eks.amazonaws.com/role-arn: arn:aws:iam::844790888233:role/lfx-v2-campaign-service }
@@ -84,7 +84,7 @@ lfx:
 app:
   use_oidc_contextualizer: false
   extraEnv: [ { name: HOST_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } } ]
-  otel: { endpoint: "http://$(HOST_IP):4317", insecure: "true", tracesExporter: "otlp", tracesSampleRatio: "1.0" }
+  otel: { endpoint: "http://$(HOST_IP):4317", insecure: "true", tracesExporter: "otlp", tracesSampler: "parentbased_traceidratio", tracesSamplerArg: "1.0" }
 serviceAccount:
   annotations: { eks.amazonaws.com/role-arn: arn:aws:iam::372256339901:role/lfx-v2-campaign-service }
 ```

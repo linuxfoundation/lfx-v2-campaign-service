@@ -86,10 +86,15 @@ spec:
           - name: OTEL_TRACES_EXPORTER
             value: {{ $otelTracesExporter | quote }}
           {{- end }}
-          {{- $otelTracesSampleRatio := .Values.app.otel.tracesSampleRatio | toString | trim }}
-          {{- if ne $otelTracesSampleRatio "" }}
-          - name: OTEL_TRACES_SAMPLE_RATIO
-            value: {{ $otelTracesSampleRatio | quote }}
+          {{- $otelTracesSampler := .Values.app.otel.tracesSampler | toString | trim }}
+          {{- if ne $otelTracesSampler "" }}
+          - name: OTEL_TRACES_SAMPLER
+            value: {{ $otelTracesSampler | quote }}
+          {{- end }}
+          {{- $otelTracesSamplerArg := .Values.app.otel.tracesSamplerArg | toString | trim }}
+          {{- if ne $otelTracesSamplerArg "" }}
+          - name: OTEL_TRACES_SAMPLER_ARG
+            value: {{ $otelTracesSamplerArg | quote }}
           {{- end }}
           {{- $otelMetricsExporter := .Values.app.otel.metricsExporter | toString | trim }}
           {{- if ne $otelMetricsExporter "" }}

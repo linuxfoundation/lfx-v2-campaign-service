@@ -142,10 +142,16 @@ app:
     # tracesExporter specifies the traces exporter: "otlp" or "none"
     # (default: "none")
     tracesExporter: "none"
-    # tracesSampleRatio specifies the sampling ratio for traces (0.0 to 1.0)
-    # A value of 1.0 means all traces are sampled, 0.5 means 50% are sampled
-    # (default: "1.0")
-    tracesSampleRatio: "1.0"
+    # tracesSampler specifies the OTEL_TRACES_SAMPLER type. Supported values:
+    # "always_on", "always_off", "traceidratio", "parentbased_always_on",
+    # "parentbased_always_off", "parentbased_traceidratio".
+    # When empty, the application defaults to parentbased_traceidratio (which
+    # honors upstream parent sampling decisions).
+    tracesSampler: ""
+    # tracesSamplerArg specifies the OTEL_TRACES_SAMPLER_ARG (sampler ratio for
+    # traceidratio / parentbased_traceidratio; 0.0 to 1.0, defaults to 1.0 if empty).
+    # (default: "")
+    tracesSamplerArg: ""
     # metricsExporter specifies the metrics exporter: "otlp" or "none"
     # (default: "none")
     metricsExporter: "none"
