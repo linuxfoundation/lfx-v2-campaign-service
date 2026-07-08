@@ -92,7 +92,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: true
+                  required: false
                   type: string
                 - name: Update-Google-AdsRequestBody
                   in: body
@@ -470,7 +470,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: true
+                  required: false
                   type: string
                 - name: Update-HubspotRequestBody
                   in: body
@@ -848,7 +848,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: true
+                  required: false
                   type: string
                 - name: Update-Linkedin-AdsRequestBody
                   in: body
@@ -1226,7 +1226,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: true
+                  required: false
                   type: string
                 - name: Update-Meta-AdsRequestBody
                   in: body
@@ -1604,7 +1604,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: true
+                  required: false
                   type: string
                 - name: Update-Microsoft-AdsRequestBody
                   in: body
@@ -1982,7 +1982,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: true
+                  required: false
                   type: string
                 - name: Update-Reddit-AdsRequestBody
                   in: body
@@ -2360,7 +2360,7 @@ paths:
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
-                  required: true
+                  required: false
                   type: string
                 - name: Update-Twitter-AdsRequestBody
                   in: body

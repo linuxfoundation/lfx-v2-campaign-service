@@ -107,9 +107,11 @@ func BuildUpdateGoogleAdsPayload(lfxV2CampaignServiceConnectionsUpdateGoogleAdsB
 			bearerToken = &lfxV2CampaignServiceConnectionsUpdateGoogleAdsBearerToken
 		}
 	}
-	var ifMatch string
+	var ifMatch *string
 	{
-		ifMatch = lfxV2CampaignServiceConnectionsUpdateGoogleAdsIfMatch
+		if lfxV2CampaignServiceConnectionsUpdateGoogleAdsIfMatch != "" {
+			ifMatch = &lfxV2CampaignServiceConnectionsUpdateGoogleAdsIfMatch
+		}
 	}
 	v := &lfxv2campaignserviceconnections.UpdateGoogleAdsPayload{}
 	if body.Config != nil {
@@ -293,9 +295,11 @@ func BuildUpdateLinkedinAdsPayload(lfxV2CampaignServiceConnectionsUpdateLinkedin
 			bearerToken = &lfxV2CampaignServiceConnectionsUpdateLinkedinAdsBearerToken
 		}
 	}
-	var ifMatch string
+	var ifMatch *string
 	{
-		ifMatch = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsIfMatch
+		if lfxV2CampaignServiceConnectionsUpdateLinkedinAdsIfMatch != "" {
+			ifMatch = &lfxV2CampaignServiceConnectionsUpdateLinkedinAdsIfMatch
+		}
 	}
 	v := &lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload{}
 	if body.Config != nil {
@@ -478,9 +482,11 @@ func BuildUpdateMetaAdsPayload(lfxV2CampaignServiceConnectionsUpdateMetaAdsBody 
 			bearerToken = &lfxV2CampaignServiceConnectionsUpdateMetaAdsBearerToken
 		}
 	}
-	var ifMatch string
+	var ifMatch *string
 	{
-		ifMatch = lfxV2CampaignServiceConnectionsUpdateMetaAdsIfMatch
+		if lfxV2CampaignServiceConnectionsUpdateMetaAdsIfMatch != "" {
+			ifMatch = &lfxV2CampaignServiceConnectionsUpdateMetaAdsIfMatch
+		}
 	}
 	v := &lfxv2campaignserviceconnections.UpdateMetaAdsPayload{}
 	if body.Config != nil {
@@ -663,9 +669,11 @@ func BuildUpdateRedditAdsPayload(lfxV2CampaignServiceConnectionsUpdateRedditAdsB
 			bearerToken = &lfxV2CampaignServiceConnectionsUpdateRedditAdsBearerToken
 		}
 	}
-	var ifMatch string
+	var ifMatch *string
 	{
-		ifMatch = lfxV2CampaignServiceConnectionsUpdateRedditAdsIfMatch
+		if lfxV2CampaignServiceConnectionsUpdateRedditAdsIfMatch != "" {
+			ifMatch = &lfxV2CampaignServiceConnectionsUpdateRedditAdsIfMatch
+		}
 	}
 	v := &lfxv2campaignserviceconnections.UpdateRedditAdsPayload{}
 	if body.Config != nil {
@@ -849,9 +857,11 @@ func BuildUpdateTwitterAdsPayload(lfxV2CampaignServiceConnectionsUpdateTwitterAd
 			bearerToken = &lfxV2CampaignServiceConnectionsUpdateTwitterAdsBearerToken
 		}
 	}
-	var ifMatch string
+	var ifMatch *string
 	{
-		ifMatch = lfxV2CampaignServiceConnectionsUpdateTwitterAdsIfMatch
+		if lfxV2CampaignServiceConnectionsUpdateTwitterAdsIfMatch != "" {
+			ifMatch = &lfxV2CampaignServiceConnectionsUpdateTwitterAdsIfMatch
+		}
 	}
 	v := &lfxv2campaignserviceconnections.UpdateTwitterAdsPayload{}
 	if body.Config != nil {
@@ -1036,9 +1046,11 @@ func BuildUpdateMicrosoftAdsPayload(lfxV2CampaignServiceConnectionsUpdateMicroso
 			bearerToken = &lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsBearerToken
 		}
 	}
-	var ifMatch string
+	var ifMatch *string
 	{
-		ifMatch = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsIfMatch
+		if lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsIfMatch != "" {
+			ifMatch = &lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsIfMatch
+		}
 	}
 	v := &lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload{}
 	if body.Config != nil {
@@ -1221,9 +1233,11 @@ func BuildUpdateHubspotPayload(lfxV2CampaignServiceConnectionsUpdateHubspotBody 
 			bearerToken = &lfxV2CampaignServiceConnectionsUpdateHubspotBearerToken
 		}
 	}
-	var ifMatch string
+	var ifMatch *string
 	{
-		ifMatch = lfxV2CampaignServiceConnectionsUpdateHubspotIfMatch
+		if lfxV2CampaignServiceConnectionsUpdateHubspotIfMatch != "" {
+			ifMatch = &lfxV2CampaignServiceConnectionsUpdateHubspotIfMatch
+		}
 	}
 	v := &lfxv2campaignserviceconnections.UpdateHubspotPayload{}
 	if body.Config != nil {

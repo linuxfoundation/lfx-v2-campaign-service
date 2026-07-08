@@ -4718,7 +4718,7 @@ func NewGetGoogleAdsPayload(projectID string, bearerToken *string) *lfxv2campaig
 
 // NewUpdateGoogleAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-google-ads endpoint payload.
-func NewUpdateGoogleAdsPayload(body *UpdateGoogleAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateGoogleAdsPayload {
+func NewUpdateGoogleAdsPayload(body *UpdateGoogleAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateGoogleAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateGoogleAdsPayload{}
 	v.Config = unmarshalGoogleAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsGoogleAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4784,7 +4784,7 @@ func NewGetLinkedinAdsPayload(projectID string, bearerToken *string) *lfxv2campa
 
 // NewUpdateLinkedinAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-linkedin-ads endpoint payload.
-func NewUpdateLinkedinAdsPayload(body *UpdateLinkedinAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload {
+func NewUpdateLinkedinAdsPayload(body *UpdateLinkedinAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateLinkedinAdsPayload{}
 	v.Config = unmarshalLinkedinAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsLinkedinAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4850,7 +4850,7 @@ func NewGetMetaAdsPayload(projectID string, bearerToken *string) *lfxv2campaigns
 
 // NewUpdateMetaAdsPayload builds a lfx-v2-campaign-service-connections service
 // update-meta-ads endpoint payload.
-func NewUpdateMetaAdsPayload(body *UpdateMetaAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateMetaAdsPayload {
+func NewUpdateMetaAdsPayload(body *UpdateMetaAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateMetaAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateMetaAdsPayload{}
 	v.Config = unmarshalMetaAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMetaAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4915,7 +4915,7 @@ func NewGetRedditAdsPayload(projectID string, bearerToken *string) *lfxv2campaig
 
 // NewUpdateRedditAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-reddit-ads endpoint payload.
-func NewUpdateRedditAdsPayload(body *UpdateRedditAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateRedditAdsPayload {
+func NewUpdateRedditAdsPayload(body *UpdateRedditAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateRedditAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateRedditAdsPayload{}
 	v.Config = unmarshalRedditAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsRedditAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -4981,7 +4981,7 @@ func NewGetTwitterAdsPayload(projectID string, bearerToken *string) *lfxv2campai
 
 // NewUpdateTwitterAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-twitter-ads endpoint payload.
-func NewUpdateTwitterAdsPayload(body *UpdateTwitterAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateTwitterAdsPayload {
+func NewUpdateTwitterAdsPayload(body *UpdateTwitterAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateTwitterAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateTwitterAdsPayload{}
 	v.Config = unmarshalTwitterAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsTwitterAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -5047,7 +5047,7 @@ func NewGetMicrosoftAdsPayload(projectID string, bearerToken *string) *lfxv2camp
 
 // NewUpdateMicrosoftAdsPayload builds a lfx-v2-campaign-service-connections
 // service update-microsoft-ads endpoint payload.
-func NewUpdateMicrosoftAdsPayload(body *UpdateMicrosoftAdsRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload {
+func NewUpdateMicrosoftAdsPayload(body *UpdateMicrosoftAdsRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload {
 	v := &lfxv2campaignserviceconnections.UpdateMicrosoftAdsPayload{}
 	v.Config = unmarshalMicrosoftAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMicrosoftAdsConnectionConfig(body.Config)
 	v.ProjectID = projectID
@@ -5113,7 +5113,7 @@ func NewGetHubspotPayload(projectID string, bearerToken *string) *lfxv2campaigns
 
 // NewUpdateHubspotPayload builds a lfx-v2-campaign-service-connections service
 // update-hubspot endpoint payload.
-func NewUpdateHubspotPayload(body *UpdateHubspotRequestBody, projectID string, bearerToken *string, ifMatch string) *lfxv2campaignserviceconnections.UpdateHubspotPayload {
+func NewUpdateHubspotPayload(body *UpdateHubspotRequestBody, projectID string, bearerToken *string, ifMatch *string) *lfxv2campaignserviceconnections.UpdateHubspotPayload {
 	v := &lfxv2campaignserviceconnections.UpdateHubspotPayload{}
 	v.Config = unmarshalHubspotConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsHubspotConnectionConfig(body.Config)
 	v.ProjectID = projectID

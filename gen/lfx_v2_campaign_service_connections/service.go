@@ -812,7 +812,7 @@ type UpdateGoogleAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch string
+	IfMatch *string
 	Config  *GoogleAdsConnectionConfig
 }
 
@@ -824,7 +824,7 @@ type UpdateHubspotPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch string
+	IfMatch *string
 	Config  *HubspotConnectionConfig
 }
 
@@ -836,7 +836,7 @@ type UpdateLinkedinAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch string
+	IfMatch *string
 	Config  *LinkedinAdsConnectionConfig
 }
 
@@ -848,7 +848,7 @@ type UpdateMetaAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch string
+	IfMatch *string
 	Config  *MetaAdsConnectionConfig
 }
 
@@ -860,7 +860,7 @@ type UpdateMicrosoftAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch string
+	IfMatch *string
 	Config  *MicrosoftAdsConnectionConfig
 }
 
@@ -872,7 +872,7 @@ type UpdateRedditAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch string
+	IfMatch *string
 	Config  *RedditAdsConnectionConfig
 }
 
@@ -884,7 +884,7 @@ type UpdateTwitterAdsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// If-Match header carrying the current ETag/version
-	IfMatch string
+	IfMatch *string
 	Config  *TwitterAdsConnectionConfig
 }
 

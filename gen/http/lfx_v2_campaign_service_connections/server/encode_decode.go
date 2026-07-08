@@ -287,7 +287,7 @@ func DecodeUpdateGoogleAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     string
+			ifMatch     *string
 
 			params = mux.Vars(r)
 		)
@@ -296,12 +296,9 @@ func DecodeUpdateGoogleAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatch = r.Header.Get("If-Match")
-		if ifMatch == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
-		}
-		if err != nil {
-			return payload, err
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
 		}
 		payload = NewUpdateGoogleAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -994,7 +991,7 @@ func DecodeUpdateLinkedinAdsRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     string
+			ifMatch     *string
 
 			params = mux.Vars(r)
 		)
@@ -1003,12 +1000,9 @@ func DecodeUpdateLinkedinAdsRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatch = r.Header.Get("If-Match")
-		if ifMatch == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
-		}
-		if err != nil {
-			return payload, err
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
 		}
 		payload = NewUpdateLinkedinAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -1702,7 +1696,7 @@ func DecodeUpdateMetaAdsRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     string
+			ifMatch     *string
 
 			params = mux.Vars(r)
 		)
@@ -1711,12 +1705,9 @@ func DecodeUpdateMetaAdsRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatch = r.Header.Get("If-Match")
-		if ifMatch == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
-		}
-		if err != nil {
-			return payload, err
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
 		}
 		payload = NewUpdateMetaAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -2408,7 +2399,7 @@ func DecodeUpdateRedditAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     string
+			ifMatch     *string
 
 			params = mux.Vars(r)
 		)
@@ -2417,12 +2408,9 @@ func DecodeUpdateRedditAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatch = r.Header.Get("If-Match")
-		if ifMatch == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
-		}
-		if err != nil {
-			return payload, err
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
 		}
 		payload = NewUpdateRedditAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -3115,7 +3103,7 @@ func DecodeUpdateTwitterAdsRequest(mux goahttp.Muxer, decoder func(*http.Request
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     string
+			ifMatch     *string
 
 			params = mux.Vars(r)
 		)
@@ -3124,12 +3112,9 @@ func DecodeUpdateTwitterAdsRequest(mux goahttp.Muxer, decoder func(*http.Request
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatch = r.Header.Get("If-Match")
-		if ifMatch == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
-		}
-		if err != nil {
-			return payload, err
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
 		}
 		payload = NewUpdateTwitterAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -3822,7 +3807,7 @@ func DecodeUpdateMicrosoftAdsRequest(mux goahttp.Muxer, decoder func(*http.Reque
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     string
+			ifMatch     *string
 
 			params = mux.Vars(r)
 		)
@@ -3831,12 +3816,9 @@ func DecodeUpdateMicrosoftAdsRequest(mux goahttp.Muxer, decoder func(*http.Reque
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatch = r.Header.Get("If-Match")
-		if ifMatch == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
-		}
-		if err != nil {
-			return payload, err
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
 		}
 		payload = NewUpdateMicrosoftAdsPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -4531,7 +4513,7 @@ func DecodeUpdateHubspotRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		var (
 			projectID   string
 			bearerToken *string
-			ifMatch     string
+			ifMatch     *string
 
 			params = mux.Vars(r)
 		)
@@ -4540,12 +4522,9 @@ func DecodeUpdateHubspotRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		ifMatch = r.Header.Get("If-Match")
-		if ifMatch == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("if_match", "header"))
-		}
-		if err != nil {
-			return payload, err
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
 		}
 		payload = NewUpdateHubspotPayload(&body, projectID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {

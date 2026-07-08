@@ -239,7 +239,6 @@ paths:
                   in: header
                   description: If-Match header carrying the current ETag/version
                   allowEmptyValue: true
-                  required: true
                   schema:
                     type: string
                     description: If-Match header carrying the current ETag/version
@@ -700,7 +699,6 @@ paths:
                   in: header
                   description: If-Match header carrying the current ETag/version
                   allowEmptyValue: true
-                  required: true
                   schema:
                     type: string
                     description: If-Match header carrying the current ETag/version
@@ -1155,7 +1153,6 @@ paths:
                   in: header
                   description: If-Match header carrying the current ETag/version
                   allowEmptyValue: true
-                  required: true
                   schema:
                     type: string
                     description: If-Match header carrying the current ETag/version
@@ -1608,7 +1605,6 @@ paths:
                   in: header
                   description: If-Match header carrying the current ETag/version
                   allowEmptyValue: true
-                  required: true
                   schema:
                     type: string
                     description: If-Match header carrying the current ETag/version
@@ -2063,7 +2059,6 @@ paths:
                   in: header
                   description: If-Match header carrying the current ETag/version
                   allowEmptyValue: true
-                  required: true
                   schema:
                     type: string
                     description: If-Match header carrying the current ETag/version
@@ -2514,7 +2509,6 @@ paths:
                   in: header
                   description: If-Match header carrying the current ETag/version
                   allowEmptyValue: true
-                  required: true
                   schema:
                     type: string
                     description: If-Match header carrying the current ETag/version
@@ -2966,7 +2960,6 @@ paths:
                   in: header
                   description: If-Match header carrying the current ETag/version
                   allowEmptyValue: true
-                  required: true
                   schema:
                     type: string
                     description: If-Match header carrying the current ETag/version

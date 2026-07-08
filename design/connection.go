@@ -191,7 +191,12 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			projectIDAttr()
 			ifMatchAttr()
 			Attribute("config", config)
-			Required("project_id", "if_match", "config")
+			// if_match is intentionally NOT Required here: a required header makes
+			// Goa's decoder reject a missing value with 400, but FR-005 wants a
+			// missing precondition to be 428 Precondition Required. Leaving it
+			// optional lets the request reach the service, which returns 428 when
+			// the header is empty (and 412 on a version mismatch).
+			Required("project_id", "config")
 		})
 		Result(result)
 		Error("BadRequest", BadRequestError, "Bad request")

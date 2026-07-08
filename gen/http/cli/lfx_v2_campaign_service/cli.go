@@ -61,7 +61,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsUpdateGoogleAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("body", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsUpdateGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsUpdateGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("bearer-token", "", "")
-		lfxV2CampaignServiceConnectionsUpdateGoogleAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("if-match", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateGoogleAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateGoogleAdsFlags.String("if-match", "", "")
 
 		lfxV2CampaignServiceConnectionsDeleteGoogleAdsFlags           = flag.NewFlagSet("delete-google-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsDeleteGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
@@ -89,7 +89,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("body", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("bearer-token", "", "")
-		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("if-match", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateLinkedinAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateLinkedinAdsFlags.String("if-match", "", "")
 
 		lfxV2CampaignServiceConnectionsDeleteLinkedinAdsFlags           = flag.NewFlagSet("delete-linkedin-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsDeleteLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
@@ -117,7 +117,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsUpdateMetaAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("body", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsUpdateMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsUpdateMetaAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("bearer-token", "", "")
-		lfxV2CampaignServiceConnectionsUpdateMetaAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("if-match", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateMetaAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateMetaAdsFlags.String("if-match", "", "")
 
 		lfxV2CampaignServiceConnectionsDeleteMetaAdsFlags           = flag.NewFlagSet("delete-meta-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsDeleteMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
@@ -145,7 +145,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsUpdateRedditAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("body", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsUpdateRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsUpdateRedditAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("bearer-token", "", "")
-		lfxV2CampaignServiceConnectionsUpdateRedditAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("if-match", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateRedditAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateRedditAdsFlags.String("if-match", "", "")
 
 		lfxV2CampaignServiceConnectionsDeleteRedditAdsFlags           = flag.NewFlagSet("delete-reddit-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsDeleteRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
@@ -173,7 +173,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsUpdateTwitterAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("body", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsUpdateTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsUpdateTwitterAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("bearer-token", "", "")
-		lfxV2CampaignServiceConnectionsUpdateTwitterAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("if-match", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateTwitterAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateTwitterAdsFlags.String("if-match", "", "")
 
 		lfxV2CampaignServiceConnectionsDeleteTwitterAdsFlags           = flag.NewFlagSet("delete-twitter-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsDeleteTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
@@ -201,7 +201,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsBodyFlag        = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("body", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("bearer-token", "", "")
-		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("if-match", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsFlags.String("if-match", "", "")
 
 		lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsFlags           = flag.NewFlagSet("delete-microsoft-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
@@ -229,7 +229,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsUpdateHubspotBodyFlag        = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("body", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsUpdateHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsUpdateHubspotBearerTokenFlag = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("bearer-token", "", "")
-		lfxV2CampaignServiceConnectionsUpdateHubspotIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("if-match", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsUpdateHubspotIfMatchFlag     = lfxV2CampaignServiceConnectionsUpdateHubspotFlags.String("if-match", "", "")
 
 		lfxV2CampaignServiceConnectionsDeleteHubspotFlags           = flag.NewFlagSet("delete-hubspot", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsDeleteHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsDeleteHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")

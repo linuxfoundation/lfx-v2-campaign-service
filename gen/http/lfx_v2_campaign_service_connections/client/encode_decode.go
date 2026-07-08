@@ -370,8 +370,8 @@ func EncodeUpdateGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 				req.Header.Set("Authorization", head)
 			}
 		}
-		{
-			head := p.IfMatch
+		if p.IfMatch != nil {
+			head := *p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateGoogleAdsRequestBody(p)
@@ -1270,8 +1270,8 @@ func EncodeUpdateLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 				req.Header.Set("Authorization", head)
 			}
 		}
-		{
-			head := p.IfMatch
+		if p.IfMatch != nil {
+			head := *p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateLinkedinAdsRequestBody(p)
@@ -2171,8 +2171,8 @@ func EncodeUpdateMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 				req.Header.Set("Authorization", head)
 			}
 		}
-		{
-			head := p.IfMatch
+		if p.IfMatch != nil {
+			head := *p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateMetaAdsRequestBody(p)
@@ -3069,8 +3069,8 @@ func EncodeUpdateRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 				req.Header.Set("Authorization", head)
 			}
 		}
-		{
-			head := p.IfMatch
+		if p.IfMatch != nil {
+			head := *p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateRedditAdsRequestBody(p)
@@ -3969,8 +3969,8 @@ func EncodeUpdateTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 				req.Header.Set("Authorization", head)
 			}
 		}
-		{
-			head := p.IfMatch
+		if p.IfMatch != nil {
+			head := *p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateTwitterAdsRequestBody(p)
@@ -4870,8 +4870,8 @@ func EncodeUpdateMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 				req.Header.Set("Authorization", head)
 			}
 		}
-		{
-			head := p.IfMatch
+		if p.IfMatch != nil {
+			head := *p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateMicrosoftAdsRequestBody(p)
@@ -5771,8 +5771,8 @@ func EncodeUpdateHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 				req.Header.Set("Authorization", head)
 			}
 		}
-		{
-			head := p.IfMatch
+		if p.IfMatch != nil {
+			head := *p.IfMatch
 			req.Header.Set("If-Match", head)
 		}
 		body := NewUpdateHubspotRequestBody(p)
