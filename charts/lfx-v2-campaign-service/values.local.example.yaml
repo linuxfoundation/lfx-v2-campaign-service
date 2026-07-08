@@ -12,6 +12,6 @@
 
 # Image configuration
 image:
-  repository: ghcr.io/linuxfoundation/lfx-v2-campaign-service
+  repository: ghcr.io/linuxfoundation/lfx-v2-campaign-service/campaign-service
   tag: "latest"  # Overrides appVersion from Chart.yaml
   pullPolicy: Never
