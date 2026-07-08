@@ -88,7 +88,7 @@ type Connection struct {
 	// projects these onto the provider table's real columns.
 	ProviderConfig map[string]string
 	Status         ConnectionStatus
-	// Version is the optimistic-concurrency iterator surfaced as the ETag.
+	// Version is the optimistic-concurrency counter surfaced as the ETag.
 	Version   int64
 	CreatedBy *Actor
 	UpdatedBy *Actor

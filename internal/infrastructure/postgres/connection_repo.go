@@ -32,8 +32,14 @@ var providerConfigColumns = map[model.Provider][]string{
 // connectionCommonCols are the shared columns every provider table selects, in
 // the fixed order scanConnection expects. Defined once so Get/Create/Update
 // can't drift out of alignment with the scan.
+//
+// id and project_id are cast to text: they are UUID columns, and pgx/v5's
+// binary codec cannot scan a uuid directly into a Go string — the ::text cast
+// makes the scan into model.Connection's string fields work without changing
+// the domain type. (Parameters bound to uuid columns accept plain strings, so
+// only the read/scan side needs the cast.)
 var connectionCommonCols = []string{
-	"id", "project_id", "label", "account_id", "credentials",
+	"id::text", "project_id::text", "label", "account_id", "credentials",
 	"status", "version", "created_by", "updated_by", "created_at", "updated_at",
 }
 
