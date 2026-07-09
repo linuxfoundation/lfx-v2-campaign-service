@@ -23,6 +23,13 @@ type Config struct {
 	Issuer   string
 
 	NATSUrl string
+
+	// DatabaseURL is the PostgreSQL DSN. Empty disables the database layer
+	// (e.g. for tests or a metadata-only run).
+	DatabaseURL string
+	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key for
+	// connection credential encryption.
+	CredentialEncryptionKey string
 }
 
 // LoadConfig loads configuration from CLI flags, then environment variables, then defaults.
@@ -52,6 +59,9 @@ func LoadConfig() *Config {
 		Audience: envOrDefault(constants.EnvAudience, constants.DefaultAudience),
 		Issuer:   envOrDefault(constants.EnvIssuer, constants.DefaultIssuer),
 		NATSUrl:  envOrDefault(constants.EnvNATSURL, constants.DefaultNATSURL),
+
+		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
+		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),
 	}
 
 	if os.Getenv(constants.EnvDebug) == "true" {
