@@ -74,6 +74,19 @@ func TestValidateIndexWithDisallowedFrontmatter(t *testing.T) {
 	}
 }
 
+func TestValidateIndexWithCRLFDisallowedFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A CRLF-delimited frontmatter block must not bypass the non-root check.
+	writeFile(t, filepath.Join(dir, "sub", "index.md"), "---\r\ntype: \"Anything\"\r\n---\r\n\r\n# Sub\r\n")
+
+	if errs := Validate(dir); len(errs) == 0 {
+		t.Fatal("Validate() = no errors, want a disallowed-frontmatter error")
+	}
+}
+
 func TestValidateIndexWithEmptyFrontmatter(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {

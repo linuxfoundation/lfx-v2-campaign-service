@@ -82,7 +82,7 @@ func validateIndex(path string, isRoot bool) []error {
 	if err != nil {
 		return []error{fmt.Errorf("%s: reading file: %w", path, err)}
 	}
-	content := string(data)
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
 
 	if strings.HasPrefix(content, "---\n") {
 		fm, body, err := okf.ParseFrontmatter(data)
