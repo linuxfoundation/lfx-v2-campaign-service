@@ -36,21 +36,21 @@ func main() {
 func run() error {
 	archRefs, err := okfgen.GenerateDocsConcepts("docs", bundleRoot+"/architecture")
 	if err != nil {
-		return err
+		return fmt.Errorf("generate architecture concepts: %w", err)
 	}
 	if err := okfgen.WriteIndex(bundleRoot+"/architecture/index.md", "Architecture",
 		okfgen.EntriesFromRefs(archRefs)); err != nil {
-		return err
+		return fmt.Errorf("write architecture index: %w", err)
 	}
 
 	k8sRefs, err := okfgen.GenerateKubernetesConcepts(
 		"charts/lfx-v2-campaign-service/templates", bundleRoot+"/kubernetes")
 	if err != nil {
-		return err
+		return fmt.Errorf("generate kubernetes concepts: %w", err)
 	}
 	if err := okfgen.WriteIndex(bundleRoot+"/kubernetes/index.md", "Kubernetes",
 		okfgen.EntriesFromRefs(k8sRefs)); err != nil {
-		return err
+		return fmt.Errorf("write kubernetes index: %w", err)
 	}
 
 	pkgDirs := []string{
@@ -66,11 +66,11 @@ func run() error {
 	}
 	codeRefs, err := okfgen.GenerateGoPackageConcepts(pkgDirs, bundleRoot+"/code")
 	if err != nil {
-		return err
+		return fmt.Errorf("generate code concepts: %w", err)
 	}
 	if err := okfgen.WriteIndex(bundleRoot+"/code/index.md", "Code",
 		okfgen.EntriesFromRefs(codeRefs)); err != nil {
-		return err
+		return fmt.Errorf("write code index: %w", err)
 	}
 
 	specFiles := []string{
@@ -83,11 +83,11 @@ func run() error {
 	}
 	specRefs, err := okfgen.GenerateSpecConcepts(specFiles, bundleRoot+"/specs/001-health-endpoints")
 	if err != nil {
-		return err
+		return fmt.Errorf("generate spec concepts: %w", err)
 	}
 	if err := okfgen.WriteIndex(bundleRoot+"/specs/001-health-endpoints/index.md",
 		"001 Health Endpoints", okfgen.EntriesFromRefs(specRefs)); err != nil {
-		return err
+		return fmt.Errorf("write spec index: %w", err)
 	}
 	if err := okfgen.WriteIndex(bundleRoot+"/specs/index.md", "Specs", []okfgen.IndexEntry{
 		{
@@ -96,7 +96,7 @@ func run() error {
 			Description: "Feature spec, plan, and tasks for the liveness/readiness health endpoints.",
 		},
 	}); err != nil {
-		return err
+		return fmt.Errorf("write specs index: %w", err)
 	}
 
 	if err := okfgen.WriteIndex(bundleRoot+"/index.md", "Knowledge Base", []okfgen.IndexEntry{
@@ -109,9 +109,12 @@ func run() error {
 		{Title: "Specs", Link: "specs/index.md",
 			Description: "Feature specs tracked via speckit."},
 	}); err != nil {
-		return err
+		return fmt.Errorf("write root index: %w", err)
 	}
 
-	return okfgen.SeedLog(bundleRoot, "2026-07-09",
-		"initial OKF knowledge bundle generated from existing docs, Helm charts, Go packages, and speckit specs.")
+	if err := okfgen.SeedLog(bundleRoot, "2026-07-09",
+		"initial OKF knowledge bundle generated from existing docs, Helm charts, Go packages, and speckit specs."); err != nil {
+		return fmt.Errorf("seed log: %w", err)
+	}
+	return nil
 }
