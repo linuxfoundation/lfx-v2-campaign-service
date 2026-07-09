@@ -14,5 +14,10 @@ useDefault = true
         '''.*_test\.go$''',
         '''(go.mod|go.sum)$''',
         # Exclude documentation files with example tokens
-        '''CLAUDE\.md$'''
-    ] 
+        '''CLAUDE\.md$''',
+        # Exclude Goa-generated code: gen/ is produced by `make apigen` and is
+        # not hand-edited. The generated CLI flag usage strings (e.g. the
+        # Twitter Ads connection test command's help text) false-positive the
+        # twitter-api-secret rule; they are not real secrets.
+        '''^gen/'''
+    ]

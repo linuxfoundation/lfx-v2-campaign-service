@@ -30,6 +30,9 @@ DISABLE_ERRORS_LINTERS:
 YAML_YAMLLINT_CONFIG_FILE: .yamllint
 REPOSITORY_KICS_ARGUMENTS: >-
   scan --no-progress --exclude-severities="medium,low,info,trace" --exclude-paths="gen/*"
+# Point grype at the repo-root .grype.yaml so its ignore list (transitive,
+# test-only github.com/docker/docker CVEs via testcontainers) is applied.
+REPOSITORY_GRYPE_ARGUMENTS: "--config .grype.yaml"
 SPELL_CSPELL_ANALYZE_FILE_NAMES: false
 # Make sure Vale is setup to run with the styles it needs.
 SPELL_VALE_PRE_COMMANDS:
