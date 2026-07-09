@@ -35,11 +35,22 @@ func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j do
 	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch}
 }
 
+// ensureAvailable returns the typed 503 ServiceUnavailable error when the
+// service has no database wired (DATABASE_URL unset). The brief routes are still
+// mounted in that mode so runtime matches the published OpenAPI contract,
+// consistent with the connection service.
+func (s *BriefService) ensureAvailable() error {
+	if s.briefs == nil {
+		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "brief storage is not configured"}
+	}
+	return nil
+}
+
 // JWTAuth mirrors the connection service: it records the authenticated actor
 // (validated by Heimdall at the gateway) into the context for attribution.
 func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
 	if token == "" {
-		return ctx, &briefs.InternalServerError{Code: "500", Message: "missing bearer token"}
+		return ctx, &briefs.BadRequestError{Code: "400", Message: "missing bearer token"}
 	}
 	if a := actorFromToken(token); a != nil {
 		ctx = context.WithValue(ctx, actorCtxKey{}, a)
@@ -50,6 +61,9 @@ func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JW
 // ─── Briefs ───
 
 func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPayload) (*briefs.Brief, error) {
+	if err := s.ensureAvailable(); err != nil {
+		return nil, err
+	}
 	in := p.Brief
 	b := &model.CampaignBrief{
 		ProjectID:    p.ProjectID,
@@ -70,6 +84,9 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 }
 
 func (s *BriefService) GetBrief(ctx context.Context, p *briefs.GetBriefPayload) (*briefs.Brief, error) {
+	if err := s.ensureAvailable(); err != nil {
+		return nil, err
+	}
 	b, err := s.briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
 	if err != nil {
 		return nil, mapBriefErr(err)
@@ -78,6 +95,9 @@ func (s *BriefService) GetBrief(ctx context.Context, p *briefs.GetBriefPayload) 
 }
 
 func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPayload) (*briefs.Brief, error) {
+	if err := s.ensureAvailable(); err != nil {
+		return nil, err
+	}
 	version, err := parseBriefIfMatch(p.IfMatch)
 	if err != nil {
 		return nil, err
@@ -103,6 +123,9 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 }
 
 func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefPayload) (*briefs.Brief, error) {
+	if err := s.ensureAvailable(); err != nil {
+		return nil, err
+	}
 	b, err := s.briefs.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx))
 	if err != nil {
 		return nil, mapBriefErr(err)
@@ -111,12 +134,18 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 }
 
 func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPayload) error {
+	if err := s.ensureAvailable(); err != nil {
+		return err
+	}
 	return mapBriefErr(s.briefs.ArchiveBrief(ctx, p.ProjectID, p.BriefID))
 }
 
 // ─── Campaigns ───
 
 func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCampaignsPayload) (*briefs.JobCreateResponse, error) {
+	if err := s.ensureAvailable(); err != nil {
+		return nil, err
+	}
 	brief, err := s.briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
 	if err != nil {
 		return nil, mapBriefErr(err)
@@ -141,6 +170,9 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 }
 
 func (s *BriefService) GetCampaign(ctx context.Context, p *briefs.GetCampaignPayload) (*briefs.Campaign, error) {
+	if err := s.ensureAvailable(); err != nil {
+		return nil, err
+	}
 	c, err := s.campaigns.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
 	if err != nil {
 		return nil, mapBriefErr(err)
@@ -149,6 +181,9 @@ func (s *BriefService) GetCampaign(ctx context.Context, p *briefs.GetCampaignPay
 }
 
 func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampaignPayload) (*briefs.Campaign, error) {
+	if err := s.ensureAvailable(); err != nil {
+		return nil, err
+	}
 	version, err := parseBriefIfMatch(p.IfMatch)
 	if err != nil {
 		return nil, err
@@ -169,7 +204,10 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 }
 
 func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*briefs.JobPollResponse, error) {
-	j, err := s.jobs.GetJob(ctx, p.JobID)
+	if err := s.ensureAvailable(); err != nil {
+		return nil, err
+	}
+	j, err := s.jobs.GetJob(ctx, p.ProjectID, p.JobID)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}

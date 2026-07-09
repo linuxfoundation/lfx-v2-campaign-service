@@ -54,10 +54,11 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	if cfg.DatabaseURL == "" {
 		slog.Warn("database URL not set; connection endpoints will return 503 Service Unavailable")
 		c.Service = service.NewCampaignService(nil)
-		// Wire the connection service with a nil repo so its routes are still
-		// mounted and return the typed 503 ServiceUnavailable advertised by the
-		// OpenAPI contract, rather than a bare 404 from unmounted routes.
+		// Wire the connection + brief services with nil repos so their routes are
+		// still mounted and return the typed 503 ServiceUnavailable advertised by
+		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
 		c.Connections = service.NewConnectionService(nil, nil)
+		c.Briefs = service.NewBriefService(nil, nil, nil, nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
 	}

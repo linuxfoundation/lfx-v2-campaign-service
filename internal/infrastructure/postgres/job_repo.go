@@ -26,6 +26,10 @@ var _ domain.JobRepository = (*JobRepo)(nil)
 
 const jobCols = `id::text, brief_id::text, status, result, error, created_at, updated_at, expires_at`
 
+// jobColsPrefixed is jobCols with a `j.` table alias, for queries that JOIN
+// campaign_jobs (aliased j) against campaign_briefs.
+const jobColsPrefixed = `j.id::text, j.brief_id::text, j.status, j.result, j.error, j.created_at, j.updated_at, j.expires_at`
+
 // CreateJob inserts a queued job for a brief.
 func (r *JobRepo) CreateJob(ctx context.Context, briefID string) (*model.CampaignJob, error) {
 	q := `INSERT INTO campaign_jobs (brief_id) VALUES ($1) RETURNING ` + jobCols
@@ -37,9 +41,14 @@ func (r *JobRepo) CreateJob(ctx context.Context, briefID string) (*model.Campaig
 }
 
 // GetJob returns a job by id.
-func (r *JobRepo) GetJob(ctx context.Context, id string) (*model.CampaignJob, error) {
-	q := `SELECT ` + jobCols + ` FROM campaign_jobs WHERE id=$1`
-	j, err := scanJob(r.db.QueryRow(ctx, q, id))
+func (r *JobRepo) GetJob(ctx context.Context, projectID, id string) (*model.CampaignJob, error) {
+	// Scope the lookup to the caller's project by joining through the owning
+	// brief: a job UUID alone must not expose a job belonging to another project
+	// (tenant isolation — the route is /projects/{project_id}/jobs/{job_id}).
+	q := `SELECT ` + jobColsPrefixed + ` FROM campaign_jobs j
+		JOIN campaign_briefs b ON b.id = j.brief_id
+		WHERE j.id=$1 AND b.project_id=$2`
+	j, err := scanJob(r.db.QueryRow(ctx, q, id, projectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound

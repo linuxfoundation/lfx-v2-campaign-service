@@ -60,7 +60,7 @@ type JobRepository interface {
 	// CreateJob inserts a queued job for a brief.
 	CreateJob(ctx context.Context, briefID string) (*model.CampaignJob, error)
 	// GetJob returns a job by id, or ErrNotFound.
-	GetJob(ctx context.Context, id string) (*model.CampaignJob, error)
+	GetJob(ctx context.Context, projectID, id string) (*model.CampaignJob, error)
 	// UpdateJobStatus sets a job's status (any JobStatus, e.g. running or a
 	// terminal succeeded/partial/failed) and its result/error.
 	UpdateJobStatus(ctx context.Context, id string, status model.JobStatus, result []byte, jobErr string) error

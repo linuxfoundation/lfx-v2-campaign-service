@@ -33,7 +33,7 @@ func (r *fakeJobRepo) CreateJob(_ context.Context, briefID string) (*model.Campa
 	return j, nil
 }
 
-func (r *fakeJobRepo) GetJob(_ context.Context, id string) (*model.CampaignJob, error) {
+func (r *fakeJobRepo) GetJob(_ context.Context, _, id string) (*model.CampaignJob, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	j, ok := r.jobs[id]
@@ -92,7 +92,7 @@ func (failDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ mode
 func waitForTerminal(t *testing.T, jobs *fakeJobRepo, id string) *model.CampaignJob {
 	t.Helper()
 	for i := 0; i < 100; i++ {
-		j, _ := jobs.GetJob(context.Background(), id)
+		j, _ := jobs.GetJob(context.Background(), "", id)
 		if j.Status.Terminal() {
 			return j
 		}
