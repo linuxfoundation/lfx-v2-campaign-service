@@ -113,11 +113,12 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			return nil
 		})
 	}
-	// Individual goroutines never return an error (per-platform failures are
-	// recorded in results), so a non-nil group error means the errgroup context
-	// was cancelled (e.g. pod shutdown) — surface it rather than dropping it.
+	// Wait for all dispatches to finish. Each goroutine returns nil and records
+	// per-platform failures in results, so g.Wait() is expected to be nil; it is
+	// checked only as a defensive guard in case a future change starts returning
+	// an error from a Go func (errgroup.Wait returns the first such error).
 	if werr := g.Wait(); werr != nil {
-		slog.ErrorContext(ctx, "campaign dispatch interrupted", "job_id", jobID, "error", werr)
+		slog.ErrorContext(ctx, "campaign dispatch returned an error", "job_id", jobID, "error", werr)
 	}
 
 	status := aggregateStatus(results)

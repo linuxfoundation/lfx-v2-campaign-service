@@ -188,15 +188,18 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if err != nil {
 		return nil, err
 	}
-	c := &model.Campaign{
-		ID:             p.CampaignID,
-		ProjectID:      p.ProjectID,
-		BriefID:        p.BriefID,
-		CampaignName:   p.Campaign.CampaignName,
-		Status:         p.Campaign.Status,
-		ConfigSnapshot: marshalAny(p.Campaign.Config),
+	// Load the existing campaign and overlay only the client-editable fields
+	// (name, status, config). ReplaceCampaign writes every column, so budget,
+	// dates, platform, and result must be carried over from the stored row or a
+	// config-only edit would zero them out.
+	existing, gerr := s.campaigns.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	if gerr != nil {
+		return nil, mapBriefErr(gerr)
 	}
-	updated, uerr := s.campaigns.ReplaceCampaign(ctx, c, version)
+	existing.CampaignName = p.Campaign.CampaignName
+	existing.Status = p.Campaign.Status
+	existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
+	updated, uerr := s.campaigns.ReplaceCampaign(ctx, existing, version)
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -213,9 +216,9 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 	}
 	resp := &briefs.JobPollResponse{JobID: j.ID, Status: string(j.Status)}
 	if len(j.Result) > 0 {
-		var any any
-		if json.Unmarshal(j.Result, &any) == nil {
-			resp.Result = any
+		var result any
+		if json.Unmarshal(j.Result, &result) == nil {
+			resp.Result = result
 		}
 	}
 	if j.Error != "" {
