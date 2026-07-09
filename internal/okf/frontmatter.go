@@ -54,7 +54,7 @@ func (fm Frontmatter) Render() string {
 // "---" delimited frontmatter block or the YAML fails to parse.
 func ParseFrontmatter(data []byte) (map[string]any, string, error) {
 	const delim = "---\n"
-	s := string(data)
+	s := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if !strings.HasPrefix(s, delim) {
 		return nil, "", fmt.Errorf("missing frontmatter delimiter")
 	}

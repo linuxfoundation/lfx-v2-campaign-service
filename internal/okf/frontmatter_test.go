@@ -57,6 +57,20 @@ func TestParseFrontmatterMissingDelimiter(t *testing.T) {
 	}
 }
 
+func TestParseFrontmatterCRLF(t *testing.T) {
+	data := []byte("---\r\ntype: \"Architecture Doc\"\r\ntitle: \"Overview\"\r\n---\r\n\r\nBody text.\r\n")
+	fm, body, err := ParseFrontmatter(data)
+	if err != nil {
+		t.Fatalf("ParseFrontmatter: %v", err)
+	}
+	if fm["type"] != "Architecture Doc" {
+		t.Errorf("fm[type] = %v, want %q", fm["type"], "Architecture Doc")
+	}
+	if strings.TrimSpace(body) != "Body text." {
+		t.Errorf("body = %q, want %q", body, "Body text.")
+	}
+}
+
 func TestWriteConcept(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "overview.md")

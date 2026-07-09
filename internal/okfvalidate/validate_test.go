@@ -74,6 +74,20 @@ func TestValidateIndexWithDisallowedFrontmatter(t *testing.T) {
 	}
 }
 
+func TestValidateIndexWithEmptyFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// An empty frontmatter block declares no keys, but non-root index.md
+	// must not declare a frontmatter block at all.
+	writeFile(t, filepath.Join(dir, "sub", "index.md"), "---\n---\n\n# Sub\n")
+
+	if errs := Validate(dir); len(errs) == 0 {
+		t.Fatal("Validate() = no errors, want a disallowed-frontmatter error")
+	}
+}
+
 func TestValidateLogNotSorted(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "log.md"),

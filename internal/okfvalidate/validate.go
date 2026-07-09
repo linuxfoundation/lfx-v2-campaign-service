@@ -89,13 +89,12 @@ func validateIndex(path string, isRoot bool) []error {
 		if err != nil {
 			return []error{fmt.Errorf("%s: %w", path, err)}
 		}
-		allowed := map[string]bool{}
-		if isRoot {
-			allowed["okf_version"] = true
+		if !isRoot {
+			return []error{fmt.Errorf("%s: non-root index.md must not declare a frontmatter block", path)}
 		}
 		var errs []error
 		for k := range fm {
-			if !allowed[k] {
+			if k != "okf_version" {
 				errs = append(errs, fmt.Errorf("%s: index.md must not declare frontmatter key %q", path, k))
 			}
 		}

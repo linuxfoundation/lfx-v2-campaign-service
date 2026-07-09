@@ -7,9 +7,11 @@ name: Validate OKF Knowledge Bundle
   pull_request:
     paths:
       - "docs/knowledge/**"
+      - "cmd/okfgen/**"
       - "cmd/okfvalidate/**"
-      - "internal/okfvalidate/**"
       - "internal/okf/**"
+      - "internal/okfgen/**"
+      - "internal/okfvalidate/**"
 
 permissions:
   contents: read
