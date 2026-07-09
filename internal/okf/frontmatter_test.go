@@ -57,6 +57,32 @@ func TestParseFrontmatterMissingDelimiter(t *testing.T) {
 	}
 }
 
+func TestParseFrontmatterEmptyBlock(t *testing.T) {
+	fm, body, err := ParseFrontmatter([]byte("---\n---\n\nBody text.\n"))
+	if err != nil {
+		t.Fatalf("ParseFrontmatter: %v", err)
+	}
+	if len(fm) != 0 {
+		t.Errorf("fm = %v, want empty map", fm)
+	}
+	if strings.TrimSpace(body) != "Body text." {
+		t.Errorf("body = %q, want %q", body, "Body text.")
+	}
+}
+
+func TestParseFrontmatterEmptyBlockNoTrailingContent(t *testing.T) {
+	fm, body, err := ParseFrontmatter([]byte("---\n---"))
+	if err != nil {
+		t.Fatalf("ParseFrontmatter: %v", err)
+	}
+	if len(fm) != 0 {
+		t.Errorf("fm = %v, want empty map", fm)
+	}
+	if body != "" {
+		t.Errorf("body = %q, want empty", body)
+	}
+}
+
 func TestParseFrontmatterCRLF(t *testing.T) {
 	data := []byte("---\r\ntype: \"Architecture Doc\"\r\ntitle: \"Overview\"\r\n---\r\n\r\nBody text.\r\n")
 	fm, body, err := ParseFrontmatter(data)

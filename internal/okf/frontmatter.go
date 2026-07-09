@@ -60,6 +60,10 @@ func ParseFrontmatter(data []byte) (map[string]any, string, error) {
 	}
 
 	rest := s[len(delim):]
+	if rest == "---" || strings.HasPrefix(rest, "---\n") {
+		return map[string]any{}, strings.TrimPrefix(rest[len("---"):], "\n"), nil
+	}
+
 	end := strings.Index(rest, "\n---")
 	if end == -1 {
 		return nil, "", fmt.Errorf("unterminated frontmatter block")
