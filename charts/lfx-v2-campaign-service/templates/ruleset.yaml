@@ -37,50 +37,62 @@ spec:
             values:
               aud: {{ .Values.app.audience }}
 
-    # Campaigns collection/item. The campaigns API is not yet implemented; these
-    # rules keep the gateway-routed paths deployable but fully locked down today:
-    # `oidc` is the only authenticator (no `anonymous_authenticator` fallback) and
-    # `deny_all` rejects every request — even a valid, authenticated subject —
-    # since there are no endpoints to serve yet.
-    # TODO(LFXV2-2558): once the campaigns API and its OpenFGA object/relation
-    # model are defined, add `anonymous_authenticator` back and replace `deny_all`
-    # with per-endpoint `openfga_check` authorizers (relation + object) so access
-    # is granted per the FGA model (the reference-service pattern).
-    - id: "rule:lfx:lfx-v2-campaign-service:campaigns:collection"
+    # Project-nested campaign API. Per the approved architecture (D2), the service
+    # introduces no new FGA object types — every endpoint is nested under
+    # /projects/{projectId}/… and gated on the `campaign_manager` relation of that
+    # project (reads AND writes; there is no read-only audience). The projectId is
+    # captured from the URL and the authorizer checks it against `project:{id}`.
+    #
+    # When OpenFGA is disabled (local dev only) all requests are allowed, matching
+    # the reference-service pattern.
+
+    # Connections — singleton per provider per project (POST/GET/PUT/DELETE on the
+    # base path, plus /test and /set-credential). The provider is part of the path
+    # token; the :projectId capture is what authorization is scoped to.
+    - id: "rule:lfx:lfx-v2-campaign-service:connections"
       allow_encoded_slashes: 'off'
       match:
         methods:
           - GET
           - POST
-        routes:
-          - path: /campaigns
-      execute:
-        - authenticator: oidc
-        {{- if .Values.app.use_oidc_contextualizer }}
-        - contextualizer: oidc_contextualizer
-        {{- end }}
-        - authorizer: deny_all
-        - finalizer: create_jwt
-          config:
-            values:
-              aud: {{ .Values.app.audience }}
-
-    - id: "rule:lfx:lfx-v2-campaign-service:campaigns:item"
-      allow_encoded_slashes: 'off'
-      match:
-        methods:
-          - GET
           - PUT
-          - PATCH
           - DELETE
         routes:
-          - path: /campaigns/:uid
+          - path: /projects/:projectId/connection-google-ads
+          - path: /projects/:projectId/connection-google-ads/test
+          - path: /projects/:projectId/connection-google-ads/set-credential
+          - path: /projects/:projectId/connection-linkedin-ads
+          - path: /projects/:projectId/connection-linkedin-ads/test
+          - path: /projects/:projectId/connection-linkedin-ads/set-credential
+          - path: /projects/:projectId/connection-meta-ads
+          - path: /projects/:projectId/connection-meta-ads/test
+          - path: /projects/:projectId/connection-meta-ads/set-credential
+          - path: /projects/:projectId/connection-reddit-ads
+          - path: /projects/:projectId/connection-reddit-ads/test
+          - path: /projects/:projectId/connection-reddit-ads/set-credential
+          - path: /projects/:projectId/connection-twitter-ads
+          - path: /projects/:projectId/connection-twitter-ads/test
+          - path: /projects/:projectId/connection-twitter-ads/set-credential
+          - path: /projects/:projectId/connection-microsoft-ads
+          - path: /projects/:projectId/connection-microsoft-ads/test
+          - path: /projects/:projectId/connection-microsoft-ads/set-credential
+          - path: /projects/:projectId/connection-hubspot
+          - path: /projects/:projectId/connection-hubspot/test
+          - path: /projects/:projectId/connection-hubspot/set-credential
       execute:
         - authenticator: oidc
         {{- if .Values.app.use_oidc_contextualizer }}
         - contextualizer: oidc_contextualizer
         {{- end }}
-        - authorizer: deny_all
+        {{- if .Values.openfga.enabled }}
+        - authorizer: openfga_check
+          config:
+            values:
+              relation: campaign_manager
+              object: "project:{{ "{{- .Request.URL.Captures.projectId -}}" }}"
+        {{- else }}
+        - authorizer: allow_all
+        {{- end }}
         - finalizer: create_jwt
           config:
             values:
