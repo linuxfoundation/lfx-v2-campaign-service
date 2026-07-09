@@ -1,0 +1,274 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strconv"
+
+	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+
+	"goa.design/goa/v3/security"
+)
+
+// BriefService implements the generated briefs service interface, delegating to
+// the brief/campaign repositories and the async orchestrator.
+type BriefService struct {
+	briefs    domain.BriefRepository
+	campaigns domain.CampaignRepository
+	jobs      domain.JobRepository
+	orch      *Orchestrator
+}
+
+var (
+	_ briefs.Service = (*BriefService)(nil)
+	_ briefs.Auther  = (*BriefService)(nil)
+)
+
+// NewBriefService constructs a BriefService.
+func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j domain.JobRepository, orch *Orchestrator) *BriefService {
+	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch}
+}
+
+// JWTAuth mirrors the connection service: it records the authenticated actor
+// (validated by Heimdall at the gateway) into the context for attribution.
+func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
+	if token == "" {
+		return ctx, &briefs.InternalServerError{Code: "500", Message: "missing bearer token"}
+	}
+	if a := actorFromToken(token); a != nil {
+		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	}
+	return ctx, nil
+}
+
+// ─── Briefs ───
+
+func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPayload) (*briefs.Brief, error) {
+	in := p.Brief
+	b := &model.CampaignBrief{
+		ProjectID:    p.ProjectID,
+		ProgramType:  model.ProgramType(in.ProgramType),
+		EventSlug:    in.EventSlug,
+		URL:          strVal(in.URL),
+		Platforms:    marshalStrings(in.Platforms),
+		EventDetails: marshalAny(in.EventDetails),
+		Copy:         marshalAny(in.Copy),
+		Keywords:     marshalAny(in.Keywords),
+		Targeting:    marshalAny(in.Targeting),
+	}
+	created, err := s.briefs.CreateBrief(ctx, b)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	return briefResult(created), nil
+}
+
+func (s *BriefService) GetBrief(ctx context.Context, p *briefs.GetBriefPayload) (*briefs.Brief, error) {
+	b, err := s.briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	return briefResult(b), nil
+}
+
+func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPayload) (*briefs.Brief, error) {
+	version, err := parseBriefIfMatch(p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	in := p.Brief
+	b := &model.CampaignBrief{
+		ID:           p.BriefID,
+		ProjectID:    p.ProjectID,
+		ProgramType:  model.ProgramType(in.ProgramType),
+		EventSlug:    in.EventSlug,
+		URL:          strVal(in.URL),
+		Platforms:    marshalStrings(in.Platforms),
+		EventDetails: marshalAny(in.EventDetails),
+		Copy:         marshalAny(in.Copy),
+		Keywords:     marshalAny(in.Keywords),
+		Targeting:    marshalAny(in.Targeting),
+	}
+	updated, uerr := s.briefs.ReplaceBrief(ctx, b, version)
+	if uerr != nil {
+		return nil, mapBriefErr(uerr)
+	}
+	return briefResult(updated), nil
+}
+
+func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefPayload) (*briefs.Brief, error) {
+	b, err := s.briefs.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx))
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	return briefResult(b), nil
+}
+
+func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPayload) error {
+	return mapBriefErr(s.briefs.ArchiveBrief(ctx, p.ProjectID, p.BriefID))
+}
+
+// ─── Campaigns ───
+
+func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCampaignsPayload) (*briefs.JobCreateResponse, error) {
+	brief, err := s.briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	if brief.Status != model.BriefApproved {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "brief must be approved before creating campaigns"}
+	}
+	platforms := make([]model.Provider, 0, len(p.Input.Platforms))
+	for _, pl := range p.Input.Platforms {
+		prov := model.Provider(pl)
+		if !prov.Valid() {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "unknown platform: " + pl}
+		}
+		platforms = append(platforms, prov)
+	}
+	jobID, err := s.orch.Start(ctx, brief, platforms, marshalAny(p.Input.Config))
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	queued := "queued"
+	return &briefs.JobCreateResponse{JobID: jobID, Status: queued, Platforms: p.Input.Platforms}, nil
+}
+
+func (s *BriefService) GetCampaign(ctx context.Context, p *briefs.GetCampaignPayload) (*briefs.Campaign, error) {
+	c, err := s.campaigns.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	return campaignResult(c), nil
+}
+
+func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampaignPayload) (*briefs.Campaign, error) {
+	version, err := parseBriefIfMatch(p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	c := &model.Campaign{
+		ID:             p.CampaignID,
+		ProjectID:      p.ProjectID,
+		BriefID:        p.BriefID,
+		CampaignName:   p.Campaign.CampaignName,
+		Status:         p.Campaign.Status,
+		ConfigSnapshot: marshalAny(p.Campaign.Config),
+	}
+	updated, uerr := s.campaigns.ReplaceCampaign(ctx, c, version)
+	if uerr != nil {
+		return nil, mapBriefErr(uerr)
+	}
+	return campaignResult(updated), nil
+}
+
+func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*briefs.JobPollResponse, error) {
+	j, err := s.jobs.GetJob(ctx, p.JobID)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	resp := &briefs.JobPollResponse{JobID: j.ID, Status: string(j.Status)}
+	if len(j.Result) > 0 {
+		var any any
+		if json.Unmarshal(j.Result, &any) == nil {
+			resp.Result = any
+		}
+	}
+	if j.Error != "" {
+		errMsg := j.Error // copy: don't hand out a pointer aliasing the source struct field
+		resp.Error = &errMsg
+	}
+	return resp, nil
+}
+
+// ─── mapping helpers ───
+
+func briefResult(b *model.CampaignBrief) *briefs.Brief {
+	return &briefs.Brief{
+		ID:          b.ID,
+		ProjectID:   b.ProjectID,
+		ProgramType: string(b.ProgramType),
+		EventSlug:   b.EventSlug,
+		URL:         optStr(b.URL),
+		Platforms:   unmarshalStrings(b.Platforms),
+		Status:      string(b.Status),
+		Version:     b.Version,
+		Etag:        optStr(etag(b.Version)),
+	}
+}
+
+func campaignResult(c *model.Campaign) *briefs.Campaign {
+	return &briefs.Campaign{
+		ID:                 c.ID,
+		ProjectID:          c.ProjectID,
+		BriefID:            c.BriefID,
+		Platform:           string(c.Platform),
+		PlatformCampaignID: optStr(c.PlatformCampaignID),
+		CampaignName:       c.CampaignName,
+		Status:             c.Status,
+		Version:            c.Version,
+		Etag:               optStr(etag(c.Version)),
+	}
+}
+
+// parseBriefIfMatch converts the If-Match header to a version (428 if missing,
+// 400 if non-numeric), returning briefs-package errors.
+func parseBriefIfMatch(ifMatch *string) (int64, error) {
+	if ifMatch == nil || *ifMatch == "" {
+		return 0, &briefs.PreconditionRequiredError{Code: "428", Message: "an If-Match header is required"}
+	}
+	v, err := strconv.ParseInt(*ifMatch, 10, 64)
+	if err != nil {
+		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be an integer version"}
+	}
+	return v, nil
+}
+
+func mapBriefErr(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, domain.ErrNotFound):
+		return &briefs.NotFoundError{Code: "404", Message: "the resource was not found"}
+	case errors.Is(err, domain.ErrConflict):
+		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
+	case errors.Is(err, domain.ErrPreconditionFailed):
+		return &briefs.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
+	default:
+		return &briefs.InternalServerError{Code: "500", Message: "an internal server error occurred"}
+	}
+}
+
+func marshalStrings(ss []string) json.RawMessage {
+	if len(ss) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(ss)
+	return b
+}
+
+func unmarshalStrings(j json.RawMessage) []string {
+	if len(j) == 0 {
+		return nil
+	}
+	var ss []string
+	_ = json.Unmarshal(j, &ss)
+	return ss
+}
+
+func marshalAny(v any) json.RawMessage {
+	if v == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
+}

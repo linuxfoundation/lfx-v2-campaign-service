@@ -10,8 +10,10 @@ import (
 	"log/slog"
 	"time"
 
+	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
@@ -28,6 +30,7 @@ type Container struct {
 	Config      *config.Config
 	Service     svc.Service
 	Connections connsvc.Service
+	Briefs      briefsvc.Service
 
 	pool *postgres.Pool
 }
@@ -89,6 +92,22 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 
 	repo := postgres.NewConnectionRepo(pool)
 	c.Connections = service.NewConnectionService(repo, enc)
+	briefRepo := postgres.NewBriefRepo(pool)
+	campaignRepo := postgres.NewCampaignRepo(pool)
+	jobRepo := postgres.NewJobRepo(pool)
+	// No platform dispatchers are registered yet; campaign creation records a
+	// job whose platforms report "no dispatcher" until the per-platform adapters
+	// land (LFXV2-2636..2640). The orchestration flow (job lifecycle,
+	// persistence) is exercised end to end regardless. Log a startup warning so
+	// this gap is visible in production logs rather than silently producing jobs
+	// that always finish "failed" with "no dispatcher registered".
+	dispatchers := map[model.Provider]service.PlatformDispatcher(nil)
+	if len(dispatchers) == 0 {
+		slog.Warn("no platform dispatchers registered; campaign creation will record jobs but perform no upstream dispatch")
+	}
+	orch := service.NewOrchestrator(briefRepo, campaignRepo, jobRepo, dispatchers)
+	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
+
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
 

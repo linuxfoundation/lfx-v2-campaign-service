@@ -15,8 +15,10 @@ import (
 	"os"
 	"sync"
 
+	briefsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
 	svcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/server"
+	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/container"
@@ -46,25 +48,31 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 	// debug-level logs elsewhere activate); it decodes no payload.
 	endpoints := svc.NewEndpoints(cont.Service)
 
-	// The container always initializes Connections (NewContainer wires it in both
-	// the DB and no-DB paths), so construct the endpoints unconditionally. Fail
-	// loudly if it's unexpectedly nil rather than silently skipping the mount —
-	// a mis-wired container should crash at startup, not serve 404s on the
-	// connection routes.
+	// The container always initializes Connections and Briefs (NewContainer wires
+	// them in both the DB and no-DB paths), so construct the endpoints
+	// unconditionally. Fail loudly if either is unexpectedly nil rather than
+	// silently skipping the mount — a mis-wired container should crash at startup,
+	// not serve 404s on the connection/brief routes. debug.LogPayloads is
+	// intentionally NOT applied to any endpoint set: connection/brief payloads
+	// carry BearerTokens and plaintext provider credentials that would leak.
 	if cont.Connections == nil {
 		return fmt.Errorf("container misconfigured: Connections service is nil")
 	}
 	connEndpoints := connsvc.NewEndpoints(cont.Connections)
+	if cont.Briefs == nil {
+		return fmt.Errorf("container misconfigured: Briefs service is nil")
+	}
+	briefEndpoints := briefsvc.NewEndpoints(cont.Briefs)
 
-	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, cont)
+	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, briefEndpoints, cont)
 }
 
-// buildMux constructs the Goa muxer and mounts BOTH the campaign service and the
-// connection service onto it. It is a seam so tests can assert that the
-// connection routes are actually reachable (the bug this fixes — routes that
-// compile but are never mounted return 404) without standing up a full server.
-// It returns an error only for a programmer-level mis-wiring (nil connEndpoints).
-func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints) (goahttp.Muxer, error) {
+// buildMux constructs the Goa muxer and mounts the campaign, connection, and
+// brief services onto it. It is a seam so tests can assert that the routes are
+// actually reachable (the bug this fixes — routes that compile but are never
+// mounted return 404) without standing up a full server. It returns an error
+// only for a programmer-level mis-wiring (nil endpoints).
+func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints) (goahttp.Muxer, error) {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
@@ -92,25 +100,41 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	)
 	svcsvr.Mount(mux, server)
 
-	// Mount the connection routes unconditionally. connEndpoints is always
-	// non-nil (StartServer constructs it and fails loudly if the service is
-	// mis-wired), and the connection service is wired even without a database
-	// (with a nil repo) so its routes return the typed 503 rather than a bare
-	// 404. A nil here would be a programmer error, so fail loudly rather than
-	// silently skipping the mount and serving 404s.
+	// Mount the connection and brief routes unconditionally. Both endpoint sets
+	// are always non-nil (StartServer constructs them and fails loudly if a
+	// service is mis-wired), and both are wired even without a database (nil repo)
+	// so their routes return the typed 503 rather than a bare 404. A nil here would
+	// be a programmer error, so fail loudly rather than silently skipping the mount
+	// and serving 404s.
 	if connEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: connEndpoints is nil (connection routes would be unmounted)")
 	}
 	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
 	connsvcsvr.Mount(mux, connServer)
 
+	if briefEndpoints == nil {
+		return nil, fmt.Errorf("buildMux: briefEndpoints is nil (brief routes would be unmounted)")
+	}
+	briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	briefsvcsvr.Mount(mux, briefServer)
+
 	return mux, nil
 }
 
-func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, cont *container.Container) error {
-	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints)
+func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, cont *container.Container) error {
+	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints)
 	if err != nil {
 		return err
+=======
+	if connEndpoints != nil {
+		connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+		connsvcsvr.Mount(mux, connServer)
+	}
+
+	if briefEndpoints != nil {
+		briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+		briefsvcsvr.Mount(mux, briefServer)
+>>>>>>> daac45d (feat(briefs): add brief + campaign API and async orchestrator)
 	}
 
 	var handler http.Handler = mux
