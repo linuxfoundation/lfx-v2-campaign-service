@@ -89,6 +89,14 @@ func (failDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ mode
 	return nil, errors.New("boom")
 }
 
+// nilDispatcher returns (nil, nil) — a misbehaving dispatcher that must be
+// handled as a failure rather than panicking on the ownership stamp.
+type nilDispatcher struct{}
+
+func (nilDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, nil //nolint:nilnil // deliberately exercises the nil-campaign guard
+}
+
 func waitForTerminal(t *testing.T, jobs *fakeJobRepo, id string) *model.CampaignJob {
 	t.Helper()
 	for i := 0; i < 100; i++ {
@@ -147,6 +155,23 @@ func TestOrchestrator_NoDispatcherFails(t *testing.T) {
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
+	}
+}
+
+func TestOrchestrator_NilCampaignFailsWithoutPanic(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: nilDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+	if len(camps.upserted) != 0 {
+		t.Errorf("upserted %d campaigns, want 0 (nil campaign must not persist)", len(camps.upserted))
 	}
 }
 

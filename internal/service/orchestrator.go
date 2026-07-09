@@ -98,6 +98,14 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				results[i] = res
 				return nil
 			}
+			if campaign == nil {
+				// Defensive: a dispatcher must return a non-nil campaign on success.
+				// A nil campaign with no error would panic on the ownership stamp
+				// below (in a detached goroutine); record it as a platform failure.
+				res.Error = "dispatcher returned no campaign"
+				results[i] = res
+				return nil
+			}
 			// Stamp ownership before persisting so a dispatcher can't cause a
 			// campaign to be written with missing/wrong ownership. Set on a
 			// fresh reference the dispatcher returned; the invariant is one
