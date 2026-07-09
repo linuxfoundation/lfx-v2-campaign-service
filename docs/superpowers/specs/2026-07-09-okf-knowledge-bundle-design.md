@@ -27,7 +27,7 @@ establish the ongoing maintenance convention.
 
 ## Directory layout
 
-```
+```text
 docs/knowledge/
 ├── index.md
 ├── log.md
@@ -120,6 +120,28 @@ Replace the current one-line speckit pointer in `CLAUDE.md` with:
   active feature spec (no longer the sole content of the file).
 
 `AGENTS.md` becomes a symlink to `CLAUDE.md` (`ln -s CLAUDE.md AGENTS.md`).
+
+## README maintenance section
+
+Add a "Knowledge Base (OKF)" section to `README.md`, aimed at human developers (the
+`CLAUDE.md` section above covers the same convention for agents), covering:
+
+- What `docs/knowledge/` is and why it exists (one link to the OKF spec/blog post).
+- **When to update it:** after merging a feature PR, changing an API endpoint,
+  adding/modifying a Helm resource, or changing a package's responsibility.
+- **How to update it:** edit the relevant existing concept file under
+  `docs/knowledge/**` (don't regenerate with `okfgen`, which would clobber manual
+  edits — that tool is for bootstrapping new subtrees only); add a new concept file
+  with OKF frontmatter (`type`, `title`, `description`) if no existing concept
+  covers the change; add/update the `* [Title](url) - description` bullet in the
+  relevant `index.md`.
+- **Always append to `docs/knowledge/log.md`** with a dated entry describing the
+  change (`## YYYY-MM-DD` / `**Update** — ...`).
+- How to validate locally before pushing: `go run ./cmd/okfvalidate ./docs/knowledge`
+  (same check CI runs in `validate-okf.yml`).
+- A one-line note that agents are expected to do this bookkeeping automatically per
+  `CLAUDE.md`, but developers making manual changes should follow the same
+  convention.
 
 ## Out of scope
 
