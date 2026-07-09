@@ -105,7 +105,7 @@ func waitForTerminal(t *testing.T, jobs *fakeJobRepo, id string) *model.Campaign
 func TestOrchestrator_AllSucceed(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{}
-	orch := NewOrchestrator(nil, camps, jobs, map[model.Provider]PlatformDispatcher{
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
 		model.ProviderGoogleAds:   okDispatcher{},
 		model.ProviderLinkedInAds: okDispatcher{},
 	})
@@ -126,7 +126,7 @@ func TestOrchestrator_AllSucceed(t *testing.T) {
 func TestOrchestrator_PartialFailure(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{}
-	orch := NewOrchestrator(nil, camps, jobs, map[model.Provider]PlatformDispatcher{
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
 		model.ProviderGoogleAds:   okDispatcher{},
 		model.ProviderLinkedInAds: failDispatcher{},
 	})
@@ -141,7 +141,7 @@ func TestOrchestrator_PartialFailure(t *testing.T) {
 func TestOrchestrator_NoDispatcherFails(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{}
-	orch := NewOrchestrator(nil, camps, jobs, nil) // no dispatchers
+	orch := NewOrchestrator(camps, jobs, nil) // no dispatchers
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
 	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)

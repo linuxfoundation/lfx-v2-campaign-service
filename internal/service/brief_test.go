@@ -98,7 +98,7 @@ func isBriefUnavailable(err error) bool {
 func newTestBriefService(repo *fakeBriefRepo) *BriefService {
 	camps := &fakeCampaignRepo{}
 	jobs := newFakeJobRepo()
-	orch := NewOrchestrator(repo, camps, jobs, nil)
+	orch := NewOrchestrator(camps, jobs, nil)
 	return NewBriefService(repo, camps, jobs, orch)
 }
 

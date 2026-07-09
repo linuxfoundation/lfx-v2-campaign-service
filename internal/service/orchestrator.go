@@ -28,7 +28,6 @@ type PlatformDispatcher interface {
 
 // Orchestrator runs async multi-platform campaign creation for a brief.
 type Orchestrator struct {
-	briefs      domain.BriefRepository
 	campaigns   domain.CampaignRepository
 	jobs        domain.JobRepository
 	dispatchers map[model.Provider]PlatformDispatcher
@@ -36,11 +35,11 @@ type Orchestrator struct {
 
 // NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
 // platform with no registered dispatcher is recorded as a failed result.
-func NewOrchestrator(briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
+func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
 	if dispatchers == nil {
 		dispatchers = map[model.Provider]PlatformDispatcher{}
 	}
-	return &Orchestrator{briefs: briefs, campaigns: campaigns, jobs: jobs, dispatchers: dispatchers}
+	return &Orchestrator{campaigns: campaigns, jobs: jobs, dispatchers: dispatchers}
 }
 
 // platformResult is the per-platform outcome recorded in the job result.

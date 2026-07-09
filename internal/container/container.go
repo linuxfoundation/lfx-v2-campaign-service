@@ -106,7 +106,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	if len(dispatchers) == 0 {
 		slog.Warn("no platform dispatchers registered; campaign creation will record jobs but perform no upstream dispatch")
 	}
-	orch := service.NewOrchestrator(briefRepo, campaignRepo, jobRepo, dispatchers)
+	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
 
 	// The health service's readiness depends on the database pool (Readyz).
