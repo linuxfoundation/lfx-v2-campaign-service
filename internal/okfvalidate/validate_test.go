@@ -85,8 +85,8 @@ func TestValidateLogNotSorted(t *testing.T) {
 }
 
 func TestValidateRealBundle(t *testing.T) {
-	// Use absolute path to the real bundle in the project root
-	bundleDir := "/Users/ddeal/projects/linuxfoundation/lfx-v2-campaign-service.git.feat-add-okf-docs/docs/knowledge"
+	// Use relative path from package directory to the real bundle at repo root
+	bundleDir := filepath.Join("..", "..", "docs", "knowledge")
 	errs := Validate(bundleDir)
 	if len(errs) != 0 {
 		t.Errorf("Real bundle validation failed with %d errors:", len(errs))
