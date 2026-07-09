@@ -33,13 +33,13 @@ var providerConfigColumns = map[model.Provider][]string{
 // the fixed order scanConnection expects. Defined once so Get/Create/Update
 // can't drift out of alignment with the scan.
 //
-// id and project_id are cast to text: they are UUID columns, and pgx/v5's
-// binary codec cannot scan a uuid directly into a Go string — the ::text cast
-// makes the scan into model.Connection's string fields work without changing
-// the domain type. (Parameters bound to uuid columns accept plain strings, so
-// only the read/scan side needs the cast.)
+// id is cast to text: it is a UUID column, and pgx/v5's binary codec cannot
+// scan a uuid directly into a Go string — the ::text cast makes the scan into
+// model.Connection's string fields work without changing the domain type.
+// project_id is a TEXT column (it holds a project UUID *or* slug, e.g. "cncf"),
+// so it scans into a string directly with no cast.
 var connectionCommonCols = []string{
-	"id::text", "project_id::text", "label", "account_id", "credentials",
+	"id::text", "project_id", "label", "account_id", "credentials",
 	"status", "version", "created_by", "updated_by", "created_at", "updated_at",
 }
 

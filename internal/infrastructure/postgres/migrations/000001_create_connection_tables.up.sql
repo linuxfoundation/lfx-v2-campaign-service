@@ -10,7 +10,7 @@
 
 CREATE TABLE IF NOT EXISTS google_ads_connections (
     id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id         UUID        NOT NULL,
+    project_id         TEXT        NOT NULL,
     label              TEXT,
     account_id         TEXT        NOT NULL,
     credentials        BYTEA,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS google_ads_connections (
 
 CREATE TABLE IF NOT EXISTS linkedin_ads_connections (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL,
+    project_id   TEXT        NOT NULL,
     label        TEXT,
     account_id   TEXT        NOT NULL,
     credentials  BYTEA,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS linkedin_ads_connections (
 
 CREATE TABLE IF NOT EXISTS meta_ads_connections (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL,
+    project_id   TEXT        NOT NULL,
     label        TEXT,
     account_id   TEXT        NOT NULL,
     credentials  BYTEA,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS meta_ads_connections (
 
 CREATE TABLE IF NOT EXISTS reddit_ads_connections (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL,
+    project_id   TEXT        NOT NULL,
     label        TEXT,
     account_id   TEXT        NOT NULL,
     credentials  BYTEA,
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS reddit_ads_connections (
 
 CREATE TABLE IF NOT EXISTS twitter_ads_connections (
     id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id             UUID        NOT NULL,
+    project_id             TEXT        NOT NULL,
     label                  TEXT,
     account_id             TEXT        NOT NULL,
     credentials            BYTEA,
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS twitter_ads_connections (
 
 CREATE TABLE IF NOT EXISTS microsoft_ads_connections (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id   UUID        NOT NULL,
+    project_id   TEXT        NOT NULL,
     label        TEXT,
     account_id   TEXT        NOT NULL,
     credentials  BYTEA,
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS microsoft_ads_connections (
 
 CREATE TABLE IF NOT EXISTS hubspot_connections (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id    UUID        NOT NULL,
+    project_id    TEXT        NOT NULL,
     label         TEXT,
     account_id    TEXT        NOT NULL,
     credentials   BYTEA,
