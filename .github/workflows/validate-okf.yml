@@ -1,0 +1,30 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+name: Validate OKF Knowledge Bundle
+
+"on":
+  pull_request:
+    paths:
+      - "docs/knowledge/**"
+      - "cmd/okfvalidate/**"
+      - "internal/okfvalidate/**"
+      - "internal/okf/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-okf:
+    name: Validate OKF Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5  # v5
+        with:
+          go-version-file: go.mod
+
+      - name: Validate docs/knowledge
+        run: go run ./cmd/okfvalidate ./docs/knowledge
