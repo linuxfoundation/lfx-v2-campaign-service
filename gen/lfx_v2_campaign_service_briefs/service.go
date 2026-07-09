@@ -237,7 +237,7 @@ type JobPollResponse struct {
 	JobID string
 	// Job status
 	Status string
-	// Per-platform results, populated as each completes
+	// Per-platform results, written once when the job reaches a terminal state
 	Result any
 	// Terminal error, if any
 	Error *string

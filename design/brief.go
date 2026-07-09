@@ -73,7 +73,7 @@ var JobPollResponse = Type("job-poll-response", func() {
 	Attribute("status", String, "Job status", func() {
 		Enum("queued", "running", "succeeded", "partial", "failed")
 	})
-	Attribute("result", Any, "Per-platform results, populated as each completes")
+	Attribute("result", Any, "Per-platform results, written once when the job reaches a terminal state")
 	Attribute("error", String, "Terminal error, if any")
 	Required("job_id", "status")
 })

@@ -184,7 +184,7 @@ type GetJobResponseBody struct {
 	JobID string `form:"job_id" json:"job_id" xml:"job_id"`
 	// Job status
 	Status string `form:"status" json:"status" xml:"status"`
-	// Per-platform results, populated as each completes
+	// Per-platform results, written once when the job reaches a terminal state
 	Result any `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
 	// Terminal error, if any
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`

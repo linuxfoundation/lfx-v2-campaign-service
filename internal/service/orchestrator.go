@@ -70,7 +70,12 @@ func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, pl
 
 // run performs the parallel per-platform dispatch and finalizes the job.
 func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage) {
-	_ = o.jobs.UpdateJobStatus(ctx, jobID, model.JobRunning, nil, "")
+	// Mark the job running. Don't abort dispatch on failure (the work should still
+	// proceed and the final status write will correct it), but log it — silently
+	// dropping this can leave a job stuck at "queued" in the client's view.
+	if err := o.jobs.UpdateJobStatus(ctx, jobID, model.JobRunning, nil, ""); err != nil {
+		slog.ErrorContext(ctx, "failed to mark campaign job running", "job_id", jobID, "error", err)
+	}
 
 	results := make([]platformResult, len(platforms))
 	g, gctx := errgroup.WithContext(ctx)

@@ -153,6 +153,11 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	if brief.Status != model.BriefApproved {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "brief must be approved before creating campaigns"}
 	}
+	if len(p.Input.Platforms) == 0 {
+		// Reject an empty platform set: it would create a job with zero dispatches
+		// that instantly aggregates to "succeeded" — a meaningless no-op job.
+		return nil, &briefs.BadRequestError{Code: "400", Message: "at least one platform is required"}
+	}
 	platforms := make([]model.Provider, 0, len(p.Input.Platforms))
 	for _, pl := range p.Input.Platforms {
 		prov := model.Provider(pl)

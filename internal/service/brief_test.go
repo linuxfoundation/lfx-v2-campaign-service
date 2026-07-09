@@ -138,3 +138,20 @@ func TestBriefService_CreateCampaigns_RejectsUnapprovedBrief(t *testing.T) {
 		t.Fatalf("expected *briefs.BadRequestError for unapproved brief, got %T (%v)", err, err)
 	}
 }
+
+// CreateCampaigns must reject an empty platform set (400) rather than creating a
+// no-op job that instantly aggregates to succeeded.
+func TestBriefService_CreateCampaigns_RejectsEmptyPlatforms(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefApproved,
+	}
+	s := newTestBriefService(repo)
+	_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{Platforms: []string{}},
+	})
+	if _, ok := err.(*briefs.BadRequestError); !ok {
+		t.Fatalf("expected *briefs.BadRequestError for empty platforms, got %T (%v)", err, err)
+	}
+}

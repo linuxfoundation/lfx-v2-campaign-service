@@ -5625,7 +5625,7 @@ components:
                     description: Job UUID
                     example: Sit qui aut aut.
                 result:
-                    description: Per-platform results, populated as each completes
+                    description: Per-platform results, written once when the job reaches a terminal state
                     example: Quisquam et consequuntur ut sunt aliquam et.
                 status:
                     type: string

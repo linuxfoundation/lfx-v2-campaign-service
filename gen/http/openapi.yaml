@@ -3970,7 +3970,7 @@ definitions:
                 description: Job UUID
                 example: Aut mollitia aut molestiae exercitationem et.
             result:
-                description: Per-platform results, populated as each completes
+                description: Per-platform results, written once when the job reaches a terminal state
                 example: Perspiciatis quisquam perferendis autem ut alias quis.
             status:
                 type: string
