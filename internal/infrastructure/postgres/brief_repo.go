@@ -80,10 +80,19 @@ func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, ex
 		return nil, fmt.Errorf("replace brief: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		if _, gerr := r.GetBrief(ctx, b.ProjectID, b.ID); errors.Is(gerr, domain.ErrNotFound) {
+		// Distinguish missing from stale version. Surface a transient re-fetch
+		// error rather than masking it as a precondition failure (which would make
+		// the caller retry with a fresh ETag instead of backing off on a server
+		// error), consistent with ConnectionRepo.Update.
+		_, gerr := r.GetBrief(ctx, b.ProjectID, b.ID)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
 			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
 		}
-		return nil, domain.ErrPreconditionFailed
 	}
 	return r.GetBrief(ctx, b.ProjectID, b.ID)
 }

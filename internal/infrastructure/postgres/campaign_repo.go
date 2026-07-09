@@ -82,10 +82,17 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		if _, gerr := r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID); errors.Is(gerr, domain.ErrNotFound) {
+		// Surface a transient re-fetch error rather than masking it as a
+		// precondition failure, consistent with ConnectionRepo.Update.
+		_, gerr := r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
 			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
 		}
-		return nil, domain.ErrPreconditionFailed
 	}
 	return r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID)
 }
