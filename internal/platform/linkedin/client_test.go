@@ -1,0 +1,436 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package linkedin
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+func testConfig() RuntimeConfig {
+	return RuntimeConfig{
+		DefaultAccountID: "123456789",
+		DefaultOrgID:     "987654321",
+		Accounts: []Account{
+			{AccountID: "123456789", Label: "LF Events", OrgID: "987654321", Status: "ACTIVE"},
+		},
+		EmployerExclusions: []string{"urn:li:organization:1111"},
+		TargetingProfiles: []TargetingProfileConfig{
+			{
+				ID:     "cloud-native",
+				Label:  "Cloud Native",
+				Skills: []string{"urn:li:skill:1", "urn:li:skill:2"},
+				Groups: []string{"urn:li:group:100"},
+			},
+		},
+	}
+}
+
+// fixedClock returns a clock far in the past so future-dated campaigns pass.
+func fixedClock() func() time.Time {
+	return func() time.Time { return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC) }
+}
+
+// ---------------------------------------------------------------------------
+// Geo resolution
+// ---------------------------------------------------------------------------
+
+func TestResolveGeoTargets_KnownAndUnknown(t *testing.T) {
+	got := ResolveGeoTargets([]string{"  Japan ", "United States", "Atlantis", "GERMANY"})
+
+	if len(got) != 3 {
+		t.Fatalf("expected 3 resolved geos (unknown dropped), got %d: %+v", len(got), got)
+	}
+
+	want := map[string]string{
+		"Japan":         "urn:li:geo:101355337",
+		"United States": "urn:li:geo:103644278",
+		"Germany":       "urn:li:geo:101165590",
+	}
+	for _, g := range got {
+		wantURN, ok := want[g.Label]
+		if !ok {
+			t.Errorf("unexpected geo in result: %+v", g)
+			continue
+		}
+		if g.URN != wantURN {
+			t.Errorf("geo %s: want URN %s, got %s", g.Label, wantURN, g.URN)
+		}
+	}
+}
+
+func TestResolveGeoTargets_UsaAlias(t *testing.T) {
+	got := ResolveGeoTargets([]string{"usa"})
+	if len(got) != 1 || got[0].URN != "urn:li:geo:103644278" {
+		t.Fatalf("usa alias should resolve to United States URN, got %+v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Targeting criteria building
+// ---------------------------------------------------------------------------
+
+func TestBuildTargetingCriteria_SkillsAndGroupsInOneOrBlock(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	if err != nil {
+		t.Fatalf("buildTargetingCriteria: %v", err)
+	}
+
+	// Round-trip through JSON to inspect structure the way LinkedIn receives it.
+	b, _ := json.Marshal(crit)
+	var decoded map[string]any
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	tc := decoded["targetingCriteria"].(map[string]any)
+	include := tc["include"].(map[string]any)
+	and := include["and"].([]any)
+	if len(and) != 2 {
+		t.Fatalf("expected 2 entries in include.and, got %d", len(and))
+	}
+
+	// First and-entry: geo locations.
+	first := and[0].(map[string]any)["or"].(map[string]any)
+	if _, ok := first["urn:li:adTargetingFacet:locations"]; !ok {
+		t.Errorf("first and-entry should carry locations facet: %+v", first)
+	}
+
+	// Second and-entry: skills + groups + jobFunctions all in ONE or block.
+	second := and[1].(map[string]any)["or"].(map[string]any)
+	for _, facet := range []string{
+		"urn:li:adTargetingFacet:skills",
+		"urn:li:adTargetingFacet:groups",
+		"urn:li:adTargetingFacet:jobFunctions",
+	} {
+		if _, ok := second[facet]; !ok {
+			t.Errorf("skills/groups OR block missing facet %s: %+v", facet, second)
+		}
+	}
+
+	skills := second["urn:li:adTargetingFacet:skills"].([]any)
+	if len(skills) != 2 {
+		t.Errorf("expected 2 skills, got %d", len(skills))
+	}
+
+	// Exclusions: employers + seniorities.
+	exclude := tc["exclude"].(map[string]any)["or"].(map[string]any)
+	if _, ok := exclude["urn:li:adTargetingFacet:employers"]; !ok {
+		t.Errorf("exclude block missing employers facet")
+	}
+	if _, ok := exclude["urn:li:adTargetingFacet:seniorities"]; !ok {
+		t.Errorf("exclude block missing seniorities facet")
+	}
+}
+
+func TestBuildTargetingCriteria_CustomAliasesCloudNative(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
+	crit, err := c.buildTargetingCriteria("custom", []string{"urn:li:geo:1"})
+	if err != nil {
+		t.Fatalf("custom should not error: %v", err)
+	}
+	b, _ := json.Marshal(crit)
+	if !strings.Contains(string(b), "urn:li:skill:1") {
+		t.Errorf("custom should fall back to cloud-native skills, got %s", b)
+	}
+}
+
+func TestBuildTargetingCriteria_UnknownProfileErrors(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
+	if _, err := c.buildTargetingCriteria("nonexistent", nil); err == nil {
+		t.Fatal("expected error for unknown targeting profile")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency: search-by-name returns existing ID -> no duplicate create
+// ---------------------------------------------------------------------------
+
+func TestFindOrCreateCampaignGroup_Idempotent(t *testing.T) {
+	var postCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "adCampaignGroups") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:555"}]}`)
+			return
+		}
+		if r.Method == http.MethodPost {
+			postCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"999"}`)
+			return
+		}
+		http.Error(w, "unexpected", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.FindOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", "2099-02-01")
+	if err != nil {
+		t.Fatalf("FindOrCreateCampaignGroup: %v", err)
+	}
+	if id != "555" {
+		t.Errorf("expected existing group id 555, got %s", id)
+	}
+	if postCount != 0 {
+		t.Errorf("expected no POST (idempotent hit), got %d POSTs", postCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Campaign-creation happy path (full hierarchy) + dark-post assertion
+// ---------------------------------------------------------------------------
+
+func TestCreateCampaign_HappyPath(t *testing.T) {
+	var mu sync.Mutex
+	var darkPostBody map[string]any
+	var campaignBody map[string]any
+	var creativePosts int
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+
+		// All search GETs return empty -> forces create path.
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+
+		bodyBytes, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(bodyBytes, &body)
+
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			// Verify group is ACTIVE.
+			if body["status"] != "ACTIVE" {
+				t.Errorf("campaign group must be ACTIVE, got %v", body["status"])
+			}
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			campaignBody = body
+			// x-restli-id header path (no body id).
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			darkPostBody = body
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			creativePosts++
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	in := CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/kubecon",
+		HSToken:          "hs-123",
+		BudgetUSD:        100,
+		LifetimeBudget:   false,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		TargetingProfile: "cloud-native",
+		Variants: []CreativeVariant{
+			{IntroText: "Join us — it's great", Headline: "KubeCon 2099"},
+		},
+		Project: "CNCF",
+	}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	// Parsed IDs (trailing segment of URN).
+	if res.CampaignGroupID != "100" {
+		t.Errorf("group id: want 100, got %s", res.CampaignGroupID)
+	}
+	if res.CampaignID != "200" {
+		t.Errorf("campaign id (from x-restli-id): want 200, got %s", res.CampaignID)
+	}
+	if res.CreativeCount != 1 {
+		t.Errorf("creative count: want 1, got %d", res.CreativeCount)
+	}
+	if creativePosts != 1 {
+		t.Errorf("expected 1 creative POST, got %d", creativePosts)
+	}
+	if res.Platform != "linkedin-ads" {
+		t.Errorf("platform: want linkedin-ads, got %s", res.Platform)
+	}
+	if !strings.Contains(res.LinkedInURL, "/campaigns/200") {
+		t.Errorf("linkedin url missing campaign id: %s", res.LinkedInURL)
+	}
+
+	// Dark-post assertion: feedDistribution NONE.
+	if darkPostBody == nil {
+		t.Fatal("dark post was never created")
+	}
+	dist, ok := darkPostBody["distribution"].(map[string]any)
+	if !ok {
+		t.Fatalf("dark post missing distribution block: %+v", darkPostBody)
+	}
+	if dist["feedDistribution"] != "NONE" {
+		t.Errorf("dark post feedDistribution: want NONE, got %v", dist["feedDistribution"])
+	}
+	// callToAction must NOT be present (article ads).
+	if _, present := darkPostBody["callToAction"]; present {
+		t.Errorf("dark post must not send callToAction for article ads")
+	}
+	// content.article present.
+	content, _ := darkPostBody["content"].(map[string]any)
+	if content == nil || content["article"] == nil {
+		t.Errorf("dark post should carry content.article: %+v", darkPostBody)
+	}
+	// em-dash in intro should be normalized to a comma.
+	if strings.Contains(darkPostBody["commentary"].(string), "—") {
+		t.Errorf("commentary should have dashes stripped, got %q", darkPostBody["commentary"])
+	}
+
+	// Campaign: budget as decimal string, status PAUSED, dailyBudget field.
+	if campaignBody["status"] != "PAUSED" {
+		t.Errorf("campaign status: want PAUSED, got %v", campaignBody["status"])
+	}
+	daily, ok := campaignBody["dailyBudget"].(map[string]any)
+	if !ok {
+		t.Fatalf("campaign missing dailyBudget: %+v", campaignBody)
+	}
+	if daily["amount"] != "100.00" {
+		t.Errorf("budget amount should be decimal string 100.00, got %v", daily["amount"])
+	}
+	if _, hasTotal := campaignBody["totalBudget"]; hasTotal {
+		t.Errorf("daily-budget campaign must not send totalBudget")
+	}
+}
+
+func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
+	var mu sync.Mutex
+	var campaignBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(b, &body)
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			campaignBody = body
+			_, _ = io.WriteString(w, `{"id":"200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"400"}`)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "E",
+		RegistrationURL:  "https://x.org",
+		BudgetUSD:        5000,
+		LifetimeBudget:   true,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	total, ok := campaignBody["totalBudget"].(map[string]any)
+	if !ok {
+		t.Fatalf("lifetime campaign should send totalBudget: %+v", campaignBody)
+	}
+	if total["amount"] != "5000.00" {
+		t.Errorf("totalBudget amount: want 5000.00, got %v", total["amount"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unit helpers
+// ---------------------------------------------------------------------------
+
+func TestToMs_PastEndDateErrors(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithClock(func() time.Time {
+		return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	}))
+	if _, err := c.toMs("2099-01-01", true); err == nil {
+		t.Error("expected error for past end date")
+	}
+}
+
+func TestToMs_PastStartDateReturnsNowPlus5Min(t *testing.T) {
+	now := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithClock(func() time.Time { return now }))
+	got, err := c.toMs("2099-01-01", false)
+	if err != nil {
+		t.Fatalf("toMs: %v", err)
+	}
+	want := now.UnixMilli() + 5*60*1000
+	if got != want {
+		t.Errorf("past start date should return now+5min: want %d, got %d", want, got)
+	}
+}
+
+func TestBuildUTMURL(t *testing.T) {
+	got := BuildUTMURL("https://x.org/reg", "hs-1", "Events | KubeCon | LinkedIn", 2)
+	if !strings.Contains(got, "utm_source=linkedin") {
+		t.Errorf("missing utm_source: %s", got)
+	}
+	if !strings.Contains(got, "utm_campaign=hs-1") {
+		t.Errorf("missing utm_campaign: %s", got)
+	}
+	if !strings.Contains(got, "utm_content=variant-2") {
+		t.Errorf("missing utm_content: %s", got)
+	}
+	if !strings.Contains(got, "utm_term=events_kubecon_linkedin") {
+		t.Errorf("term normalization wrong: %s", got)
+	}
+}
+
+func TestResolveOrgID_CrossTenantRefusal(t *testing.T) {
+	cfg := testConfig()
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	// Unknown account that is not the default -> must refuse.
+	if _, err := c.resolveOrgID("000000"); err == nil {
+		t.Error("expected refusal for unknown non-default account")
+	}
+}
+
+func TestContextCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[]}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.doRequest(ctx, http.MethodGet, "adAccounts/1", nil, nil); err == nil {
+		t.Error("expected error from cancelled context")
+	}
+}
