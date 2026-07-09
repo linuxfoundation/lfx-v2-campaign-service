@@ -10,6 +10,79 @@ metadata:
   labels:
     app: {{ .Chart.Name }}
 spec:
-  # TODO: Define rules as needed for your service
-  rules: []
+  rules:
+    # OpenAPI specification documents are publicly readable (no authorization),
+    # matching the reference-service pattern. A JWT is still minted so downstream
+    # handlers receive a consistent identity context.
+    - id: "rule:lfx:lfx-v2-campaign-service:openapi:get"
+      allow_encoded_slashes: 'off'
+      match:
+        methods:
+          - GET
+          - HEAD
+        routes:
+          - path: /_campaigns/openapi.json
+          - path: /_campaigns/openapi.yaml
+          - path: /_campaigns/openapi3.json
+          - path: /_campaigns/openapi3.yaml
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience }}
+
+    # Campaigns collection/item. The campaigns API is not yet implemented; these
+    # rules keep the gateway-routed paths deployable but fully locked down today:
+    # `oidc` is the only authenticator (no `anonymous_authenticator` fallback) and
+    # `deny_all` rejects every request — even a valid, authenticated subject —
+    # since there are no endpoints to serve yet.
+    # TODO(LFXV2-2558): once the campaigns API and its OpenFGA object/relation
+    # model are defined, add `anonymous_authenticator` back and replace `deny_all`
+    # with per-endpoint `openfga_check` authorizers (relation + object) so access
+    # is granted per the FGA model (the reference-service pattern).
+    - id: "rule:lfx:lfx-v2-campaign-service:campaigns:collection"
+      allow_encoded_slashes: 'off'
+      match:
+        methods:
+          - GET
+          - POST
+        routes:
+          - path: /campaigns
+      execute:
+        - authenticator: oidc
+        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        - authorizer: deny_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience }}
+
+    - id: "rule:lfx:lfx-v2-campaign-service:campaigns:item"
+      allow_encoded_slashes: 'off'
+      match:
+        methods:
+          - GET
+          - PUT
+          - PATCH
+          - DELETE
+        routes:
+          - path: /campaigns/:uid
+      execute:
+        - authenticator: oidc
+        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        - authorizer: deny_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience }}
 {{- end }}

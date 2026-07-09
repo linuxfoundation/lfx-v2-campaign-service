@@ -32,6 +32,18 @@ podDisruptionBudget:
   # minAvailable: 1
   # maxUnavailable: 1
 
+# topologySpreadConstraints controls how pods are spread across nodes/zones.
+# Empty by default (no constraints). Set per-environment (e.g. in the GitOps
+# global values) to spread replicas across hosts/zones for high availability.
+# Example:
+#   - maxSkew: 1
+#     topologyKey: kubernetes.io/hostname
+#     whenUnsatisfiable: DoNotSchedule
+#     labelSelector:
+#       matchLabels:
+#         app.kubernetes.io/name: lfx-v2-campaign-service
+topologySpreadConstraints: []
+
 # resources is the configuration for container resource requests and limits
 resources:
   # limits is the maximum amount of resources allowed
@@ -130,10 +142,16 @@ app:
     # tracesExporter specifies the traces exporter: "otlp" or "none"
     # (default: "none")
     tracesExporter: "none"
-    # tracesSampleRatio specifies the sampling ratio for traces (0.0 to 1.0)
-    # A value of 1.0 means all traces are sampled, 0.5 means 50% are sampled
-    # (default: "1.0")
-    tracesSampleRatio: "1.0"
+    # tracesSampler specifies the OTEL_TRACES_SAMPLER type. Supported values:
+    # "always_on", "always_off", "traceidratio", "parentbased_always_on",
+    # "parentbased_always_off", "parentbased_traceidratio".
+    # When empty, the application defaults to parentbased_traceidratio (which
+    # honors upstream parent sampling decisions).
+    tracesSampler: ""
+    # tracesSamplerArg specifies the OTEL_TRACES_SAMPLER_ARG (sampler ratio for
+    # traceidratio / parentbased_traceidratio; 0.0 to 1.0, defaults to 1.0 if empty).
+    # (default: "")
+    tracesSamplerArg: ""
     # metricsExporter specifies the metrics exporter: "otlp" or "none"
     # (default: "none")
     metricsExporter: "none"
@@ -182,24 +200,6 @@ app:
     # Optional, defaults to nats. Production should use 'nats', local development should use 'mock'
     REPOSITORY_SOURCE:
       value: nats
-
-    # ITX Proxy Configuration
-    ITX_BASE_URL:
-      value: ""
-
-    ITX_CLIENT_ID:
-      value: ""
-
-    # ITX_CLIENT_PRIVATE_KEY is the private key for ITX proxy authentication
-    # WARNING: Do not commit actual credentials to this file - should be set via Kubernetes secrets using valueFrom
-    ITX_CLIENT_PRIVATE_KEY:
-      value: ""
-
-    ITX_AUTH0_DOMAIN:
-      value: ""
-
-    ITX_AUDIENCE:
-      value: ""
 
     EVENTING_ENABLED:
       value: "true"

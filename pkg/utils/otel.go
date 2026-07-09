@@ -27,7 +27,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 )
 
 const (
@@ -40,39 +40,39 @@ const (
 // OTelConfig holds OpenTelemetry configuration.
 // All fields can be set via the standard OTEL_* environment variables.
 type OTelConfig struct {
-	ServiceName       string
-	ServiceVersion    string
-	Protocol          string
-	Endpoint          string
-	Insecure          bool
-	TracesExporter    string
-	TracesSampleRatio float64
-	MetricsExporter   string
-	LogsExporter      string
-	Propagators       string
+	ServiceName    string
+	ServiceVersion string
+	Protocol       string
+	Endpoint       string
+	Insecure       bool
+	TracesExporter string
+	// TracesSampler selects the trace sampler (OTEL_TRACES_SAMPLER). Supported:
+	// always_on, always_off, traceidratio, parentbased_always_on,
+	// parentbased_always_off, parentbased_traceidratio. Empty/unknown falls back
+	// to parentbased_traceidratio.
+	TracesSampler string
+	// TracesSamplerArg is the sampler argument (OTEL_TRACES_SAMPLER_ARG); for
+	// ratio-based samplers it is the ratio in [0.0, 1.0].
+	TracesSamplerArg string
+	MetricsExporter  string
+	LogsExporter     string
+	Propagators      string
 }
 
 // OTelConfigFromEnv reads OTel configuration from environment variables.
 func OTelConfigFromEnv() OTelConfig {
 	cfg := OTelConfig{
-		ServiceName:       envOrDefault("OTEL_SERVICE_NAME", "lfx-v2-campaign-service"),
-		ServiceVersion:    os.Getenv("OTEL_SERVICE_VERSION"),
-		Protocol:          envOrDefault("OTEL_EXPORTER_OTLP_PROTOCOL", OTelProtocolGRPC),
-		Endpoint:          os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		Insecure:          os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true",
-		TracesExporter:    envOrDefault("OTEL_TRACES_EXPORTER", OTelExporterNone),
-		MetricsExporter:   envOrDefault("OTEL_METRICS_EXPORTER", OTelExporterNone),
-		LogsExporter:      envOrDefault("OTEL_LOGS_EXPORTER", OTelExporterNone),
-		Propagators:       envOrDefault("OTEL_PROPAGATORS", "tracecontext,baggage"),
-		TracesSampleRatio: 1.0,
-	}
-
-	if ratio := os.Getenv("OTEL_TRACES_SAMPLE_RATIO"); ratio != "" {
-		if parsed, err := strconv.ParseFloat(ratio, 64); err == nil && parsed >= 0.0 && parsed <= 1.0 {
-			cfg.TracesSampleRatio = parsed
-		} else {
-			slog.Warn("invalid OTEL_TRACES_SAMPLE_RATIO, using 1.0", "value", ratio)
-		}
+		ServiceName:      envOrDefault("OTEL_SERVICE_NAME", "lfx-v2-campaign-service"),
+		ServiceVersion:   os.Getenv("OTEL_SERVICE_VERSION"),
+		Protocol:         envOrDefault("OTEL_EXPORTER_OTLP_PROTOCOL", OTelProtocolGRPC),
+		Endpoint:         os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		Insecure:         os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true",
+		TracesExporter:   envOrDefault("OTEL_TRACES_EXPORTER", OTelExporterNone),
+		TracesSampler:    strings.ToLower(strings.TrimSpace(os.Getenv("OTEL_TRACES_SAMPLER"))),
+		TracesSamplerArg: strings.TrimSpace(os.Getenv("OTEL_TRACES_SAMPLER_ARG")),
+		MetricsExporter:  envOrDefault("OTEL_METRICS_EXPORTER", OTelExporterNone),
+		LogsExporter:     envOrDefault("OTEL_LOGS_EXPORTER", OTelExporterNone),
+		Propagators:      envOrDefault("OTEL_PROPAGATORS", "tracecontext,baggage"),
 	}
 
 	return cfg
@@ -224,9 +224,55 @@ func newTraceProvider(ctx context.Context, cfg OTelConfig, res *resource.Resourc
 	}
 	return sdktrace.NewTracerProvider(
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(cfg.TracesSampleRatio)),
+		sdktrace.WithSampler(newSampler(cfg)),
 		sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(time.Second)),
 	), nil
+}
+
+// newSampler creates a trace sampler from OTEL_TRACES_SAMPLER and
+// OTEL_TRACES_SAMPLER_ARG, following the OpenTelemetry specification. When the
+// sampler is unset or unrecognized it falls back to parentbased_traceidratio so
+// that upstream (parent) sampling decisions are honored — important for keeping
+// distributed traces intact across services behind the gateway.
+func newSampler(cfg OTelConfig) sdktrace.Sampler {
+	parseRatio := func() float64 {
+		if cfg.TracesSamplerArg == "" {
+			return 1.0
+		}
+		r, err := strconv.ParseFloat(cfg.TracesSamplerArg, 64)
+		if err != nil {
+			slog.Warn("invalid OTEL_TRACES_SAMPLER_ARG, defaulting to 1.0",
+				"provided-value", cfg.TracesSamplerArg, "error", err)
+			return 1.0
+		}
+		if r < 0.0 || r > 1.0 {
+			slog.Warn("OTEL_TRACES_SAMPLER_ARG out of range [0.0, 1.0], defaulting to 1.0",
+				"provided-value", cfg.TracesSamplerArg)
+			return 1.0
+		}
+		return r
+	}
+
+	switch cfg.TracesSampler {
+	case "always_on":
+		return sdktrace.AlwaysSample()
+	case "always_off":
+		return sdktrace.NeverSample()
+	case "traceidratio":
+		return sdktrace.TraceIDRatioBased(parseRatio())
+	case "parentbased_always_on":
+		return sdktrace.ParentBased(sdktrace.AlwaysSample())
+	case "parentbased_always_off":
+		return sdktrace.ParentBased(sdktrace.NeverSample())
+	case "parentbased_traceidratio":
+		return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(parseRatio()))
+	default:
+		if cfg.TracesSampler != "" {
+			slog.Warn("unknown OTEL_TRACES_SAMPLER, falling back to parentbased_traceidratio",
+				"provided-value", cfg.TracesSampler)
+		}
+		return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(parseRatio()))
+	}
 }
 
 func newMetricsProvider(ctx context.Context, cfg OTelConfig, res *resource.Resource) (*metric.MeterProvider, error) {

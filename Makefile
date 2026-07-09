@@ -7,9 +7,9 @@ BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GIT_COMMIT := $(shell git rev-parse HEAD)
 
 # Docker
-DOCKER_REGISTRY := linuxfoundation
-DOCKER_IMAGE := $(DOCKER_REGISTRY)/$(APP_NAME)
-DOCKER_TAG := $(VERSION)
+DOCKER_REGISTRY := ghcr.io/linuxfoundation
+DOCKER_IMAGE := $(DOCKER_REGISTRY)/$(APP_NAME)/campaign-service
+DOCKER_TAG ?= latest
 
 # Helm variables
 HELM_CHART_PATH=./charts/lfx-v2-campaign-service
