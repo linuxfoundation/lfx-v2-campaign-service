@@ -15,7 +15,36 @@ spec:
   hostnames:
     - "lfx-api.{{ .Values.lfx.domain }}"
   rules:
-    # Main application endpoints (with authentication)
+    # Project-nested campaign API (the approved contract — every endpoint is
+    # /projects/{projectId}/…, gated on the project `campaign_manager` relation).
+    #
+    # project-service owns `PathPrefix: /projects/`, so we cannot claim that
+    # prefix. The distinguishing token (connection-*, briefs, jobs, the metrics
+    # provider segment, hubspot) sits AFTER the variable {projectId}, which a
+    # PathPrefix/Exact match cannot reach past. We therefore use a
+    # RegularExpression path match (Traefik Gateway API "custom" conformance) to
+    # select exactly this service's project-nested subpaths; project-service's
+    # /projects/ routes are unaffected (Traefik resolves overlap by match
+    # specificity — the regex only matches campaign subpaths).
+    - matches:
+      - path:
+          type: RegularExpression
+          value: ^/projects/[^/]+/(connection-(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads|microsoft-ads|hubspot)|briefs|jobs|hubspot|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))(/.*)?$
+      {{- if .Values.heimdall.enabled }}
+      filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: heimdall-forward-body
+      {{- end }}
+      backendRefs:
+        - group: ''
+          kind: Service
+          name: {{ .Chart.Name }}
+          port: {{ .Values.service.port }}
+          weight: 1
+    # OpenAPI spec + reserved placeholder prefix (served directly by the service).
     - matches:
       - path:
           type: Exact

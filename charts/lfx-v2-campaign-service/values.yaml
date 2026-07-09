@@ -204,6 +204,29 @@ app:
     EVENTING_ENABLED:
       value: "true"
 
+    # DATABASE_URL is the PostgreSQL DSN for the connection/brief persistence
+    # layer. It MUST be a URL-scheme DSN (postgres://user:pass@host:5432/db?…);
+    # the app rejects keyword DSNs. When UNSET (as it is here by default) the
+    # service runs with the database layer disabled: connection/brief endpoints
+    # return the typed 503 Service Unavailable, no migrations run. Enable per
+    # environment (in the GitOps global values) by pointing at the synced secret,
+    # e.g. the CloudNativePG-generated secret's `uri` key:
+    #   DATABASE_URL:
+    #     valueFrom:
+    #       secretKeyRef:
+    #         name: lfx-v2-campaign-service-db
+    #         key: uri
+    #
+    # CREDENTIAL_ENCRYPTION_KEY is the base64-encoded 32-byte AES-256 key used to
+    # encrypt stored ad-platform credentials at the application layer (never in
+    # the DB). Required whenever DATABASE_URL is set; the container fails to start
+    # without it. Sourced from a Kubernetes secret, per environment:
+    #   CREDENTIAL_ENCRYPTION_KEY:
+    #     valueFrom:
+    #       secretKeyRef:
+    #         name: lfx-v2-campaign-service-secrets
+    #         key: credential-encryption-key
+
 # serviceAccount is the configuration for the Kubernetes service account (used by multiple components)
 serviceAccount:
   # create specifies whether a service account should be created
