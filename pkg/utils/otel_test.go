@@ -7,9 +7,9 @@ import (
 	"context"
 	"testing"
 
-	oteltrace "go.opentelemetry.io/otel/trace"
-
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // TestOTelConfigFromEnv_Sampler verifies that the sampler env vars are read
@@ -25,6 +25,24 @@ func TestOTelConfigFromEnv_Sampler(t *testing.T) {
 	}
 	if cfg.TracesSamplerArg != "0.25" {
 		t.Errorf("TracesSamplerArg = %q, want %q", cfg.TracesSamplerArg, "0.25")
+	}
+}
+
+// TestNewResource_NoSchemaConflict guards against the OTel resource schema-URL
+// conflict that crashes the service at startup. resource.Merge errors when the
+// SDK's default resource and our attribute resource carry differing non-empty
+// schema URLs, so this fails if the semconv import ever drifts from the schema
+// URL bundled by the installed go.opentelemetry.io/otel/sdk version.
+func TestNewResource_NoSchemaConflict(t *testing.T) {
+	res, err := newResource(OTelConfig{ServiceName: "test-svc", ServiceVersion: "1.2.3"})
+	if err != nil {
+		t.Fatalf("newResource returned error (semconv import likely out of sync with the OTel SDK default resource schema URL): %v", err)
+	}
+	if res == nil {
+		t.Fatal("newResource returned nil resource")
+	}
+	if got := res.SchemaURL(); got != semconv.SchemaURL {
+		t.Errorf("resource SchemaURL = %q, want %q", got, semconv.SchemaURL)
 	}
 }
 
