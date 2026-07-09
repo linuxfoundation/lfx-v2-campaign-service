@@ -210,17 +210,21 @@ func (r *ConnectionRepo) SetCredential(ctx context.Context, projectID string, pr
 }
 
 // Delete soft-deletes the connection.
-func (r *ConnectionRepo) Delete(ctx context.Context, projectID string, provider model.Provider) error {
+func (r *ConnectionRepo) Delete(ctx context.Context, projectID string, provider model.Provider, by *model.Actor) error {
 	if !provider.Valid() {
 		return fmt.Errorf("unknown provider %q", provider)
 	}
+	updatedBy, err := marshalActor(by)
+	if err != nil {
+		return err
+	}
 	//nolint:gosec // table name comes from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
-		"UPDATE %s SET status = 'deleted', version = version + 1, updated_at = now() "+
-			"WHERE project_id = $1 AND status <> 'deleted'",
+		"UPDATE %s SET status = 'deleted', updated_by = $1, version = version + 1, updated_at = now() "+
+			"WHERE project_id = $2 AND status <> 'deleted'",
 		provider.Table(),
 	)
-	tag, err := r.db.Exec(ctx, q, projectID)
+	tag, err := r.db.Exec(ctx, q, updatedBy, projectID)
 	if err != nil {
 		return fmt.Errorf("delete connection: %w", err)
 	}
