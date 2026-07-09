@@ -14,7 +14,9 @@ import (
 	"os"
 	"sync"
 
+	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
 	svcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/server"
+	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/container"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -34,15 +36,22 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
+	// NOTE: debug.LogPayloads() is intentionally NOT applied. Every authenticated
+	// payload carries a BearerToken (a valid JWT), and the connection service's
+	// create/set-credential payloads carry plaintext provider credentials, so
+	// enabling DEBUG would leak those secrets into logs. Debug HTTP logging
+	// (headers/status, no decoded payload) is still applied below via debug.HTTP().
 	endpoints := svc.NewEndpoints(cont.Service)
-	if cfg.Debug {
-		endpoints.Use(debug.LogPayloads())
+
+	var connEndpoints *connsvc.Endpoints
+	if cont.Connections != nil {
+		connEndpoints = connsvc.NewEndpoints(cont.Connections)
 	}
 
-	return handleHTTPServer(ctx, cfg, endpoints, cont)
+	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, cont)
 }
 
-func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, cont *container.Container) error {
+func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, cont *container.Container) error {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
@@ -69,6 +78,14 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 		koHTTPDir,
 	)
 	svcsvr.Mount(mux, server)
+
+	// Mount the connection routes when the connection service is wired (it is
+	// wired even without a database — with a nil repo — so its routes return the
+	// typed 503 rather than a bare 404).
+	if connEndpoints != nil {
+		connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+		connsvcsvr.Mount(mux, connServer)
+	}
 
 	var handler http.Handler = mux
 	handler = middleware.RequestIDMiddleware()(handler)
