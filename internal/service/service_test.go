@@ -19,7 +19,7 @@ func TestServiceReady(t *testing.T) {
 	}{
 		{
 			name:    "ready when constructed",
-			service: NewCampaignService(),
+			service: NewCampaignService(nil),
 			want:    true,
 		},
 		{
@@ -37,7 +37,7 @@ func TestServiceReady(t *testing.T) {
 }
 
 func TestLivez(t *testing.T) {
-	s := NewCampaignService()
+	s := NewCampaignService(nil)
 
 	result, err := s.Livez(context.Background())
 
@@ -54,7 +54,7 @@ func TestReadyz(t *testing.T) {
 	}{
 		{
 			name:         "ready returns OK",
-			service:      NewCampaignService(),
+			service:      NewCampaignService(nil),
 			expectError:  false,
 			expectedBody: "OK\n",
 		},
@@ -79,6 +79,28 @@ func TestReadyz(t *testing.T) {
 
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedBody, string(result))
+		})
+	}
+}
+
+// fakeReadiness is a ReadinessChecker whose result is controllable.
+type fakeReadiness struct{ ready bool }
+
+func (f fakeReadiness) Ready(context.Context) bool { return f.ready }
+
+func TestServiceReady_WithDependency(t *testing.T) {
+	tests := []struct {
+		name string
+		dep  ReadinessChecker
+		want bool
+	}{
+		{"healthy dependency", fakeReadiness{ready: true}, true},
+		{"unhealthy dependency", fakeReadiness{ready: false}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewCampaignService(tt.dep)
+			assert.Equal(t, tt.want, s.ServiceReady())
 		})
 	}
 }

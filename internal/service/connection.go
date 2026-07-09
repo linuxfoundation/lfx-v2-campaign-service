@@ -1,262 +1,551 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Package service — connection service stub.
+// Package service — per-provider connection adapters.
 //
-// This is the Phase 1 (LFXV2-2554) stub: it satisfies the generated connection
-// service interface and its Auther so the contract compiles and serves, but
-// every method returns "not implemented". The real business logic (validate,
-// encrypt, persist, audit) and in-app JWT validation land in LFXV2-2556.
-//
-// The 42 methods below (7 providers x 6 endpoints) are intentionally
-// mechanical; they exist so the generated interface is satisfied end to end.
+// Each provider's six methods are thin adapters: they convert the typed Goa
+// payload to the generic *model.Connection (plus plaintext credential JSON),
+// call the shared core helpers in connection_handler.go, and convert the
+// generic result back to the provider's typed Goa result. The repetitive shape
+// across providers is intentional; the interesting logic lives in
+// connection_handler.go.
 package service
 
 import (
 	"context"
-	"errors"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
-
-	"goa.design/goa/v3/security"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// ConnectionService implements the generated connection service interface.
-type ConnectionService struct{}
+// ─── GoogleAds ───
 
-// Ensure ConnectionService satisfies the generated interfaces.
-var (
-	_ conn.Service = (*ConnectionService)(nil)
-	_ conn.Auther  = (*ConnectionService)(nil)
-)
-
-// NewConnectionService constructs the connection service stub.
-func NewConnectionService() *ConnectionService {
-	return &ConnectionService{}
-}
-
-// errNotImplemented is the placeholder returned by every stub method until the
-// persistence layer (LFXV2-2556) is wired in.
-func errNotImplemented() error {
-	return &conn.InternalServerError{Code: "500", Message: "connection endpoints are not implemented yet (LFXV2-2556)"}
-}
-
-// JWTAuth authorizes a request. The Heimdall gateway has already validated the
-// JWT and enforced the campaign_manager relation; in-app validation of the
-// token audience is wired in LFXV2-2556. For now a non-empty token is accepted.
-func (s *ConnectionService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	if token == "" {
-		return ctx, errors.New("missing bearer token")
+func (s *ConnectionService) buildGoogleAdsResult(c *model.Connection) *conn.GoogleAdsConnection {
+	r := &conn.GoogleAdsConnection{
+		ID:             c.ID,
+		ProjectID:      c.ProjectID,
+		Label:          optStr(c.Label),
+		AccountID:      c.AccountID,
+		HasCredentials: c.HasCredentials(),
+		Status:         string(c.Status),
+		Version:        c.Version,
+		Etag:           etag(c.Version),
 	}
-	return ctx, nil
+	r.LoginCustomerID = optStr(c.ProviderConfig["login_customer_id"])
+	return r
 }
 
-// CreateGoogleAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) CreateGoogleAds(_ context.Context, _ *conn.CreateGoogleAdsPayload) (*conn.GoogleAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) CreateGoogleAds(ctx context.Context, p *conn.CreateGoogleAdsPayload) (*conn.GoogleAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderGoogleAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"login_customer_id": strVal(cfg.LoginCustomerID),
+		},
+		CreatedBy: actorFromCtx(ctx),
+	}
+	created, err := s.createConn(ctx, m, p.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildGoogleAdsResult(created), nil
 }
 
-// GetGoogleAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) GetGoogleAds(_ context.Context, _ *conn.GetGoogleAdsPayload) (*conn.GoogleAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) GetGoogleAds(ctx context.Context, p *conn.GetGoogleAdsPayload) (*conn.GoogleAdsConnection, error) {
+	c, err := s.getConn(ctx, p.ProjectID, model.ProviderGoogleAds)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildGoogleAdsResult(c), nil
 }
 
-// UpdateGoogleAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) UpdateGoogleAds(_ context.Context, _ *conn.UpdateGoogleAdsPayload) (*conn.GoogleAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) UpdateGoogleAds(ctx context.Context, p *conn.UpdateGoogleAdsPayload) (*conn.GoogleAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderGoogleAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"login_customer_id": strVal(cfg.LoginCustomerID),
+		},
+		UpdatedBy: actorFromCtx(ctx),
+	}
+	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildGoogleAdsResult(updated), nil
 }
 
-// DeleteGoogleAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) DeleteGoogleAds(_ context.Context, _ *conn.DeleteGoogleAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) DeleteGoogleAds(ctx context.Context, p *conn.DeleteGoogleAdsPayload) error {
+	return s.deleteConn(ctx, p.ProjectID, model.ProviderGoogleAds)
 }
 
-// TestGoogleAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) TestGoogleAds(_ context.Context, _ *conn.TestGoogleAdsPayload) (*conn.ConnectionTestResult, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) TestGoogleAds(ctx context.Context, p *conn.TestGoogleAdsPayload) (*conn.ConnectionTestResult, error) {
+	return s.testConn(ctx, p.ProjectID, model.ProviderGoogleAds)
 }
 
-// SetCredentialGoogleAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) SetCredentialGoogleAds(_ context.Context, _ *conn.SetCredentialGoogleAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.SetCredentialGoogleAdsPayload) error {
+	return s.setCredential(ctx, p.ProjectID, model.ProviderGoogleAds, p.Credentials, actorFromCtx(ctx))
 }
 
-// CreateLinkedinAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) CreateLinkedinAds(_ context.Context, _ *conn.CreateLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
-	return nil, errNotImplemented()
+// ─── LinkedinAds ───
+
+func (s *ConnectionService) buildLinkedinAdsResult(c *model.Connection) *conn.LinkedinAdsConnection {
+	r := &conn.LinkedinAdsConnection{
+		ID:             c.ID,
+		ProjectID:      c.ProjectID,
+		Label:          optStr(c.Label),
+		AccountID:      c.AccountID,
+		HasCredentials: c.HasCredentials(),
+		Status:         string(c.Status),
+		Version:        c.Version,
+		Etag:           etag(c.Version),
+	}
+	r.OrgID = optStr(c.ProviderConfig["org_id"])
+	return r
 }
 
-// GetLinkedinAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) GetLinkedinAds(_ context.Context, _ *conn.GetLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) CreateLinkedinAds(ctx context.Context, p *conn.CreateLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderLinkedInAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"org_id": cfg.OrgID,
+		},
+		CreatedBy: actorFromCtx(ctx),
+	}
+	created, err := s.createConn(ctx, m, p.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildLinkedinAdsResult(created), nil
 }
 
-// UpdateLinkedinAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) UpdateLinkedinAds(_ context.Context, _ *conn.UpdateLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) GetLinkedinAds(ctx context.Context, p *conn.GetLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
+	c, err := s.getConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildLinkedinAdsResult(c), nil
 }
 
-// DeleteLinkedinAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) DeleteLinkedinAds(_ context.Context, _ *conn.DeleteLinkedinAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) UpdateLinkedinAds(ctx context.Context, p *conn.UpdateLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderLinkedInAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"org_id": cfg.OrgID,
+		},
+		UpdatedBy: actorFromCtx(ctx),
+	}
+	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildLinkedinAdsResult(updated), nil
 }
 
-// TestLinkedinAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) TestLinkedinAds(_ context.Context, _ *conn.TestLinkedinAdsPayload) (*conn.ConnectionTestResult, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.DeleteLinkedinAdsPayload) error {
+	return s.deleteConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
 }
 
-// SetCredentialLinkedinAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) SetCredentialLinkedinAds(_ context.Context, _ *conn.SetCredentialLinkedinAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLinkedinAdsPayload) (*conn.ConnectionTestResult, error) {
+	return s.testConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
 }
 
-// CreateMetaAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) CreateMetaAds(_ context.Context, _ *conn.CreateMetaAdsPayload) (*conn.MetaAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) SetCredentialLinkedinAds(ctx context.Context, p *conn.SetCredentialLinkedinAdsPayload) error {
+	return s.setCredential(ctx, p.ProjectID, model.ProviderLinkedInAds, p.Credentials, actorFromCtx(ctx))
 }
 
-// GetMetaAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) GetMetaAds(_ context.Context, _ *conn.GetMetaAdsPayload) (*conn.MetaAdsConnection, error) {
-	return nil, errNotImplemented()
+// ─── MetaAds ───
+
+func (s *ConnectionService) buildMetaAdsResult(c *model.Connection) *conn.MetaAdsConnection {
+	r := &conn.MetaAdsConnection{
+		ID:             c.ID,
+		ProjectID:      c.ProjectID,
+		Label:          optStr(c.Label),
+		AccountID:      c.AccountID,
+		HasCredentials: c.HasCredentials(),
+		Status:         string(c.Status),
+		Version:        c.Version,
+		Etag:           etag(c.Version),
+	}
+	r.PageID = optStr(c.ProviderConfig["page_id"])
+	r.AppID = optStr(c.ProviderConfig["app_id"])
+	return r
 }
 
-// UpdateMetaAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) UpdateMetaAds(_ context.Context, _ *conn.UpdateMetaAdsPayload) (*conn.MetaAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) CreateMetaAds(ctx context.Context, p *conn.CreateMetaAdsPayload) (*conn.MetaAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderMetaAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"page_id": strVal(cfg.PageID),
+			"app_id":  strVal(cfg.AppID),
+		},
+		CreatedBy: actorFromCtx(ctx),
+	}
+	created, err := s.createConn(ctx, m, p.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildMetaAdsResult(created), nil
 }
 
-// DeleteMetaAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) DeleteMetaAds(_ context.Context, _ *conn.DeleteMetaAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) GetMetaAds(ctx context.Context, p *conn.GetMetaAdsPayload) (*conn.MetaAdsConnection, error) {
+	c, err := s.getConn(ctx, p.ProjectID, model.ProviderMetaAds)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildMetaAdsResult(c), nil
 }
 
-// TestMetaAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) TestMetaAds(_ context.Context, _ *conn.TestMetaAdsPayload) (*conn.ConnectionTestResult, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) UpdateMetaAds(ctx context.Context, p *conn.UpdateMetaAdsPayload) (*conn.MetaAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderMetaAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"page_id": strVal(cfg.PageID),
+			"app_id":  strVal(cfg.AppID),
+		},
+		UpdatedBy: actorFromCtx(ctx),
+	}
+	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildMetaAdsResult(updated), nil
 }
 
-// SetCredentialMetaAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) SetCredentialMetaAds(_ context.Context, _ *conn.SetCredentialMetaAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) DeleteMetaAds(ctx context.Context, p *conn.DeleteMetaAdsPayload) error {
+	return s.deleteConn(ctx, p.ProjectID, model.ProviderMetaAds)
 }
 
-// CreateRedditAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) CreateRedditAds(_ context.Context, _ *conn.CreateRedditAdsPayload) (*conn.RedditAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) TestMetaAds(ctx context.Context, p *conn.TestMetaAdsPayload) (*conn.ConnectionTestResult, error) {
+	return s.testConn(ctx, p.ProjectID, model.ProviderMetaAds)
 }
 
-// GetRedditAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) GetRedditAds(_ context.Context, _ *conn.GetRedditAdsPayload) (*conn.RedditAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) SetCredentialMetaAds(ctx context.Context, p *conn.SetCredentialMetaAdsPayload) error {
+	return s.setCredential(ctx, p.ProjectID, model.ProviderMetaAds, p.Credentials, actorFromCtx(ctx))
 }
 
-// UpdateRedditAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) UpdateRedditAds(_ context.Context, _ *conn.UpdateRedditAdsPayload) (*conn.RedditAdsConnection, error) {
-	return nil, errNotImplemented()
+// ─── RedditAds ───
+
+func (s *ConnectionService) buildRedditAdsResult(c *model.Connection) *conn.RedditAdsConnection {
+	r := &conn.RedditAdsConnection{
+		ID:             c.ID,
+		ProjectID:      c.ProjectID,
+		Label:          optStr(c.Label),
+		AccountID:      c.AccountID,
+		HasCredentials: c.HasCredentials(),
+		Status:         string(c.Status),
+		Version:        c.Version,
+		Etag:           etag(c.Version),
+	}
+	return r
 }
 
-// DeleteRedditAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) DeleteRedditAds(_ context.Context, _ *conn.DeleteRedditAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) CreateRedditAds(ctx context.Context, p *conn.CreateRedditAdsPayload) (*conn.RedditAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID:      p.ProjectID,
+		Provider:       model.ProviderRedditAds,
+		Label:          strVal(cfg.Label),
+		AccountID:      cfg.AccountID,
+		ProviderConfig: map[string]string{},
+		CreatedBy:      actorFromCtx(ctx),
+	}
+	created, err := s.createConn(ctx, m, p.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildRedditAdsResult(created), nil
 }
 
-// TestRedditAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) TestRedditAds(_ context.Context, _ *conn.TestRedditAdsPayload) (*conn.ConnectionTestResult, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) GetRedditAds(ctx context.Context, p *conn.GetRedditAdsPayload) (*conn.RedditAdsConnection, error) {
+	c, err := s.getConn(ctx, p.ProjectID, model.ProviderRedditAds)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildRedditAdsResult(c), nil
 }
 
-// SetCredentialRedditAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) SetCredentialRedditAds(_ context.Context, _ *conn.SetCredentialRedditAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) UpdateRedditAds(ctx context.Context, p *conn.UpdateRedditAdsPayload) (*conn.RedditAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID:      p.ProjectID,
+		Provider:       model.ProviderRedditAds,
+		Label:          strVal(cfg.Label),
+		AccountID:      cfg.AccountID,
+		ProviderConfig: map[string]string{},
+		UpdatedBy:      actorFromCtx(ctx),
+	}
+	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildRedditAdsResult(updated), nil
 }
 
-// CreateTwitterAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) CreateTwitterAds(_ context.Context, _ *conn.CreateTwitterAdsPayload) (*conn.TwitterAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) DeleteRedditAds(ctx context.Context, p *conn.DeleteRedditAdsPayload) error {
+	return s.deleteConn(ctx, p.ProjectID, model.ProviderRedditAds)
 }
 
-// GetTwitterAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) GetTwitterAds(_ context.Context, _ *conn.GetTwitterAdsPayload) (*conn.TwitterAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) TestRedditAds(ctx context.Context, p *conn.TestRedditAdsPayload) (*conn.ConnectionTestResult, error) {
+	return s.testConn(ctx, p.ProjectID, model.ProviderRedditAds)
 }
 
-// UpdateTwitterAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) UpdateTwitterAds(_ context.Context, _ *conn.UpdateTwitterAdsPayload) (*conn.TwitterAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) SetCredentialRedditAds(ctx context.Context, p *conn.SetCredentialRedditAdsPayload) error {
+	return s.setCredential(ctx, p.ProjectID, model.ProviderRedditAds, p.Credentials, actorFromCtx(ctx))
 }
 
-// DeleteTwitterAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) DeleteTwitterAds(_ context.Context, _ *conn.DeleteTwitterAdsPayload) error {
-	return errNotImplemented()
+// ─── TwitterAds ───
+
+func (s *ConnectionService) buildTwitterAdsResult(c *model.Connection) *conn.TwitterAdsConnection {
+	r := &conn.TwitterAdsConnection{
+		ID:             c.ID,
+		ProjectID:      c.ProjectID,
+		Label:          optStr(c.Label),
+		AccountID:      c.AccountID,
+		HasCredentials: c.HasCredentials(),
+		Status:         string(c.Status),
+		Version:        c.Version,
+		Etag:           etag(c.Version),
+	}
+	r.FundingInstrumentID = optStr(c.ProviderConfig["funding_instrument_id"])
+	return r
 }
 
-// TestTwitterAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) TestTwitterAds(_ context.Context, _ *conn.TestTwitterAdsPayload) (*conn.ConnectionTestResult, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) CreateTwitterAds(ctx context.Context, p *conn.CreateTwitterAdsPayload) (*conn.TwitterAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderTwitterAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"funding_instrument_id": strVal(cfg.FundingInstrumentID),
+		},
+		CreatedBy: actorFromCtx(ctx),
+	}
+	created, err := s.createConn(ctx, m, p.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildTwitterAdsResult(created), nil
 }
 
-// SetCredentialTwitterAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) SetCredentialTwitterAds(_ context.Context, _ *conn.SetCredentialTwitterAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) GetTwitterAds(ctx context.Context, p *conn.GetTwitterAdsPayload) (*conn.TwitterAdsConnection, error) {
+	c, err := s.getConn(ctx, p.ProjectID, model.ProviderTwitterAds)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildTwitterAdsResult(c), nil
 }
 
-// CreateMicrosoftAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) CreateMicrosoftAds(_ context.Context, _ *conn.CreateMicrosoftAdsPayload) (*conn.MicrosoftAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) UpdateTwitterAds(ctx context.Context, p *conn.UpdateTwitterAdsPayload) (*conn.TwitterAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderTwitterAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"funding_instrument_id": strVal(cfg.FundingInstrumentID),
+		},
+		UpdatedBy: actorFromCtx(ctx),
+	}
+	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildTwitterAdsResult(updated), nil
 }
 
-// GetMicrosoftAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) GetMicrosoftAds(_ context.Context, _ *conn.GetMicrosoftAdsPayload) (*conn.MicrosoftAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) DeleteTwitterAds(ctx context.Context, p *conn.DeleteTwitterAdsPayload) error {
+	return s.deleteConn(ctx, p.ProjectID, model.ProviderTwitterAds)
 }
 
-// UpdateMicrosoftAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) UpdateMicrosoftAds(_ context.Context, _ *conn.UpdateMicrosoftAdsPayload) (*conn.MicrosoftAdsConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) TestTwitterAds(ctx context.Context, p *conn.TestTwitterAdsPayload) (*conn.ConnectionTestResult, error) {
+	return s.testConn(ctx, p.ProjectID, model.ProviderTwitterAds)
 }
 
-// DeleteMicrosoftAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) DeleteMicrosoftAds(_ context.Context, _ *conn.DeleteMicrosoftAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) SetCredentialTwitterAds(ctx context.Context, p *conn.SetCredentialTwitterAdsPayload) error {
+	return s.setCredential(ctx, p.ProjectID, model.ProviderTwitterAds, p.Credentials, actorFromCtx(ctx))
 }
 
-// TestMicrosoftAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) TestMicrosoftAds(_ context.Context, _ *conn.TestMicrosoftAdsPayload) (*conn.ConnectionTestResult, error) {
-	return nil, errNotImplemented()
+// ─── MicrosoftAds ───
+
+func (s *ConnectionService) buildMicrosoftAdsResult(c *model.Connection) *conn.MicrosoftAdsConnection {
+	r := &conn.MicrosoftAdsConnection{
+		ID:             c.ID,
+		ProjectID:      c.ProjectID,
+		Label:          optStr(c.Label),
+		AccountID:      c.AccountID,
+		HasCredentials: c.HasCredentials(),
+		Status:         string(c.Status),
+		Version:        c.Version,
+		Etag:           etag(c.Version),
+	}
+	r.CustomerID = optStr(c.ProviderConfig["customer_id"])
+	return r
 }
 
-// SetCredentialMicrosoftAds is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) SetCredentialMicrosoftAds(_ context.Context, _ *conn.SetCredentialMicrosoftAdsPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) CreateMicrosoftAds(ctx context.Context, p *conn.CreateMicrosoftAdsPayload) (*conn.MicrosoftAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderMicrosoftAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"customer_id": strVal(cfg.CustomerID),
+		},
+		CreatedBy: actorFromCtx(ctx),
+	}
+	created, err := s.createConn(ctx, m, p.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildMicrosoftAdsResult(created), nil
 }
 
-// CreateHubspot is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) CreateHubspot(_ context.Context, _ *conn.CreateHubspotPayload) (*conn.HubspotConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) GetMicrosoftAds(ctx context.Context, p *conn.GetMicrosoftAdsPayload) (*conn.MicrosoftAdsConnection, error) {
+	c, err := s.getConn(ctx, p.ProjectID, model.ProviderMicrosoftAds)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildMicrosoftAdsResult(c), nil
 }
 
-// GetHubspot is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) GetHubspot(_ context.Context, _ *conn.GetHubspotPayload) (*conn.HubspotConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) UpdateMicrosoftAds(ctx context.Context, p *conn.UpdateMicrosoftAdsPayload) (*conn.MicrosoftAdsConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderMicrosoftAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"customer_id": strVal(cfg.CustomerID),
+		},
+		UpdatedBy: actorFromCtx(ctx),
+	}
+	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildMicrosoftAdsResult(updated), nil
 }
 
-// UpdateHubspot is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) UpdateHubspot(_ context.Context, _ *conn.UpdateHubspotPayload) (*conn.HubspotConnection, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) DeleteMicrosoftAds(ctx context.Context, p *conn.DeleteMicrosoftAdsPayload) error {
+	return s.deleteConn(ctx, p.ProjectID, model.ProviderMicrosoftAds)
 }
 
-// DeleteHubspot is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) DeleteHubspot(_ context.Context, _ *conn.DeleteHubspotPayload) error {
-	return errNotImplemented()
+func (s *ConnectionService) TestMicrosoftAds(ctx context.Context, p *conn.TestMicrosoftAdsPayload) (*conn.ConnectionTestResult, error) {
+	return s.testConn(ctx, p.ProjectID, model.ProviderMicrosoftAds)
 }
 
-// TestHubspot is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) TestHubspot(_ context.Context, _ *conn.TestHubspotPayload) (*conn.ConnectionTestResult, error) {
-	return nil, errNotImplemented()
+func (s *ConnectionService) SetCredentialMicrosoftAds(ctx context.Context, p *conn.SetCredentialMicrosoftAdsPayload) error {
+	return s.setCredential(ctx, p.ProjectID, model.ProviderMicrosoftAds, p.Credentials, actorFromCtx(ctx))
 }
 
-// SetCredentialHubspot is not implemented yet (LFXV2-2556).
-func (s *ConnectionService) SetCredentialHubspot(_ context.Context, _ *conn.SetCredentialHubspotPayload) error {
-	return errNotImplemented()
+// ─── Hubspot ───
+
+func (s *ConnectionService) buildHubspotResult(c *model.Connection) *conn.HubspotConnection {
+	r := &conn.HubspotConnection{
+		ID:             c.ID,
+		ProjectID:      c.ProjectID,
+		Label:          optStr(c.Label),
+		AccountID:      c.AccountID,
+		HasCredentials: c.HasCredentials(),
+		Status:         string(c.Status),
+		Version:        c.Version,
+		Etag:           etag(c.Version),
+	}
+	r.PortalID = optStr(c.ProviderConfig["portal_id"])
+	r.SenderEmail = optStr(c.ProviderConfig["sender_email"])
+	r.SenderName = optStr(c.ProviderConfig["sender_name"])
+	r.BrandKit = optStr(c.ProviderConfig["brand_kit"])
+	return r
+}
+
+func (s *ConnectionService) CreateHubspot(ctx context.Context, p *conn.CreateHubspotPayload) (*conn.HubspotConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderHubSpot,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"portal_id":    strVal(cfg.PortalID),
+			"sender_email": strVal(cfg.SenderEmail),
+			"sender_name":  strVal(cfg.SenderName),
+			"brand_kit":    strVal(cfg.BrandKit),
+		},
+		CreatedBy: actorFromCtx(ctx),
+	}
+	created, err := s.createConn(ctx, m, p.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildHubspotResult(created), nil
+}
+
+func (s *ConnectionService) GetHubspot(ctx context.Context, p *conn.GetHubspotPayload) (*conn.HubspotConnection, error) {
+	c, err := s.getConn(ctx, p.ProjectID, model.ProviderHubSpot)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildHubspotResult(c), nil
+}
+
+func (s *ConnectionService) UpdateHubspot(ctx context.Context, p *conn.UpdateHubspotPayload) (*conn.HubspotConnection, error) {
+	cfg := p.Config
+	m := &model.Connection{
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderHubSpot,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"portal_id":    strVal(cfg.PortalID),
+			"sender_email": strVal(cfg.SenderEmail),
+			"sender_name":  strVal(cfg.SenderName),
+			"brand_kit":    strVal(cfg.BrandKit),
+		},
+		UpdatedBy: actorFromCtx(ctx),
+	}
+	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildHubspotResult(updated), nil
+}
+
+func (s *ConnectionService) DeleteHubspot(ctx context.Context, p *conn.DeleteHubspotPayload) error {
+	return s.deleteConn(ctx, p.ProjectID, model.ProviderHubSpot)
+}
+
+func (s *ConnectionService) TestHubspot(ctx context.Context, p *conn.TestHubspotPayload) (*conn.ConnectionTestResult, error) {
+	return s.testConn(ctx, p.ProjectID, model.ProviderHubSpot)
+}
+
+func (s *ConnectionService) SetCredentialHubspot(ctx context.Context, p *conn.SetCredentialHubspotPayload) error {
+	return s.setCredential(ctx, p.ProjectID, model.ProviderHubSpot, p.Credentials, actorFromCtx(ctx))
 }

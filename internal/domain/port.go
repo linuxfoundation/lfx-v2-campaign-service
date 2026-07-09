@@ -34,7 +34,7 @@ type ConnectionWriter interface {
 	SetCredential(ctx context.Context, projectID string, provider model.Provider, ciphertext []byte, by *model.Actor) (*model.Connection, error)
 
 	// Delete soft-deletes the connection (status = deleted).
-	Delete(ctx context.Context, projectID string, provider model.Provider) error
+	Delete(ctx context.Context, projectID string, provider model.Provider, by *model.Actor) error
 }
 
 // ConnectionRepository is the full persistence port for connections.
