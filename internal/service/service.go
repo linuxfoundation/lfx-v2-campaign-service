@@ -48,6 +48,8 @@ func NewCampaignService(dep ReadinessChecker) *CampaignService {
 
 // ServiceReady reports whether the service is able to accept inbound requests:
 // the service is constructed and every wired dependency is healthy.
+// Prefer Readyz for probe paths so the request context bounds the dependency
+// check; this helper remains for tests and callers without a request context.
 func (s *CampaignService) ServiceReady() bool {
 	if !s.ready {
 		return false
@@ -63,13 +65,26 @@ func (s *CampaignService) ServiceReady() bool {
 // Readyz checks if the service is able to take inbound requests, including a
 // lightweight PostgreSQL connectivity check when a database dependency is wired.
 func (s *CampaignService) Readyz(ctx context.Context) ([]byte, error) {
-	if !s.ServiceReady() {
-		slog.WarnContext(ctx, "readyz: service not ready")
+	if !s.ready {
+		slog.DebugContext(ctx, "readyz: service not ready")
 		return nil, &campaignsvc.ServiceUnavailableError{
 			Code:    "503",
 			Message: "The service is unavailable.",
 		}
 	}
+
+	if s.dep != nil {
+		pingCtx, cancel := context.WithTimeout(ctx, readinessProbeTimeout)
+		defer cancel()
+		if !s.dep.Ready(pingCtx) {
+			slog.DebugContext(ctx, "readyz: service not ready")
+			return nil, &campaignsvc.ServiceUnavailableError{
+				Code:    "503",
+				Message: "The service is unavailable.",
+			}
+		}
+	}
+
 	return []byte("OK\n"), nil
 }
 
