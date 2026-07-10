@@ -23,11 +23,12 @@ Reports land under `megalinter-reports/` (gitignored).
 scoped allowlists:
 
 - Test fixtures (`*_test.go`), `go.mod`/`go.sum`, and `CLAUDE.md`
-- Goa-generated CLI file
-  `gen/http/cli/lfx_v2_campaign_service/cli.go` (twitter-api-secret
-  false positive; also fingerprinted in `.gitleaksignore`)
 - Documented local/dev AES sample key only in README, the db-conn-check
   quickstart, and `values.local.example.yaml` (path **and** value)
+
+Goa CLI `twitter-api-secret` false positive in
+`gen/http/cli/lfx_v2_campaign_service/cli.go` is suppressed via fingerprint
+in [`.gitleaksignore`](../../../.gitleaksignore) (not a path allowlist).
 
 Faster secrets-only check:
 
@@ -42,3 +43,5 @@ gitleaks detect --source . --config .gitleaks.toml
 golang-migrate / `dktest`). MegaLinter is pointed at that config with
 `REPOSITORY_GRYPE_ARGUMENTS: "--config .grype.yaml"`. Ignores are
 package-scoped so new findings in runtime dependencies still fail CI.
+Engine patches exist, but a remediated Go module is not yet resolvable on
+the path migrate pulls; track a migrate/dktest upgrade separately.

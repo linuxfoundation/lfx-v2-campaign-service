@@ -6,10 +6,16 @@
 # The ignored vulnerabilities below are all in github.com/docker/docker, a
 # TRANSITIVE, TEST-ONLY dependency pulled in via golang-migrate's pgx driver
 # tests (dhui/dktest). It is never imported by the service binary that ships
-# to production. Four of the five have no fixed version available; the one
-# that does (GHSA-x744-4wpc-v9h2, fixed in 29.3.1) is gated behind a
-# dependency upgrade tracked separately. These are ignored (not suppressed
-# globally) so any NEW vulnerability in a real runtime dependency still fails CI.
+# to production.
+#
+# Engine releases document fixes (e.g. 29.3.1 / 29.3.2), but those versions are
+# not published on the Go module path we resolve today (proxy.golang.org tops
+# out around v28.5.x for github.com/docker/docker; some advisories list
+# first_patched_version: null for that module and point at moby/moby/v2).
+# Until migrate/dktest pulls a remediated client module, keep these
+# package-scoped ignores so NEW findings in runtime deps still fail CI.
+# Track: upgrade golang-migrate / dktest (or replace) when a fixed module is
+# available — do not treat this ignore list as permanent.
 ignore:
   - vulnerability: GHSA-x744-4wpc-v9h2
     package:

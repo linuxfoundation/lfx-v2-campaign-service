@@ -2,6 +2,10 @@
 
 ## 2026-07-10
 
+**Update** — Dropped the Goa CLI path allowlist; twitter-api-secret FP is
+fingerprint-only in `.gitleaksignore`. Clarified `.grype.yaml` rationale
+(Engine fixes exist; Go module path not yet upgradeable via migrate/dktest).
+
 **Update** — Absorbed PR #18 grype fixes into the MegaLinter secrets work:
 added `.grype.yaml` (ignore five transitive test-only `docker/docker`
 CVEs) and `REPOSITORY_GRYPE_ARGUMENTS` in `.mega-linter.yml`. Kept the

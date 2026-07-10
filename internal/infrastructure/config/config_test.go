@@ -230,10 +230,9 @@ func TestLoadDatabaseFromEnv_DefaultPort(t *testing.T) {
 
 func TestConfigString_RedactsSecrets(t *testing.T) {
 	cfg := &Config{
-		Host: "*",
-		Port: "8080",
-		// Intentional fake DSN for redaction tests — not a real secret.
-		DatabaseURL:             "postgres://campaign:s3cret-value@db.example.com:5432/campaign", // secretlint-disable-line -- test fixture
+		Host:                    "*",
+		Port:                    "8080",
+		DatabaseURL:             "postgres://campaign:s3cret-value@db.example.com:5432/campaign", // secretlint-disable-line -- intentional fake DSN
 		CredentialEncryptionKey: "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE=",
 		PGHost:                  "db.example.com",
 		PGUser:                  "campaign",

@@ -18,15 +18,9 @@ paths = [
     '''CLAUDE\.md$'''
 ]
 
-# Narrow path allowlist for the known Goa CLI false positive. Prefer a
-# single generated file over all of gen/, and avoid targetRules here —
-# MegaLinter CI (gitleaks v8.28.0) still reported twitter-api-secret when
-# this allowlist used targetRules + gen/, while other [[allowlists]] applied.
-[[allowlists]]
-description = "Goa-generated CLI usage string false positive"
-paths = [
-    '''(^|/)gen/http/cli/lfx_v2_campaign_service/cli\.go$'''
-]
+# Goa CLI twitter-api-secret false positive is suppressed via fingerprint in
+# .gitleaksignore (not a path allowlist — that would mute all rules for the
+# file). targetRules + path did not clear the finding under gitleaks v8.28.0.
 
 # Sample local/dev AES key is ignored only when it appears in documented
 # non-production paths (not if copied into production manifests).
