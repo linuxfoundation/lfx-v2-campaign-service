@@ -18,7 +18,7 @@
 
 ## R2 — Connection settings / env var shape
 
-**Decision**: Accept discrete env vars `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` (and optionally validate `engine`/`PGENGINE` is postgres when present). Compose a DSN in-process. Do not require a pre-built `DATABASE_URL` in the secret.
+**Decision**: Accept discrete env vars `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` (and optionally validate `PGENGINE` (from secret key `engine`) is postgres when present). Compose a DSN in-process. Do not require a pre-built `DATABASE_URL` in the secret.
 
 **Rationale**: The provisioned Kubernetes secret exposes field keys `host`, `port`, `username`, `password`, `dbname`, `engine` — the same shape newsletter uses with `shape: "fields"`. Composing the URL in-process keeps the password out of shell/Helm string interpolation. Campaign chart already supports per-key `valueFrom.secretKeyRef` under `app.environment`.
 

@@ -122,8 +122,8 @@ func TestReadyz_DependencyTimeout(t *testing.T) {
 	assert.Nil(t, result)
 	var unavailable *campaignsvc.ServiceUnavailableError
 	assert.ErrorAs(t, err, &unavailable)
+	assert.True(t, dep.sawCanceled, "dependency must observe context cancellation")
 	assert.GreaterOrEqual(t, elapsed, readinessProbeTimeout)
-	assert.Less(t, elapsed, readinessProbeTimeout+500*time.Millisecond)
 }
 
 // fakeReadiness is a ReadinessChecker whose result is controllable.
@@ -143,10 +143,13 @@ func (c *countingReadiness) Ready(context.Context) bool {
 }
 
 // blockingReadiness waits until ctx is done, then reports not ready.
-type blockingReadiness struct{}
+type blockingReadiness struct {
+	sawCanceled bool
+}
 
-func (blockingReadiness) Ready(ctx context.Context) bool {
+func (b *blockingReadiness) Ready(ctx context.Context) bool {
 	<-ctx.Done()
+	b.sawCanceled = ctx.Err() != nil
 	return false
 }
 

@@ -17,7 +17,7 @@ Provisioned connection parameters consumed at process startup.
 | Username | `username` → `PGUSER` | Yes | DB role |
 | Password | `password` → `PGPASSWORD` | Yes | Secret; never logged/traced |
 | Database name | `dbname` → `PGDATABASE` | Yes | Target database |
-| Engine | `engine` → optional `PGENGINE` / `ENGINE` | No* | When present, must indicate PostgreSQL |
+| Engine | `engine` → optional `PGENGINE` | No* | When present, must indicate PostgreSQL |
 
 \*If engine is supplied and is not PostgreSQL, startup MUST fail. If absent, assume PostgreSQL (secret is known to be Postgres).
 
