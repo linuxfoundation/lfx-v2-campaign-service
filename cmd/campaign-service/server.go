@@ -125,16 +125,6 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints)
 	if err != nil {
 		return err
-=======
-	if connEndpoints != nil {
-		connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
-		connsvcsvr.Mount(mux, connServer)
-	}
-
-	if briefEndpoints != nil {
-		briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
-		briefsvcsvr.Mount(mux, briefServer)
->>>>>>> daac45d (feat(briefs): add brief + campaign API and async orchestrator)
 	}
 
 	var handler http.Handler = mux

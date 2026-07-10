@@ -155,3 +155,54 @@ func TestBriefService_CreateCampaigns_RejectsEmptyPlatforms(t *testing.T) {
 		t.Fatalf("expected *briefs.BadRequestError for empty platforms, got %T (%v)", err, err)
 	}
 }
+
+// CreateCampaigns must reject a duplicate platform (400) rather than dispatching
+// the same platform twice, which would create two paid upstream campaigns.
+func TestBriefService_CreateCampaigns_RejectsDuplicatePlatforms(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefApproved,
+	}
+	s := newTestBriefService(repo)
+	_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{Platforms: []string{"google-ads", "google-ads"}},
+	})
+	if _, ok := err.(*briefs.BadRequestError); !ok {
+		t.Fatalf("expected *briefs.BadRequestError for duplicate platforms, got %T (%v)", err, err)
+	}
+}
+
+// Create/Get must round-trip the full brief content (event_details, copy,
+// keywords, targeting), not drop it from the response.
+func TestBriefService_ResponseIncludesBriefContent(t *testing.T) {
+	repo := newFakeBriefRepo()
+	s := newTestBriefService(repo)
+	details := map[string]any{"venue": "Salt Lake City"}
+	kw := []any{"kubernetes", "cloud native"}
+	created, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief: &briefs.BriefInput{
+			ProgramType:  "events",
+			EventSlug:    "kubecon-2025",
+			EventDetails: details,
+			Keywords:     kw,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+	if created.EventDetails == nil {
+		t.Error("create response dropped event_details")
+	}
+	got, err := s.GetBrief(context.Background(), &briefs.GetBriefPayload{ProjectID: "cncf", BriefID: created.ID})
+	if err != nil {
+		t.Fatalf("GetBrief: %v", err)
+	}
+	if got.EventDetails == nil {
+		t.Error("get response dropped event_details")
+	}
+	if got.Keywords == nil {
+		t.Error("get response dropped keywords")
+	}
+}

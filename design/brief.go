@@ -40,6 +40,10 @@ var Brief = Type("brief", func() {
 	Attribute("event_slug", String, "Event/course slug")
 	Attribute("url", String, "Event/course page URL")
 	Attribute("platforms", ArrayOf(String), "Suggested default platforms")
+	Attribute("event_details", Any, "Extracted event/course details")
+	Attribute("copy", Any, "Ad copy")
+	Attribute("keywords", Any, "Keyword list")
+	Attribute("targeting", Any, "Targeting recommendation")
 	Attribute("status", String, "Lifecycle status", func() {
 		Enum("draft", "approved", "archived")
 	})
@@ -52,7 +56,11 @@ var Brief = Type("brief", func() {
 
 // CampaignCreateInput selects the platforms to launch on and their config.
 var CampaignCreateInput = Type("campaign-create-input", func() {
-	Attribute("platforms", ArrayOf(String), "Platforms to create campaigns on (binding selection)")
+	Attribute("platforms", ArrayOf(String, func() {
+		// Constrain to the known providers so OpenAPI clients can discover the
+		// valid values and Goa advertises them; the service also revalidates.
+		Enum("google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot")
+	}), "Platforms to create campaigns on (binding selection)")
 	Attribute("config", Any, "Per-platform campaign configuration")
 	Required("platforms")
 })
@@ -297,22 +305,25 @@ func campaignIDAttr() {
 }
 
 // commonBriefErrors declares the standard error set for a brief method.
-// withBadRequest adds BadRequest for methods that accept a body.
+// BadRequest is always declared: JWTAuth can reject any method with a 400
+// (malformed/invalid token) regardless of whether the method takes a body, so
+// every method's generated encoder must handle it. The withBadRequest parameter
+// is retained for call-site readability (true = the method also validates a body)
+// but no longer gates BadRequest.
 func commonBriefErrors(withBadRequest bool) {
-	if withBadRequest {
-		Error("BadRequest", BadRequestError, "Bad request")
-	}
+	_ = withBadRequest
+	Error("BadRequest", BadRequestError, "Bad request")
 	Error("NotFound", NotFoundError, "Resource not found")
 	Error("Conflict", ConflictError, "Conflict")
 	Error("InternalServerError", InternalServerError, "Internal server error")
 	Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 }
 
-// briefErrorResponses maps the standard errors to HTTP responses.
+// briefErrorResponses maps the standard errors to HTTP responses. BadRequest is
+// always mapped to match commonBriefErrors.
 func briefErrorResponses(withBadRequest bool) {
-	if withBadRequest {
-		Response("BadRequest", StatusBadRequest)
-	}
+	_ = withBadRequest
+	Response("BadRequest", StatusBadRequest)
 	Response("NotFound", StatusNotFound)
 	Response("Conflict", StatusConflict)
 	Response("InternalServerError", StatusInternalServerError)

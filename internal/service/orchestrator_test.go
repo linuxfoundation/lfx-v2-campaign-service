@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -59,10 +60,28 @@ func (r *fakeJobRepo) UpdateJobStatus(_ context.Context, id string, status model
 type fakeCampaignRepo struct {
 	mu       sync.Mutex
 	upserted []*model.Campaign
+	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
+	// test simulate a brief already dispatched to a platform (idempotency guard).
+	existing map[string]*model.Campaign
+	// byPlatformErr, when set, is returned by GetCampaignByPlatform to simulate a
+	// transient lookup failure.
+	byPlatformErr error
 }
 
 func (r *fakeCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
 	return nil, errors.New("unused")
+}
+
+func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, briefID string, platform model.Provider) (*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.byPlatformErr != nil {
+		return nil, r.byPlatformErr
+	}
+	if c, ok := r.existing[briefID+"|"+string(platform)]; ok {
+		return c, nil
+	}
+	return nil, domain.ErrNotFound
 }
 func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
 	r.mu.Lock()
@@ -172,6 +191,76 @@ func TestOrchestrator_NilCampaignFailsWithoutPanic(t *testing.T) {
 	}
 	if len(camps.upserted) != 0 {
 		t.Errorf("upserted %d campaigns, want 0 (nil campaign must not persist)", len(camps.upserted))
+	}
+}
+
+// countingDispatcher records how many times Dispatch is called, to prove the
+// idempotency guard skips the upstream create.
+type countingDispatcher struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (d *countingDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	d.mu.Lock()
+	d.calls++
+	d.mu.Unlock()
+	return &model.Campaign{PlatformCampaignID: "pc-" + string(p), Status: "active", CampaignName: "n"}, nil
+}
+
+// TestOrchestrator_SkipsAlreadyDispatchedPlatform verifies that a brief already
+// carrying a campaign with an upstream id for a platform does NOT re-invoke the
+// platform's create API (which would spend money on a duplicate).
+func TestOrchestrator_SkipsAlreadyDispatchedPlatform(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
+		"b1|" + string(model.ProviderGoogleAds): {ID: "existing-c1", PlatformCampaignID: "pc-google-ads"},
+	}}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Errorf("status = %s, want succeeded", j.Status)
+	}
+	disp.mu.Lock()
+	calls := disp.calls
+	disp.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("Dispatch called %d times, want 0 (existing campaign must be reused)", calls)
+	}
+	if len(camps.upserted) != 0 {
+		t.Errorf("upserted %d campaigns, want 0 (no re-create)", len(camps.upserted))
+	}
+}
+
+// TestOrchestrator_TransientLookupErrorIsFailure verifies that a transient error
+// from the existing-campaign lookup is recorded as a platform failure rather
+// than proceeding to a create that could duplicate.
+func TestOrchestrator_TransientLookupErrorIsFailure(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{byPlatformErr: errors.New("db down")}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+	disp.mu.Lock()
+	calls := disp.calls
+	disp.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("Dispatch called %d times, want 0 (must not create when lookup is uncertain)", calls)
 	}
 }
 

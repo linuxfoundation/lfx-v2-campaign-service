@@ -26,6 +26,16 @@ must also be mounted in `server.go`, or its routes 404 despite compiling.
 **Creation** — Added the `internal/platform/reddit` concept doc for the new
 Reddit Ads API v3 client (OAuth2 token refresh + Campaign -> Ad Group -> Ad
 creation) and listed it in the code index.
+**Update** — Brief + campaign API and async orchestrator (LFXV2-2626):
+updated `design`, `internal/service`, and `internal/container` concepts for
+the Project → Brief → Campaigns hierarchy, async job dispatch, and idempotent
+per-platform creation. Behavior hardened per review: brief content replace
+resets status to `draft` and persists `event_slug`; duplicate platform sets are
+rejected; dispatch reuses an existing upstream campaign instead of re-creating;
+brief responses carry `event_details`/`copy`/`keywords`/`targeting`; the
+`(project_id, event_slug)` archived-aware partial unique index moved to a new
+migration `000003` (never edit an applied migration in place); `platforms` is
+enum-constrained and every brief method declares `BadRequest` (JWTAuth can 400).
 
 **Update** — Dropped the Goa CLI path allowlist; twitter-api-secret FP is
 fingerprint-only in `.gitleaksignore`. Clarified `.grype.yaml` rationale

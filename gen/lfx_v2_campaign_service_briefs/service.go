@@ -84,6 +84,14 @@ type Brief struct {
 	URL *string
 	// Suggested default platforms
 	Platforms []string
+	// Extracted event/course details
+	EventDetails any
+	// Ad copy
+	Copy any
+	// Keyword list
+	Keywords any
+	// Targeting recommendation
+	Targeting any
 	// Lifecycle status
 	Status string
 	// Optimistic-concurrency version

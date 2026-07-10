@@ -38,6 +38,10 @@ type BriefRepository interface {
 type CampaignReader interface {
 	// GetCampaign returns a single campaign under a brief, or ErrNotFound.
 	GetCampaign(ctx context.Context, projectID, briefID, id string) (*model.Campaign, error)
+	// GetCampaignByPlatform returns the campaign for a (brief, platform) pair, or
+	// ErrNotFound. Used to make dispatch idempotent: a brief already dispatched to
+	// a platform must not create a second upstream (paid) campaign on retry.
+	GetCampaignByPlatform(ctx context.Context, briefID string, platform model.Provider) (*model.Campaign, error)
 }
 
 // CampaignWriter mutates campaigns.

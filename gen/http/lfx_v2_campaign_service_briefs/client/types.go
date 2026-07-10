@@ -53,6 +53,14 @@ type CreateBriefResponseBody struct {
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+	// Extracted event/course details
+	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
+	// Ad copy
+	Copy any `form:"copy,omitempty" json:"copy,omitempty" xml:"copy,omitempty"`
+	// Keyword list
+	Keywords any `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+	// Targeting recommendation
+	Targeting any `form:"targeting,omitempty" json:"targeting,omitempty" xml:"targeting,omitempty"`
 	// Lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
@@ -74,6 +82,14 @@ type GetBriefResponseBody struct {
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+	// Extracted event/course details
+	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
+	// Ad copy
+	Copy any `form:"copy,omitempty" json:"copy,omitempty" xml:"copy,omitempty"`
+	// Keyword list
+	Keywords any `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+	// Targeting recommendation
+	Targeting any `form:"targeting,omitempty" json:"targeting,omitempty" xml:"targeting,omitempty"`
 	// Lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
@@ -95,6 +111,14 @@ type UpdateBriefResponseBody struct {
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+	// Extracted event/course details
+	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
+	// Ad copy
+	Copy any `form:"copy,omitempty" json:"copy,omitempty" xml:"copy,omitempty"`
+	// Keyword list
+	Keywords any `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+	// Targeting recommendation
+	Targeting any `form:"targeting,omitempty" json:"targeting,omitempty" xml:"targeting,omitempty"`
 	// Lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
@@ -116,6 +140,14 @@ type ApproveBriefResponseBody struct {
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 	// Suggested default platforms
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+	// Extracted event/course details
+	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
+	// Ad copy
+	Copy any `form:"copy,omitempty" json:"copy,omitempty" xml:"copy,omitempty"`
+	// Keyword list
+	Keywords any `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+	// Targeting recommendation
+	Targeting any `form:"targeting,omitempty" json:"targeting,omitempty" xml:"targeting,omitempty"`
 	// Lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
@@ -240,6 +272,16 @@ type CreateBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetBriefBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
+// body for the "BadRequest" error.
+type GetBriefBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetBriefConflictResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-brief" endpoint HTTP response
 // body for the "Conflict" error.
@@ -350,6 +392,16 @@ type UpdateBriefPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ApproveBriefBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "BadRequest" error.
+type ApproveBriefBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ApproveBriefConflictResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
 // response body for the "Conflict" error.
@@ -384,6 +436,16 @@ type ApproveBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
 // response body for the "NotFound" error.
 type ApproveBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteBriefBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
+// response body for the "BadRequest" error.
+type DeleteBriefBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -474,6 +536,16 @@ type CreateCampaignsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "NotFound" error.
 type CreateCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetCampaignBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -584,6 +656,16 @@ type UpdateCampaignPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body for the "PreconditionRequired" error.
 type UpdateCampaignPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetJobBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
+// body for the "BadRequest" error.
+type GetJobBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -717,13 +799,17 @@ func NewUpdateCampaignRequestBody(p *lfxv2campaignservicebriefs.UpdateCampaignPa
 // "create-brief" endpoint result from a HTTP "Created" response.
 func NewCreateBriefBriefCreated(body *CreateBriefResponseBody, etag *string) *lfxv2campaignservicebriefs.Brief {
 	v := &lfxv2campaignservicebriefs.Brief{
-		ID:          *body.ID,
-		ProjectID:   *body.ProjectID,
-		ProgramType: *body.ProgramType,
-		EventSlug:   *body.EventSlug,
-		URL:         body.URL,
-		Status:      *body.Status,
-		Version:     *body.Version,
+		ID:           *body.ID,
+		ProjectID:    *body.ProjectID,
+		ProgramType:  *body.ProgramType,
+		EventSlug:    *body.EventSlug,
+		URL:          body.URL,
+		EventDetails: body.EventDetails,
+		Copy:         body.Copy,
+		Keywords:     body.Keywords,
+		Targeting:    body.Targeting,
+		Status:       *body.Status,
+		Version:      *body.Version,
 	}
 	if body.Platforms != nil {
 		v.Platforms = make([]string, len(body.Platforms))
@@ -795,13 +881,17 @@ func NewCreateBriefNotFound(body *CreateBriefNotFoundResponseBody) *lfxv2campaig
 // "get-brief" endpoint result from a HTTP "OK" response.
 func NewGetBriefBriefOK(body *GetBriefResponseBody, etag *string) *lfxv2campaignservicebriefs.Brief {
 	v := &lfxv2campaignservicebriefs.Brief{
-		ID:          *body.ID,
-		ProjectID:   *body.ProjectID,
-		ProgramType: *body.ProgramType,
-		EventSlug:   *body.EventSlug,
-		URL:         body.URL,
-		Status:      *body.Status,
-		Version:     *body.Version,
+		ID:           *body.ID,
+		ProjectID:    *body.ProjectID,
+		ProgramType:  *body.ProgramType,
+		EventSlug:    *body.EventSlug,
+		URL:          body.URL,
+		EventDetails: body.EventDetails,
+		Copy:         body.Copy,
+		Keywords:     body.Keywords,
+		Targeting:    body.Targeting,
+		Status:       *body.Status,
+		Version:      *body.Version,
 	}
 	if body.Platforms != nil {
 		v.Platforms = make([]string, len(body.Platforms))
@@ -810,6 +900,17 @@ func NewGetBriefBriefOK(body *GetBriefResponseBody, etag *string) *lfxv2campaign
 		}
 	}
 	v.Etag = etag
+
+	return v
+}
+
+// NewGetBriefBadRequest builds a lfx-v2-campaign-service-briefs service
+// get-brief endpoint BadRequest error.
+func NewGetBriefBadRequest(body *GetBriefBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
 
 	return v
 }
@@ -862,13 +963,17 @@ func NewGetBriefNotFound(body *GetBriefNotFoundResponseBody) *lfxv2campaignservi
 // "update-brief" endpoint result from a HTTP "OK" response.
 func NewUpdateBriefBriefOK(body *UpdateBriefResponseBody, etag *string) *lfxv2campaignservicebriefs.Brief {
 	v := &lfxv2campaignservicebriefs.Brief{
-		ID:          *body.ID,
-		ProjectID:   *body.ProjectID,
-		ProgramType: *body.ProgramType,
-		EventSlug:   *body.EventSlug,
-		URL:         body.URL,
-		Status:      *body.Status,
-		Version:     *body.Version,
+		ID:           *body.ID,
+		ProjectID:    *body.ProjectID,
+		ProgramType:  *body.ProgramType,
+		EventSlug:    *body.EventSlug,
+		URL:          body.URL,
+		EventDetails: body.EventDetails,
+		Copy:         body.Copy,
+		Keywords:     body.Keywords,
+		Targeting:    body.Targeting,
+		Status:       *body.Status,
+		Version:      *body.Version,
 	}
 	if body.Platforms != nil {
 		v.Platforms = make([]string, len(body.Platforms))
@@ -962,13 +1067,17 @@ func NewUpdateBriefPreconditionRequired(body *UpdateBriefPreconditionRequiredRes
 // "approve-brief" endpoint result from a HTTP "OK" response.
 func NewApproveBriefBriefOK(body *ApproveBriefResponseBody, etag *string) *lfxv2campaignservicebriefs.Brief {
 	v := &lfxv2campaignservicebriefs.Brief{
-		ID:          *body.ID,
-		ProjectID:   *body.ProjectID,
-		ProgramType: *body.ProgramType,
-		EventSlug:   *body.EventSlug,
-		URL:         body.URL,
-		Status:      *body.Status,
-		Version:     *body.Version,
+		ID:           *body.ID,
+		ProjectID:    *body.ProjectID,
+		ProgramType:  *body.ProgramType,
+		EventSlug:    *body.EventSlug,
+		URL:          body.URL,
+		EventDetails: body.EventDetails,
+		Copy:         body.Copy,
+		Keywords:     body.Keywords,
+		Targeting:    body.Targeting,
+		Status:       *body.Status,
+		Version:      *body.Version,
 	}
 	if body.Platforms != nil {
 		v.Platforms = make([]string, len(body.Platforms))
@@ -977,6 +1086,17 @@ func NewApproveBriefBriefOK(body *ApproveBriefResponseBody, etag *string) *lfxv2
 		}
 	}
 	v.Etag = etag
+
+	return v
+}
+
+// NewApproveBriefBadRequest builds a lfx-v2-campaign-service-briefs service
+// approve-brief endpoint BadRequest error.
+func NewApproveBriefBadRequest(body *ApproveBriefBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
 
 	return v
 }
@@ -1018,6 +1138,17 @@ func NewApproveBriefInternalServerError(body *ApproveBriefInternalServerErrorRes
 // approve-brief endpoint NotFound error.
 func NewApproveBriefNotFound(body *ApproveBriefNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteBriefBadRequest builds a lfx-v2-campaign-service-briefs service
+// delete-brief endpoint BadRequest error.
+func NewDeleteBriefBadRequest(body *DeleteBriefBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -1157,6 +1288,17 @@ func NewGetCampaignCampaignOK(body *GetCampaignResponseBody, etag *string) *lfxv
 		Version:            *body.Version,
 	}
 	v.Etag = etag
+
+	return v
+}
+
+// NewGetCampaignBadRequest builds a lfx-v2-campaign-service-briefs service
+// get-campaign endpoint BadRequest error.
+func NewGetCampaignBadRequest(body *GetCampaignBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
 
 	return v
 }
@@ -1309,6 +1451,17 @@ func NewGetJobJobPollResponseOK(body *GetJobResponseBody) *lfxv2campaignserviceb
 		Status: *body.Status,
 		Result: body.Result,
 		Error:  body.Error,
+	}
+
+	return v
+}
+
+// NewGetJobBadRequest builds a lfx-v2-campaign-service-briefs service get-job
+// endpoint BadRequest error.
+func NewGetJobBadRequest(body *GetJobBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
 	}
 
 	return v
@@ -1622,6 +1775,18 @@ func ValidateCreateBriefNotFoundResponseBody(body *CreateBriefNotFoundResponseBo
 	return
 }
 
+// ValidateGetBriefBadRequestResponseBody runs the validations defined on
+// get-brief_BadRequest_response_body
+func ValidateGetBriefBadRequestResponseBody(body *GetBriefBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetBriefConflictResponseBody runs the validations defined on
 // get-brief_Conflict_response_body
 func ValidateGetBriefConflictResponseBody(body *GetBriefConflictResponseBody) (err error) {
@@ -1754,6 +1919,18 @@ func ValidateUpdateBriefPreconditionRequiredResponseBody(body *UpdateBriefPrecon
 	return
 }
 
+// ValidateApproveBriefBadRequestResponseBody runs the validations defined on
+// approve-brief_BadRequest_response_body
+func ValidateApproveBriefBadRequestResponseBody(body *ApproveBriefBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateApproveBriefConflictResponseBody runs the validations defined on
 // approve-brief_Conflict_response_body
 func ValidateApproveBriefConflictResponseBody(body *ApproveBriefConflictResponseBody) (err error) {
@@ -1793,6 +1970,18 @@ func ValidateApproveBriefInternalServerErrorResponseBody(body *ApproveBriefInter
 // ValidateApproveBriefNotFoundResponseBody runs the validations defined on
 // approve-brief_NotFound_response_body
 func ValidateApproveBriefNotFoundResponseBody(body *ApproveBriefNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteBriefBadRequestResponseBody runs the validations defined on
+// delete-brief_BadRequest_response_body
+func ValidateDeleteBriefBadRequestResponseBody(body *DeleteBriefBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -1901,6 +2090,18 @@ func ValidateCreateCampaignsInternalServerErrorResponseBody(body *CreateCampaign
 // ValidateCreateCampaignsNotFoundResponseBody runs the validations defined on
 // create-campaigns_NotFound_response_body
 func ValidateCreateCampaignsNotFoundResponseBody(body *CreateCampaignsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignBadRequestResponseBody runs the validations defined on
+// get-campaign_BadRequest_response_body
+func ValidateGetCampaignBadRequestResponseBody(body *GetCampaignBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -2042,6 +2243,18 @@ func ValidateUpdateCampaignPreconditionRequiredResponseBody(body *UpdateCampaign
 	return
 }
 
+// ValidateGetJobBadRequestResponseBody runs the validations defined on
+// get-job_BadRequest_response_body
+func ValidateGetJobBadRequestResponseBody(body *GetJobBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetJobConflictResponseBody runs the validations defined on
 // get-job_Conflict_response_body
 func ValidateGetJobConflictResponseBody(body *GetJobConflictResponseBody) (err error) {
@@ -2104,6 +2317,11 @@ func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 func ValidateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody) (err error) {
 	if body.Platforms == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("platforms", "body"))
+	}
+	for _, e := range body.Platforms {
+		if !(e == "google-ads" || e == "linkedin-ads" || e == "meta-ads" || e == "reddit-ads" || e == "twitter-ads" || e == "microsoft-ads" || e == "hubspot") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))
+		}
 	}
 	return
 }

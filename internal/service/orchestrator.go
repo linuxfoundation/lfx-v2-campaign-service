@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 
 	"golang.org/x/sync/errgroup"
@@ -89,6 +90,24 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			d, ok := o.dispatchers[p]
 			if !ok {
 				res.Error = "no dispatcher registered for platform"
+				results[i] = res
+				return nil
+			}
+			// Idempotency guard: if this brief already has a campaign for this
+			// platform with an upstream id, a prior run (or a re-POST of
+			// create-campaigns) already created the paid campaign. Reuse it instead
+			// of calling the platform's create API again, which would spend money on
+			// a duplicate. A not-found is the normal first-time path; a transient
+			// lookup error is recorded as a failure rather than risking a duplicate.
+			if existing, lerr := o.campaigns.GetCampaignByPlatform(gctx, brief.ID, p); lerr == nil {
+				if existing.PlatformCampaignID != "" {
+					res.OK = true
+					res.CampaignID = existing.ID
+					results[i] = res
+					return nil
+				}
+			} else if !errors.Is(lerr, domain.ErrNotFound) {
+				res.Error = "check existing campaign: " + lerr.Error()
 				results[i] = res
 				return nil
 			}

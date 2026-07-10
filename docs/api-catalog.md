@@ -276,11 +276,14 @@ platforms: CampaignPlatform[]   — Platforms this job will create on (echoed fr
 jobId: string
 status: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
                                 — 'partial' = some platforms succeeded, some failed
-results: CampaignCreateResult[] — Per-platform results, populated as each platform completes
-errors: string[]                — Platform-specific errors if any
-startedAt: string               — ISO timestamp
-finishedAt?: string             — ISO timestamp, present once terminal
+result?: CampaignCreateResult[] — Per-platform results, written once when the job
+                                  reaches a terminal state (absent while queued/running)
+error?: string                  — Terminal error, if the job failed as a whole
 ```
+
+Per-platform errors are carried inside each `result` entry rather than in a
+separate top-level array; the job's own start/finish times are available from
+the job record's timestamps and are not echoed in the poll payload.
 
 ### CampaignCreateResult (per-platform result, embedded in JobPollResponse.results)
 

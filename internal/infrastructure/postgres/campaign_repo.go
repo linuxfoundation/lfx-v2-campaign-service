@@ -41,6 +41,20 @@ func (r *CampaignRepo) GetCampaign(ctx context.Context, projectID, briefID, id s
 	return c, nil
 }
 
+// GetCampaignByPlatform returns the campaign for a (brief, platform) pair. The
+// (brief_id, platform) pair is unique, so at most one row matches.
+func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, briefID string, platform model.Provider) (*model.Campaign, error) {
+	q := `SELECT ` + campaignCols + ` FROM campaigns WHERE brief_id=$1 AND platform=$2`
+	c, err := scanCampaign(r.db.QueryRow(ctx, q, briefID, string(platform)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get campaign by platform: %w", err)
+	}
+	return c, nil
+}
+
 // UpsertCampaign inserts or updates the (brief, platform) campaign row. On
 // conflict it updates in place (a brief change after campaigns exist).
 func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error) {

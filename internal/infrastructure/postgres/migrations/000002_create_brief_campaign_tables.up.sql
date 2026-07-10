@@ -23,16 +23,11 @@ CREATE TABLE IF NOT EXISTS campaign_briefs (
     approved_by   JSONB,
     approved_at   TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, event_slug)
 );
--- Singleton per (project, event) but only among live briefs: a partial unique
--- index that excludes archived rows, so archiving a brief frees its
--- (project_id, event_slug) slot and a new brief for the same event can be
--- created (a full UNIQUE constraint would permanently reserve the slot). Mirrors
--- the connection tables' partial-unique pattern. This index also covers
--- project_id-only lookups as its leftmost column, so no standalone index needed.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_campaign_briefs_project_event
-    ON campaign_briefs (project_id, event_slug) WHERE status <> 'archived';
+-- No standalone project_id index: UNIQUE (project_id, event_slug) already
+-- indexes project_id as its leftmost column, covering project_id-only lookups.
 
 CREATE TABLE IF NOT EXISTS campaign_jobs (
     id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

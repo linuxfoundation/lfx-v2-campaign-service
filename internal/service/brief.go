@@ -159,11 +159,19 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 		return nil, &briefs.BadRequestError{Code: "400", Message: "at least one platform is required"}
 	}
 	platforms := make([]model.Provider, 0, len(p.Input.Platforms))
+	seen := make(map[model.Provider]struct{}, len(p.Input.Platforms))
 	for _, pl := range p.Input.Platforms {
 		prov := model.Provider(pl)
 		if !prov.Valid() {
 			return nil, &briefs.BadRequestError{Code: "400", Message: "unknown platform: " + pl}
 		}
+		if _, dup := seen[prov]; dup {
+			// Reject duplicates outright: dispatching the same platform twice would
+			// create two paid upstream campaigns concurrently, only one of which the
+			// (brief_id, platform)-unique persistence can record.
+			return nil, &briefs.BadRequestError{Code: "400", Message: "duplicate platform: " + pl}
+		}
+		seen[prov] = struct{}{}
 		platforms = append(platforms, prov)
 	}
 	jobID, err := s.orch.Start(ctx, brief, platforms, marshalAny(p.Input.Config))
@@ -237,15 +245,19 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 
 func briefResult(b *model.CampaignBrief) *briefs.Brief {
 	return &briefs.Brief{
-		ID:          b.ID,
-		ProjectID:   b.ProjectID,
-		ProgramType: string(b.ProgramType),
-		EventSlug:   b.EventSlug,
-		URL:         optStr(b.URL),
-		Platforms:   unmarshalStrings(b.Platforms),
-		Status:      string(b.Status),
-		Version:     b.Version,
-		Etag:        optStr(etag(b.Version)),
+		ID:           b.ID,
+		ProjectID:    b.ProjectID,
+		ProgramType:  string(b.ProgramType),
+		EventSlug:    b.EventSlug,
+		URL:          optStr(b.URL),
+		Platforms:    unmarshalStrings(b.Platforms),
+		EventDetails: unmarshalAny(b.EventDetails),
+		Copy:         unmarshalAny(b.Copy),
+		Keywords:     unmarshalAny(b.Keywords),
+		Targeting:    unmarshalAny(b.Targeting),
+		Status:       string(b.Status),
+		Version:      b.Version,
+		Etag:         optStr(etag(b.Version)),
 	}
 }
 
@@ -317,4 +329,18 @@ func marshalAny(v any) json.RawMessage {
 		return nil
 	}
 	return b
+}
+
+// unmarshalAny decodes a stored JSONB column back into an arbitrary value for
+// the response. Returns nil for empty/undecodable input so the response omits
+// the field rather than surfacing malformed data.
+func unmarshalAny(j json.RawMessage) any {
+	if len(j) == 0 {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(j, &v); err != nil {
+		return nil
+	}
+	return v
 }

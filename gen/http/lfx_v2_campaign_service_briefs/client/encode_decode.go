@@ -244,6 +244,7 @@ func EncodeGetBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(*ht
 // lfx-v2-campaign-service-briefs get-brief endpoint. restoreBody controls
 // whether the response body should be restored after having been read.
 // DecodeGetBriefResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
 //   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
@@ -286,6 +287,20 @@ func DecodeGetBriefResponse(decoder func(*http.Response) goahttp.Decoder, restor
 			}
 			res := NewGetBriefBriefOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetBriefBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief", err)
+			}
+			err = ValidateGetBriefBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief", err)
+			}
+			return nil, NewGetBriefBadRequest(&body)
 		case http.StatusConflict:
 			var (
 				body GetBriefConflictResponseBody
@@ -611,6 +626,7 @@ func EncodeApproveBriefRequest(encoder func(*http.Request) goahttp.Encoder) func
 // lfx-v2-campaign-service-briefs approve-brief endpoint. restoreBody controls
 // whether the response body should be restored after having been read.
 // DecodeApproveBriefResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
 //   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
@@ -653,6 +669,20 @@ func DecodeApproveBriefResponse(decoder func(*http.Response) goahttp.Decoder, re
 			}
 			res := NewApproveBriefBriefOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ApproveBriefBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "approve-brief", err)
+			}
+			err = ValidateApproveBriefBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "approve-brief", err)
+			}
+			return nil, NewApproveBriefBadRequest(&body)
 		case http.StatusConflict:
 			var (
 				body ApproveBriefConflictResponseBody
@@ -768,6 +798,7 @@ func EncodeDeleteBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(
 // lfx-v2-campaign-service-briefs delete-brief endpoint. restoreBody controls
 // whether the response body should be restored after having been read.
 // DecodeDeleteBriefResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
 //   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
@@ -790,6 +821,20 @@ func DecodeDeleteBriefResponse(decoder func(*http.Response) goahttp.Decoder, res
 		switch resp.StatusCode {
 		case http.StatusNoContent:
 			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteBriefBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-brief", err)
+			}
+			err = ValidateDeleteBriefBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-brief", err)
+			}
+			return nil, NewDeleteBriefBadRequest(&body)
 		case http.StatusConflict:
 			var (
 				body DeleteBriefConflictResponseBody
@@ -1076,6 +1121,7 @@ func EncodeGetCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(
 // lfx-v2-campaign-service-briefs get-campaign endpoint. restoreBody controls
 // whether the response body should be restored after having been read.
 // DecodeGetCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
 //   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
@@ -1118,6 +1164,20 @@ func DecodeGetCampaignResponse(decoder func(*http.Response) goahttp.Decoder, res
 			}
 			res := NewGetCampaignCampaignOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign", err)
+			}
+			err = ValidateGetCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign", err)
+			}
+			return nil, NewGetCampaignBadRequest(&body)
 		case http.StatusConflict:
 			var (
 				body GetCampaignConflictResponseBody
@@ -1444,6 +1504,7 @@ func EncodeGetJobRequest(encoder func(*http.Request) goahttp.Encoder) func(*http
 // lfx-v2-campaign-service-briefs get-job endpoint. restoreBody controls
 // whether the response body should be restored after having been read.
 // DecodeGetJobResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
 //   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
@@ -1479,6 +1540,20 @@ func DecodeGetJobResponse(decoder func(*http.Response) goahttp.Decoder, restoreB
 			}
 			res := NewGetJobJobPollResponseOK(&body)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetJobBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-job", err)
+			}
+			err = ValidateGetJobBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-job", err)
+			}
+			return nil, NewGetJobBadRequest(&body)
 		case http.StatusConflict:
 			var (
 				body GetJobConflictResponseBody

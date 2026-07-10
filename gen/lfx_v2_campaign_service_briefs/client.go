@@ -63,6 +63,7 @@ func (c *Client) CreateBrief(ctx context.Context, p *CreateBriefPayload) (res *B
 // GetBrief calls the "get-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
 // GetBrief may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -100,6 +101,7 @@ func (c *Client) UpdateBrief(ctx context.Context, p *UpdateBriefPayload) (res *B
 // ApproveBrief calls the "approve-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
 // ApproveBrief may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -117,6 +119,7 @@ func (c *Client) ApproveBrief(ctx context.Context, p *ApproveBriefPayload) (res 
 // DeleteBrief calls the "delete-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
 // DeleteBrief may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -148,6 +151,7 @@ func (c *Client) CreateCampaigns(ctx context.Context, p *CreateCampaignsPayload)
 // GetCampaign calls the "get-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
 // GetCampaign may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
@@ -185,6 +189,7 @@ func (c *Client) UpdateCampaign(ctx context.Context, p *UpdateCampaignPayload) (
 // GetJob calls the "get-job" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
 // GetJob may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
