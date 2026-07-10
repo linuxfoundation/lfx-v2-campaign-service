@@ -187,6 +187,9 @@ go run ./cmd/campaign-service
 1. Confirm the ExternalSecret-managed secret has keys
    `host`, `port`, `username`, `password`, `dbname`, and
    `credential-encryption-key` (base64 32-byte AES key).
+   **Rollout prerequisite:** sync `credential-encryption-key`
+   onto the secret before deploying the chart revision that
+   references it.
 2. Deploy chart revision that injects `PG*` and
    `CREDENTIAL_ENCRYPTION_KEY` via `secretKeyRef`.
 3. With DB up: pod Ready; `kubectl exec`/`curl` `/readyz` → 200.

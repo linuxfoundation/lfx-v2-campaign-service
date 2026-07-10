@@ -38,9 +38,12 @@ injected from the ExternalSecret-managed Kubernetes secret
 - `PGDATABASE` (secret key `dbname`) — PostgreSQL database name
 - `CREDENTIAL_ENCRYPTION_KEY` (secret key
   `credential-encryption-key`) — base64-encoded 32-byte AES-256
-  key used to encrypt ad-platform connection credentials. Required
-  whenever a database URL is configured, because startup initializes
-  the encryptor before opening the pool that `/readyz` pings.
+  key used to encrypt ad-platform connection credentials at rest.
+  Required whenever a database is configured. **Rollout
+  prerequisite:** provision this key on
+  `lfx-v2-campaign-service-secrets` (via ExternalSecret sync)
+  before deploying the chart revision that references it; otherwise
+  the pod stays in `CreateContainerConfigError`.
 
 The service composes the DSN in-process from these fields (no
 `DATABASE_URL` env var required).
@@ -269,9 +272,14 @@ install with the local values override.
 `password`, `dbname`) in that same namespace for the required `PG*`
 env refs. Without it the pod stays in `CreateContainerConfigError`.
 
-Pick one of these before installing:
+Pick one of these before installing. Set `HELM_NAMESPACE` once and
+pass it to the final `make helm-install-local` (Makefile assigns
+`HELM_NAMESPACE=lfx` with `=`, so an env prefix does not override).
 
 ```sh
+# Default local release namespace (Option A / C)
+HELM_NS=lfx
+
 # Option A — copy the secret from lfx-v2-dev into a local cluster.
 # Use distinct source and destination contexts (adjust names to match
 # `kubectl config get-contexts`). Rebuild a clean Secret so server-
@@ -292,9 +300,7 @@ kubectl --context="$SRC_CONTEXT" get secret \
   | kubectl --context="$DST_CONTEXT" apply -f -
 
 # Option B — install into the namespace that already has the secret
-# (Makefile uses HELM_NAMESPACE=lfx with =, so pass it as a make
-#  command-line variable — an env prefix does not override.)
-make helm-install-local HELM_NAMESPACE=lfx-v2-campaign-service
+HELM_NS=lfx-v2-campaign-service
 
 # Option C — point PG* at a local database in values.local.yaml
 # (override PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE with `value:`
@@ -316,8 +322,8 @@ make docker-build
 #    kind load docker-image \
 #      ghcr.io/linuxfoundation/lfx-v2-campaign-service/campaign-service:latest
 
-# 4) Install / upgrade the chart
-make helm-install-local
+# 4) Install / upgrade the chart (uses HELM_NS from above)
+make helm-install-local HELM_NAMESPACE="$HELM_NS"
 ```
 
 `values.local.example.yaml` documents the copy path and

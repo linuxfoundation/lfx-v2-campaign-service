@@ -249,7 +249,22 @@ func TestConfigString_RedactsSecrets(t *testing.T) {
 	} {
 		assert.NotContains(t, formatted, "s3cret-value")
 		assert.NotContains(t, formatted, "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE=")
+		assert.Contains(t, formatted, "[redacted]")
 		assert.Contains(t, formatted, "xxxxx")
 		assert.Contains(t, formatted, "db.example.com")
+	}
+}
+
+func TestConfigString_RedactsKeywordAndMalformedDSN(t *testing.T) {
+	cases := []string{
+		"host=localhost user=app password=s3cret-value dbname=campaign",
+		"://not-a-valid-url password=s3cret-value",
+		"postgres://campaign@db.example.com:5432/campaign?password=s3cret-value",
+	}
+	for _, dsn := range cases {
+		cfg := &Config{DatabaseURL: dsn}
+		formatted := cfg.String()
+		assert.NotContains(t, formatted, "s3cret-value", "dsn=%q", dsn)
+		assert.Contains(t, formatted, "[redacted]", "dsn=%q", dsn)
 	}
 }

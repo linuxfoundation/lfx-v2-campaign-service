@@ -24,7 +24,7 @@ Wire a PostgreSQL connection pool into the campaign service at startup (credenti
 
 **Performance Goals**: Readiness DB check completes within ~2s timeout under failure; successful checks typically well under 1s (SC-006)
 
-**Constraints**: No secrets in logs/traces; livez must not depend on DB; preserve `OK\n` / 503 contracts; fail startup on missing credentials; no migrations/repos in scope
+**Constraints**: No secrets in logs/traces; livez must not depend on DB; preserve `OK\n` / 503 contracts; fail startup on *partially* supplied PostgreSQL settings (fully omitting all DB settings remains allowed for no-DB mode, FR-009); no migrations/repos in scope
 
 **Scale/Scope**: Config + postgres package + container/service wiring + Helm env injection + unit tests. Small, focused change.
 
@@ -71,12 +71,12 @@ internal/
 ├── container/container.go              # EDIT — open pool at startup; inject into service; close on shutdown
 ├── infrastructure/
 │   ├── config/config.go                # EDIT — load PG* (and optional engine); compose DSN; validate required fields
-│   └── postgres/                       # NEW — pool factory, HealthCheck/Ping helper, otelpgx tracer hook
-│       ├── postgres.go
-│       └── postgres_test.go
+│   └── postgres/                       # pool factory, Ready helper, otelpgx tracer hook
+│       ├── pool.go
+│       └── pool_test.go
 ├── service/
-│   ├── service.go                      # EDIT — DBPinger dependency; Readyz runs timed ping; Livez unchanged
-│   └── service_test.go                 # EDIT — mock pinger success/failure cases
+│   ├── service.go                      # EDIT — ReadinessChecker dependency; Readyz timed ping; Livez unchanged
+│   └── service_test.go                 # EDIT — mock readiness success/failure/timeout cases
 pkg/constants/constants.go              # EDIT — PG* / engine env constant names
 charts/lfx-v2-campaign-service/
 ├── values.yaml                         # EDIT — PG* env via secretKeyRef to existing secret keys

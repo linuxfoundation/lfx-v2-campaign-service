@@ -233,15 +233,9 @@ func redactDatabaseURL(dsn string) string {
 	if dsn == "" {
 		return ""
 	}
-	u, err := url.Parse(dsn)
-	if err != nil || u.User == nil {
-		return dsn
-	}
-	if _, hasPass := u.User.Password(); !hasPass {
-		return dsn
-	}
-	u.User = url.UserPassword(u.User.Username(), "xxxxx")
-	return u.String()
+	// Always mask: keyword DSNs, malformed URLs, and query-embedded
+	// passwords are not safely parseable as userinfo (FR-008).
+	return "[redacted]"
 }
 
 func redactSecret(v string) string {

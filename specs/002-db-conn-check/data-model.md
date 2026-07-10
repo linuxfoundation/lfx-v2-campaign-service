@@ -23,7 +23,9 @@ Provisioned connection parameters consumed at process startup.
 
 **Validation rules**:
 
-- All required fields non-empty after config load, or process exits non-zero (FR-009).
+- When any PostgreSQL setting is supplied, all required fields must be
+  non-empty after config load, or the process exits non-zero (FR-009).
+  Fully omitting all database settings is allowed (no-DB mode).
 - Password MUST NOT appear in `String()` helpers, logs, trace attributes, or metric labels (FR-008).
 - DSN is composed in-process from the fields above (not read as a single URL from the secret).
 

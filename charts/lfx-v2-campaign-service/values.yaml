@@ -208,6 +208,9 @@ app:
     # Required whenever a database URL is configured (PG* / DATABASE_URL), because
     # NewContainer initializes the encryptor before opening the pool used by
     # /readyz. Secret key must be a base64-encoded 32-byte value.
+    # Rollout prerequisite: ExternalSecret / secret sync must provision
+    # `credential-encryption-key` on lfx-v2-campaign-service-secrets before
+    # deploying this chart revision (otherwise CreateContainerConfigError).
     # Local/dev sample (NOT for production): see README / values.local.example.yaml.
     CREDENTIAL_ENCRYPTION_KEY:
       valueFrom:

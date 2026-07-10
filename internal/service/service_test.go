@@ -6,9 +6,11 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	campaignsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestServiceReady(t *testing.T) {
@@ -46,12 +48,14 @@ func TestLivez(t *testing.T) {
 }
 
 func TestLivez_IgnoresUnhealthyDependency(t *testing.T) {
-	s := NewCampaignService(fakeReadiness{ready: false})
+	dep := &countingReadiness{ready: false}
+	s := NewCampaignService(dep)
 
 	result, err := s.Livez(context.Background())
 
 	assert.NoError(t, err)
 	assert.Equal(t, "OK\n", string(result))
+	assert.Equal(t, 0, dep.calls, "Livez must not call the database dependency")
 }
 
 func TestReadyz(t *testing.T) {
@@ -104,10 +108,47 @@ func TestReadyz(t *testing.T) {
 	}
 }
 
+func TestReadyz_DependencyTimeout(t *testing.T) {
+	// A dependency that blocks until the request context is canceled proves
+	// Readyz applies readinessProbeTimeout (removing the deadline would hang).
+	dep := &blockingReadiness{}
+	s := NewCampaignService(dep)
+
+	start := time.Now()
+	result, err := s.Readyz(context.Background())
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	var unavailable *campaignsvc.ServiceUnavailableError
+	assert.ErrorAs(t, err, &unavailable)
+	assert.GreaterOrEqual(t, elapsed, readinessProbeTimeout)
+	assert.Less(t, elapsed, readinessProbeTimeout+500*time.Millisecond)
+}
+
 // fakeReadiness is a ReadinessChecker whose result is controllable.
 type fakeReadiness struct{ ready bool }
 
 func (f fakeReadiness) Ready(context.Context) bool { return f.ready }
+
+// countingReadiness records how many times Ready is called.
+type countingReadiness struct {
+	ready bool
+	calls int
+}
+
+func (c *countingReadiness) Ready(context.Context) bool {
+	c.calls++
+	return c.ready
+}
+
+// blockingReadiness waits until ctx is done, then reports not ready.
+type blockingReadiness struct{}
+
+func (blockingReadiness) Ready(ctx context.Context) bool {
+	<-ctx.Done()
+	return false
+}
 
 func TestServiceReady_WithDependency(t *testing.T) {
 	tests := []struct {

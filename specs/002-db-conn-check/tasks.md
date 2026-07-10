@@ -26,7 +26,7 @@
 
 - [x] T001 Add `github.com/jackc/pgx/v5` and `github.com/exaring/otelpgx` to `go.mod` / `go.sum` via `go get`
 - [x] T002 [P] Add PostgreSQL env constant names (`EnvPGHost`, `EnvPGPort`, `EnvPGUser`, `EnvPGPassword`, `EnvPGDatabase`, optional `EnvPGEngine`) in `pkg/constants/constants.go`
-- [x] T003 [P] Create package skeleton `internal/infrastructure/postgres/postgres.go` with license header and package doc (no behavior yet)
+- [x] T003 [P] Create package skeleton `internal/infrastructure/postgres/pool.go` with license header and package doc (behavior added in T006; file may already exist after rebase)
 
 ---
 
@@ -38,8 +38,8 @@
 
 - [x] T004 Extend `internal/infrastructure/config/config.go` to load `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` (and optional engine), compose a DSN in-process, validate required fields are non-empty, and ensure password is never included in any config debug/`String` output
 - [x] T005 [P] Add config unit tests for missing/incomplete credentials and successful load (no password assertions in logs) in `internal/infrastructure/config/config_test.go`
-- [x] T006 Implement pool factory `NewPool(ctx, cfg)` in `internal/infrastructure/postgres/postgres.go` using `pgxpool`, plus `Ping(ctx)` / health-check helper with a default 2s timeout; fail fast on invalid config / pool create errors
-- [x] T007 [P] Add postgres package unit tests for DSN rewriting and Ready/ping-helper behavior with injectable ping + in-memory span recorder (no live DB required) in `internal/infrastructure/postgres/pool_test.go`
+- [x] T006 Implement pool factory `NewPool(ctx, dsn)` in `internal/infrastructure/postgres/pool.go` using `pgxpool`, plus `Ready(ctx)` / health-check helper; fail fast on invalid config / pool create errors
+- [x] T007 [P] Add postgres package unit tests for DSN rewriting and Ready/ping-helper behavior with injectable ping + in-memory span recorder in `internal/infrastructure/postgres/pool_test.go`; add `Readyz` timeout coverage with a blocking fake in `internal/service/service_test.go`
 
 **Checkpoint**: Foundation ready — config validates credentials; postgres package can open a pool and ping
 
@@ -61,7 +61,7 @@
 ### Implementation for User Story 1
 
 - [x] T010 [US1] Introduce a `ReadinessChecker` (or equivalent) interface and inject it into `CampaignService` in `internal/service/service.go`; update `NewCampaignService` constructor; `ServiceReady()` / `Readyz` require dep health only when a dependency is wired (nil dep = no-DB mode, FR-009)
-- [x] T011 [US1] Update `Readyz` in `internal/service/service.go` to run a timed connectivity check via the pinger after `ServiceReady()`; on failure return `ServiceUnavailableError` (503); on success return `OK\n`; do not change response content type/body contract
+- [x] T011 [US1] Update `Readyz` in `internal/service/service.go` to check the init flag then (when wired) run a timed connectivity check via the dependency; on failure return `ServiceUnavailableError` (503); on success return `OK\n`; do not change response content type/body contract
 - [x] T012 [US1] Wire pool open into `internal/container/container.go` (`NewContainer`): create pool from config, inject into service, store pool for `Close()`; return error (fail startup) if config/pool init fails
 - [x] T013 [US1] Implement pool close in `internal/container/container.go` `Close()` so connections drain on shutdown
 - [x] T014 [US1] Add Helm `app.environment` entries for `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` via `valueFrom.secretKeyRef` mapping to secret keys `host`/`port`/`username`/`password`/`dbname` in `charts/lfx-v2-campaign-service/values.yaml` (document optional `PGENGINE`/`engine` if included)
@@ -102,7 +102,7 @@
 
 ### Implementation for User Story 3
 
-- [x] T020 [US3] Register `otelpgx` tracer on the pool config in `internal/infrastructure/postgres/postgres.go` so Ping/query activity creates spans when exporters are enabled
+- [x] T020 [US3] Register `otelpgx` tracer on the pool config in `internal/infrastructure/postgres/pool.go` so query activity creates spans when exporters are enabled
 - [x] T021 [US3] On Readyz DB check failure in `internal/service/service.go`, emit structured `slog` warning with error message only (no password, no DSN with credentials); keep HTTP `/readyz` otelhttp filter unchanged in `cmd/campaign-service/server.go`
 - [x] T022 [US3] Smoke-check against `specs/002-db-conn-check/quickstart.md` section 6 (optional OTEL) and document any required `OTEL_*` notes in that file only if a gap is found
 
@@ -180,7 +180,7 @@ Task: "Helm PG* secretKeyRef in values.yaml"
 
 ```bash
 Task: "Secret-leakage tests for failure logs"
-Task: "Register otelpgx on pool config in postgres.go"
+Task: "Register otelpgx on pool config in pool.go"
 # Then:
 Task: "slog warning on Readyz ping failure in service.go"
 ```
