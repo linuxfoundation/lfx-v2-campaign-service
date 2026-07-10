@@ -10,23 +10,42 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/exaring/otelpgx"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 )
+
+var tracerName = "github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+
+// readyTracer returns the current global tracer so tests can install an
+// in-memory provider without fighting a package-init Tracer binding.
+func readyTracer() trace.Tracer {
+	return otel.Tracer(tracerName)
+}
 
 // Pool wraps a pgx connection pool.
 type Pool struct {
 	*pgxpool.Pool
 }
 
-// NewPool opens a pgx connection pool for the given DSN and verifies
-// connectivity with a ping.
+// NewPool opens an instrumented pgx connection pool for the given DSN and
+// verifies connectivity with a ping.
 func NewPool(ctx context.Context, dsn string) (*Pool, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse database config: %w", err)
+	}
+	cfg.ConnConfig.Tracer = otelpgx.NewTracer()
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open pgx pool: %w", err)
 	}
@@ -41,9 +60,28 @@ func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 }
 
 // Ready reports whether the pool can reach the database. Used by the readiness
-// probe.
+// probe. Emits an explicit health span because /readyz is excluded from
+// otelhttp and pgxpool.Ping does not go through otelpgx's Query/Exec hooks.
 func (p *Pool) Ready(ctx context.Context) bool {
-	return p.Ping(ctx) == nil
+	return p.checkReady(ctx, p.Ping)
+}
+
+// checkReady runs ping under a postgres.ready span. ping is injectable so unit
+// tests can cover success/failure without a live database.
+func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error) bool {
+	ctx, span := readyTracer().Start(ctx, "postgres.ready",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("db.system", "postgresql")),
+	)
+	defer span.End()
+
+	if err := ping(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "database ping failed")
+		return false
+	}
+	span.SetStatus(codes.Ok, "")
+	return true
 }
 
 // Migrate applies all pending up migrations from the embedded migration files.

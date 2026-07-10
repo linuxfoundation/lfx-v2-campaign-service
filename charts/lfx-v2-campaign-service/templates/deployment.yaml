@@ -130,12 +130,16 @@ spec:
               port: web
             failureThreshold: 1
             periodSeconds: 10
+            # Align with readinessProbeTimeout (2s) in internal/service, plus
+            # margin for HTTP handling. Kubernetes default is 1s.
+            timeoutSeconds: 3
           startupProbe:
             httpGet:
               path: /readyz
               port: web
             failureThreshold: 30
             periodSeconds: 1
+            timeoutSeconds: 3
       {{- with .Values.topologySpreadConstraints }}
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
