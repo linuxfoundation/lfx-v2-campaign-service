@@ -7,6 +7,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	campaignsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
@@ -47,6 +48,8 @@ func NewCampaignService(dep ReadinessChecker) *CampaignService {
 
 // ServiceReady reports whether the service is able to accept inbound requests:
 // the service is constructed and every wired dependency is healthy.
+// Prefer Readyz for probe paths so the request context bounds the dependency
+// check; this helper remains for tests and callers without a request context.
 func (s *CampaignService) ServiceReady() bool {
 	if !s.ready {
 		return false
@@ -59,22 +62,37 @@ func (s *CampaignService) ServiceReady() bool {
 	return true
 }
 
-// Readyz checks if the service is able to take inbound requests.
-func (s *CampaignService) Readyz(_ context.Context) ([]byte, error) {
-	if !s.ServiceReady() {
+// Readyz checks if the service is able to take inbound requests, including a
+// lightweight PostgreSQL connectivity check when a database dependency is wired.
+func (s *CampaignService) Readyz(ctx context.Context) ([]byte, error) {
+	if !s.ready {
+		slog.DebugContext(ctx, "readyz: service not initialized")
 		return nil, &campaignsvc.ServiceUnavailableError{
 			Code:    "503",
 			Message: "The service is unavailable.",
 		}
 	}
+
+	if s.dep != nil {
+		pingCtx, cancel := context.WithTimeout(ctx, readinessProbeTimeout)
+		defer cancel()
+		if !s.dep.Ready(pingCtx) {
+			slog.DebugContext(ctx, "readyz: database dependency not ready")
+			return nil, &campaignsvc.ServiceUnavailableError{
+				Code:    "503",
+				Message: "The service is unavailable.",
+			}
+		}
+	}
+
 	return []byte("OK\n"), nil
 }
 
 // Livez checks if the service is alive.
+//
+// This always returns OK as long as the process can respond. It deliberately
+// does not call the database: Kubernetes uses livez to restart hung processes,
+// and a DB outage must not trigger restarts.
 func (s *CampaignService) Livez(_ context.Context) ([]byte, error) {
-	// This always returns OK as long as the service is still running. As this
-	// endpoint is used as a Kubernetes liveness check, the service must
-	// self-detect non-recoverable errors and self-terminate (the process exits
-	// non-zero on a fatal startup error in main).
 	return []byte("OK\n"), nil
 }

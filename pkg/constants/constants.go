@@ -13,11 +13,25 @@ const (
 	EnvAudience = "JWT_AUDIENCE"
 	EnvIssuer   = "JWT_ISSUER"
 	EnvNATSURL  = "NATS_URL"
-	// EnvDatabaseURL is the PostgreSQL connection string (DSN).
+	// EnvDatabaseURL is an optional PostgreSQL connection string (DSN).
+	// Prefer composing from PG* variables when running in-cluster.
 	EnvDatabaseURL = "DATABASE_URL"
 	// EnvCredentialEncryptionKey is the base64-encoded 32-byte AES-256 key used
 	// to encrypt connection credentials. Sourced from a Kubernetes secret.
 	EnvCredentialEncryptionKey = "CREDENTIAL_ENCRYPTION_KEY"
+
+	// PostgreSQL connection settings (composed into a DSN in-process).
+	EnvPGHost     = "PGHOST"
+	EnvPGPort     = "PGPORT"
+	EnvPGUser     = "PGUSER"
+	EnvPGPassword = "PGPASSWORD"
+	EnvPGDatabase = "PGDATABASE"
+	EnvPGEngine   = "PGENGINE"
+)
+
+// Default PostgreSQL port when PGPORT is unset.
+const (
+	DefaultPGPort = "5432"
 )
 
 // Default configuration values. These mirror the defaults wired into the Helm

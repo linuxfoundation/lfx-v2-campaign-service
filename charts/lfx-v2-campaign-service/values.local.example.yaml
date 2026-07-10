@@ -9,9 +9,21 @@
 #   cp charts/lfx-v2-campaign-service/values.local.example.yaml \
 #      charts/lfx-v2-campaign-service/values.local.yaml
 #   make helm-install-local
+#
+# make helm-install-local uses HELM_NAMESPACE=lfx. The chart's required
+# PG* secretKeyRefs still need secret lfx-v2-campaign-service-secrets in
+# that namespace (or override PG* / HELM_NAMESPACE — see README).
 
 # Image configuration
 image:
   repository: ghcr.io/linuxfoundation/lfx-v2-campaign-service/campaign-service
   tag: "latest"  # Overrides appVersion from Chart.yaml
   pullPolicy: Never
+
+# Local-only overrides. Do NOT use these values in shared/dev/staging/prod.
+app:
+  environment:
+    # Base64 of the 32-byte ASCII string "LFX-campaign-local-dev-aes-256!!".
+    # Safe for laptop / kind smoke tests only — never reuse in a real cluster.
+    CREDENTIAL_ENCRYPTION_KEY:
+      value: "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE="

@@ -1,0 +1,270 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package config
+
+import (
+	"fmt"
+	"net/url"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestValidateDatabaseSettings_Success(t *testing.T) {
+	cfg := &Config{
+		PGHost:          "db.example.com",
+		PGPort:          "5432",
+		PGUser:          "campaign",
+		PGDatabase:      "campaign",
+		PGEngine:        "postgres",
+		DatabaseURL:     "postgres://campaign:secret@db.example.com:5432/campaign",
+		passwordPresent: true,
+	}
+	assert.NoError(t, cfg.ValidateDatabaseSettings())
+}
+
+func TestValidateDatabaseSettings_EmptyOptional(t *testing.T) {
+	cfg := &Config{}
+	assert.NoError(t, cfg.ValidateDatabaseSettings())
+}
+
+func TestValidateDatabaseSettings_ExplicitDatabaseURL(t *testing.T) {
+	cfg := &Config{DatabaseURL: "postgres://campaign:secret@db.example.com:5432/campaign"}
+	assert.NoError(t, cfg.ValidateDatabaseSettings())
+}
+
+func TestValidateDatabaseSettings_MissingFields(t *testing.T) {
+	cfg := &Config{PGHost: "localhost"}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PGUSER")
+	assert.Contains(t, err.Error(), "PGDATABASE")
+	assert.NotContains(t, err.Error(), "secret")
+}
+
+func TestValidateDatabaseSettings_UnsupportedEngine(t *testing.T) {
+	cfg := &Config{
+		PGHost:          "db.example.com",
+		PGPort:          "5432",
+		PGUser:          "campaign",
+		PGDatabase:      "campaign",
+		PGEngine:        "mysql",
+		DatabaseURL:     "postgres://campaign:secret@db.example.com:5432/campaign",
+		passwordPresent: true,
+	}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported database engine")
+}
+
+func TestLoadDatabaseFromEnv_ComposesURL(t *testing.T) {
+	t.Setenv("PGHOST", "localhost")
+	t.Setenv("PGPORT", "5433")
+	t.Setenv("PGUSER", "app")
+	t.Setenv("PGPASSWORD", "s3cret-value")
+	t.Setenv("PGDATABASE", "campaign")
+	t.Setenv("PGENGINE", "postgresql")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+
+	require.NoError(t, cfg.ValidateDatabaseSettings())
+	assert.Equal(t, "localhost", cfg.PGHost)
+	assert.Equal(t, "5433", cfg.PGPort)
+	assert.Equal(t, "app", cfg.PGUser)
+	assert.Equal(t, "campaign", cfg.PGDatabase)
+
+	u, err := url.Parse(cfg.DatabaseURL)
+	require.NoError(t, err)
+	assert.Equal(t, "postgres", u.Scheme)
+	assert.Equal(t, "app", u.User.Username())
+	pass, ok := u.User.Password()
+	require.True(t, ok)
+	assert.Equal(t, "s3cret-value", pass)
+	assert.Equal(t, "localhost:5433", u.Host)
+	assert.Equal(t, "/campaign", u.Path)
+
+	redacted := cfg.RedactedDatabaseHost()
+	assert.Equal(t, "localhost:5433/campaign", redacted)
+	assert.NotContains(t, redacted, "s3cret")
+}
+
+func TestLoadDatabaseFromEnv_PasswordSpecialCharacters(t *testing.T) {
+	const password = "p@ss:w/ord"
+	t.Setenv("PGHOST", "localhost")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGUSER", "app")
+	t.Setenv("PGPASSWORD", password)
+	t.Setenv("PGDATABASE", "campaign")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+
+	require.NoError(t, cfg.ValidateDatabaseSettings())
+	u, err := url.Parse(cfg.DatabaseURL)
+	require.NoError(t, err)
+	pass, ok := u.User.Password()
+	require.True(t, ok)
+	assert.Equal(t, password, pass)
+	assert.Contains(t, cfg.DatabaseURL, "p%40ss%3Aw%2Ford")
+	assert.NotContains(t, cfg.RedactedDatabaseHost(), password)
+}
+
+func TestValidateDatabaseSettings_CompleteFieldsMissingURL(t *testing.T) {
+	cfg := &Config{
+		PGHost:          "localhost",
+		PGPort:          "5432",
+		PGUser:          "app",
+		PGDatabase:      "campaign",
+		passwordPresent: true,
+		// DatabaseURL intentionally unset — simulates hand-built Config
+		// without loadDatabaseFromEnv.
+	}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DatabaseURL is empty")
+	assert.Contains(t, err.Error(), "loadDatabaseFromEnv")
+}
+
+func TestValidateDatabaseSettings_DatabaseURLWithPartialPGRequiresPassword(t *testing.T) {
+	// Explicit DATABASE_URL must not mask a partial PG* set (FR-009).
+	cfg := &Config{
+		PGHost:      "localhost",
+		PGUser:      "app",
+		PGDatabase:  "campaign",
+		DatabaseURL: "postgres://app:secret@localhost:5432/campaign",
+	}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PGPASSWORD")
+}
+
+func TestLoadDatabaseFromEnv_IPv6Host(t *testing.T) {
+	t.Setenv("PGHOST", "2001:db8::1")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGUSER", "app")
+	t.Setenv("PGPASSWORD", "x")
+	t.Setenv("PGDATABASE", "campaign")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+
+	u, err := url.Parse(cfg.DatabaseURL)
+	require.NoError(t, err)
+	assert.Equal(t, "[2001:db8::1]:5432", u.Host)
+	assert.Equal(t, "[2001:db8::1]:5432/campaign", cfg.RedactedDatabaseHost())
+}
+
+func TestLoadDatabaseFromEnv_IncompleteSkipsURL(t *testing.T) {
+	t.Setenv("PGHOST", "localhost")
+	t.Setenv("PGUSER", "app")
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGDATABASE", "campaign")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+	assert.Empty(t, cfg.DatabaseURL)
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "s3cret")
+}
+
+func TestValidateDatabaseSettings_PartialEngineOnly(t *testing.T) {
+	cfg := &Config{PGEngine: "postgres"}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PGHOST")
+}
+
+func TestValidateDatabaseSettings_PartialPortOnly(t *testing.T) {
+	cfg := &Config{PGPort: "5432", pgPortPresent: true}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PGHOST")
+}
+
+func TestLoadDatabaseFromEnv_EngineOnlyFailsValidation(t *testing.T) {
+	t.Setenv("PGHOST", "")
+	t.Setenv("PGPORT", "")
+	t.Setenv("PGUSER", "")
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGDATABASE", "")
+	t.Setenv("PGENGINE", "postgres")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required database settings")
+}
+
+func TestLoadDatabaseFromEnv_PortOnlyFailsValidation(t *testing.T) {
+	t.Setenv("PGHOST", "")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGUSER", "")
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGDATABASE", "")
+	t.Setenv("PGENGINE", "")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+	assert.True(t, cfg.pgPortPresent)
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required database settings")
+}
+
+func TestLoadDatabaseFromEnv_DefaultPort(t *testing.T) {
+	t.Setenv("PGHOST", "localhost")
+	t.Setenv("PGPORT", "")
+	t.Setenv("PGUSER", "app")
+	t.Setenv("PGPASSWORD", "x")
+	t.Setenv("PGDATABASE", "campaign")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+	assert.Equal(t, "5432", cfg.PGPort)
+}
+
+func TestConfigString_RedactsSecrets(t *testing.T) {
+	cfg := &Config{
+		Host:                    "*",
+		Port:                    "8080",
+		DatabaseURL:             "postgres://campaign:s3cret-value@db.example.com:5432/campaign",
+		CredentialEncryptionKey: "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE=",
+		PGHost:                  "db.example.com",
+		PGUser:                  "campaign",
+		PGDatabase:              "campaign",
+		passwordPresent:         true,
+	}
+
+	for _, formatted := range []string{
+		cfg.String(),
+		cfg.GoString(),
+		fmt.Sprintf("%v", cfg),
+		fmt.Sprintf("%+v", cfg),
+		fmt.Sprintf("%#v", cfg),
+	} {
+		assert.NotContains(t, formatted, "s3cret-value")
+		assert.NotContains(t, formatted, "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE=")
+		assert.Contains(t, formatted, "[redacted]")
+		assert.Contains(t, formatted, "xxxxx")
+		assert.Contains(t, formatted, "db.example.com")
+	}
+}
+
+func TestConfigString_RedactsKeywordAndMalformedDSN(t *testing.T) {
+	cases := []string{
+		"host=localhost user=app password=s3cret-value dbname=campaign",
+		"://not-a-valid-url password=s3cret-value",
+		"postgres://campaign@db.example.com:5432/campaign?password=s3cret-value",
+	}
+	for _, dsn := range cases {
+		cfg := &Config{DatabaseURL: dsn}
+		formatted := cfg.String()
+		assert.NotContains(t, formatted, "s3cret-value", "dsn=%q", dsn)
+		assert.Contains(t, formatted, "[redacted]", "dsn=%q", dsn)
+	}
+}

@@ -42,10 +42,14 @@ type Container struct {
 func NewContainer(cfg *config.Config) (*Container, error) {
 	slog.Info("initializing dependency container")
 
+	if err := cfg.ValidateDatabaseSettings(); err != nil {
+		return nil, fmt.Errorf("database configuration: %w", err)
+	}
+
 	c := &Container{Config: cfg}
 
 	if cfg.DatabaseURL == "" {
-		slog.Warn("DATABASE_URL not set; connection endpoints will return 503 Service Unavailable")
+		slog.Warn("database URL not set; connection endpoints will return 503 Service Unavailable")
 		c.Service = service.NewCampaignService(nil)
 		// Wire the connection service with a nil repo so its routes are still
 		// mounted and return the typed 503 ServiceUnavailable advertised by the
@@ -85,10 +89,14 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 
 	repo := postgres.NewConnectionRepo(pool)
 	c.Connections = service.NewConnectionService(repo, enc)
-	// The health service's readiness now depends on the database pool.
+	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
 
-	slog.Info("dependency container initialized")
+	if host := cfg.RedactedDatabaseHost(); host != "" {
+		slog.Info("dependency container initialized", "database", host)
+	} else {
+		slog.Info("dependency container initialized")
+	}
 	return c, nil
 }
 
