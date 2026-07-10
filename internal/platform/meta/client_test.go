@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -226,6 +227,27 @@ func TestBuildUTMURLPreservesExistingQuery(t *testing.T) {
 	}
 	if !strings.HasSuffix(u, "#section") {
 		t.Errorf("utm url %q must keep #section at the end", u)
+	}
+}
+
+// TestBuildUTMURLPreservesSlashInQueryValue guards against the whole-string
+// TrimRight bug: a query value ending in '/' (e.g. ?redirect=/) must survive.
+func TestBuildUTMURLPreservesSlashInQueryValue(t *testing.T) {
+	u := buildUTMURL(CampaignInput{
+		EventName:       "KubeCon EU",
+		RegistrationURL: "https://events.example.org/register?redirect=/",
+		HSToken:         "hs-1",
+	}, 0)
+
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatalf("result url %q did not parse: %v", u, err)
+	}
+	if got := parsed.Query().Get("redirect"); got != "/" {
+		t.Errorf("redirect value = %q, want %q (trailing slash was stripped)", got, "/")
+	}
+	if !strings.Contains(u, "utm_source=meta") {
+		t.Errorf("utm url %q missing utm_source", u)
 	}
 }
 
@@ -525,6 +547,122 @@ func TestNonGraphErrorBodySurfaces(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Non-fatal failure paths (per-variant ad failure; account verification)
+// ---------------------------------------------------------------------------
+
+// TestCreateCampaignPerVariantFailureIsNonFatal verifies that when the FIRST
+// variant's creative call fails, the campaign still succeeds, a later variant is
+// still created, AdCount counts only the successes, and the failure is recorded
+// as a step.
+func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
+	var creativeCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			// Fail the first creative; succeed on all subsequent ones.
+			if atomic.AddInt32(&creativeCalls, 1) == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":{"message":"bad creative"}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"id":"creative_ok"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_ok"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants: []AdVariant{
+			{PrimaryText: "p1", Headline: "h1"},
+			{PrimaryText: "p2", Headline: "h2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign should not fail when one variant fails: %v", err)
+	}
+	if res.CampaignID != "camp_1" {
+		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
+	}
+	if res.AdCount != 1 {
+		t.Errorf("ad count = %d, want 1 (only the second variant succeeds)", res.AdCount)
+	}
+	if !anyStepContains(res.Steps, "Ad 1 failed") {
+		t.Errorf("expected an 'Ad 1 failed' step, got %v", res.Steps)
+	}
+	if !anyStepContains(res.Steps, "Ad 2 created") {
+		t.Errorf("expected an 'Ad 2 created' step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignAccountVerificationFailureIsNonFatal verifies that a failing
+// account-verification GET does not abort creation: the campaign is still created
+// and a warning step is recorded.
+func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			// Account verification fails.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"account lookup failed"}}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", Label: "LF Core"}, WithBaseURL(srv.URL))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("account verification failure must be non-fatal: %v", err)
+	}
+	if res.CampaignID != "camp_1" {
+		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
+	}
+	if res.AdCount != 1 {
+		t.Errorf("ad count = %d, want 1", res.AdCount)
+	}
+	if !anyStepContains(res.Steps, "Account verification warning") {
+		t.Errorf("expected an 'Account verification warning' step, got %v", res.Steps)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Input validation errors
 // ---------------------------------------------------------------------------
 
@@ -636,6 +774,25 @@ func TestCreateCampaignRequiresPageIDBeforeAnyPost(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "PageID is required") {
 		t.Fatalf("err = %v, want 'PageID is required'", err)
+	}
+}
+
+func TestCreateCampaignRequiresAccountIDBeforeAnyPost(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	// AccountID intentionally left empty; an empty ID would build "//campaigns".
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{PageID: "p"}, WithBaseURL(srv.URL))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "AccountID is required") {
+		t.Fatalf("err = %v, want 'AccountID is required'", err)
 	}
 }
 

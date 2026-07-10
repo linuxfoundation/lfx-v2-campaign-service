@@ -46,6 +46,9 @@ const (
 	// maxRetryWait caps how long a single 429 backoff waits, so an outsized
 	// Retry-After value can't stall a request past the point of usefulness.
 	maxRetryWait = 60 * time.Second
+	// drainLimit bounds how much of a 429 response body is drained before close
+	// so the connection can be reused, without reading an unbounded body.
+	drainLimit = 64 << 10
 )
 
 // ---------------------------------------------------------------------------
@@ -341,6 +344,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
 			wait := c.parseRetryAfter(resp)
+			// Drain (bounded) before closing so the HTTP transport can reuse this
+			// connection for the retry instead of opening a fresh TCP/TLS conn while
+			// already rate-limited.
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, drainLimit))
 			_ = resp.Body.Close()
 			if wait <= 0 {
 				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
@@ -582,7 +589,7 @@ func buildCampaignName(in CampaignInput, geoTargets []string) string {
 
 // buildUTMURL mirrors buildMetaUtmUrl.
 func buildUTMURL(in CampaignInput, variantIndex int) string {
-	base := strings.TrimRight(in.RegistrationURL, "/")
+	base := in.RegistrationURL
 
 	slug := in.EventSlug
 	if slug == "" {
@@ -617,6 +624,13 @@ func buildUTMURL(in CampaignInput, variantIndex int) string {
 			sep = "&"
 		}
 		return base + sep + params.Encode()
+	}
+
+	// Normalize a trailing slash on the PATH only. Trimming the raw URL string
+	// (the old approach) corrupted URLs whose query or fragment ends in '/'
+	// (e.g. "?redirect=/" or "#/"). Trimming the path leaves query/fragment intact.
+	if parsed.Path != "/" {
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
 	}
 
 	q := parsed.Query()
@@ -757,6 +771,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if in.EndDate <= in.StartDate {
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+	}
+
+	// AccountID is required to build every Graph endpoint (/{accountID}/campaigns
+	// etc.). An empty AccountID would produce malformed "//campaigns" requests, so
+	// fail fast before any mutating call rather than issuing a bad request.
+	if strings.TrimSpace(c.account.AccountID) == "" {
+		return nil, fmt.Errorf("AccountID is required to create a Meta campaign; configure an ad account for this client")
 	}
 
 	// PageID is required for the creative flow (object_story_spec.page_id) and,
