@@ -8,11 +8,20 @@ title = "gitleaks config"
 useDefault = true
 
 [allowlist]
-    description = "Allowlisted files"
+    description = "Allowlisted files and known non-production sample secrets"
     paths = [
         # Exclude test files as they often contain dummy/fake data
         '''.*_test\.go$''',
         '''(go.mod|go.sum)$''',
         # Exclude documentation files with example tokens
-        '''CLAUDE\.md$'''
-    ] 
+        '''CLAUDE\.md$''',
+        # Generated Goa code (matches MegaLinter FILTER_REGEX_EXCLUDE gen/)
+        '''(^|/)gen/'''
+    ]
+    regexes = [
+        # Documented local/dev AES-256 sample only (README, quickstart,
+        # values.local.example). Not a real secret — base64 of
+        # "LFX-campaign-local-dev-aes-256!!".
+        '''TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='''
+    ]
+

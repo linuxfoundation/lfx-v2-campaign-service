@@ -53,6 +53,9 @@ Thumbs.db
 *.log
 logs/
 
+# Local MegaLinter Docker output
+megalinter-reports/
+
 # Runtime data
 pids
 *.pid
