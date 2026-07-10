@@ -11,7 +11,9 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -509,4 +511,129 @@ func anyStepContains(steps []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// 429 rate-limit retry/backoff
+// ---------------------------------------------------------------------------
+
+// TestDoRequestRetriesOn429 verifies that a 429 followed by a 200 is retried and
+// ultimately succeeds. A short Retry-After keeps the test fast.
+func TestDoRequestRetriesOn429(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Retry-After", "0") // 0 -> falls back to base backoff
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"123"}`)
+	}))
+	defer srv.Close()
+
+	// Shrink the base backoff so the fallback wait doesn't slow the test.
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	if err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"k": "v"}, &out); err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	if out.ID != "123" {
+		t.Errorf("id = %q, want 123", out.ID)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("server calls = %d, want 2 (one 429 + one success)", got)
+	}
+}
+
+// TestDoRequestExhaustsRetries verifies that persistent 429s return an error
+// after retryMax attempts rather than looping forever.
+func TestDoRequestExhaustsRetries(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := c.doRequest(ctx, http.MethodGet, "/x", nil, nil)
+	if err == nil {
+		t.Fatalf("expected an error after exhausting retries")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("error type = %T, want *APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429", apiErr.StatusCode)
+	}
+	// 1 initial + retryMax retries = retryMax+1 total server hits.
+	if got := atomic.LoadInt32(&calls); got != int32(retryMax+1) {
+		t.Errorf("server calls = %d, want %d", got, retryMax+1)
+	}
+}
+
+// TestParseRetryAfter covers the header parsing paths: delay-seconds, HTTP-date,
+// and absent/invalid headers.
+func TestParseRetryAfter(t *testing.T) {
+	fixed := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "a"},
+		WithClock(func() time.Time { return fixed }))
+
+	tests := []struct {
+		name   string
+		header string
+		want   time.Duration
+	}{
+		{"delay seconds", "5", 5 * time.Second},
+		{"zero -> none", "0", 0},
+		{"negative -> none", "-3", 0},
+		{"http-date future", fixed.Add(10 * time.Second).UTC().Format(http.TimeFormat), 10 * time.Second},
+		{"http-date past -> none", fixed.Add(-10 * time.Second).UTC().Format(http.TimeFormat), 0},
+		{"absent -> none", "", 0},
+		{"garbage -> none", "soon", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{Header: http.Header{}}
+			if tt.header != "" {
+				resp.Header.Set("Retry-After", tt.header)
+			}
+			if got := c.parseRetryAfter(resp); got != tt.want {
+				t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.header, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDoRequestRetryHonorsContextCancel verifies that a cancelled context during
+// 429 backoff aborts promptly rather than sleeping out the full delay.
+func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30") // long enough that cancel must win
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "a"}, WithBaseURL(srv.URL))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	err := c.doRequest(ctx, http.MethodGet, "/x", nil, nil)
+	if err == nil {
+		t.Fatalf("expected a context error")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("doRequest blocked %v; should have aborted on cancel", elapsed)
+	}
 }

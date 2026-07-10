@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,6 +36,16 @@ const (
 	DefaultAdsManagerURL = "https://adsmanager.facebook.com"
 	// DefaultRequestTimeout mirrors META_REQUEST_TIMEOUT_MS (30s).
 	DefaultRequestTimeout = 30 * time.Second
+
+	// retryMax is the number of times a 429 (rate-limited) request is retried
+	// before giving up. Mirrors the resilience the Twitter client applies.
+	retryMax = 3
+	// retryBaseDelay is the base for exponential backoff when the API returns a
+	// 429 without a usable Retry-After header (1s, 2s, 4s, ...).
+	retryBaseDelay = 1 * time.Second
+	// maxRetryWait caps how long a single 429 backoff waits, so an outsized
+	// Retry-After value can't stall a request past the point of usefulness.
+	maxRetryWait = 60 * time.Second
 )
 
 // ---------------------------------------------------------------------------
@@ -189,6 +200,12 @@ type Client struct {
 	httpClient    *http.Client
 	baseURL       string
 	adsManagerURL string
+	// timeNow allows tests to control the clock used for 429 backoff.
+	// Defaults to time.Now.
+	timeNow func() time.Time
+	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
+	// retryBaseDelay const; tests may shrink it to keep runs fast.
+	retryBaseDelay time.Duration
 }
 
 // Option customizes a Client.
@@ -209,14 +226,35 @@ func WithAdsManagerURL(u string) Option {
 	return func(c *Client) { c.adsManagerURL = strings.TrimRight(u, "/") }
 }
 
+// WithClock overrides the time source used for 429 backoff. For tests.
+func WithClock(now func() time.Time) Option {
+	return func(c *Client) {
+		if now != nil {
+			c.timeNow = now
+		}
+	}
+}
+
+// withRetryBaseDelay overrides the exponential-backoff base for 429 retries.
+// Unexported: only tests use it, to keep retry runs fast.
+func withRetryBaseDelay(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.retryBaseDelay = d
+		}
+	}
+}
+
 // NewClient constructs a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:         creds,
-		account:       account,
-		httpClient:    &http.Client{Timeout: DefaultRequestTimeout},
-		baseURL:       DefaultBaseURL,
-		adsManagerURL: DefaultAdsManagerURL,
+		creds:          creds,
+		account:        account,
+		httpClient:     &http.Client{Timeout: DefaultRequestTimeout},
+		baseURL:        DefaultBaseURL,
+		adsManagerURL:  DefaultAdsManagerURL,
+		timeNow:        time.Now,
+		retryBaseDelay: retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -265,51 +303,113 @@ func (e *APIError) Error() string {
 }
 
 // doRequest performs a Graph API call and decodes the JSON body into out.
-// It honors ctx via http.NewRequestWithContext.
+// It honors ctx via http.NewRequestWithContext. A 429 (rate-limited) response is
+// retried up to retryMax times with a bounded backoff (honoring Retry-After when
+// present), since CreateCampaign issues several sequential Graph API calls that
+// can trip Meta's per-app/account rate limits mid-flow.
 func (c *Client) doRequest(ctx context.Context, method, path string, body map[string]any, out any) error {
 	if c.creds.AccessToken == "" {
 		return fmt.Errorf("meta access token is not configured")
 	}
 
-	var reqBody io.Reader
+	var encoded []byte
 	if body != nil && method == http.MethodPost {
-		encoded, err := json.Marshal(body)
+		var err error
+		encoded, err = json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("encode request body: %w", err)
 		}
-		reqBody = bytes.NewReader(encoded)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("meta API %s %s: %w", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	raw, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		apiErr := &APIError{StatusCode: resp.StatusCode, Method: method, Path: path}
-		var env graphErrorEnvelope
-		if json.Unmarshal(raw, &env) == nil && env.Error != nil && env.Error.Message != "" {
-			apiErr.Message = env.Error.Message
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		var reqBody io.Reader
+		if encoded != nil {
+			reqBody = bytes.NewReader(encoded)
 		}
-		return apiErr
+
+		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
+		if err != nil {
+			return fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("meta API %s %s: %w", method, path, err)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
+			wait := c.parseRetryAfter(resp)
+			_ = resp.Body.Close()
+			if wait <= 0 {
+				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
+			}
+			if wait > maxRetryWait {
+				wait = maxRetryWait
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
+				return err
+			}
+			continue
+		}
+
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			apiErr := &APIError{StatusCode: resp.StatusCode, Method: method, Path: path}
+			var env graphErrorEnvelope
+			if json.Unmarshal(raw, &env) == nil && env.Error != nil && env.Error.Message != "" {
+				apiErr.Message = env.Error.Message
+			}
+			return apiErr
+		}
+
+		if out != nil {
+			if err := json.Unmarshal(raw, out); err != nil {
+				return fmt.Errorf("decode response: %w", err)
+			}
+		}
+		return nil
 	}
 
-	if out != nil {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return fmt.Errorf("decode response: %w", err)
+	return &APIError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path,
+		Message: fmt.Sprintf("exhausted %d retries after 429s", retryMax)}
+}
+
+// parseRetryAfter returns how long to wait before retrying a 429, or 0 if no
+// usable header is present. Meta returns Retry-After either as a delay in seconds
+// or as an HTTP-date; both forms are honored. Never returns a negative duration.
+func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		if n > 0 {
+			return time.Duration(n) * time.Second
+		}
+		return 0
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(c.timeNow()); d > 0 {
+			return d
 		}
 	}
-	return nil
+	return 0
+}
+
+// sleepCtx waits for d, returning early if ctx is cancelled.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // ---------------------------------------------------------------------------
