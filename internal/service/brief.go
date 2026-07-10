@@ -229,9 +229,28 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 	}
 	resp := &briefs.JobPollResponse{JobID: j.ID, Status: string(j.Status)}
 	if len(j.Result) > 0 {
-		var result any
-		if json.Unmarshal(j.Result, &result) == nil {
-			resp.Result = result
+		// The stored result is the orchestrator's per-platform outcome array; decode
+		// it into the typed response shape so the OpenAPI contract is honored.
+		var stored []struct {
+			Platform   string `json:"platform"`
+			OK         bool   `json:"ok"`
+			CampaignID string `json:"campaign_id"`
+			Error      string `json:"error"`
+		}
+		if json.Unmarshal(j.Result, &stored) == nil {
+			resp.Result = make([]*briefs.PlatformResult, 0, len(stored))
+			for _, r := range stored {
+				pr := &briefs.PlatformResult{Platform: r.Platform, OK: r.OK}
+				if r.CampaignID != "" {
+					id := r.CampaignID
+					pr.CampaignID = &id
+				}
+				if r.Error != "" {
+					e := r.Error
+					pr.Error = &e
+				}
+				resp.Result = append(resp.Result, pr)
+			}
 		}
 	}
 	if j.Error != "" {

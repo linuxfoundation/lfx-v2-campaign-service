@@ -217,7 +217,7 @@ type GetJobResponseBody struct {
 	// Job status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Per-platform results, written once when the job reaches a terminal state
-	Result any `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
+	Result []*PlatformResultResponseBody `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
 	// Terminal error, if any
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
 }
@@ -751,6 +751,18 @@ type CampaignUpdateInputRequestBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Campaign configuration snapshot
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// PlatformResultResponseBody is used to define fields on response body types.
+type PlatformResultResponseBody struct {
+	// Platform this result is for
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// Whether the campaign was created (or reused) successfully
+	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
+	// Upstream platform campaign id (present when ok)
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// Failure reason (present when not ok)
+	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
 }
 
 // NewCreateBriefRequestBody builds the HTTP request body from the payload of
@@ -1449,8 +1461,17 @@ func NewGetJobJobPollResponseOK(body *GetJobResponseBody) *lfxv2campaignserviceb
 	v := &lfxv2campaignservicebriefs.JobPollResponse{
 		JobID:  *body.JobID,
 		Status: *body.Status,
-		Result: body.Result,
 		Error:  body.Error,
+	}
+	if body.Result != nil {
+		v.Result = make([]*lfxv2campaignservicebriefs.PlatformResult, len(body.Result))
+		for i, val := range body.Result {
+			if val == nil {
+				v.Result[i] = nil
+				continue
+			}
+			v.Result[i] = unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResult(val)
+		}
 	}
 
 	return v
@@ -1710,6 +1731,13 @@ func ValidateGetJobResponseBody(body *GetJobResponseBody) (err error) {
 	if body.Status != nil {
 		if !(*body.Status == "queued" || *body.Status == "running" || *body.Status == "succeeded" || *body.Status == "partial" || *body.Status == "failed") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"queued", "running", "succeeded", "partial", "failed"}))
+		}
+	}
+	for _, e := range body.Result {
+		if e != nil {
+			if err2 := ValidatePlatformResultResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	return
@@ -2322,6 +2350,18 @@ func ValidateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 		if !(e == "google-ads" || e == "linkedin-ads" || e == "meta-ads" || e == "reddit-ads" || e == "twitter-ads" || e == "microsoft-ads" || e == "hubspot") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))
 		}
+	}
+	return
+}
+
+// ValidatePlatformResultResponseBody runs the validations defined on
+// platform-resultResponseBody
+func ValidatePlatformResultResponseBody(body *PlatformResultResponseBody) (err error) {
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.OK == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
 	}
 	return
 }

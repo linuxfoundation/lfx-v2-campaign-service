@@ -1726,3 +1726,20 @@ func marshalCampaignUpdateInputRequestBodyToLfxv2campaignservicebriefsCampaignUp
 
 	return res
 }
+
+// unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResult
+// builds a value of type *lfxv2campaignservicebriefs.PlatformResult from a
+// value of type *PlatformResultResponseBody.
+func unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResult(v *PlatformResultResponseBody) *lfxv2campaignservicebriefs.PlatformResult {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignservicebriefs.PlatformResult{
+		Platform:   *v.Platform,
+		OK:         *v.OK,
+		CampaignID: v.CampaignID,
+		Error:      v.Error,
+	}
+
+	return res
+}

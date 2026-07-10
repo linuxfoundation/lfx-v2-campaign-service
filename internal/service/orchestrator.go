@@ -99,10 +99,20 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			// of calling the platform's create API again, which would spend money on
 			// a duplicate. A not-found is the normal first-time path; a transient
 			// lookup error is recorded as a failure rather than risking a duplicate.
+			//
+			// This read-before-dispatch check narrows — but does not fully close —
+			// the duplicate window: two concurrent create-campaigns requests for the
+			// same (brief, platform) can both observe not-found and both dispatch.
+			// The (brief_id, platform) unique index keeps persistence single-rowed,
+			// but the upstream create is not transactional with it. Fully closing
+			// this requires provider-side idempotency keys and single-flight job
+			// ownership, tracked with the job-recovery follow-up (see the goroutine
+			// lifecycle thread). campaign_id below is always the upstream platform id
+			// so the field's meaning is identical on the reuse and create paths.
 			if existing, lerr := o.campaigns.GetCampaignByPlatform(gctx, brief.ID, p); lerr == nil {
 				if existing.PlatformCampaignID != "" {
 					res.OK = true
-					res.CampaignID = existing.ID
+					res.CampaignID = existing.PlatformCampaignID
 					results[i] = res
 					return nil
 				}

@@ -217,7 +217,7 @@ type GetJobResponseBody struct {
 	// Job status
 	Status string `form:"status" json:"status" xml:"status"`
 	// Per-platform results, written once when the job reaches a terminal state
-	Result any `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
+	Result []*PlatformResultResponseBody `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
 	// Terminal error, if any
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
 }
@@ -712,6 +712,18 @@ type GetJobNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// PlatformResultResponseBody is used to define fields on response body types.
+type PlatformResultResponseBody struct {
+	// Platform this result is for
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Whether the campaign was created (or reused) successfully
+	OK bool `form:"ok" json:"ok" xml:"ok"`
+	// Upstream platform campaign id (present when ok)
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// Failure reason (present when not ok)
+	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
+}
+
 // BriefInputRequestBody is used to define fields on request body types.
 type BriefInputRequestBody struct {
 	// Funnel context
@@ -909,8 +921,17 @@ func NewGetJobResponseBody(res *lfxv2campaignservicebriefs.JobPollResponse) *Get
 	body := &GetJobResponseBody{
 		JobID:  res.JobID,
 		Status: res.Status,
-		Result: res.Result,
 		Error:  res.Error,
+	}
+	if res.Result != nil {
+		body.Result = make([]*PlatformResultResponseBody, len(res.Result))
+		for i, val := range res.Result {
+			if val == nil {
+				body.Result[i] = nil
+				continue
+			}
+			body.Result[i] = marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody(val)
+		}
 	}
 	return body
 }

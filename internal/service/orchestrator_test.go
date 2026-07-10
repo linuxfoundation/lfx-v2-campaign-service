@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -237,6 +238,14 @@ func TestOrchestrator_SkipsAlreadyDispatchedPlatform(t *testing.T) {
 	}
 	if len(camps.upserted) != 0 {
 		t.Errorf("upserted %d campaigns, want 0 (no re-create)", len(camps.upserted))
+	}
+	// The reuse path must report the upstream platform campaign id (not the DB
+	// row id), so campaign_id means the same thing as on the create path.
+	if !strings.Contains(string(j.Result), "pc-google-ads") {
+		t.Errorf("result = %s, want it to carry the upstream campaign id pc-google-ads", j.Result)
+	}
+	if strings.Contains(string(j.Result), "existing-c1") {
+		t.Errorf("result = %s, must not leak the DB row id existing-c1", j.Result)
 	}
 }
 

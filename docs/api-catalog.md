@@ -276,9 +276,18 @@ platforms: CampaignPlatform[]   — Platforms this job will create on (echoed fr
 jobId: string
 status: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
                                 — 'partial' = some platforms succeeded, some failed
-result?: CampaignCreateResult[] — Per-platform results, written once when the job
+result?: PlatformResult[]       — Per-platform results, written once when the job
                                   reaches a terminal state (absent while queued/running)
 error?: string                  — Terminal error, if the job failed as a whole
+```
+
+### PlatformResult (per-platform outcome, embedded in JobPollResponse.result)
+
+```
+platform: string        — Platform this result is for
+ok: boolean             — Whether the campaign was created (or reused) successfully
+campaignId?: string     — Upstream platform campaign id (present when ok)
+error?: string          — Failure reason (present when not ok)
 ```
 
 Per-platform errors are carried inside each `result` entry rather than in a

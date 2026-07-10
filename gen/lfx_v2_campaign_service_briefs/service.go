@@ -246,8 +246,19 @@ type JobPollResponse struct {
 	// Job status
 	Status string
 	// Per-platform results, written once when the job reaches a terminal state
-	Result any
+	Result []*PlatformResult
 	// Terminal error, if any
+	Error *string
+}
+
+type PlatformResult struct {
+	// Platform this result is for
+	Platform string
+	// Whether the campaign was created (or reused) successfully
+	OK bool
+	// Upstream platform campaign id (present when ok)
+	CampaignID *string
+	// Failure reason (present when not ok)
 	Error *string
 }
 

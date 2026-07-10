@@ -75,13 +75,24 @@ var JobCreateResponse = Type("job-create-response", func() {
 	Required("job_id", "status")
 })
 
+// PlatformResult is one platform's outcome within a terminal job result. It
+// mirrors exactly what the orchestrator emits so the OpenAPI can describe the
+// result array instead of an opaque Any.
+var PlatformResult = Type("platform-result", func() {
+	Attribute("platform", String, "Platform this result is for")
+	Attribute("ok", Boolean, "Whether the campaign was created (or reused) successfully")
+	Attribute("campaign_id", String, "Upstream platform campaign id (present when ok)")
+	Attribute("error", String, "Failure reason (present when not ok)")
+	Required("platform", "ok")
+})
+
 // JobPollResponse is returned from GET .../jobs/{jobId}.
 var JobPollResponse = Type("job-poll-response", func() {
 	Attribute("job_id", String, "Job UUID")
 	Attribute("status", String, "Job status", func() {
 		Enum("queued", "running", "succeeded", "partial", "failed")
 	})
-	Attribute("result", Any, "Per-platform results, written once when the job reaches a terminal state")
+	Attribute("result", ArrayOf(PlatformResult), "Per-platform results, written once when the job reaches a terminal state")
 	Attribute("error", String, "Terminal error, if any")
 	Required("job_id", "status")
 })
