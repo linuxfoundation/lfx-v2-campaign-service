@@ -44,6 +44,8 @@ type Config struct {
 	PGEngine   string
 	// passwordPresent is true when PGPASSWORD was non-empty (value is not retained).
 	passwordPresent bool
+	// pgPortPresent is true when PGPORT was explicitly set (before applying the default).
+	pgPortPresent bool
 }
 
 // LoadConfig loads configuration from CLI flags, then environment variables, then defaults.
@@ -96,7 +98,9 @@ func LoadConfig() *Config {
 // interpolated by Helm. An explicit DATABASE_URL is kept when PG* are incomplete.
 func (c *Config) loadDatabaseFromEnv() {
 	c.PGHost = strings.TrimSpace(os.Getenv(constants.EnvPGHost))
-	c.PGPort = strings.TrimSpace(os.Getenv(constants.EnvPGPort))
+	rawPort := strings.TrimSpace(os.Getenv(constants.EnvPGPort))
+	c.pgPortPresent = rawPort != ""
+	c.PGPort = rawPort
 	if c.PGPort == "" {
 		c.PGPort = constants.DefaultPGPort
 	}
@@ -132,13 +136,16 @@ func (c *Config) ValidateDatabaseSettings() error {
 		}
 	}
 
-	// No PG* fields and no composed/explicit URL: optional database mode.
-	if c.PGHost == "" && c.PGUser == "" && c.PGDatabase == "" && !c.passwordPresent && c.DatabaseURL == "" {
+	// Truly empty: no PG* intent and no composed/explicit URL → optional no-DB mode.
+	// An explicit PGPORT or PGENGINE alone counts as partial configuration (FR-009).
+	if c.PGHost == "" && c.PGUser == "" && c.PGDatabase == "" && !c.passwordPresent &&
+		!c.pgPortPresent && c.PGEngine == "" && c.DatabaseURL == "" {
 		return nil
 	}
 
-	// Explicit DATABASE_URL without PG* composition is fine.
-	if c.DatabaseURL != "" && c.PGHost == "" && c.PGUser == "" && c.PGDatabase == "" && !c.passwordPresent {
+	// Explicit DATABASE_URL without any PG* composition fields is fine.
+	if c.DatabaseURL != "" && c.PGHost == "" && c.PGUser == "" && c.PGDatabase == "" &&
+		!c.passwordPresent && !c.pgPortPresent && c.PGEngine == "" {
 		return nil
 	}
 

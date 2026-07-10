@@ -118,6 +118,51 @@ func TestLoadDatabaseFromEnv_IncompleteSkipsURL(t *testing.T) {
 	assert.NotContains(t, err.Error(), "s3cret")
 }
 
+func TestValidateDatabaseSettings_PartialEngineOnly(t *testing.T) {
+	cfg := &Config{PGEngine: "postgres"}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PGHOST")
+}
+
+func TestValidateDatabaseSettings_PartialPortOnly(t *testing.T) {
+	cfg := &Config{PGPort: "5432", pgPortPresent: true}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PGHOST")
+}
+
+func TestLoadDatabaseFromEnv_EngineOnlyFailsValidation(t *testing.T) {
+	t.Setenv("PGHOST", "")
+	t.Setenv("PGPORT", "")
+	t.Setenv("PGUSER", "")
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGDATABASE", "")
+	t.Setenv("PGENGINE", "postgres")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required database settings")
+}
+
+func TestLoadDatabaseFromEnv_PortOnlyFailsValidation(t *testing.T) {
+	t.Setenv("PGHOST", "")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGUSER", "")
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGDATABASE", "")
+	t.Setenv("PGENGINE", "")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+	assert.True(t, cfg.pgPortPresent)
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required database settings")
+}
+
 func TestLoadDatabaseFromEnv_DefaultPort(t *testing.T) {
 	t.Setenv("PGHOST", "localhost")
 	t.Setenv("PGPORT", "")

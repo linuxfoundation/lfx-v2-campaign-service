@@ -230,6 +230,8 @@ app:
         secretKeyRef:
           name: lfx-v2-campaign-service-secrets
           key: port
+          # Optional: app defaults to 5432 when unset (same pattern as PGENGINE).
+          optional: true
     PGUSER:
       valueFrom:
         secretKeyRef:

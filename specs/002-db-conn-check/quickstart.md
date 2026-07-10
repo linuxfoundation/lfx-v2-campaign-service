@@ -170,12 +170,16 @@ curl -sS -o /tmp/livez.body -w "%{http_code}\n" http://127.0.0.1:8080/livez
 # expect: 200 (liveness unchanged)
 ```
 
-## 4. Missing credentials (fail-fast)
+## 4. Incomplete credentials (fail-fast)
+
+Fully omitting all `PG*` vars starts no-DB / metadata-only mode
+(allowed for unit tests). Fail-fast applies to a *partial* set:
 
 ```bash
-unset PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE
+unset PGPORT PGUSER PGPASSWORD PGDATABASE PGENGINE CREDENTIAL_ENCRYPTION_KEY
+export PGHOST=127.0.0.1
 go run ./cmd/campaign-service
-# expect: non-zero exit; process does not serve as ready
+# expect: non-zero exit (missing required database settings)
 ```
 
 ## 5. In-cluster (after Helm env wiring)
