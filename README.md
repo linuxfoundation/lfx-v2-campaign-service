@@ -60,8 +60,9 @@ string `LFX-campaign-local-dev-aes-256!!`):
 # NEVER use this in production or shared environments!
 # -----------------------------------------------------
 # (test/dev/example: base64-encoded 'LFX-campaign-local-dev-aes-256!!')
-# Example (use -n so base64 is exactly 32 bytes, not 33 with a trailing newline):
-#   echo -n 'LFX-campaign-local-dev-aes-256!!' | base64
+# Example (use printf so the *plaintext* stays exactly 32 bytes — a trailing
+# newline from echo would make it 33 and break AES-256 key length):
+#   printf '%s' 'LFX-campaign-local-dev-aes-256!!' | base64
 export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
 ```
 

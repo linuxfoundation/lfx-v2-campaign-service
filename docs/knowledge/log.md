@@ -1,5 +1,12 @@
 # Log
 
+## 2026-07-10
+
+**Update** — Documented local MegaLinter/Docker workflow and tightened
+`.gitleaks.toml` allowlists (rule-scoped `gen/` twitter false positive;
+sample AES key limited to docs + `values.local.example.yaml`). Added
+architecture concept `megalinter-secrets.md`.
+
 ## 2026-07-09
 
 **Update** — Wired `CREDENTIAL_ENCRYPTION_KEY` into the Helm chart and local docs (required whenever a DB URL is configured so `/readyz` can start). Documented a non-production local sample key.

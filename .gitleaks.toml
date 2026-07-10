@@ -7,21 +7,37 @@ title = "gitleaks config"
 # useDefault will extend the base configuration with the default gitleaks config
 useDefault = true
 
-[allowlist]
-    description = "Allowlisted files and known non-production sample secrets"
-    paths = [
-        # Exclude test files as they often contain dummy/fake data
-        '''.*_test\.go$''',
-        '''(go.mod|go.sum)$''',
-        # Exclude documentation files with example tokens
-        '''CLAUDE\.md$''',
-        # Generated Goa code (matches MegaLinter FILTER_REGEX_EXCLUDE gen/)
-        '''(^|/)gen/'''
-    ]
-    regexes = [
-        # Documented local/dev AES-256 sample only (README, quickstart,
-        # values.local.example). Not a real secret — base64 of
-        # "LFX-campaign-local-dev-aes-256!!".
-        '''TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='''
-    ]
+# Global allowlists (any matching allowlist suppresses a finding).
+# Prefer scoped [[allowlists]] over a single OR-combined [allowlist].
 
+[[allowlists]]
+description = "Test fixtures, module metadata, and agent guide examples"
+paths = [
+    '''.*_test\.go$''',
+    '''(go.mod|go.sum)$''',
+    '''CLAUDE\.md$'''
+]
+
+# Only suppress the known Goa CLI false positive rule under gen/, not every
+# gitleaks rule for generated code.
+[[allowlists]]
+description = "Goa-generated CLI usage string false positive"
+targetRules = ["twitter-api-secret"]
+paths = [
+    '''(^|/)gen/'''
+]
+
+# Sample local/dev AES key is ignored only when it appears in documented
+# non-production paths (not if copied into production manifests).
+[[allowlists]]
+description = "Documented local/dev AES-256 sample key (docs + local Helm example)"
+condition = "AND"
+regexTarget = "secret"
+regexes = [
+    '''TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='''
+]
+paths = [
+    '''(^|/)README\.md$''',
+    '''(^|/)specs/002-db-conn-check/quickstart\.md$''',
+    '''(^|/)charts/lfx-v2-campaign-service/values\.local\.example\.yaml$'''
+]
