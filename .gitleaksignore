@@ -1,0 +1,6 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+#
+# Fingerprints for known false positives (gitleaks detect --report-format json).
+# Goa-generated CLI help text matching twitter-api-secret (not a credential).
+dee9f87bfa62284eb9f3ec6a352af364ef87e2b8:gen/http/cli/lfx_v2_campaign_service/cli.go:twitter-api-secret:282

@@ -3,9 +3,10 @@
 ## 2026-07-10
 
 **Update** — Documented local MegaLinter/Docker workflow and tightened
-`.gitleaks.toml` allowlists (rule-scoped `gen/` twitter false positive;
-sample AES key limited to docs + `values.local.example.yaml`). Added
-architecture concept `megalinter-secrets.md`.
+`.gitleaks.toml` allowlists (narrow Goa CLI path + `.gitleaksignore`
+fingerprint for twitter-api-secret false positive; sample AES key limited
+to docs + `values.local.example.yaml`). Added architecture concept
+`megalinter-secrets.md`.
 
 ## 2026-07-09
 

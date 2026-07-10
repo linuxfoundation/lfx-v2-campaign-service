@@ -23,7 +23,9 @@ Reports land under `megalinter-reports/` (gitignored).
 scoped allowlists:
 
 - Test fixtures (`*_test.go`), `go.mod`/`go.sum`, and `CLAUDE.md`
-- `twitter-api-secret` only under `gen/` (Goa CLI false positive)
+- Goa-generated CLI file
+  `gen/http/cli/lfx_v2_campaign_service/cli.go` (twitter-api-secret
+  false positive; also fingerprinted in `.gitleaksignore`)
 - Documented local/dev AES sample key only in README, the db-conn-check
   quickstart, and `values.local.example.yaml` (path **and** value)
 
