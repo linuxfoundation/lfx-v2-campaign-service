@@ -68,6 +68,12 @@ func TestReadyz(t *testing.T) {
 			expectedBody: "OK\n",
 		},
 		{
+			name:         "ready with healthy dependency returns OK",
+			service:      NewCampaignService(fakeReadiness{ready: true}),
+			expectError:  false,
+			expectedBody: "OK\n",
+		},
+		{
 			name:        "not ready returns ServiceUnavailable",
 			service:     &CampaignService{ready: false},
 			expectError: true,

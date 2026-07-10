@@ -292,7 +292,9 @@ kubectl --context="$SRC_CONTEXT" get secret \
   | kubectl --context="$DST_CONTEXT" apply -f -
 
 # Option B — install into the namespace that already has the secret
-HELM_NAMESPACE=lfx-v2-campaign-service make helm-install-local
+# (Makefile uses HELM_NAMESPACE=lfx with =, so pass it as a make
+#  command-line variable — an env prefix does not override.)
+make helm-install-local HELM_NAMESPACE=lfx-v2-campaign-service
 
 # Option C — point PG* at a local database in values.local.yaml
 # (override PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE with `value:`
