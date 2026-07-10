@@ -434,3 +434,133 @@ func TestContextCancellation(t *testing.T) {
 		t.Error("expected error from cancelled context")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 429 rate-limit retry/backoff
+// ---------------------------------------------------------------------------
+
+// TestDoRequestRetriesOn429 verifies that a 429 followed by a 200 is retried and
+// ultimately succeeds.
+func TestDoRequestRetriesOn429(t *testing.T) {
+	var mu sync.Mutex
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 1 {
+			w.Header().Set("Retry-After", "0") // 0 -> falls back to base backoff
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"urn:li:x:99"}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
+		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	out, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"k": "v"}, nil)
+	if err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	if out.ID != "urn:li:x:99" {
+		t.Errorf("id = %q, want urn:li:x:99", out.ID)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 {
+		t.Errorf("server calls = %d, want 2 (one 429 + one success)", calls)
+	}
+}
+
+// TestDoRequestExhaustsRetries verifies that persistent 429s return an error
+// after retryMax attempts rather than looping forever.
+func TestDoRequestExhaustsRetries(t *testing.T) {
+	var mu sync.Mutex
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
+		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	_, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil)
+	if err == nil {
+		t.Fatalf("expected an error after exhausting retries")
+	}
+	// The final attempt (attempt == retryMax) no longer retries, so it returns
+	// the standard non-2xx error for the persistent 429 rather than looping.
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error = %q, want it to report the 429 status", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// 1 initial + retryMax retries = retryMax+1 total server hits.
+	if calls != retryMax+1 {
+		t.Errorf("server calls = %d, want %d", calls, retryMax+1)
+	}
+}
+
+// TestParseRetryAfter covers the header parsing paths: delay-seconds, HTTP-date,
+// and absent/invalid headers.
+func TestParseRetryAfter(t *testing.T) {
+	fixed := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
+		WithClock(func() time.Time { return fixed }))
+
+	tests := []struct {
+		name   string
+		header string
+		want   time.Duration
+	}{
+		{"delay seconds", "5", 5 * time.Second},
+		{"zero -> none", "0", 0},
+		{"negative -> none", "-3", 0},
+		{"http-date future", fixed.Add(10 * time.Second).UTC().Format(http.TimeFormat), 10 * time.Second},
+		{"http-date past -> none", fixed.Add(-10 * time.Second).UTC().Format(http.TimeFormat), 0},
+		{"absent -> none", "", 0},
+		{"garbage -> none", "soon", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{Header: http.Header{}}
+			if tt.header != "" {
+				resp.Header.Set("Retry-After", tt.header)
+			}
+			if got := c.parseRetryAfter(resp); got != tt.want {
+				t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.header, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDoRequestRetryHonorsContextCancel verifies that a cancelled context during
+// 429 backoff aborts promptly rather than sleeping out the full delay.
+func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30") // long enough that cancel must win
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	if _, err := c.doRequest(ctx, http.MethodGet, "adCampaigns/1", nil, nil); err == nil {
+		t.Fatalf("expected a context error")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("doRequest blocked %v; should have aborted on cancel", elapsed)
+	}
+}

@@ -29,6 +29,9 @@ type Client struct {
 	apiVersion string
 	// now allows tests to control the clock. Defaults to time.Now.
 	now func() time.Time
+	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
+	// retryBaseDelay const; tests may shrink it to keep runs fast.
+	retryBaseDelay time.Duration
 }
 
 // Option customizes a Client.
@@ -61,16 +64,27 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+// withRetryBaseDelay overrides the exponential-backoff base for 429 retries.
+// Unexported: only tests use it, to keep retry runs fast.
+func withRetryBaseDelay(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.retryBaseDelay = d
+		}
+	}
+}
+
 // NewClient builds a Client from injected credentials and runtime config.
 // The package never reads env vars or files; everything comes through here.
 func NewClient(creds Credentials, cfg RuntimeConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:      creds,
-		cfg:        cfg,
-		httpClient: &http.Client{Timeout: requestTimeout},
-		baseURL:    baseURL,
-		apiVersion: apiVersion,
-		now:        time.Now,
+		creds:          creds,
+		cfg:            cfg,
+		httpClient:     &http.Client{Timeout: requestTimeout},
+		baseURL:        baseURL,
+		apiVersion:     apiVersion,
+		now:            time.Now,
+		retryBaseDelay: retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -169,67 +183,133 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		u.RawQuery = q.Encode()
 	}
 
-	var reqBody *bytes.Reader
+	var encoded []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("marshal body: %w", err)
 		}
-		reqBody = bytes.NewReader(b)
-	} else {
-		reqBody = bytes.NewReader(nil)
+		encoded = b
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
-	req.Header.Set("LinkedIn-Version", c.apiVersion)
-	req.Header.Set("X-RestLi-Protocol-Version", "2.0.0")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("linkedin %s %s: %w", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Bound the response body read so an unexpectedly large response can't
-	// exhaust memory (10 MiB is far above any legitimate LinkedIn API response).
-	buf := new(bytes.Buffer)
-	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes)); err != nil {
-		return nil, fmt.Errorf("read response body: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		text := buf.String()
-		if len(text) > 400 {
-			text = text[:400]
+	// A 429 is retried up to retryMax times with a bounded backoff (honoring
+	// Retry-After when present), since CreateCampaign drives several sequential
+	// Marketing API calls (campaign group, campaign, dark post, creative) that
+	// can trip a per-account rate limit mid-flow.
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		var reqBody *bytes.Reader
+		if encoded != nil {
+			reqBody = bytes.NewReader(encoded)
+		} else {
+			reqBody = bytes.NewReader(nil)
 		}
-		return nil, fmt.Errorf("LinkedIn API %s %s -> %d: %s", method, path, resp.StatusCode, text)
+
+		req, err := http.NewRequestWithContext(ctx, method, u.String(), reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("new request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
+		req.Header.Set("LinkedIn-Version", c.apiVersion)
+		req.Header.Set("X-RestLi-Protocol-Version", "2.0.0")
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("linkedin %s %s: %w", method, path, err)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
+			wait := c.parseRetryAfter(resp)
+			_ = resp.Body.Close()
+			if wait <= 0 {
+				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
+			}
+			if wait > maxRetryWait {
+				wait = maxRetryWait
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		// Bound the response body read so an unexpectedly large response can't
+		// exhaust memory (10 MiB is far above any legitimate LinkedIn API response).
+		buf := new(bytes.Buffer)
+		if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes)); err != nil {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("read response body: %w", err)
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			text := buf.String()
+			if len(text) > 400 {
+				text = text[:400]
+			}
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("LinkedIn API %s %s -> %d: %s", method, path, resp.StatusCode, text)
+		}
+
+		out := &linkedInResponse{}
+		if strings.Contains(resp.Header.Get("Content-Type"), "application/json") && buf.Len() > 0 {
+			if err := json.Unmarshal(buf.Bytes(), out); err != nil {
+				_ = resp.Body.Close()
+				return nil, fmt.Errorf("decode response: %w", err)
+			}
+		}
+
+		// Promote the resource ID header when the body carried no id. Mirrors the
+		// x-restli-id fallback in linkedInRequest().
+		if out.ID == "" {
+			// http.Header.Get canonicalizes the key, so a single lookup covers any
+			// casing the server used (x-restli-id / X-RestLi-Id → X-Restli-Id).
+			if rid := resp.Header.Get("x-restli-id"); rid != "" {
+				out.ID = rid
+			}
+		}
+
+		_ = resp.Body.Close()
+		return out, nil
 	}
 
-	out := &linkedInResponse{}
-	if strings.Contains(resp.Header.Get("Content-Type"), "application/json") && buf.Len() > 0 {
-		if err := json.Unmarshal(buf.Bytes(), out); err != nil {
-			return nil, fmt.Errorf("decode response: %w", err)
+	return nil, fmt.Errorf("LinkedIn API %s %s -> exhausted %d retries after 429s", method, path, retryMax)
+}
+
+// parseRetryAfter returns how long to wait before retrying a 429, or 0 if no
+// usable header is present. LinkedIn returns Retry-After either as a delay in
+// seconds or as an HTTP-date; both forms are honored. Never returns a negative
+// duration.
+func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		if n > 0 {
+			return time.Duration(n) * time.Second
+		}
+		return 0
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(c.now()); d > 0 {
+			return d
 		}
 	}
+	return 0
+}
 
-	// Promote the resource ID header when the body carried no id. Mirrors the
-	// x-restli-id fallback in linkedInRequest().
-	if out.ID == "" {
-		// http.Header.Get canonicalizes the key, so a single lookup covers any
-		// casing the server used (x-restli-id / X-RestLi-Id → X-Restli-Id).
-		if rid := resp.Header.Get("x-restli-id"); rid != "" {
-			out.ID = rid
-		}
+// sleepCtx waits for d, returning early if ctx is cancelled.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
-
-	return out, nil
 }
 
 // findByName searches a nested resource path for a live element matching name.

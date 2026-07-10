@@ -31,6 +31,18 @@ const requestTimeout = 30 * time.Second
 // above any legitimate LinkedIn API response, to prevent memory exhaustion.
 const maxResponseBytes = 10 << 20 // 10 MiB
 
+// retryMax is the number of times a 429 (rate-limited) request is retried
+// before giving up. Mirrors the resilience the Twitter client (#19) applies.
+const retryMax = 3
+
+// retryBaseDelay is the base for exponential backoff when the API returns a 429
+// without a usable Retry-After header (1s, 2s, 4s, ...).
+const retryBaseDelay = 1 * time.Second
+
+// maxRetryWait caps how long a single 429 backoff waits, so an outsized
+// Retry-After value can't stall a request past the point of usefulness.
+const maxRetryWait = 60 * time.Second
+
 // jobFunctions are the default job-function facets included in targeting.
 // Mirrors JOB_FUNCTIONS.
 var jobFunctions = []string{
