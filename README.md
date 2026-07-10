@@ -29,16 +29,38 @@ stays process-ready without a pool). In-cluster they are typically
 injected from the ExternalSecret-managed Kubernetes secret
 (`lfx-v2-campaign-service-secrets` in namespace
 `lfx-v2-campaign-service`; keys `host`, `port`, `username`,
-`password`, `dbname`, `engine`).
+`password`, `dbname`, `engine`, `credential-encryption-key`).
 
 - `PGHOST` (secret key `host`) — PostgreSQL hostname
 - `PGUSER` (secret key `username`) — PostgreSQL username
 - `PGPASSWORD` (secret key `password`) — PostgreSQL password
   (never logged)
 - `PGDATABASE` (secret key `dbname`) — PostgreSQL database name
+- `CREDENTIAL_ENCRYPTION_KEY` (secret key
+  `credential-encryption-key`) — base64-encoded 32-byte AES-256
+  key used to encrypt ad-platform connection credentials. Required
+  whenever a database URL is configured, because startup initializes
+  the encryptor before opening the pool that `/readyz` pings.
 
 The service composes the DSN in-process from these fields (no
 `DATABASE_URL` env var required).
+
+#### Local / test sample key
+
+For laptop runs against the RDS tunnel (or any local Postgres), you
+can use this **non-production** sample (base64 of the 32-byte ASCII
+string `LFX-campaign-local-dev-aes-256!!`):
+
+```sh
+export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
+```
+
+Do **not** use this value in shared, staging, or production clusters.
+Generate a real key for those environments, for example:
+
+```sh
+openssl rand -base64 32
+```
 
 ### Optional (with defaults)
 
@@ -171,6 +193,8 @@ export PGPASSWORD="$(kubectl -n lfx-v2-campaign-service get secret \
 export PGDATABASE="$(kubectl -n lfx-v2-campaign-service get secret \
   lfx-v2-campaign-service-secrets \
   -o jsonpath='{.data.dbname}' | base64 -d)"
+# Local-dev sample only (see "Local / test sample key" above).
+export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
 
 # Sanity-check before starting (must be 127.0.0.1, not the RDS FQDN)
 echo "PGHOST=$PGHOST PGPORT=$PGPORT PGDATABASE=$PGDATABASE"

@@ -204,6 +204,17 @@ app:
     EVENTING_ENABLED:
       value: "true"
 
+    # AES-256-GCM key for encrypting ad-platform connection credentials at rest.
+    # Required whenever a database URL is configured (PG* / DATABASE_URL), because
+    # NewContainer initializes the encryptor before opening the pool used by
+    # /readyz. Secret key must be a base64-encoded 32-byte value.
+    # Local/dev sample (NOT for production): see README / values.local.example.yaml.
+    CREDENTIAL_ENCRYPTION_KEY:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: credential-encryption-key
+
     # PostgreSQL connection settings from the ExternalSecret-managed secret
     # (keys: host, port, username, password, dbname, engine). The app composes
     # the DSN in-process so the password is not interpolated into the pod spec.

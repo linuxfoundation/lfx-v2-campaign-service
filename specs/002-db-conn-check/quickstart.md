@@ -12,10 +12,20 @@ HTTP/env contract and [data-model.md](./data-model.md) for signals.
 - Reachable PostgreSQL instance (local CloudNativePG, Docker, or shared env)
 - Connection fields available as env vars (or via Helm secret injection in-cluster):
   - `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`
+  - `CREDENTIAL_ENCRYPTION_KEY` (base64-encoded 32-byte AES key;
+    required whenever a database URL is configured — startup
+    initializes the encryptor before the pool used by `/readyz`)
 - For an in-cluster development database: working `kubectl` context
   (e.g. `KUBECONFIG=$HOME/.kube/lfx-v2-dev`), permission to read
   `lfx-v2-campaign-service-secrets`, and ability to create a jump
   pod / port-forward in the `lfx-v2-campaign-service` namespace
+
+Local/test sample (NOT for production) — base64 of
+`LFX-campaign-local-dev-aes-256!!`:
+
+```bash
+export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
+```
 
 ## 0. Build and run against lfx-v2-dev (OrbStack laptop)
 
@@ -89,6 +99,8 @@ export PGPASSWORD="$(kubectl -n lfx-v2-campaign-service get secret \
 export PGDATABASE="$(kubectl -n lfx-v2-campaign-service get secret \
   lfx-v2-campaign-service-secrets \
   -o jsonpath='{.data.dbname}' | base64 -d)"
+# Local/test sample only — see Prerequisites above.
+export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
 
 # Must print 127.0.0.1 — not the RDS FQDN from secret `host`
 echo "PGHOST=$PGHOST PGPORT=$PGPORT PGDATABASE=$PGDATABASE"
@@ -126,6 +138,8 @@ export PGPORT=5432
 export PGUSER=<user>
 export PGPASSWORD=<password>
 export PGDATABASE=<dbname>
+# Local/test sample only — see Prerequisites above.
+export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
 
 make run
 # or: go run ./cmd/campaign-service
@@ -166,9 +180,11 @@ go run ./cmd/campaign-service
 
 ## 5. In-cluster (after Helm env wiring)
 
-1. Confirm the ExternalSecret-managed secret still has keys
-   `host`, `port`, `username`, `password`, `dbname`.
-2. Deploy chart revision that injects `PG*` via `secretKeyRef`.
+1. Confirm the ExternalSecret-managed secret has keys
+   `host`, `port`, `username`, `password`, `dbname`, and
+   `credential-encryption-key` (base64 32-byte AES key).
+2. Deploy chart revision that injects `PG*` and
+   `CREDENTIAL_ENCRYPTION_KEY` via `secretKeyRef`.
 3. With DB up: pod Ready; `kubectl exec`/`curl` `/readyz` → 200.
 4. Simulate DB outage (network policy / scale DB down):
    `/readyz` → 503, pod not Ready; `/livez` still 200 (no restart
