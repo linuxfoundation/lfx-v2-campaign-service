@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -183,6 +185,95 @@ func TestFindOrCreateCampaignGroup_Idempotent(t *testing.T) {
 	}
 	if postCount != 0 {
 		t.Errorf("expected no POST (idempotent hit), got %d POSTs", postCount)
+	}
+}
+
+// TestFindOrCreateCampaignGroup_TransientSearchErrorNoCreate verifies that a
+// transient 500 during the name search propagates as an error and does NOT lead
+// to a create POST (which would risk a duplicate campaign group).
+func TestFindOrCreateCampaignGroup_TransientSearchErrorNoCreate(t *testing.T) {
+	var mu sync.Mutex
+	var postCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodGet {
+			// Transient server error during search.
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		if r.Method == http.MethodPost {
+			postCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"999"}`)
+			return
+		}
+		http.Error(w, "unexpected", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.FindOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", "2099-02-01")
+	if err == nil {
+		t.Fatal("expected error from transient 500 during search, got nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if postCount != 0 {
+		t.Errorf("no create POST should be issued when search fails transiently, got %d POSTs", postCount)
+	}
+}
+
+// TestFindByName_MatchOnLaterPage verifies that a same-name resource that only
+// appears beyond the old fixed 5-page cap is still found (name-based
+// idempotency), so no duplicate is created. Each full page advertises a "next"
+// link so the client keeps paginating.
+func TestFindByName_MatchOnLaterPage(t *testing.T) {
+	const pageSize = 50
+	// Place the match on page index 7 (start=350), well past the old 5-page cap.
+	const matchStart = 7 * pageSize
+
+	var mu sync.Mutex
+	var getCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		getCount++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+
+		start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+
+		if start == matchStart {
+			// The page carrying the live match.
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Late | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:777"}],"paging":{"links":[]}}`)
+			return
+		}
+		// A full page of non-matching elements, advertising a next page.
+		var sb strings.Builder
+		sb.WriteString(`{"elements":[`)
+		for i := 0; i < pageSize; i++ {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			sb.WriteString(`{"name":"Other","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:1"}`)
+		}
+		sb.WriteString(`],"paging":{"links":[{"rel":"next","href":"?start="}]}}`)
+		_, _ = io.WriteString(w, sb.String())
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | Late | CNCF")
+	if err != nil {
+		t.Fatalf("findByName: %v", err)
+	}
+	if id != "777" {
+		t.Errorf("expected match on later page (id 777), got %q", id)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if getCount <= 5 {
+		t.Errorf("expected pagination past the old 5-page cap, only made %d GETs", getCount)
 	}
 }
 
@@ -409,6 +500,54 @@ func TestBuildUTMURL(t *testing.T) {
 	}
 	if !strings.Contains(got, "utm_term=events_kubecon_linkedin") {
 		t.Errorf("term normalization wrong: %s", got)
+	}
+}
+
+// TestBuildUTMURL_PreservesFragment asserts UTM params land in the query BEFORE
+// the "#fragment", not concatenated onto the end of the fragment (where browsers
+// would drop them).
+func TestBuildUTMURL_PreservesFragment(t *testing.T) {
+	got := BuildUTMURL("https://x.org/reg#tickets", "hs-1", "Events | KubeCon", 1)
+
+	u, err := neturl.Parse(got)
+	if err != nil {
+		t.Fatalf("result is not a valid URL: %q (%v)", got, err)
+	}
+	if u.Fragment != "tickets" {
+		t.Errorf("fragment should be preserved as %q, got %q (full: %s)", "tickets", u.Fragment, got)
+	}
+	q := u.Query()
+	if q.Get("utm_source") != "linkedin" {
+		t.Errorf("utm_source not in query: %s", got)
+	}
+	if q.Get("utm_content") != "variant-1" {
+		t.Errorf("utm_content not in query: %s", got)
+	}
+	// The utm params must appear before the '#', not inside the fragment.
+	hashIdx := strings.Index(got, "#")
+	utmIdx := strings.Index(got, "utm_source")
+	if hashIdx < 0 || utmIdx < 0 || utmIdx > hashIdx {
+		t.Errorf("utm params must precede the fragment: %s", got)
+	}
+}
+
+// TestBuildUTMURL_PreservesExistingQuery asserts existing query params survive
+// alongside the appended UTM params, with the fragment kept at the end.
+func TestBuildUTMURL_PreservesExistingQuery(t *testing.T) {
+	got := BuildUTMURL("https://x.org/reg?ref=abc#tickets", "", "Events | KubeCon", 1)
+	u, err := neturl.Parse(got)
+	if err != nil {
+		t.Fatalf("result is not a valid URL: %q (%v)", got, err)
+	}
+	q := u.Query()
+	if q.Get("ref") != "abc" {
+		t.Errorf("existing query param dropped: %s", got)
+	}
+	if q.Get("utm_source") != "linkedin" {
+		t.Errorf("utm_source not merged into query: %s", got)
+	}
+	if u.Fragment != "tickets" {
+		t.Errorf("fragment should be preserved, got %q (full: %s)", u.Fragment, got)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -146,6 +147,33 @@ type linkedInResponse struct {
 	Name     string            `json:"name"`
 	Status   string            `json:"status"`
 	Elements []responseElement `json:"elements"`
+	Paging   linkedInPaging    `json:"paging"`
+}
+
+// linkedInPaging mirrors the RestLi paging block. The presence of a "next" link
+// in Links signals another page is available; the client follows it until no
+// next link remains. Count/Start/Total are decoded for completeness.
+type linkedInPaging struct {
+	Start int                `json:"start"`
+	Count int                `json:"count"`
+	Total int                `json:"total"`
+	Links []linkedInPageLink `json:"links"`
+}
+
+// linkedInPageLink is one entry in paging.links (rel="next" marks the next page).
+type linkedInPageLink struct {
+	Rel  string `json:"rel"`
+	Href string `json:"href"`
+}
+
+// hasNextPage reports whether the paging block advertises a further page.
+func (p linkedInPaging) hasNextPage() bool {
+	for _, l := range p.Links {
+		if l.Rel == "next" {
+			return true
+		}
+	}
+	return false
 }
 
 // responseElement mirrors LinkedInResponseElement. LinkedIn returns an
@@ -161,6 +189,20 @@ type responseElement struct {
 }
 
 var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:?=&.-]*$`)
+
+// apiError is a non-2xx HTTP response from the LinkedIn API. It carries the
+// status code so callers (e.g. findByName) can distinguish a 404 "not found"
+// from a transient/unexpected failure that must not be swallowed.
+type apiError struct {
+	StatusCode int
+	Method     string
+	Path       string
+	Body       string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("LinkedIn API %s %s -> %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
+}
 
 // doRequest performs one API call. It honors ctx, sets the OAuth2 bearer and
 // LinkedIn headers, applies the client timeout, and promotes x-restli-id into
@@ -249,7 +291,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				text = text[:400]
 			}
 			_ = resp.Body.Close()
-			return nil, fmt.Errorf("LinkedIn API %s %s -> %d: %s", method, path, resp.StatusCode, text)
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
 		}
 
 		out := &linkedInResponse{}
@@ -312,22 +354,44 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// maxListPages bounds how many pages findByName will walk before giving up. It
+// mirrors the Twitter client's cap. Since name-based idempotency depends on
+// actually seeing a live same-name resource, hitting the cap with more pages
+// still available is reported as an error rather than a silent no-match — a
+// silent no-match would let the caller create a DUPLICATE.
+const maxListPages = 25
+
 // findByName searches a nested resource path for a live element matching name.
-// It returns the trailing numeric ID, or "" if none. Statuses in skipStatuses
-// are ignored. Mirrors findByName() (paginated search across all statuses).
-// Search failures are swallowed and reported as no-match, matching the TS.
-func (c *Client) findByName(ctx context.Context, nestedPath, name string) string {
+// It returns the trailing numeric ID, or "" when the resource genuinely does not
+// exist (a 404 or an exhausted result set with no match). Statuses in
+// skipStatuses are ignored. Mirrors findByName() (paginated search across all
+// statuses).
+//
+// Unlike the TypeScript original, transient/unexpected search failures are NOT
+// swallowed: a non-404 HTTP error, network error, or decode error is returned so
+// the find-or-create caller aborts instead of proceeding to a create POST that
+// would produce a duplicate. Pagination is followed to exhaustion (up to
+// maxListPages); reaching the cap with more pages remaining also returns an
+// error rather than a false no-match.
+func (c *Client) findByName(ctx context.Context, nestedPath, name string) (string, error) {
 	const pageSize = 50
-	const maxPages = 5
 	start := 0
-	for page := 0; page < maxPages; page++ {
+	for page := 0; page < maxListPages; page++ {
 		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, map[string]string{
 			"q":     "search",
 			"count": strconv.Itoa(pageSize),
 			"start": strconv.Itoa(start),
 		})
 		if err != nil {
-			return ""
+			// A 404 means the collection/resource genuinely isn't there: treat as
+			// a clean no-match. Any other error (401/429/5xx, network, decode) is
+			// transient or unexpected and must propagate so we never create a
+			// duplicate off a swallowed failure.
+			var ae *apiError
+			if errors.As(err, &ae) && ae.StatusCode == http.StatusNotFound {
+				return "", nil
+			}
+			return "", fmt.Errorf("search %q by name: %w", nestedPath, err)
 		}
 		for _, el := range resp.Elements {
 			if el.Name != name {
@@ -346,14 +410,17 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) string
 			if raw == "" {
 				continue
 			}
-			return trailingID(raw)
+			return trailingID(raw), nil
 		}
-		if len(resp.Elements) < pageSize {
-			break
+		// Stop when the page is short or the paging block advertises no next page.
+		if len(resp.Elements) < pageSize || !resp.Paging.hasNextPage() {
+			return "", nil
 		}
 		start += pageSize
 	}
-	return ""
+	// Cap reached with more pages still available: refuse to report a false
+	// no-match, which would let the caller create a duplicate resource.
+	return "", fmt.Errorf("search %q by name: exceeded %d pages without exhausting results — aborting to avoid creating a duplicate", nestedPath, maxListPages)
 }
 
 // trailingID returns the segment after the last colon of a URN, or the input
@@ -408,7 +475,11 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 func (c *Client) FindOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate, endDate string) (string, error) {
 	groupsPath := fmt.Sprintf("adAccounts/%s/adCampaignGroups", accountID)
 
-	if existing := c.findByName(ctx, groupsPath, name); existing != "" {
+	existing, err := c.findByName(ctx, groupsPath, name)
+	if err != nil {
+		return "", err
+	}
+	if existing != "" {
 		return existing, nil
 	}
 
@@ -451,7 +522,11 @@ func (c *Client) FindOrCreateCampaignGroup(ctx context.Context, accountID, name,
 func (c *Client) CreateSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile, startDate, endDate string, lifetimeBudget bool) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
-	if existing := c.findByName(ctx, campaignsPath, name); existing != "" {
+	existing, err := c.findByName(ctx, campaignsPath, name)
+	if err != nil {
+		return "", err
+	}
+	if existing != "" {
 		return existing, nil
 	}
 
@@ -590,11 +665,40 @@ func (c *Client) CreateCreative(ctx context.Context, accountID, campaignID, shar
 
 // BuildUTMURL appends LinkedIn UTM params to baseURL for a given variant.
 // Mirrors buildLinkedInUtmUrl().
+//
+// The URL is parsed so UTM params merge into the query and the fragment stays at
+// the end: naive string concatenation on "https://x.org/reg#tickets" would yield
+// "https://x.org/reg#tickets?utm_..." (query inside the fragment, which browsers
+// drop). Any existing query params are preserved.
 func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string {
 	term := strings.ReplaceAll(campaignName, " | ", "_")
 	term = strings.Join(strings.Fields(term), "-")
 	term = strings.ToLower(term)
 
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		// Fall back to concatenation if the URL is unparseable; better a slightly
+		// malformed URL than dropping the UTM params entirely.
+		trimmed := strings.TrimRight(baseURL, "/")
+		sep := "?"
+		if strings.Contains(baseURL, "?") {
+			sep = "&"
+		}
+		return trimmed + sep + utmValues(hsToken, term, variantIndex).Encode()
+	}
+
+	q := u.Query()
+	for k, vals := range utmValues(hsToken, term, variantIndex) {
+		for _, val := range vals {
+			q.Set(k, val)
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// utmValues builds the LinkedIn UTM query parameters.
+func utmValues(hsToken, term string, variantIndex int) url.Values {
 	v := url.Values{}
 	v.Set("utm_source", "linkedin")
 	v.Set("utm_medium", "paid-social")
@@ -603,13 +707,7 @@ func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string
 	}
 	v.Set("utm_term", term)
 	v.Set("utm_content", fmt.Sprintf("variant-%d", variantIndex))
-
-	trimmed := strings.TrimRight(baseURL, "/")
-	sep := "?"
-	if strings.Contains(baseURL, "?") {
-		sep = "&"
-	}
-	return trimmed + sep + v.Encode()
+	return v
 }
 
 // truncateRunes returns at most n runes of s, never splitting a multi-byte rune
