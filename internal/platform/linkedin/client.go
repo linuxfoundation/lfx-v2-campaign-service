@@ -143,7 +143,7 @@ type CampaignResult struct {
 // linkedInResponse is the decoded JSON body plus the resource ID promoted from
 // the x-restli-id header. Mirrors LinkedInResponse.
 type linkedInResponse struct {
-	ID       string            `json:"id"`
+	ID       flexibleID        `json:"id"`
 	Name     string            `json:"name"`
 	Status   string            `json:"status"`
 	Elements []responseElement `json:"elements"`
@@ -176,16 +176,55 @@ func (p linkedInPaging) hasNextPage() bool {
 	return false
 }
 
+// flexibleID decodes a LinkedIn resource identifier that the API returns as
+// EITHER a JSON number (a long, e.g. campaign/campaign-group search results) or
+// a JSON string (e.g. a URN like "urn:li:sponsoredCampaign:200"). Both forms are
+// normalized to their string representation. Decoding the numeric form into a Go
+// string previously failed json.Unmarshal outright, silently breaking search
+// once a real numeric id appeared.
+type flexibleID string
+
+// UnmarshalJSON accepts a JSON number or a JSON string and yields the string
+// form. A JSON null (or absent field) decodes to the empty string.
+func (f *flexibleID) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*f = ""
+		return nil
+	}
+	// Quoted string form: unquote to strip the JSON escaping.
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return err
+		}
+		*f = flexibleID(s)
+		return nil
+	}
+	// Numeric form (a long): keep the exact digits via json.Number so a large id
+	// is never distorted by float64 rounding.
+	var n json.Number
+	if err := json.Unmarshal(trimmed, &n); err != nil {
+		return fmt.Errorf("resource id is neither a JSON string nor number: %w", err)
+	}
+	*f = flexibleID(n.String())
+	return nil
+}
+
+// String returns the normalized string form of the id.
+func (f flexibleID) String() string { return string(f) }
+
 // responseElement mirrors LinkedInResponseElement. LinkedIn returns an
 // element's identifier under any of `id`, `$URN`, or `urn` depending on the
 // endpoint, so each is decoded into its own field and the read sites fall back
-// through ID → DURN → URN.
+// through ID → DURN → URN. The `id` field is a flexibleID because search
+// results return it as a numeric long while other endpoints return a quoted URN.
 type responseElement struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	ID     string `json:"id"`
-	URN    string `json:"urn"`
-	DURN   string `json:"$URN"`
+	Name   string     `json:"name"`
+	Status string     `json:"status"`
+	ID     flexibleID `json:"id"`
+	URN    string     `json:"urn"`
+	DURN   string     `json:"$URN"`
 }
 
 var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:?=&.-]*$`)
@@ -308,7 +347,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// http.Header.Get canonicalizes the key, so a single lookup covers any
 			// casing the server used (x-restli-id / X-RestLi-Id → X-Restli-Id).
 			if rid := resp.Header.Get("x-restli-id"); rid != "" {
-				out.ID = rid
+				out.ID = flexibleID(rid)
 			}
 		}
 
@@ -400,7 +439,7 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 			if _, skip := skipStatuses[el.Status]; skip {
 				continue
 			}
-			raw := el.ID
+			raw := el.ID.String()
 			if raw == "" {
 				raw = el.DURN
 			}
@@ -412,8 +451,13 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 			}
 			return trailingID(raw), nil
 		}
-		// Stop when the page is short or the paging block advertises no next page.
-		if len(resp.Elements) < pageSize || !resp.Paging.hasNextPage() {
+		// Decide whether to fetch another page. A normal LinkedIn offset-paginated
+		// response omits paging.links entirely, so relying on a "next" link alone
+		// would stop after page one. Mirror the TS behavior: keep paginating while
+		// EITHER the paging block advertises a next link OR the page came back full
+		// (>= pageSize elements, i.e. there is very likely another page). A short
+		// page means the result set is exhausted.
+		if len(resp.Elements) < pageSize && !resp.Paging.hasNextPage() {
 			return "", nil
 		}
 		start += pageSize
@@ -469,10 +513,15 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 // Hierarchy creation
 // ---------------------------------------------------------------------------
 
-// FindOrCreateCampaignGroup returns an existing ACTIVE-eligible group's ID or
+// findOrCreateCampaignGroup returns an existing ACTIVE-eligible group's ID or
 // creates a new ACTIVE campaign group. Mirrors findOrCreateCampaignGroup():
 // campaign groups are always created with status ACTIVE.
-func (c *Client) FindOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate, endDate string) (string, error) {
+//
+// Unexported by design: accountID is trusted to have already passed the
+// cross-tenant fail-closed check (resolveAccountID) in CreateCampaign. Exposing
+// it would let a caller create resources under an arbitrary, unvalidated account
+// id, bypassing that check. All hierarchy helpers are internal for this reason.
+func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate, endDate string) (string, error) {
 	groupsPath := fmt.Sprintf("adAccounts/%s/adCampaignGroups", accountID)
 
 	existing, err := c.findByName(ctx, groupsPath, name)
@@ -512,14 +561,17 @@ func (c *Client) FindOrCreateCampaignGroup(ctx context.Context, accountID, name,
 	if resp.ID == "" {
 		return "", fmt.Errorf("LinkedIn API returned no ID for campaign group creation")
 	}
-	return trailingID(resp.ID), nil
+	return trailingID(resp.ID.String()), nil
 }
 
-// CreateSponsoredCampaign returns an existing campaign's ID (idempotent by
+// createSponsoredCampaign returns an existing campaign's ID (idempotent by
 // name) or creates a new PAUSED sponsored-updates campaign. Budget is sent as a
 // decimal string (not micros); timestamps are milliseconds. Mirrors
 // createCampaign().
-func (c *Client) CreateSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile, startDate, endDate string, lifetimeBudget bool) (string, error) {
+//
+// Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
+// have passed resolveAccountID in CreateCampaign.
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile, startDate, endDate string, lifetimeBudget bool) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	existing, err := c.findByName(ctx, campaignsPath, name)
@@ -580,16 +632,19 @@ func (c *Client) CreateSponsoredCampaign(ctx context.Context, accountID, groupID
 	if resp.ID == "" {
 		return "", fmt.Errorf("LinkedIn API returned no ID for campaign creation")
 	}
-	return trailingID(resp.ID), nil
+	return trailingID(resp.ID.String()), nil
 }
 
-// CreateDarkPost creates an unpublished-to-feed sponsored post
+// createDarkPost creates an unpublished-to-feed sponsored post
 // (feedDistribution NONE) and returns its share URN. Mirrors createDarkPost().
 //
 // The post uses an article content block. Per the TS, callToAction is NOT sent
 // for article ads. The dark-post nature comes from distribution.feedDistribution
 // = "NONE".
-func (c *Client) CreateDarkPost(ctx context.Context, accountID, introText, headline, destURL, imageURN string) (string, error) {
+//
+// Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
+// have passed resolveAccountID in CreateCampaign.
+func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headline, destURL, imageURN string) (string, error) {
 	author, err := c.orgURN(accountID)
 	if err != nil {
 		return "", err
@@ -631,12 +686,15 @@ func (c *Client) CreateDarkPost(ctx context.Context, accountID, introText, headl
 	if resp.ID == "" {
 		return "", fmt.Errorf("LinkedIn API returned no ID for dark post creation")
 	}
-	return resp.ID, nil
+	return resp.ID.String(), nil
 }
 
-// CreateCreative creates a DRAFT creative referencing a share URN and returns
+// createCreative creates a DRAFT creative referencing a share URN and returns
 // its ID. Mirrors createCreative().
-func (c *Client) CreateCreative(ctx context.Context, accountID, campaignID, shareURN, adName string) (string, error) {
+//
+// Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
+// have passed resolveAccountID in CreateCampaign.
+func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shareURN, adName string) (string, error) {
 	body := map[string]any{
 		"campaign":       "urn:li:sponsoredCampaign:" + campaignID,
 		"intendedStatus": "DRAFT",
@@ -656,7 +714,7 @@ func (c *Client) CreateCreative(ctx context.Context, accountID, campaignID, shar
 	if resp.ID == "" {
 		return "", fmt.Errorf("LinkedIn API returned no ID for creative creation")
 	}
-	return resp.ID, nil
+	return resp.ID.String(), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -762,10 +820,47 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 	return fmt.Errorf("LinkedIn targeting profile %q not found in runtime config — refusing to start campaign creation", profile)
 }
 
+// validateRegistrationURL rejects a registration URL before any permanent
+// resource is created. LinkedIn's ad API only surfaces a bad landing-page URL
+// AFTER the campaign group and campaign already exist, orphaning them; catching
+// it up front keeps CreateCampaign side-effect-free on invalid input. The URL
+// must parse, be absolute, and use an http/https scheme.
+func validateRegistrationURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("registration URL is required")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("registration URL %q is not a valid URL: %w", raw, err)
+	}
+	if !u.IsAbs() || u.Host == "" {
+		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", raw, u.Scheme)
+	}
+}
+
 // CreateCampaign runs the full campaign-creation flow: verify prerequisites,
 // find/create the ACTIVE campaign group, create the PAUSED campaign, then for
 // each variant create a dark post and a DRAFT creative. Mirrors
 // executeLinkedInCampaignCreation().
+//
+// Resumability limitation: variant creation is NOT idempotent. If a later
+// variant fails after earlier ones succeeded, the group and campaign are found
+// (idempotent by name) on a retry, but each already-created dark post is
+// recreated because dark posts have no name-based lookup — a blind retry would
+// duplicate the surviving creatives. To keep the caller from retrying blindly,
+// a mid-variant failure returns an error that states how many variants
+// succeeded versus failed AND still returns a *CampaignResult carrying the
+// group/campaign IDs and the steps completed so far (including the created
+// creatives). Callers should inspect the partial result rather than re-invoking
+// CreateCampaign unchanged. A full idempotent-resume implementation is out of
+// scope for this fix.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	accountID, err := c.resolveAccountID(in.AdAccountID)
 	if err != nil {
@@ -773,6 +868,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
+		return nil, err
+	}
+
+	// Validate the registration URL BEFORE any POST so an empty/relative/malformed
+	// URL is rejected up front rather than after the campaign group and campaign
+	// (permanent resources) already exist.
+	if err := validateRegistrationURL(in.RegistrationURL); err != nil {
 		return nil, err
 	}
 
@@ -791,7 +893,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	steps := []string{}
 
 	groupName := fmt.Sprintf("Events | %s | %s", in.EventName, project)
-	groupID, err := c.FindOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, in.EndDate)
+	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, err
 	}
@@ -803,7 +905,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	campaignName := fmt.Sprintf("Events | %s | LinkedIn | Conversions | Prospecting | Static | %s | MoFU", in.EventName, project)
-	campaignID, err := c.CreateSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, in.StartDate, in.EndDate, in.LifetimeBudget)
+	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, in.StartDate, in.EndDate, in.LifetimeBudget)
 	if err != nil {
 		return nil, err
 	}
@@ -812,21 +914,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	creativeCount := 0
 	for i, variant := range in.Variants {
 		destURL := BuildUTMURL(in.RegistrationURL, in.HSToken, campaignName, i+1)
-		shareURN, err := c.CreateDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, variant.ImageURN)
+		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, variant.ImageURN)
 		if err != nil {
-			return nil, err
+			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
+				fmt.Errorf("variant-%d dark post failed after %d of %d variant(s) created: %w — group %q and campaign %q already exist; do NOT blindly retry (would duplicate the %d created creative(s)); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, creativeCount)
 		}
 		steps = append(steps, fmt.Sprintf("Dark post variant-%d: %s", i+1, shareURN))
 
 		adName := fmt.Sprintf("%s | variant-%d", in.EventName, i+1)
-		creativeID, err := c.CreateCreative(ctx, accountID, campaignID, shareURN, adName)
+		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName)
 		if err != nil {
-			return nil, err
+			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
+				fmt.Errorf("variant-%d creative failed after %d of %d variant(s) created: %w — group %q and campaign %q already exist; do NOT blindly retry (would duplicate the %d created creative(s)); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, creativeCount)
 		}
 		steps = append(steps, fmt.Sprintf("Creative (DRAFT): %s", creativeID))
 		creativeCount++
 	}
 
+	return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps), nil
+}
+
+// buildResult assembles a CampaignResult from the created hierarchy pieces.
+func (c *Client) buildResult(accountID, groupName, groupID, campaignName, campaignID string, creativeCount int, steps []string) *CampaignResult {
 	return &CampaignResult{
 		Platform:          "linkedin-ads",
 		CampaignGroupName: groupName,
@@ -836,5 +945,5 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		CreativeCount:     creativeCount,
 		LinkedInURL:       fmt.Sprintf("https://www.linkedin.com/campaignmanager/accounts/%s/campaigns/%s", accountID, campaignID),
 		Steps:             steps,
-	}, nil
+	}
 }
