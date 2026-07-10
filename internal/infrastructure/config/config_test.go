@@ -88,6 +88,43 @@ func TestLoadDatabaseFromEnv_ComposesURL(t *testing.T) {
 	assert.NotContains(t, redacted, "s3cret")
 }
 
+func TestLoadDatabaseFromEnv_PasswordSpecialCharacters(t *testing.T) {
+	const password = "p@ss:w/ord"
+	t.Setenv("PGHOST", "localhost")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGUSER", "app")
+	t.Setenv("PGPASSWORD", password)
+	t.Setenv("PGDATABASE", "campaign")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+
+	require.NoError(t, cfg.ValidateDatabaseSettings())
+	u, err := url.Parse(cfg.DatabaseURL)
+	require.NoError(t, err)
+	pass, ok := u.User.Password()
+	require.True(t, ok)
+	assert.Equal(t, password, pass)
+	assert.Contains(t, cfg.DatabaseURL, "p%40ss%3Aw%2Ford")
+	assert.NotContains(t, cfg.RedactedDatabaseHost(), password)
+}
+
+func TestValidateDatabaseSettings_CompleteFieldsMissingURL(t *testing.T) {
+	cfg := &Config{
+		PGHost:          "localhost",
+		PGPort:          "5432",
+		PGUser:          "app",
+		PGDatabase:      "campaign",
+		passwordPresent: true,
+		// DatabaseURL intentionally unset — simulates hand-built Config
+		// without loadDatabaseFromEnv.
+	}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DatabaseURL is empty")
+	assert.Contains(t, err.Error(), "loadDatabaseFromEnv")
+}
+
 func TestLoadDatabaseFromEnv_IPv6Host(t *testing.T) {
 	t.Setenv("PGHOST", "2001:db8::1")
 	t.Setenv("PGPORT", "5432")

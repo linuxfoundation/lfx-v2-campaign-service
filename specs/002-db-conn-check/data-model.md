@@ -56,15 +56,21 @@ Transient failures flip to Unreachable for that probe; a later successful probe 
 
 ### Readiness Status
 
-Overall signal for accepting traffic.
+Overall signal for accepting traffic. Pool and connectivity inputs
+apply only when a database is wired (FR-009 no-DB mode has a nil
+pool).
 
-| Inputs | Ready when |
-|--------|------------|
-| Service initialized (`ready` flag / wired deps) | true |
-| Pool present (non-nil) | true |
-| Database Connectivity Status | Reachable |
+| Mode | Inputs | Ready when |
+|------|--------|------------|
+| Database configured | Service initialized (`ready` flag) | true |
+| Database configured | Pool present (non-nil dep) | true |
+| Database configured | Database Connectivity Status | Reachable |
+| No-DB / metadata-only | Service initialized; dep is nil | true (flag alone) |
 
-All must hold for `/readyz` → 200 `OK\n`. Any failure → 503 `ServiceUnavailableError`.
+When a database is configured, all DB-mode inputs must hold for
+`/readyz` → 200 `OK\n`. In no-DB mode, `/readyz` succeeds from the
+ready flag alone. Any wired-dep failure → 503
+`ServiceUnavailableError`.
 
 ### Liveness Status
 

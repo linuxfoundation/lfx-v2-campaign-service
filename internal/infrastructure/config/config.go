@@ -122,18 +122,20 @@ func (c *Config) loadDatabaseFromEnv() {
 }
 
 // ValidateDatabaseSettings validates PostgreSQL settings when any are supplied.
+// Callers that load from the environment must run loadDatabaseFromEnv first
+// (LoadConfig does this). Password is never stored on Config and is never
+// included in errors.
+//
 // An empty database configuration remains allowed for unit tests and
 // metadata-only local runs (no-DB mode). Production charts inject PG* so
-// this path is not used in-cluster. Password is never included in errors.
+// this path is not used in-cluster.
 func (c *Config) ValidateDatabaseSettings() error {
 	if c == nil {
 		return errors.New("config is nil")
 	}
 
-	if eng := strings.ToLower(c.PGEngine); eng != "" {
-		if eng != "postgres" && eng != "postgresql" {
-			return fmt.Errorf("unsupported database engine %q; only postgres is supported", c.PGEngine)
-		}
+	if eng := strings.ToLower(c.PGEngine); eng != "" && eng != "postgres" && eng != "postgresql" {
+		return fmt.Errorf("unsupported database engine %q; only postgres is supported", c.PGEngine)
 	}
 
 	// Truly empty: no PG* intent and no composed/explicit URL → optional no-DB mode.
@@ -159,16 +161,18 @@ func (c *Config) ValidateDatabaseSettings() error {
 	if c.PGDatabase == "" {
 		missing = append(missing, constants.EnvPGDatabase)
 	}
-	if c.DatabaseURL == "" {
-		if !c.passwordPresent {
-			missing = append(missing, constants.EnvPGPassword)
-		}
-		if len(missing) == 0 {
-			return errors.New("unable to compose database URL from PostgreSQL settings")
-		}
+	if c.DatabaseURL == "" && !c.passwordPresent {
+		missing = append(missing, constants.EnvPGPassword)
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required database settings: %s", strings.Join(missing, ", "))
+	}
+
+	// PG* fields look complete but DatabaseURL is still empty. Password is not
+	// retained on Config, so validation cannot recompose the URL — callers must
+	// set DatabaseURL (normally via loadDatabaseFromEnv).
+	if c.DatabaseURL == "" {
+		return errors.New("DatabaseURL is empty despite complete PG* fields; call loadDatabaseFromEnv or set DatabaseURL")
 	}
 	return nil
 }

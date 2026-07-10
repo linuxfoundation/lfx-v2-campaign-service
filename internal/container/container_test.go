@@ -56,5 +56,7 @@ func TestNewContainer_IncompletePGSettings(t *testing.T) {
 	assert.Nil(t, cont)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "database configuration")
+	assert.Contains(t, err.Error(), "PGDATABASE")
+	assert.Contains(t, err.Error(), "PGPASSWORD")
 	assert.NotContains(t, err.Error(), "password=")
 }

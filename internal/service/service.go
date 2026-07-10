@@ -66,7 +66,7 @@ func (s *CampaignService) ServiceReady() bool {
 // lightweight PostgreSQL connectivity check when a database dependency is wired.
 func (s *CampaignService) Readyz(ctx context.Context) ([]byte, error) {
 	if !s.ready {
-		slog.DebugContext(ctx, "readyz: service not ready")
+		slog.DebugContext(ctx, "readyz: service not initialized")
 		return nil, &campaignsvc.ServiceUnavailableError{
 			Code:    "503",
 			Message: "The service is unavailable.",
@@ -77,7 +77,7 @@ func (s *CampaignService) Readyz(ctx context.Context) ([]byte, error) {
 		pingCtx, cancel := context.WithTimeout(ctx, readinessProbeTimeout)
 		defer cancel()
 		if !s.dep.Ready(pingCtx) {
-			slog.DebugContext(ctx, "readyz: service not ready")
+			slog.DebugContext(ctx, "readyz: database dependency not ready")
 			return nil, &campaignsvc.ServiceUnavailableError{
 				Code:    "503",
 				Message: "The service is unavailable.",

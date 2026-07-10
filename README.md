@@ -96,7 +96,11 @@ required for local runs).
 - `OTEL_LOGS_EXPORTER` (default `none`) — `otlp` or `none`
 - `OTEL_PROPAGATORS` (default `tracecontext,baggage`) —
   comma-separated; `jaeger` supported
-- `OTEL_TRACES_SAMPLE_RATIO` (default `1.0`) — ratio in `[0.0, 1.0]`
+- `OTEL_TRACES_SAMPLER` (default `parentbased_traceidratio` when
+  unset) — sampler type (`always_on`, `always_off`, `traceidratio`,
+  `parentbased_*`, …)
+- `OTEL_TRACES_SAMPLER_ARG` (default `1.0`) — sampler argument; for
+  ratio-based samplers, a value in `[0.0, 1.0]`
 
 ### Build and run locally (against lfx-v2-dev)
 
@@ -252,6 +256,32 @@ kubectl -n lfx-v2-campaign-service delete pod pg-tunnel \
 
 See also `specs/002-db-conn-check/quickstart.md` for readiness /
 liveness validation scenarios.
+
+### Run in a local Kubernetes cluster
+
+Prefer `make run` (above) for day-to-day Go iteration. To exercise the
+Helm chart — probes, secret refs, and env wiring — build an image and
+install with the local values override:
+
+```sh
+# 1) Copy the example override (gitignored once renamed)
+cp charts/lfx-v2-campaign-service/values.local.example.yaml \
+   charts/lfx-v2-campaign-service/values.local.yaml
+# Edit values.local.yaml as needed (encryption key sample is included).
+
+# 2) Build the image (pullPolicy: Never in the local values file)
+make docker-build
+
+# 3) Load the image into your local cluster if needed (kind example):
+#    kind load docker-image \
+#      ghcr.io/linuxfoundation/lfx-v2-campaign-service/campaign-service:latest
+
+# 4) Install / upgrade the chart (namespace: lfx)
+make helm-install-local
+```
+
+`values.local.example.yaml` documents the copy path and
+`make helm-install-local` target. Uninstall with `make helm-uninstall`.
 
 ## Development
 

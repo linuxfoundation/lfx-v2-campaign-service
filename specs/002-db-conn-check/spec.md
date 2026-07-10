@@ -58,7 +58,12 @@ As a platform operator or developer investigating readiness failures, I need dat
 
 ### Edge Cases
 
-- **Database unreachable at startup**: The service may start its HTTP listener, but readiness MUST report unavailable until a successful connectivity check completes.
+- **Database unreachable at startup**: When a database URL is
+  configured, container init runs migrations and an initial pool
+  ping before the HTTP server starts; an unreachable database MUST
+  cause startup to fail (non-zero exit) rather than exposing an
+  unavailable readiness endpoint. After a successful start, a later
+  outage is reported via readiness only (see transient blips).
 - **Transient database blips**: A failed check MUST cause readiness to report unavailable for that probe; a subsequent successful check MUST restore ready status without requiring a process restart.
 - **Missing or incomplete credentials**: If required connection settings are absent or incomplete at startup, the service MUST fail startup (non-zero exit) rather than report ready without a database.
 - **Credential secrecy**: Connection passwords and other secret fields MUST NOT appear in logs, traces, metrics labels, or readiness response bodies.
