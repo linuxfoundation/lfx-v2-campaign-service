@@ -200,7 +200,9 @@ With OTEL exporters enabled (`OTEL_*` env per existing service
 docs):
 
 1. Hit `/readyz` with DB up and down.
-2. Confirm DB-related spans appear from
+2. Confirm a `postgres.ready` span appears for the readiness
+   connectivity check (explicit health span on `Pool.Ready`).
+   Repository queries additionally emit spans via
    `github.com/exaring/otelpgx` (registered on the pool). Readiness
    failures return HTTP 503; debug-level logs may include
    `readyz: database dependency not ready` (or

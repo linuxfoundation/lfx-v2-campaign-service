@@ -63,16 +63,17 @@
 
 ## R5 — OpenTelemetry on the connection
 
-**Decision**: Register [`github.com/exaring/otelpgx`](https://github.com/exaring/otelpgx) as the pgx tracer on the pool config so pings and future queries emit spans. On readiness failure, emit a structured `slog` warning with the error message and **no** connection secrets (host may be logged; password never).
+**Decision**: Register [`github.com/exaring/otelpgx`](https://github.com/exaring/otelpgx) as the pgx tracer on the pool config so repository queries emit spans. Wrap `Pool.Ready` in an explicit `postgres.ready` health span that records ping success/failure — `/readyz` is excluded from `otelhttp` (probe noise), and `pgxpool.Ping` does not go through otelpgx's Query/Exec hooks. On readiness failure, emit a structured `slog` debug line with the error message and **no** connection secrets (host may be logged; password never).
 
-**Rationale**: Service already uses OTEL SDK + `otelhttp`. There is no `go.opentelemetry.io/contrib/.../otelpgx` module path; `exaring/otelpgx` is the community-standard pgx v5 tracer and matches common Go+Postgres+OTEL practice. HTTP `/readyz` remains filtered out of `otelhttp` (existing behavior); DB spans still appear when exporters are enabled.
+**Rationale**: Service already uses OTEL SDK + `otelhttp`. There is no `go.opentelemetry.io/contrib/.../otelpgx` module path; `exaring/otelpgx` is the community-standard pgx v5 tracer and matches common Go+Postgres+OTEL practice. Keeping `/readyz` out of `otelhttp` avoids steady HTTP span volume; the explicit Ready span still satisfies FR-007 for the health-check path.
 
 **Alternatives considered**:
 
 | Option | Why rejected |
 |--------|--------------|
 | `go.opentelemetry.io/contrib/.../otelpgx` | Module path does not exist / has no published versions |
-| Manual span only around Readyz ping | Works but does not instrument the pool for future repository work |
+| Rely on otelpgx alone for readiness | `Ping` is not traced by otelpgx Query/Exec hooks; `/readyz` has no recording HTTP parent |
+| Trace `/readyz` via otelhttp | Creates high-volume probe spans; health check is better as a dedicated DB span |
 | Metrics-only | Spec asks for observable connectivity checks; traces + slog cover diagnosis |
 | Log DSN on failure | Violates FR-008 |
 

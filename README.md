@@ -261,7 +261,32 @@ liveness validation scenarios.
 
 Prefer `make run` (above) for day-to-day Go iteration. To exercise the
 Helm chart — probes, secret refs, and env wiring — build an image and
-install with the local values override:
+install with the local values override.
+
+`make helm-install-local` installs into namespace `lfx` (see
+`HELM_NAMESPACE` in the Makefile). The chart still requires secret
+`lfx-v2-campaign-service-secrets` (keys: `host`, `port`, `username`,
+`password`, `dbname`) in that same namespace for the required `PG*`
+env refs. Without it the pod stays in `CreateContainerConfigError`.
+
+Pick one of these before installing:
+
+```sh
+# Option A — copy the secret from lfx-v2-dev into the local release ns
+kubectl get secret lfx-v2-campaign-service-secrets \
+  -n lfx-v2-campaign-service -o yaml \
+  | sed 's/namespace: .*/namespace: lfx/' \
+  | kubectl apply -f -
+
+# Option B — install into the namespace that already has the secret
+HELM_NAMESPACE=lfx-v2-campaign-service make helm-install-local
+
+# Option C — point PG* at a local database in values.local.yaml
+# (override PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE with `value:`
+#  entries instead of secretKeyRef; see values.yaml for the keys)
+```
+
+Then:
 
 ```sh
 # 1) Copy the example override (gitignored once renamed)
@@ -276,7 +301,7 @@ make docker-build
 #    kind load docker-image \
 #      ghcr.io/linuxfoundation/lfx-v2-campaign-service/campaign-service:latest
 
-# 4) Install / upgrade the chart (namespace: lfx)
+# 4) Install / upgrade the chart
 make helm-install-local
 ```
 

@@ -13,12 +13,13 @@ import (
 
 func TestValidateDatabaseSettings_Success(t *testing.T) {
 	cfg := &Config{
-		PGHost:      "db.example.com",
-		PGPort:      "5432",
-		PGUser:      "campaign",
-		PGDatabase:  "campaign",
-		PGEngine:    "postgres",
-		DatabaseURL: "postgres://campaign:secret@db.example.com:5432/campaign",
+		PGHost:          "db.example.com",
+		PGPort:          "5432",
+		PGUser:          "campaign",
+		PGDatabase:      "campaign",
+		PGEngine:        "postgres",
+		DatabaseURL:     "postgres://campaign:secret@db.example.com:5432/campaign",
+		passwordPresent: true,
 	}
 	assert.NoError(t, cfg.ValidateDatabaseSettings())
 }
@@ -44,12 +45,13 @@ func TestValidateDatabaseSettings_MissingFields(t *testing.T) {
 
 func TestValidateDatabaseSettings_UnsupportedEngine(t *testing.T) {
 	cfg := &Config{
-		PGHost:      "db.example.com",
-		PGPort:      "5432",
-		PGUser:      "campaign",
-		PGDatabase:  "campaign",
-		PGEngine:    "mysql",
-		DatabaseURL: "postgres://campaign:secret@db.example.com:5432/campaign",
+		PGHost:          "db.example.com",
+		PGPort:          "5432",
+		PGUser:          "campaign",
+		PGDatabase:      "campaign",
+		PGEngine:        "mysql",
+		DatabaseURL:     "postgres://campaign:secret@db.example.com:5432/campaign",
+		passwordPresent: true,
 	}
 	err := cfg.ValidateDatabaseSettings()
 	require.Error(t, err)
@@ -123,6 +125,19 @@ func TestValidateDatabaseSettings_CompleteFieldsMissingURL(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DatabaseURL is empty")
 	assert.Contains(t, err.Error(), "loadDatabaseFromEnv")
+}
+
+func TestValidateDatabaseSettings_DatabaseURLWithPartialPGRequiresPassword(t *testing.T) {
+	// Explicit DATABASE_URL must not mask a partial PG* set (FR-009).
+	cfg := &Config{
+		PGHost:      "localhost",
+		PGUser:      "app",
+		PGDatabase:  "campaign",
+		DatabaseURL: "postgres://app:secret@localhost:5432/campaign",
+	}
+	err := cfg.ValidateDatabaseSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PGPASSWORD")
 }
 
 func TestLoadDatabaseFromEnv_IPv6Host(t *testing.T) {

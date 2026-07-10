@@ -161,7 +161,9 @@ func (c *Config) ValidateDatabaseSettings() error {
 	if c.PGDatabase == "" {
 		missing = append(missing, constants.EnvPGDatabase)
 	}
-	if c.DatabaseURL == "" && !c.passwordPresent {
+	// Once any PG* intent exists, require PGPASSWORD even if DATABASE_URL is
+	// already set — otherwise a partial PG* set can hide behind an explicit URL.
+	if !c.passwordPresent {
 		missing = append(missing, constants.EnvPGPassword)
 	}
 	if len(missing) > 0 {

@@ -15,9 +15,15 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 )
+
+var tracer = otel.Tracer("github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres")
 
 // Pool wraps a pgx connection pool.
 type Pool struct {
@@ -48,9 +54,22 @@ func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 }
 
 // Ready reports whether the pool can reach the database. Used by the readiness
-// probe.
+// probe. Emits an explicit health span because /readyz is excluded from
+// otelhttp and pgxpool.Ping does not go through otelpgx's Query/Exec hooks.
 func (p *Pool) Ready(ctx context.Context) bool {
-	return p.Ping(ctx) == nil
+	ctx, span := tracer.Start(ctx, "postgres.ready",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("db.system", "postgresql")),
+	)
+	defer span.End()
+
+	if err := p.Ping(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "database ping failed")
+		return false
+	}
+	span.SetStatus(codes.Ok, "")
+	return true
 }
 
 // Migrate applies all pending up migrations from the embedded migration files.

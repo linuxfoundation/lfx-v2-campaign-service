@@ -9,6 +9,10 @@
 #   cp charts/lfx-v2-campaign-service/values.local.example.yaml \
 #      charts/lfx-v2-campaign-service/values.local.yaml
 #   make helm-install-local
+#
+# make helm-install-local uses HELM_NAMESPACE=lfx. The chart's required
+# PG* secretKeyRefs still need secret lfx-v2-campaign-service-secrets in
+# that namespace (or override PG* / HELM_NAMESPACE — see README).
 
 # Image configuration
 image:
