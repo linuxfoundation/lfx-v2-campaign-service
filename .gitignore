@@ -27,6 +27,7 @@ go.work
 
 # Environment files
 .env
+.envrc
 .env.local
 .env.development.local
 .env.test.local

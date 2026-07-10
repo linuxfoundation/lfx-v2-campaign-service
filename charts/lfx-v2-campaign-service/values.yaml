@@ -204,6 +204,42 @@ app:
     EVENTING_ENABLED:
       value: "true"
 
+    # PostgreSQL connection settings from the ExternalSecret-managed secret
+    # (keys: host, port, username, password, dbname, engine). The app composes
+    # the DSN in-process so the password is not interpolated into the pod spec.
+    # Secret name/namespace in lfx-v2-dev: lfx-v2-campaign-service-secrets
+    # in namespace lfx-v2-campaign-service.
+    PGHOST:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: host
+    PGPORT:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: port
+    PGUSER:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: username
+    PGPASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: password
+    PGDATABASE:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: dbname
+    PGENGINE:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: engine
+
 # serviceAccount is the configuration for the Kubernetes service account (used by multiple components)
 serviceAccount:
   # create specifies whether a service account should be created

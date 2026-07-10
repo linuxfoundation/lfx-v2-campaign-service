@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/exaring/otelpgx"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
@@ -23,10 +24,16 @@ type Pool struct {
 	*pgxpool.Pool
 }
 
-// NewPool opens a pgx connection pool for the given DSN and verifies
-// connectivity with a ping.
+// NewPool opens an instrumented pgx connection pool for the given DSN and
+// verifies connectivity with a ping.
 func NewPool(ctx context.Context, dsn string) (*Pool, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse database config: %w", err)
+	}
+	cfg.ConnConfig.Tracer = otelpgx.NewTracer()
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open pgx pool: %w", err)
 	}

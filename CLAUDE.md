@@ -32,7 +32,7 @@ only to bootstrap new subtrees.
 ## Active feature spec
 
 The current active speckit feature spec/plan/tasks live under
-[`specs/001-health-endpoints/`](specs/001-health-endpoints/plan.md).
+[`specs/002-db-conn-check/`](specs/002-db-conn-check/plan.md).
 
 ## Development
 

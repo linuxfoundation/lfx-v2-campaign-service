@@ -45,6 +45,15 @@ func TestLivez(t *testing.T) {
 	assert.Equal(t, "OK\n", string(result))
 }
 
+func TestLivez_IgnoresUnhealthyDependency(t *testing.T) {
+	s := NewCampaignService(fakeReadiness{ready: false})
+
+	result, err := s.Livez(context.Background())
+
+	assert.NoError(t, err)
+	assert.Equal(t, "OK\n", string(result))
+}
+
 func TestReadyz(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -63,6 +72,11 @@ func TestReadyz(t *testing.T) {
 			service:     &CampaignService{ready: false},
 			expectError: true,
 		},
+		{
+			name:        "unhealthy dependency returns ServiceUnavailable",
+			service:     NewCampaignService(fakeReadiness{ready: false}),
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -74,6 +88,7 @@ func TestReadyz(t *testing.T) {
 				var unavailable *campaignsvc.ServiceUnavailableError
 				assert.ErrorAs(t, err, &unavailable)
 				assert.Nil(t, result)
+				assert.NotContains(t, err.Error(), "PGPASSWORD")
 				return
 			}
 

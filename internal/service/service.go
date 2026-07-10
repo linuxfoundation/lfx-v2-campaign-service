@@ -7,6 +7,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	campaignsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
@@ -59,9 +60,11 @@ func (s *CampaignService) ServiceReady() bool {
 	return true
 }
 
-// Readyz checks if the service is able to take inbound requests.
-func (s *CampaignService) Readyz(_ context.Context) ([]byte, error) {
+// Readyz checks if the service is able to take inbound requests, including a
+// lightweight PostgreSQL connectivity check when a database dependency is wired.
+func (s *CampaignService) Readyz(ctx context.Context) ([]byte, error) {
 	if !s.ServiceReady() {
+		slog.WarnContext(ctx, "readyz: service not ready")
 		return nil, &campaignsvc.ServiceUnavailableError{
 			Code:    "503",
 			Message: "The service is unavailable.",
@@ -71,10 +74,10 @@ func (s *CampaignService) Readyz(_ context.Context) ([]byte, error) {
 }
 
 // Livez checks if the service is alive.
+//
+// This always returns OK as long as the process can respond. It deliberately
+// does not call the database: Kubernetes uses livez to restart hung processes,
+// and a DB outage must not trigger restarts.
 func (s *CampaignService) Livez(_ context.Context) ([]byte, error) {
-	// This always returns OK as long as the service is still running. As this
-	// endpoint is used as a Kubernetes liveness check, the service must
-	// self-detect non-recoverable errors and self-terminate (the process exits
-	// non-zero on a fatal startup error in main).
 	return []byte("OK\n"), nil
 }
