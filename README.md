@@ -272,11 +272,24 @@ env refs. Without it the pod stays in `CreateContainerConfigError`.
 Pick one of these before installing:
 
 ```sh
-# Option A — copy the secret from lfx-v2-dev into the local release ns
-kubectl get secret lfx-v2-campaign-service-secrets \
-  -n lfx-v2-campaign-service -o yaml \
-  | sed 's/namespace: .*/namespace: lfx/' \
-  | kubectl apply -f -
+# Option A — copy the secret from lfx-v2-dev into a local cluster.
+# Use distinct source and destination contexts (adjust names to match
+# `kubectl config get-contexts`). Rebuild a clean Secret so server-
+# managed fields (uid, resourceVersion, …) are not re-applied.
+SRC_CONTEXT="${SRC_CONTEXT:-lfx-v2-dev}"
+DST_CONTEXT="${DST_CONTEXT:-kind-kind}"
+
+kubectl --context="$SRC_CONTEXT" get secret \
+  lfx-v2-campaign-service-secrets \
+  -n lfx-v2-campaign-service -o json \
+  | jq '{
+      apiVersion: .apiVersion,
+      kind: .kind,
+      type: .type,
+      metadata: { name: .metadata.name, namespace: "lfx" },
+      data: .data
+    }' \
+  | kubectl --context="$DST_CONTEXT" apply -f -
 
 # Option B — install into the namespace that already has the secret
 HELM_NAMESPACE=lfx-v2-campaign-service make helm-install-local
