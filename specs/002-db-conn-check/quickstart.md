@@ -95,7 +95,7 @@ echo "PGHOST=$PGHOST PGPORT=$PGPORT PGDATABASE=$PGDATABASE"
 
 make build
 make run
-# Startup log "database pool initialized" must show
+# Startup log "dependency container initialized" must show
 # database=127.0.0.1:5432/... (RDS hostname means PGHOST is wrong)
 ```
 
@@ -143,10 +143,12 @@ curl -sS -o /tmp/livez.body -w "%{http_code}\n" http://127.0.0.1:8080/livez
 
 ## 3. Local run — database unreachable
 
-Keep the process running; point at a closed port or stop Postgres:
+Keep the already-running service up. Do **not** restart with a bad
+host/port — startup migrates and pings the DB, so the process exits
+before `/readyz` is available. Instead stop the port-forward / jump
+pod (or stop local Postgres), then:
 
 ```bash
-# restart with bad host/port, or block the DB, then:
 curl -sS -o /tmp/readyz.body -w "%{http_code}\n" http://127.0.0.1:8080/readyz
 # expect: 503
 

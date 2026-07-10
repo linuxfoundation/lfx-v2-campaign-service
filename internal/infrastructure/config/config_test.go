@@ -88,6 +88,22 @@ func TestLoadDatabaseFromEnv_ComposesURL(t *testing.T) {
 	assert.NotContains(t, redacted, "s3cret")
 }
 
+func TestLoadDatabaseFromEnv_IPv6Host(t *testing.T) {
+	t.Setenv("PGHOST", "2001:db8::1")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGUSER", "app")
+	t.Setenv("PGPASSWORD", "x")
+	t.Setenv("PGDATABASE", "campaign")
+
+	cfg := &Config{}
+	cfg.loadDatabaseFromEnv()
+
+	u, err := url.Parse(cfg.DatabaseURL)
+	require.NoError(t, err)
+	assert.Equal(t, "[2001:db8::1]:5432", u.Host)
+	assert.Equal(t, "[2001:db8::1]:5432/campaign", cfg.RedactedDatabaseHost())
+}
+
 func TestLoadDatabaseFromEnv_IncompleteSkipsURL(t *testing.T) {
 	t.Setenv("PGHOST", "localhost")
 	t.Setenv("PGUSER", "app")

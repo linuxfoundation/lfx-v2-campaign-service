@@ -234,11 +234,14 @@ app:
         secretKeyRef:
           name: lfx-v2-campaign-service-secrets
           key: dbname
+    # Optional in the app (empty default). Mark optional so a secret without
+    # an `engine` key does not block pod start.
     PGENGINE:
       valueFrom:
         secretKeyRef:
           name: lfx-v2-campaign-service-secrets
           key: engine
+          optional: true
 
 # serviceAccount is the configuration for the Kubernetes service account (used by multiple components)
 serviceAccount:

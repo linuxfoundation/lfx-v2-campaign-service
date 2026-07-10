@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -109,7 +110,7 @@ func (c *Config) loadDatabaseFromEnv() {
 		u := &url.URL{
 			Scheme: "postgres",
 			User:   url.UserPassword(c.PGUser, password),
-			Host:   c.PGHost + ":" + c.PGPort,
+			Host:   net.JoinHostPort(c.PGHost, c.PGPort),
 			Path:   "/" + c.PGDatabase,
 		}
 		c.DatabaseURL = u.String()
@@ -117,8 +118,9 @@ func (c *Config) loadDatabaseFromEnv() {
 }
 
 // ValidateDatabaseSettings validates PostgreSQL settings when any are supplied.
-// An empty database configuration remains allowed (metadata-only / unit-test mode).
-// Password is never included in errors.
+// An empty database configuration remains allowed for unit tests and
+// metadata-only local runs (no-DB mode). Production charts inject PG* so
+// this path is not used in-cluster. Password is never included in errors.
 func (c *Config) ValidateDatabaseSettings() error {
 	if c == nil {
 		return errors.New("config is nil")
@@ -180,7 +182,7 @@ func (c *Config) RedactedDatabaseHost() string {
 	if c.PGHost == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s:%s/%s", c.PGHost, c.PGPort, c.PGDatabase)
+	return net.JoinHostPort(c.PGHost, c.PGPort) + "/" + c.PGDatabase
 }
 
 func envOrDefault(key, def string) string {

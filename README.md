@@ -22,9 +22,11 @@ Configuration priority: CLI flags > environment variables > defaults.
 
 ### Required (startup)
 
-These must be set for the process to start. Missing or incomplete
-values cause a non-zero exit. In-cluster they are typically injected
-From the ExternalSecret-managed Kubernetes secret
+When any PostgreSQL setting is supplied, the set must be complete or
+the process exits non-zero. Fully omitting all database settings is
+allowed for unit tests / metadata-only local runs (no-DB mode; `/readyz`
+stays process-ready without a pool). In-cluster they are typically
+injected from the ExternalSecret-managed Kubernetes secret
 (`lfx-v2-campaign-service-secrets` in namespace
 `lfx-v2-campaign-service`; keys `host`, `port`, `username`,
 `password`, `dbname`, `engine`).
@@ -177,9 +179,9 @@ nc -z 127.0.0.1 5432 && echo "tunnel port open"
 
 make build
 make run
-# On startup, the log line "database pool initialized" must show
-# database=127.0.0.1:5432/<dbname> — if it shows the RDS hostname,
-# stop and fix PGHOST.
+# On startup, the log line "dependency container initialized" must
+# show database=127.0.0.1:5432/<dbname> — if it shows the RDS
+# hostname, stop and fix PGHOST.
 ```
 
 Smoke-check readiness (expects `200` / `OK` while the tunnel is up):
