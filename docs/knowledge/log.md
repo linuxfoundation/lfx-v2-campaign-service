@@ -2,6 +2,11 @@
 
 ## 2026-07-10
 
+**Update** — Absorbed PR #18 grype fixes into the MegaLinter secrets work:
+added `.grype.yaml` (ignore five transitive test-only `docker/docker`
+CVEs) and `REPOSITORY_GRYPE_ARGUMENTS` in `.mega-linter.yml`. Kept the
+narrower gitleaks allowlists from PR #24 (not #18's broad `^gen/`).
+
 **Update** — Documented local MegaLinter/Docker workflow and tightened
 `.gitleaks.toml` allowlists (narrow Goa CLI path + `.gitleaksignore`
 fingerprint for twitter-api-secret false positive; sample AES key limited

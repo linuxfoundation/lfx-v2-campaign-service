@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "MegaLinter and secret scanning"
-description: "How MegaLinter, gitleaks, and secretlint are configured for this repo, including local Docker runs."
+description: "How MegaLinter, gitleaks, secretlint, and grype are configured for this repo, including local Docker runs."
 resource: ".mega-linter.yml"
 ---
 
@@ -34,3 +34,11 @@ Faster secrets-only check:
 ```sh
 gitleaks detect --source . --config .gitleaks.toml
 ```
+
+## Grype
+
+[`.grype.yaml`](../../../.grype.yaml) ignores five known CVEs in
+`github.com/docker/docker`, a transitive **test-only** dependency (via
+golang-migrate / `dktest`). MegaLinter is pointed at that config with
+`REPOSITORY_GRYPE_ARGUMENTS: "--config .grype.yaml"`. Ignores are
+package-scoped so new findings in runtime dependencies still fail CI.
