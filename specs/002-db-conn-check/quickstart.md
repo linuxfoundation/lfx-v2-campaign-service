@@ -24,6 +24,14 @@ Local/test sample (NOT for production) — base64 of
 `LFX-campaign-local-dev-aes-256!!`:
 
 ```bash
+# !!! WARNING !!!
+# This is a *TEST/EXAMPLE* key for local/dev use only.
+# NEVER use this in production or shared environments!
+# -----------------------------------------------------
+# (test/dev/example: base64-encoded 'LFX-campaign-local-dev-aes-256!!')
+# Example (use printf so the *plaintext* stays exactly 32 bytes — a trailing
+# newline from echo would make it 33 and break AES-256 key length):
+#   printf '%s' 'LFX-campaign-local-dev-aes-256!!' | base64
 export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
 ```
 
@@ -100,9 +108,11 @@ export PGDATABASE="$(kubectl -n lfx-v2-campaign-service get secret \
   lfx-v2-campaign-service-secrets \
   -o jsonpath='{.data.dbname}' | base64 -d)"
 # Local/test sample only — see Prerequisites above.
+# NEVER use this in production or shared environments!
 export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
 
 # Must print 127.0.0.1 — not the RDS FQDN from secret `host`
+
 echo "PGHOST=$PGHOST PGPORT=$PGPORT PGDATABASE=$PGDATABASE"
 
 make build
@@ -139,6 +149,7 @@ export PGUSER=<user>
 export PGPASSWORD=<password>
 export PGDATABASE=<dbname>
 # Local/test sample only — see Prerequisites above.
+# NEVER use this in production or shared environments!
 export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
 
 make run

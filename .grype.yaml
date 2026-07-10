@@ -1,0 +1,39 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+# Grype configuration for the MegaLinter REPOSITORY_GRYPE scan.
+#
+# The ignored vulnerabilities below are all in github.com/docker/docker, a
+# TRANSITIVE, TEST-ONLY dependency pulled in via golang-migrate's pgx driver
+# tests (dhui/dktest). It is never imported by the service binary that ships
+# to production.
+#
+# Engine releases document fixes (e.g. 29.3.1 / 29.3.2), but those versions are
+# not published on the Go module path we resolve today (proxy.golang.org tops
+# out around v28.5.x for github.com/docker/docker; some advisories list
+# first_patched_version: null for that module and point at moby/moby/v2).
+# Until migrate/dktest pulls a remediated client module, keep these
+# package-scoped ignores so NEW findings in runtime deps still fail CI.
+# Track: upgrade golang-migrate / dktest (or replace) when a fixed module is
+# available — do not treat this ignore list as permanent.
+ignore:
+  - vulnerability: GHSA-x744-4wpc-v9h2
+    package:
+      name: github.com/docker/docker
+      type: go-module
+  - vulnerability: GHSA-x86f-5xw2-fm2r
+    package:
+      name: github.com/docker/docker
+      type: go-module
+  - vulnerability: GHSA-rg2x-37c3-w2rh
+    package:
+      name: github.com/docker/docker
+      type: go-module
+  - vulnerability: GHSA-pxq6-2prw-chj9
+    package:
+      name: github.com/docker/docker
+      type: go-module
+  - vulnerability: GHSA-vp62-88p7-qqf5
+    package:
+      name: github.com/docker/docker
+      type: go-module

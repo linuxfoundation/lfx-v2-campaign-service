@@ -55,10 +55,18 @@ can use this **non-production** sample (base64 of the 32-byte ASCII
 string `LFX-campaign-local-dev-aes-256!!`):
 
 ```sh
+# !!! WARNING !!!
+# This is a *TEST/EXAMPLE* key for local/dev use only.
+# NEVER use this in production or shared environments!
+# -----------------------------------------------------
+# (test/dev/example: base64-encoded 'LFX-campaign-local-dev-aes-256!!')
+# Example (use printf so the *plaintext* stays exactly 32 bytes — a trailing
+# newline from echo would make it 33 and break AES-256 key length):
+#   printf '%s' 'LFX-campaign-local-dev-aes-256!!' | base64
 export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
 ```
 
-Do **not** use this value in shared, staging, or production clusters.
+Again, do **not** use this value in shared, staging, or production clusters.
 Generate a real key for those environments, for example:
 
 ```sh
@@ -200,8 +208,10 @@ export PGPASSWORD="$(kubectl -n lfx-v2-campaign-service get secret \
 export PGDATABASE="$(kubectl -n lfx-v2-campaign-service get secret \
   lfx-v2-campaign-service-secrets \
   -o jsonpath='{.data.dbname}' | base64 -d)"
-# Local-dev sample only (see "Local / test sample key" above).
+# **Note**: This is a Local-dev sample only (see "Local / test sample key" above).
+# NEVER use this in production or shared environments!
 export CREDENTIAL_ENCRYPTION_KEY='TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='
+
 
 # Sanity-check before starting (must be 127.0.0.1, not the RDS FQDN)
 echo "PGHOST=$PGHOST PGPORT=$PGPORT PGDATABASE=$PGDATABASE"
@@ -345,6 +355,36 @@ make build         # build a local binary
 make build-release # build a static release binary for Linux
 make run           # build and run locally (needs PG* env; see above)
 ```
+
+### MegaLinter (local)
+
+CI runs MegaLinter on pull requests (`.github/workflows/mega-linter.yaml`,
+Go flavor `v9.1.0`). Config lives in `.mega-linter.yml`. To reproduce
+locally with Docker or OrbStack:
+
+```sh
+docker pull oxsecurity/megalinter-go:v9.1.0
+docker run --rm \
+  -e DEFAULT_WORKSPACE=/tmp/lint \
+  -e GOTOOLCHAIN=auto \
+  -e MEGALINTER_CONFIG=.mega-linter.yml \
+  -v "$PWD:/tmp/lint:rw" \
+  oxsecurity/megalinter-go:v9.1.0
+```
+
+Reports are written under `megalinter-reports/` (gitignored). The first
+pull is large; a full run often takes several minutes.
+
+For a faster secrets-only check matching the CI gitleaks step:
+
+```sh
+gitleaks detect --source . --config .gitleaks.toml
+```
+
+Note: if this checkout is a git worktree, the containerized `git_diff`
+linter may fail because the worktree `.git` path is not visible inside
+the container. That does not affect GitHub Actions (normal
+`actions/checkout`).
 
 ## Knowledge Base (OKF)
 

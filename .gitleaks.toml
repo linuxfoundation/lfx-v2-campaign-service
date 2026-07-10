@@ -7,12 +7,32 @@ title = "gitleaks config"
 # useDefault will extend the base configuration with the default gitleaks config
 useDefault = true
 
-[allowlist]
-    description = "Allowlisted files"
-    paths = [
-        # Exclude test files as they often contain dummy/fake data
-        '''.*_test\.go$''',
-        '''(go.mod|go.sum)$''',
-        # Exclude documentation files with example tokens
-        '''CLAUDE\.md$'''
-    ] 
+# Global allowlists (any matching allowlist suppresses a finding).
+# Prefer scoped [[allowlists]] over a single OR-combined [allowlist].
+
+[[allowlists]]
+description = "Test fixtures, module metadata, and agent guide examples"
+paths = [
+    '''.*_test\.go$''',
+    '''(go.mod|go.sum)$''',
+    '''CLAUDE\.md$'''
+]
+
+# Goa CLI twitter-api-secret false positive is suppressed via fingerprint in
+# .gitleaksignore (not a path allowlist — that would mute all rules for the
+# file). targetRules + path did not clear the finding under gitleaks v8.28.0.
+
+# Sample local/dev AES key is ignored only when it appears in documented
+# non-production paths (not if copied into production manifests).
+[[allowlists]]
+description = "Documented local/dev AES-256 sample key (docs + local Helm example)"
+condition = "AND"
+regexTarget = "secret"
+regexes = [
+    '''TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE='''
+]
+paths = [
+    '''(^|/)README\.md$''',
+    '''(^|/)specs/002-db-conn-check/quickstart\.md$''',
+    '''(^|/)charts/lfx-v2-campaign-service/values\.local\.example\.yaml$'''
+]
