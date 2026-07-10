@@ -48,11 +48,11 @@
 
 **Decision**:
 
-1. At startup, open the pool; missing/incomplete credentials → non-zero exit (FR-009).
-2. `ServiceReady()` requires the pool to be non-nil (wired) **and** the existing init flag.
-3. `Readyz` additionally runs a per-request connectivity check (timed ping). If ping fails → `ServiceUnavailableError` (503). `Livez` unchanged.
+1. At startup, when a database URL is configured, open the pool; incomplete PG* credentials → non-zero exit (FR-009). Fully omitting all database settings remains allowed (no-DB / metadata-only mode).
+2. `ServiceReady()` / `Readyz` require dependency health only when a pool is wired; a nil dep reports ready from the init flag alone (FR-009).
+3. When a dep is wired, `Readyz` runs a per-request connectivity check (timed ping). If ping fails → `ServiceUnavailableError` (503). `Livez` unchanged.
 
-**Rationale**: Separates “dependency wired” from “dependency reachable now.” Keeps unit tests mockable via a small `DBPinger` (or equivalent) interface injected into `CampaignService`.
+**Rationale**: Separates “dependency wired” from “dependency reachable now.” Keeps unit tests mockable via a small `ReadinessChecker` interface injected into `CampaignService`. No-DB mode stays usable for unit tests and metadata-only local runs.
 
 **Alternatives considered**:
 

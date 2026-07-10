@@ -4,6 +4,7 @@
 package config
 
 import (
+	"fmt"
 	"net/url"
 	"testing"
 
@@ -225,4 +226,30 @@ func TestLoadDatabaseFromEnv_DefaultPort(t *testing.T) {
 	cfg := &Config{}
 	cfg.loadDatabaseFromEnv()
 	assert.Equal(t, "5432", cfg.PGPort)
+}
+
+func TestConfigString_RedactsSecrets(t *testing.T) {
+	cfg := &Config{
+		Host:                    "*",
+		Port:                    "8080",
+		DatabaseURL:             "postgres://campaign:s3cret-value@db.example.com:5432/campaign",
+		CredentialEncryptionKey: "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE=",
+		PGHost:                  "db.example.com",
+		PGUser:                  "campaign",
+		PGDatabase:              "campaign",
+		passwordPresent:         true,
+	}
+
+	for _, formatted := range []string{
+		cfg.String(),
+		cfg.GoString(),
+		fmt.Sprintf("%v", cfg),
+		fmt.Sprintf("%+v", cfg),
+		fmt.Sprintf("%#v", cfg),
+	} {
+		assert.NotContains(t, formatted, "s3cret-value")
+		assert.NotContains(t, formatted, "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE=")
+		assert.Contains(t, formatted, "xxxxx")
+		assert.Contains(t, formatted, "db.example.com")
+	}
 }

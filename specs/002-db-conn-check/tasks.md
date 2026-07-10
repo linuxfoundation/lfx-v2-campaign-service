@@ -39,7 +39,7 @@
 - [x] T004 Extend `internal/infrastructure/config/config.go` to load `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` (and optional engine), compose a DSN in-process, validate required fields are non-empty, and ensure password is never included in any config debug/`String` output
 - [x] T005 [P] Add config unit tests for missing/incomplete credentials and successful load (no password assertions in logs) in `internal/infrastructure/config/config_test.go`
 - [x] T006 Implement pool factory `NewPool(ctx, cfg)` in `internal/infrastructure/postgres/postgres.go` using `pgxpool`, plus `Ping(ctx)` / health-check helper with a default 2s timeout; fail fast on invalid config / pool create errors
-- [x] T007 [P] Add postgres package unit tests for DSN/pool config construction and ping-helper timeout behavior (use interfaces/fakes where a live DB is not required) in `internal/infrastructure/postgres/postgres_test.go`
+- [x] T007 [P] Add postgres package unit tests for DSN rewriting and Ready/ping-helper behavior with injectable ping + in-memory span recorder (no live DB required) in `internal/infrastructure/postgres/pool_test.go`
 
 **Checkpoint**: Foundation ready — config validates credentials; postgres package can open a pool and ping
 
@@ -55,12 +55,12 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [x] T008 [P] [US1] Extend `internal/service/service_test.go` with a mock `DBPinger`: Readyz success when ping OK; Readyz returns `ServiceUnavailableError` when ping fails or pinger is nil
+- [x] T008 [P] [US1] Extend `internal/service/service_test.go` with a mock readiness dependency: Readyz success when dep is healthy (or nil for no-DB mode); Readyz returns `ServiceUnavailableError` when dep reports not ready
 - [x] T009 [P] [US1] Add container/startup tests (or config+container focused tests) asserting missing DB credentials cause non-zero/startup failure path in `internal/container/container_test.go` (new) or existing test location matching project patterns
 
 ### Implementation for User Story 1
 
-- [x] T010 [US1] Introduce a `DBPinger` (or equivalent) interface and inject it into `CampaignService` in `internal/service/service.go`; update `NewCampaignService` constructor; keep `ServiceReady()` requiring init flag AND non-nil pinger
+- [x] T010 [US1] Introduce a `ReadinessChecker` (or equivalent) interface and inject it into `CampaignService` in `internal/service/service.go`; update `NewCampaignService` constructor; `ServiceReady()` / `Readyz` require dep health only when a dependency is wired (nil dep = no-DB mode, FR-009)
 - [x] T011 [US1] Update `Readyz` in `internal/service/service.go` to run a timed connectivity check via the pinger after `ServiceReady()`; on failure return `ServiceUnavailableError` (503); on success return `OK\n`; do not change response content type/body contract
 - [x] T012 [US1] Wire pool open into `internal/container/container.go` (`NewContainer`): create pool from config, inject into service, store pool for `Close()`; return error (fail startup) if config/pool init fails
 - [x] T013 [US1] Implement pool close in `internal/container/container.go` `Close()` so connections drain on shutdown

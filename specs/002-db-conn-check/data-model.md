@@ -47,12 +47,15 @@ Binary runtime signal derived from a lightweight round-trip check against the po
    pool opened ──fail──► process exit (non-zero)
         │
         ▼
-   Reachable ◄──ping ok──► Unreachable
+   Reachable ──ping fail──► Unreachable
+        ▲                      │
+        └────── ping ok ───────┘
         │                      │
         └── /readyz 200        └── /readyz 503
 ```
 
-Transient failures flip to Unreachable for that probe; a later successful probe returns to Reachable without restart.
+Transient failures flip to Unreachable for that probe; a later successful
+probe (`ping ok`) returns to Reachable without restart.
 
 ### Readiness Status
 

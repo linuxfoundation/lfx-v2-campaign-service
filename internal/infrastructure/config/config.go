@@ -198,6 +198,59 @@ func (c *Config) RedactedDatabaseHost() string {
 	return net.JoinHostPort(c.PGHost, c.PGPort) + "/" + c.PGDatabase
 }
 
+// String returns a redacted representation safe for logs and debug formatting
+// (FR-008). DatabaseURL passwords and CredentialEncryptionKey are masked.
+// Implements fmt.Stringer so fmt verbs like %v / %+v / %s use this form.
+func (c *Config) String() string {
+	if c == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf(
+		"&{Debug:%v Host:%q Port:%q JWKSUrl:%q Audience:%q Issuer:%q NATSUrl:%q DatabaseURL:%q CredentialEncryptionKey:%q PGHost:%q PGPort:%q PGUser:%q PGDatabase:%q PGEngine:%q}",
+		c.Debug,
+		c.Host,
+		c.Port,
+		c.JWKSUrl,
+		c.Audience,
+		c.Issuer,
+		c.NATSUrl,
+		redactDatabaseURL(c.DatabaseURL),
+		redactSecret(c.CredentialEncryptionKey),
+		c.PGHost,
+		c.PGPort,
+		c.PGUser,
+		c.PGDatabase,
+		c.PGEngine,
+	)
+}
+
+// GoString implements fmt.GoStringer so %#v also uses the redacted form.
+func (c *Config) GoString() string {
+	return c.String()
+}
+
+func redactDatabaseURL(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	u, err := url.Parse(dsn)
+	if err != nil || u.User == nil {
+		return dsn
+	}
+	if _, hasPass := u.User.Password(); !hasPass {
+		return dsn
+	}
+	u.User = url.UserPassword(u.User.Username(), "xxxxx")
+	return u.String()
+}
+
+func redactSecret(v string) string {
+	if v == "" {
+		return ""
+	}
+	return "xxxxx"
+}
+
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

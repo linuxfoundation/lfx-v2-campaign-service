@@ -65,7 +65,11 @@ As a platform operator or developer investigating readiness failures, I need dat
   unavailable readiness endpoint. After a successful start, a later
   outage is reported via readiness only (see transient blips).
 - **Transient database blips**: A failed check MUST cause readiness to report unavailable for that probe; a subsequent successful check MUST restore ready status without requiring a process restart.
-- **Missing or incomplete credentials**: If required connection settings are absent or incomplete at startup, the service MUST fail startup (non-zero exit) rather than report ready without a database.
+- **Missing or incomplete credentials**: If required connection settings
+  are *partially* supplied (incomplete PG* set) at startup, the service
+  MUST fail startup (non-zero exit). Fully omitting all database
+  settings remains allowed for unit tests / metadata-only local runs
+  (no-DB mode; FR-009).
 - **Credential secrecy**: Connection passwords and other secret fields MUST NOT appear in logs, traces, metrics labels, or readiness response bodies.
 - **Probe cost**: The connectivity check MUST be a lightweight validation (a simple round-trip query) suitable for frequent readiness polling; it MUST NOT run migrations, heavy queries, or schema validation as part of the probe.
 - **Liveness unchanged**: Database failure MUST NOT cause the liveness endpoint to fail.
@@ -100,7 +104,7 @@ As a platform operator or developer investigating readiness failures, I need dat
 - **SC-001**: When the database is reachable with valid credentials, readiness reports ready and the instance can enter serving rotation in development, staging, and production.
 - **SC-002**: When the database is unreachable or rejects the connectivity check, readiness reports unavailable within one probe interval and the instance is removed from (or never added to) serving rotation.
 - **SC-003**: When the database is unreachable, liveness continues to report success so the orchestration platform does not restart the process solely due to database unavailability.
-- **SC-004**: A developer can run the existing local build/test workflow and automated tests cover ready-with-database, not-ready-without-database, and alive-despite-database-failure cases.
+- **SC-004**: A developer can run the existing local build/test workflow and automated tests cover ready-with-database, not-ready-when-configured-database-unreachable-or-check-fails, and alive-despite-database-failure cases (no-DB mode remains a successful ready path per FR-009).
 - **SC-005**: Operators investigating a readiness failure can identify from observability data that the database connectivity check failed, without any secret credentials appearing in that data.
 - **SC-006**: Under normal conditions, a successful readiness check that includes the database validation completes quickly enough for standard Kubernetes probe intervals (on the order of hundreds of milliseconds for the check itself, not multi-second blocking work).
 

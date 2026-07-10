@@ -23,7 +23,13 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 )
 
-var tracer = otel.Tracer("github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres")
+var tracerName = "github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+
+// readyTracer returns the current global tracer so tests can install an
+// in-memory provider without fighting a package-init Tracer binding.
+func readyTracer() trace.Tracer {
+	return otel.Tracer(tracerName)
+}
 
 // Pool wraps a pgx connection pool.
 type Pool struct {
@@ -57,13 +63,19 @@ func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 // probe. Emits an explicit health span because /readyz is excluded from
 // otelhttp and pgxpool.Ping does not go through otelpgx's Query/Exec hooks.
 func (p *Pool) Ready(ctx context.Context) bool {
-	ctx, span := tracer.Start(ctx, "postgres.ready",
+	return p.checkReady(ctx, p.Ping)
+}
+
+// checkReady runs ping under a postgres.ready span. ping is injectable so unit
+// tests can cover success/failure without a live database.
+func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error) bool {
+	ctx, span := readyTracer().Start(ctx, "postgres.ready",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("db.system", "postgresql")),
 	)
 	defer span.End()
 
-	if err := p.Ping(ctx); err != nil {
+	if err := ping(ctx); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "database ping failed")
 		return false

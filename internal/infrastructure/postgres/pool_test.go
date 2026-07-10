@@ -3,7 +3,18 @@
 
 package postgres
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+)
 
 func TestPgxURL_RewritesURLSchemes(t *testing.T) {
 	cases := map[string]string{
@@ -29,4 +40,58 @@ func TestPgxURL_RejectsKeywordDSN(t *testing.T) {
 	if _, err := pgxURL("host=localhost user=u dbname=d"); err == nil {
 		t.Error("pgxURL(keyword DSN) = nil error, want a clear rejection")
 	}
+}
+
+func withSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+	return sr
+}
+
+func TestCheckReady_SuccessRecordsOKSpan(t *testing.T) {
+	sr := withSpanRecorder(t)
+	p := &Pool{}
+
+	ok := p.checkReady(context.Background(), func(context.Context) error { return nil })
+	require.True(t, ok)
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "postgres.ready", spans[0].Name())
+	assert.Equal(t, codes.Ok, spans[0].Status().Code)
+}
+
+func TestCheckReady_FailureRecordsErrorSpan(t *testing.T) {
+	sr := withSpanRecorder(t)
+	p := &Pool{}
+
+	ok := p.checkReady(context.Background(), func(context.Context) error {
+		return errors.New("boom")
+	})
+	require.False(t, ok)
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "postgres.ready", spans[0].Name())
+	assert.Equal(t, codes.Error, spans[0].Status().Code)
+	require.NotEmpty(t, spans[0].Events(), "expected RecordError event")
+}
+
+func TestCheckReady_PassesContextToPing(t *testing.T) {
+	_ = withSpanRecorder(t)
+	p := &Pool{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var sawCanceled bool
+	ok := p.checkReady(ctx, func(c context.Context) error {
+		sawCanceled = c.Err() != nil
+		return c.Err()
+	})
+	require.False(t, ok)
+	assert.True(t, sawCanceled)
 }
