@@ -299,7 +299,7 @@ func (e *APIError) Error() string {
 	if e.Message != "" {
 		return fmt.Sprintf("meta API request failed (%d): %s", e.StatusCode, e.Message)
 	}
-	return fmt.Sprintf("meta API request failed (%d). Check server logs for details.", e.StatusCode)
+	return fmt.Sprintf("meta API request failed (%d) with no error details in the response body", e.StatusCode)
 }
 
 // doRequest performs a Graph API call and decodes the JSON body into out.
@@ -362,6 +362,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			var env graphErrorEnvelope
 			if json.Unmarshal(raw, &env) == nil && env.Error != nil && env.Error.Message != "" {
 				apiErr.Message = env.Error.Message
+			} else if snippet := strings.TrimSpace(string(raw)); snippet != "" {
+				// Non-Graph or malformed error body: surface a truncated snippet of
+				// the raw body so the real reason isn't lost.
+				apiErr.Message = truncate(snippet, 300)
 			}
 			return apiErr
 		}
@@ -590,18 +594,37 @@ func buildUTMURL(in CampaignInput, variantIndex int) string {
 		campaign = slug
 	}
 
-	params := url.Values{}
-	params.Set("utm_source", "meta")
-	params.Set("utm_medium", "paid-social")
-	params.Set("utm_campaign", campaign)
-	params.Set("utm_term", strings.ToLower(collapseSpacesToDash(in.EventName)))
-	params.Set("utm_content", fmt.Sprintf("variant-%d", variantIndex+1))
-
-	sep := "?"
-	if strings.Contains(base, "?") {
-		sep = "&"
+	utm := map[string]string{
+		"utm_source":   "meta",
+		"utm_medium":   "paid-social",
+		"utm_campaign": campaign,
+		"utm_term":     strings.ToLower(collapseSpacesToDash(in.EventName)),
+		"utm_content":  fmt.Sprintf("variant-%d", variantIndex+1),
 	}
-	return base + sep + params.Encode()
+
+	// Parse the URL so UTM params merge into the existing query and any fragment
+	// stays at the very end (a fragment must not be pushed after the query).
+	parsed, err := url.Parse(base)
+	if err != nil {
+		// Fall back to naive concatenation if the URL can't be parsed; this
+		// preserves behavior for inputs that already passed validation.
+		params := url.Values{}
+		for k, v := range utm {
+			params.Set(k, v)
+		}
+		sep := "?"
+		if strings.Contains(base, "?") {
+			sep = "&"
+		}
+		return base + sep + params.Encode()
+	}
+
+	q := parsed.Query()
+	for k, v := range utm {
+		q.Set(k, v)
+	}
+	parsed.RawQuery = q.Encode()
+	return parsed.String()
 }
 
 var wsRE = regexp.MustCompile(`\s+`)
@@ -618,10 +641,15 @@ func truncateErr(err error, max int) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
-	runes := []rune(msg)
+	return truncate(err.Error(), max)
+}
+
+// truncate clamps s to at most max runes, appending an ellipsis when it clips,
+// without splitting a multi-byte rune.
+func truncate(s string, max int) string {
+	runes := []rune(s)
 	if len(runes) <= max {
-		return msg
+		return s
 	}
 	return string(runes[:max]) + "…"
 }
@@ -707,6 +735,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0 {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
 	}
+	// Reject sub-cent budgets that round to zero cents before any API call: a
+	// zero/invalid budget would otherwise be sent to Meta and create a bad ad set.
+	budgetCents := int64(math.Round(in.BudgetUSD * 100))
+	if budgetCents < 1 {
+		return nil, fmt.Errorf("budget too small: must be at least 0.01")
+	}
 
 	if !dateRE.MatchString(in.StartDate) {
 		return nil, fmt.Errorf("invalid start date format: %s — expected YYYY-MM-DD", in.StartDate)
@@ -714,8 +748,39 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if !dateRE.MatchString(in.EndDate) {
 		return nil, fmt.Errorf("invalid end date format: %s — expected YYYY-MM-DD", in.EndDate)
 	}
+	// Reject impossible calendar dates (e.g. 2026-13-40) that pass the shape check.
+	if _, err := time.Parse("2006-01-02", in.StartDate); err != nil {
+		return nil, fmt.Errorf("invalid start date format: %s — expected YYYY-MM-DD", in.StartDate)
+	}
+	if _, err := time.Parse("2006-01-02", in.EndDate); err != nil {
+		return nil, fmt.Errorf("invalid end date format: %s — expected YYYY-MM-DD", in.EndDate)
+	}
 	if in.EndDate <= in.StartDate {
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+	}
+
+	// PageID is required for the creative flow (object_story_spec.page_id) and,
+	// for some objectives, the promoted_object. Fail fast before any mutating
+	// call so a missing PageID doesn't create a paid campaign that can't get ads.
+	if strings.TrimSpace(c.account.PageID) == "" {
+		return nil, fmt.Errorf("PageID is required to create Meta creatives; configure a Facebook Page for this account")
+	}
+
+	// Resolve the objective and validate deterministic inputs (placements and the
+	// promoted object) BEFORE the first mutating call, so an input error never
+	// creates a paid campaign.
+	objective := defaultObjective(in.Objective)
+	objParams, ok := objectiveParams[objective]
+	if !ok {
+		return nil, fmt.Errorf("unknown Meta objective: '%s'. Valid objectives: %s", objective, strings.Join(objectiveKeys(), ", "))
+	}
+	placementTargeting, err := buildPlacementTargeting(in.Placements)
+	if err != nil {
+		return nil, err
+	}
+	promotedObject, err := buildPromotedObject(objective, c.account.PageID, in.PixelID)
+	if err != nil {
+		return nil, err
 	}
 
 	accountID := c.account.AccountID
@@ -749,16 +814,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", strings.Join(skippedGeos, ", ")))
 	}
 
-	objective := defaultObjective(in.Objective)
-	objParams, ok := objectiveParams[objective]
-	if !ok {
-		return nil, fmt.Errorf("unknown Meta objective: '%s'. Valid objectives: %s", objective, strings.Join(objectiveKeys(), ", "))
-	}
-
 	campaignName := buildCampaignName(in, geoCountries)
 
 	var campaignResp createResponse
-	err := c.doRequest(ctx, http.MethodPost, "/"+accountID+"/campaigns", map[string]any{
+	err = c.doRequest(ctx, http.MethodPost, "/"+accountID+"/campaigns", map[string]any{
 		"name":                            campaignName,
 		"objective":                       objParams.CampaignObjective,
 		"status":                          "PAUSED",
@@ -774,13 +833,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (%s, PAUSED)", campaignID, objectiveLabel(objective)))
 
-	// Step 3: Ad set.
-	budgetCents := int64(math.Round(in.BudgetUSD * 100))
+	// Step 3: Ad set (budget, placements, and promoted object were validated up
+	// front, before the campaign was created).
 	adSetName := fmt.Sprintf("%s - %s", in.EventName, objectiveLabel(objective))
-	placementTargeting, err := buildPlacementTargeting(in.Placements)
-	if err != nil {
-		return nil, err
-	}
 
 	targeting := map[string]any{"geo_locations": map[string]any{"countries": geoCountries}}
 	for k, v := range placementTargeting {
@@ -799,10 +854,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"end_time":          in.EndDate + "T23:59:59+0000",
 	}
 
-	promotedObject, err := buildPromotedObject(objective, c.account.PageID, in.PixelID)
-	if err != nil {
-		return nil, err
-	}
 	if promotedObject != nil {
 		adSetBody["promoted_object"] = promotedObject
 	}

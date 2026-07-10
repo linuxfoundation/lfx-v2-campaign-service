@@ -192,6 +192,43 @@ func TestBuildUTMURL(t *testing.T) {
 	}
 }
 
+func TestBuildUTMURLPreservesFragment(t *testing.T) {
+	u := buildUTMURL(CampaignInput{
+		EventName:       "KubeCon EU",
+		RegistrationURL: "https://events.example.org/event#register",
+		HSToken:         "hs-123",
+	}, 0)
+
+	hashIdx := strings.Index(u, "#")
+	if hashIdx < 0 {
+		t.Fatalf("utm url %q dropped the fragment", u)
+	}
+	if !strings.HasSuffix(u, "#register") {
+		t.Errorf("utm url %q must keep #register at the very end", u)
+	}
+	// All utm params must land before the fragment, not after it.
+	beforeFragment := u[:hashIdx]
+	for _, want := range []string{"utm_source=meta", "utm_medium=paid-social", "utm_campaign=hs-123", "utm_content=variant-1", "utm_term=kubecon-eu"} {
+		if !strings.Contains(beforeFragment, want) {
+			t.Errorf("utm url %q missing %q before the fragment", u, want)
+		}
+	}
+}
+
+func TestBuildUTMURLPreservesExistingQuery(t *testing.T) {
+	u := buildUTMURL(CampaignInput{
+		EventName:       "KubeCon EU",
+		RegistrationURL: "https://events.example.org/e?ref=abc#section",
+		HSToken:         "hs-1",
+	}, 0)
+	if !strings.Contains(u, "ref=abc") {
+		t.Errorf("utm url %q dropped the existing query param ref=abc", u)
+	}
+	if !strings.HasSuffix(u, "#section") {
+		t.Errorf("utm url %q must keep #section at the end", u)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // CreateCampaign happy path against an httptest server
 // ---------------------------------------------------------------------------
@@ -442,6 +479,51 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 	}
 }
 
+// TestNonGraphErrorBodySurfaces verifies that a non-2xx response whose body is
+// NOT a Graph error envelope still surfaces the raw body in the error, rather
+// than pointing at nonexistent server logs.
+func TestNonGraphErrorBodySurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, "<html>502 Bad Gateway from upstream proxy</html>")
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatalf("expected an error")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("error type = %T, want *APIError", err)
+	}
+	if !strings.Contains(apiErr.Message, "502 Bad Gateway from upstream proxy") {
+		t.Errorf("APIError.Message = %q, want the raw body snippet", apiErr.Message)
+	}
+	if !strings.Contains(err.Error(), "502 Bad Gateway from upstream proxy") {
+		t.Errorf("error string = %q, want the raw body snippet", err.Error())
+	}
+	if strings.Contains(err.Error(), "server logs") {
+		t.Errorf("error string %q must not reference server logs", err.Error())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Input validation errors
 // ---------------------------------------------------------------------------
@@ -467,7 +549,9 @@ func TestCreateCampaignValidation(t *testing.T) {
 		{"empty variants", func(in *CampaignInput) { in.Variants = []AdVariant{{PrimaryText: " ", Headline: ""}} }, "non-empty primary text"},
 		{"bad url", func(in *CampaignInput) { in.RegistrationURL = "http://x.example" }, "must use HTTPS"},
 		{"bad budget", func(in *CampaignInput) { in.BudgetUSD = 0 }, "positive number"},
+		{"sub-cent budget rounds to zero", func(in *CampaignInput) { in.BudgetUSD = 0.001 }, "budget too small"},
 		{"bad start date", func(in *CampaignInput) { in.StartDate = "2026/08/01" }, "invalid start date"},
+		{"impossible calendar date", func(in *CampaignInput) { in.StartDate = "2026-13-40" }, "invalid start date"},
 		{"end before start", func(in *CampaignInput) { in.EndDate = "2026-07-01" }, "must be after start date"},
 	}
 	for _, tc := range tests {
@@ -479,6 +563,97 @@ func TestCreateCampaignValidation(t *testing.T) {
 				t.Errorf("err = %v, want containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// noPostServer returns an httptest server that fails the test if it ever
+// receives a POST (a mutating call). GETs return a benign body so account
+// verification succeeds.
+func noPostServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("unexpected POST (mutating call) to %s: input validation should have failed first", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"name":"x"}`)
+	}))
+}
+
+func TestCreateCampaignRejectsSubCentBudgetBeforeAnyPost(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       0.001,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "budget too small") {
+		t.Fatalf("err = %v, want 'budget too small'", err)
+	}
+}
+
+func TestCreateCampaignAllDisabledPlacementsMakesZeroPosts(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	f := false
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Placements:      Placement{FacebookFeed: &f, InstagramFeed: &f},
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "at least one placement") {
+		t.Fatalf("err = %v, want 'at least one placement'", err)
+	}
+}
+
+func TestCreateCampaignRequiresPageIDBeforeAnyPost(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	// PageID intentionally left empty.
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"}, WithBaseURL(srv.URL))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "PageID is required") {
+		t.Fatalf("err = %v, want 'PageID is required'", err)
+	}
+}
+
+func TestCreateCampaignImpossibleDateMakesZeroPosts(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-13-40",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid start date") {
+		t.Fatalf("err = %v, want 'invalid start date'", err)
 	}
 }
 
