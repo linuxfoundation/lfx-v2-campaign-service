@@ -13,7 +13,7 @@ Provisioned connection parameters consumed at process startup.
 | Field | Source (secret key → env) | Required | Notes |
 |-------|---------------------------|----------|-------|
 | Host | `host` → `PGHOST` | Yes | PostgreSQL hostname |
-| Port | `port` → `PGPORT` | Yes | Typically `5432` |
+| Port | `port` → `PGPORT` | No | Defaults to `5432` when unset |
 | Username | `username` → `PGUSER` | Yes | DB role |
 | Password | `password` → `PGPASSWORD` | Yes | Secret; never logged/traced |
 | Database name | `dbname` → `PGDATABASE` | Yes | Target database |

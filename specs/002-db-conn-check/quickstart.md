@@ -198,7 +198,7 @@ docs):
 1. Hit `/readyz` with DB up and down.
 2. Confirm DB-related spans appear from
    `github.com/exaring/otelpgx` (registered on the pool) and/or
-   readiness failure logs
-   (`readyz: database connectivity check failed`).
+   readiness failure logs (`readyz: service not ready` when the
+   pool dependency reports unhealthy).
 3. Confirm password does not appear in span attributes or log
    fields.

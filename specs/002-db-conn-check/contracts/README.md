@@ -17,11 +17,12 @@ Hand-authored contract notes for review. The authoritative HTTP surface remains 
 | Env var | Secret key | Required |
 |---------|------------|----------|
 | `PGHOST` | `host` | Yes |
-| `PGPORT` | `port` | Yes |
+| `PGPORT` | `port` | No (defaults to `5432`) |
 | `PGUSER` | `username` | Yes |
 | `PGPASSWORD` | `password` | Yes |
 | `PGDATABASE` | `dbname` | Yes |
 | `PGENGINE` (optional) | `engine` | No |
+| `CREDENTIAL_ENCRYPTION_KEY` | `credential-encryption-key` | Yes when a DB URL is configured |
 
 Secret in lfx-v2-dev: `lfx-v2-campaign-service-secrets`
 (namespace `lfx-v2-campaign-service`).

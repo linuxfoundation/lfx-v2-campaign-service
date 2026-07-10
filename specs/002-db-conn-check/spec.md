@@ -77,7 +77,7 @@ As a platform operator or developer investigating readiness failures, I need dat
 - **FR-006**: The liveness endpoint (`GET /livez`) MUST NOT depend on database availability; its behavior MUST remain process-liveness only, consistent with the existing health-endpoint contract.
 - **FR-007**: Database connection activity used by the health check MUST be instrumented with the service's existing observability stack so operators can see successful and failed connectivity checks.
 - **FR-008**: Secret connection material (especially passwords) MUST NEVER be logged, traced as attribute values, emitted as metric labels, or returned in health responses.
-- **FR-009**: If required database connection settings are missing or incomplete when the service starts, the service MUST exit with a non-zero status rather than continuing in a "ready without database" state.
+- **FR-009**: If required database connection settings are *partially* supplied (incomplete PG* set) when the service starts, the service MUST exit with a non-zero status. Fully omitting all database settings remains allowed for unit tests / metadata-only local runs (no-DB mode); production charts inject PG* so in-cluster runs are not optional.
 - **FR-010**: The database connectivity check behavior MUST be covered by automated tests for both success (database reachable) and failure (database unreachable or check error) paths affecting readiness, and for liveness remaining successful when the database check would fail.
 - **FR-011**: The existing unauthenticated access, response body, content type, and public-docs exclusion contracts for `/livez` and `/readyz` MUST be preserved.
 
