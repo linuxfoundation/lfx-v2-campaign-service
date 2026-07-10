@@ -33,6 +33,16 @@ GOA_VERSION := v3.25.3
 
 ##@ Development
 
+.PHONY: clean
+clean: ## Remove temporary build artifacts (binaries, coverage)
+	@echo "Cleaning build artifacts..."
+	rm -rf bin/
+	rm -f coverage.out
+
+.PHONY: all
+all: clean apigen fmt lint test build ## Clean, generate, format, lint, test, and build
+	@echo "==> Ready for local testing: bin/$(APP_NAME)"
+
 .PHONY: setup-dev
 setup-dev: ## Setup development tools
 	@echo "Installing development tools..."

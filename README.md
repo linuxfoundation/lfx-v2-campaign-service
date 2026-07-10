@@ -313,6 +313,8 @@ make helm-install-local
 Common workflow targets (see the `Makefile` for the full list):
 
 ```sh
+make all           # clean → apigen → fmt → lint → test → build
+make clean         # remove bin/ and coverage.out
 make apigen        # generate API code from design/ (required before first build)
 make fmt           # format Go code (gofmt + simplify)
 make check-fmt     # verify formatting (used in CI)
