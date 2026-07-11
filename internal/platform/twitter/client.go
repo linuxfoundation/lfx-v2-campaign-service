@@ -53,6 +53,15 @@ const (
 	// maxEventNameLen bounds the event name folded into campaign / line-item
 	// names, guarding against unbounded input producing oversized API payloads.
 	maxEventNameLen = 200
+	// maxProjectLen bounds the project name folded into the campaign name. Like
+	// EventName, Project is caller-supplied and otherwise unbounded, so it is
+	// trimmed and length-capped before composition.
+	maxProjectLen = 200
+	// maxEntityNameLen is X's hard limit on a campaign / line-item entity name.
+	// The composed name (event + project + fixed template) can exceed this even
+	// when EventName and Project are individually within bounds, so the FINAL
+	// composed names are validated against this rune limit before any create call.
+	maxEntityNameLen = 255
 	// retryMax mirrors TWITTER_API_RETRY_MAX.
 	retryMax = 3
 	// maxRetryWait caps how long a single 429 backoff will sleep. X rate-limit
@@ -498,12 +507,34 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 
 func buildTwitterCampaignName(in CampaignInput) string {
 	event := strings.ReplaceAll(in.EventName, "|", "-")
-	project := in.Project
-	if project == "" {
-		project = "Linux Foundation"
-	}
+	project := boundProject(in.Project)
 	project = strings.ReplaceAll(project, "|", "-")
 	return fmt.Sprintf("Events | %s | Global | Awareness | Prospecting | Promoted Post | %s | MoFU", event, project)
+}
+
+// boundProject trims the caller-supplied project name and caps its rune length,
+// defaulting to "Linux Foundation" when empty. Project is otherwise unbounded,
+// so bounding it here keeps the composed campaign name from ballooning.
+func boundProject(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return "Linux Foundation"
+	}
+	if r := []rune(project); len(r) > maxProjectLen {
+		project = string(r[:maxProjectLen])
+	}
+	return project
+}
+
+// validateEntityName enforces X's 255-rune entity-name limit on a FINAL composed
+// campaign / line-item name. Even with EventName and Project individually bounded,
+// the composed name (event + project + fixed template) can exceed 255, so it is
+// checked here before any create call. kind is "campaign" or "line item".
+func validateEntityName(kind, name string) error {
+	if n := len([]rune(name)); n > maxEntityNameLen {
+		return fmt.Errorf("invalid %s name: composed name is %d characters, exceeds X's %d-character limit", kind, n, maxEntityNameLen)
+	}
+	return nil
 }
 
 var spaceRe = regexp.MustCompile(`\s+`)
@@ -624,11 +655,36 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
 	}
 
+	// Validate required account config before any mutating call. account_id and
+	// funding_instrument_id are both required by the X Ads campaign-create
+	// contract, but a stored connection may persist them as empty strings (the
+	// connection contract permits funding_instrument_id to be omitted). Failing
+	// fast client-side yields a clear error instead of an opaque X API rejection
+	// (and never issues a create with a missing funding instrument).
+	if strings.TrimSpace(c.account.AccountID) == "" {
+		return nil, fmt.Errorf("invalid account config: account_id must not be empty")
+	}
+	if strings.TrimSpace(c.account.FundingInstrumentID) == "" {
+		return nil, fmt.Errorf("invalid account config: funding_instrument_id must not be empty")
+	}
+
+	// Compose and validate the entity names before ANY network call: even with
+	// EventName and Project individually bounded, the composed campaign / line-item
+	// names can exceed X's 255-rune entity-name limit, so reject an oversized name
+	// up front rather than after a wasted account-verify / lookup round trip.
+	campaignName := buildTwitterCampaignName(in)
+	if err := validateEntityName("campaign", campaignName); err != nil {
+		return nil, err
+	}
+	lineItemName := fmt.Sprintf("Events | %s | Promoted Tweets | AUTO", strings.ReplaceAll(in.EventName, "|", "-"))
+	if err := validateEntityName("line item", lineItemName); err != nil {
+		return nil, err
+	}
+
 	// Step 1: verify account (non-fatal).
 	c.verifyAccount(ctx, &steps)
 
 	// Step 2: create campaign (PAUSED), reusing by name.
-	campaignName := buildTwitterCampaignName(in)
 	campaignID, err := c.findCampaignByName(ctx, campaignName)
 	if err != nil {
 		return nil, err
@@ -661,7 +717,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Step 3: create line item (ad group), reusing by name.
-	lineItemName := fmt.Sprintf("Events | %s | Promoted Tweets | AUTO", strings.ReplaceAll(in.EventName, "|", "-"))
 	lineItemID, err := c.findLineItemByName(ctx, campaignID, lineItemName)
 	if err != nil {
 		return nil, err

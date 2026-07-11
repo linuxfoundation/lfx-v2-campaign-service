@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -138,6 +139,103 @@ func TestBuildOAuthHeaderDeterministic(t *testing.T) {
 			t.Errorf("header missing %q\nfull: %s", want, hdr)
 		}
 	}
+}
+
+// TestBuildOAuthHeaderSignsQueryParams verifies that query-string parameters on
+// the request URL are folded into the OAuth 1.0a signature base string. This is
+// the critical create-POST signing path: X carries create params on the query
+// string, and if the query-param signing loop were removed the Authorization
+// header would still be well-formed but the signature would be computed over the
+// oauth params ALONE — and X would reject every create. We recompute an
+// independent reference signature over method + base-URL(no query) + the sorted,
+// percent-encoded union of oauth params AND query params (RFC 5849 §3.4.1), and
+// assert equality; mutating the query-param loop must break this test.
+func TestBuildOAuthHeaderSignsQueryParams(t *testing.T) {
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+	)
+	c.nonceFn = func() string { return "fixednonce" }
+	c.timeFn = staticTime
+
+	// A create-style URL: base + path + query params (name, funding, entity_status).
+	baseURL := "https://ads-api.x.com/12/accounts/acc1/campaigns"
+	rawURL := baseURL + "?name=KubeCon+EU&funding_instrument_id=fi1&entity_status=PAUSED"
+
+	hdr, err := c.buildOAuthHeader("POST", rawURL, nil)
+	if err != nil {
+		t.Fatalf("buildOAuthHeader: %v", err)
+	}
+	gotSig := extractOAuthSignature(t, hdr)
+
+	// Independent reference: the full signed param set is the deterministic oauth
+	// params PLUS the query params, normalized (encode name+value, sort, join).
+	allParams := map[string]string{
+		"oauth_consumer_key":     "ck",
+		"oauth_nonce":            "fixednonce",
+		"oauth_signature_method": "HMAC-SHA1",
+		"oauth_timestamp":        strconv.FormatInt(staticTime().Unix(), 10),
+		"oauth_token":            "at",
+		"oauth_version":          "1.0",
+		"name":                   "KubeCon EU",
+		"funding_instrument_id":  "fi1",
+		"entity_status":          "PAUSED",
+	}
+	parts := make([]string, 0, len(allParams))
+	for k, v := range allParams {
+		parts = append(parts, percentEncode(k)+"="+percentEncode(v))
+	}
+	sort.Strings(parts)
+	wantSig := referenceSignature("POST", baseURL, strings.Join(parts, "&"), "cs", "ats")
+
+	if gotSig != wantSig {
+		t.Fatalf("query params not folded into signature:\n got=%q\nwant=%q", gotSig, wantSig)
+	}
+
+	// Guard against a false positive: the signature over the oauth params ALONE
+	// (the query params dropped) must differ from wantSig — otherwise this test
+	// couldn't distinguish a working signing loop from a removed one.
+	oauthOnly := map[string]string{
+		"oauth_consumer_key":     "ck",
+		"oauth_nonce":            "fixednonce",
+		"oauth_signature_method": "HMAC-SHA1",
+		"oauth_timestamp":        strconv.FormatInt(staticTime().Unix(), 10),
+		"oauth_token":            "at",
+		"oauth_version":          "1.0",
+	}
+	oparts := make([]string, 0, len(oauthOnly))
+	for k, v := range oauthOnly {
+		oparts = append(oparts, percentEncode(k)+"="+percentEncode(v))
+	}
+	sort.Strings(oparts)
+	oauthOnlySig := referenceSignature("POST", baseURL, strings.Join(oparts, "&"), "cs", "ats")
+	if wantSig == oauthOnlySig {
+		t.Fatal("test cannot detect a dropped query-param signing loop: oauth-only signature equals full signature")
+	}
+	if gotSig == oauthOnlySig {
+		t.Fatalf("signature was computed over oauth params alone; query params not signed: %q", gotSig)
+	}
+}
+
+// extractOAuthSignature pulls the oauth_signature value out of an
+// "OAuth k=\"v\", ..." Authorization header and percent-decodes it.
+func extractOAuthSignature(t *testing.T, hdr string) string {
+	t.Helper()
+	const key = `oauth_signature="`
+	i := strings.Index(hdr, key)
+	if i < 0 {
+		t.Fatalf("no oauth_signature in header: %q", hdr)
+	}
+	rest := hdr[i+len(key):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("unterminated oauth_signature in header: %q", hdr)
+	}
+	dec, err := url.QueryUnescape(rest[:j])
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	return dec
 }
 
 func TestPercentEncode(t *testing.T) {
@@ -426,6 +524,108 @@ func TestCreateCampaignValidation(t *testing.T) {
 	for i, in := range cases {
 		if _, err := c.CreateCampaign(context.Background(), in); err == nil {
 			t.Errorf("case %d: expected validation error", i)
+		}
+	}
+}
+
+// TestCreateCampaignRejectsOversizedComposedName verifies a composed campaign
+// name exceeding X's 255-rune entity-name limit is rejected before any network
+// call. A 200-char event (the per-field max) with the default project composes
+// to ~286 chars — within the per-field bounds but over the entity-name limit.
+func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	// Sanity-check the premise: 200-char event + default project overflows 255.
+	name := buildTwitterCampaignName(CampaignInput{EventName: strings.Repeat("x", maxEventNameLen)})
+	if got := len([]rune(name)); got <= maxEntityNameLen {
+		t.Fatalf("test premise wrong: composed name is %d runes, expected > %d", got, maxEntityNameLen)
+	}
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: strings.Repeat("x", maxEventNameLen), // valid per-field, no default project
+		BudgetUsd: 500,
+		StartDate: "2026-03-01",
+		EndDate:   "2026-03-10",
+	})
+	if err == nil {
+		t.Fatal("expected error for composed name exceeding entity-name limit")
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(maxEntityNameLen)) {
+		t.Errorf("error should mention the %d-char limit: %v", maxEntityNameLen, err)
+	}
+	if calls != 0 {
+		t.Errorf("expected no network call before name validation, got %d", calls)
+	}
+}
+
+// TestValidateEntityName covers the 255-rune boundary directly.
+func TestValidateEntityName(t *testing.T) {
+	if err := validateEntityName("campaign", strings.Repeat("x", maxEntityNameLen)); err != nil {
+		t.Errorf("name at limit should pass: %v", err)
+	}
+	if err := validateEntityName("campaign", strings.Repeat("x", maxEntityNameLen+1)); err == nil {
+		t.Error("name one over limit should fail")
+	}
+	// Rune-aware: multi-byte characters count as one rune each, not per-byte.
+	if err := validateEntityName("campaign", strings.Repeat("é", maxEntityNameLen)); err != nil {
+		t.Errorf("multi-byte name at rune limit should pass: %v", err)
+	}
+}
+
+// TestCreateCampaignRejectsEmptyAccountConfig verifies required account config
+// (account_id, funding_instrument_id) is guarded non-empty before any mutating
+// call, so an empty stored connection value fails fast client-side instead of at
+// the X API. A missing funding_instrument_id must never reach a create POST.
+func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	base := CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+	}
+	cases := []struct {
+		name string
+		acct AccountConfig
+	}{
+		{"empty funding instrument", AccountConfig{AccountID: "acc1", FundingInstrumentID: ""}},
+		{"whitespace funding instrument", AccountConfig{AccountID: "acc1", FundingInstrumentID: "   "}},
+		{"empty account id", AccountConfig{AccountID: "", FundingInstrumentID: "fi1"}},
+	}
+	for _, tc := range cases {
+		calls = 0
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			tc.acct,
+			WithBaseURL(srv.URL),
+		)
+		c.nonceFn = func() string { return "n" }
+		c.timeFn = staticTime
+
+		if _, err := c.CreateCampaign(context.Background(), base); err == nil {
+			t.Errorf("%s: expected error, got nil", tc.name)
+		}
+		if calls != 0 {
+			t.Errorf("%s: expected no network call before config guard, got %d", tc.name, calls)
 		}
 	}
 }
