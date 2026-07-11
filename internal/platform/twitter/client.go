@@ -847,10 +847,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
 	}
 
-	// Step 4: create promoted tweet if a tweet ID was provided.
+	// Step 4: create promoted tweet if a tweet ID was provided. Trim first so a
+	// whitespace-only value ("   ") isn't treated as supplied (which would
+	// guarantee a rejected POST after the campaign + line item already exist) and
+	// a padded value (" 123 ") isn't sent verbatim and corrupted.
+	tweetID := strings.TrimSpace(in.TweetID)
 	var promotedTweetID string
 	var promotedTweetWarning string
-	if in.TweetID != "" {
+	if tweetID != "" {
 		if err := c.pace(ctx); err != nil {
 			return nil, err
 		}
@@ -862,29 +866,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// make the retry hit a duplicate — handled below.
 		resp, err := c.createRequest(ctx, "promoted_tweets", map[string]string{
 			"line_item_id": lineItemID,
-			"tweet_ids":    in.TweetID,
+			"tweet_ids":    tweetID,
 		})
 		switch {
 		case err != nil && isDuplicatePromotedTweetErr(err):
 			// The association already exists (e.g. a prior POST that succeeded but
 			// whose response was lost). Idempotent: treat as success, not a gap.
-			steps = append(steps, fmt.Sprintf("Promoted tweet already associated with line item %s (tweet: %s) — treating as created (idempotent)", lineItemID, in.TweetID))
+			steps = append(steps, fmt.Sprintf("Promoted tweet already associated with line item %s (tweet: %s) — treating as created (idempotent)", lineItemID, tweetID))
 		case err != nil:
 			// A real POST failure. Do NOT report unqualified success: record a
 			// warning both in the step log and on the result so the caller can see
 			// the promoted tweet may not have been created/associated.
-			promotedTweetWarning = fmt.Sprintf("promoted-tweet POST failed for tweet %s: %s", in.TweetID, err.Error())
+			promotedTweetWarning = fmt.Sprintf("promoted-tweet POST failed for tweet %s: %s", tweetID, err.Error())
 			steps = append(steps, fmt.Sprintf("Promoted tweet creation failed: %s — add manually in X Ads Manager", err.Error()))
 		default:
 			promotedTweetID = extractPromotedTweetID(resp)
 			if promotedTweetID != "" {
-				steps = append(steps, fmt.Sprintf("Promoted tweet created: %s (tweet: %s; created ACTIVE by the API but held from serving by the PAUSED line item)", promotedTweetID, in.TweetID))
+				steps = append(steps, fmt.Sprintf("Promoted tweet created: %s (tweet: %s; created ACTIVE by the API but held from serving by the PAUSED line item)", promotedTweetID, tweetID))
 			} else {
 				// A 2xx response missing data.id is a malformed success: don't
 				// silently treat it as done. Surface a warning (step + result field)
 				// so the gap is visible without making the whole flow fatal.
-				promotedTweetWarning = fmt.Sprintf("promoted-tweet POST returned no ID (malformed response) for tweet %s", in.TweetID)
-				steps = append(steps, fmt.Sprintf("Promoted tweet creation returned no promoted-tweet ID (malformed response, tweet: %s) — add it manually in X Ads Manager", in.TweetID))
+				promotedTweetWarning = fmt.Sprintf("promoted-tweet POST returned no ID (malformed response) for tweet %s", tweetID)
+				steps = append(steps, fmt.Sprintf("Promoted tweet creation returned no promoted-tweet ID (malformed response, tweet: %s) — add it manually in X Ads Manager", tweetID))
 			}
 		}
 	} else {

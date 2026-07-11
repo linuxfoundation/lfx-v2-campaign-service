@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1459,5 +1460,51 @@ func TestWithWriteDelayZeroDisablesPacing(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
 		t.Errorf("pace slept %v with zero writeDelay; expected a no-op", elapsed)
+	}
+}
+
+// TestTweetIDWhitespaceNotPromoted verifies a whitespace-only TweetID is treated
+// as "not supplied" (no promoted-tweet POST) rather than sent verbatim and
+// guaranteeing a rejected POST after the campaign + line item already exist.
+func TestTweetIDWhitespaceNotPromoted(t *testing.T) {
+	var promotedHit int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			atomic.AddInt32(&promotedHit, 1)
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "   ",
+	}); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if got := atomic.LoadInt32(&promotedHit); got != 0 {
+		t.Errorf("promoted_tweets hit %d times for a whitespace-only TweetID, want 0", got)
 	}
 }
