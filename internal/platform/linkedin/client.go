@@ -925,11 +925,11 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		}
 		return nil
 	}
-	if profile == "custom" {
-		// custom tolerates a missing cloud-native fallback (empty targeting).
-		return nil
-	}
-	return fmt.Errorf("LinkedIn targeting profile %q not found in runtime config — refusing to start campaign creation", profile)
+	// Not found. Matching the TS validateLinkedInPrerequisites contract, the
+	// aliased "cloud-native" profile must exist even for "custom" here — only the
+	// lower-level builder tolerates its absence. So do NOT special-case custom:
+	// require the (aliased) profile to be present in the runtime config.
+	return fmt.Errorf("LinkedIn targeting profile %q not found in runtime config — refusing to start campaign creation", lookup)
 }
 
 // validateRegistrationURL rejects a registration URL before any permanent
@@ -946,7 +946,9 @@ func validateRegistrationURL(raw string) error {
 	if err != nil {
 		return fmt.Errorf("registration URL %q is not a valid URL: %w", raw, err)
 	}
-	if !u.IsAbs() || u.Host == "" {
+	// Require a real host: url.Parse accepts "https://:443/path" (Host=":443")
+	// where Hostname() is empty, so check Hostname() not just Host.
+	if !u.IsAbs() || u.Hostname() == "" {
 		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
 	}
 	switch strings.ToLower(u.Scheme) {

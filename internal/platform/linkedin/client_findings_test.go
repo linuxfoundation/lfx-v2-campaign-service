@@ -1493,21 +1493,13 @@ func TestCreateCampaign_RejectsProfileWithNoTargetingBeforeAnyPOST(t *testing.T)
 	}
 }
 
-// TestCreateCampaign_AllowsCustomFallbackWithEmptyTargeting verifies the ONE
-// documented exception: the "custom" profile aliases "cloud-native" and is
-// explicitly allowed to fall back to empty targeting when that profile is absent,
-// so it must NOT be rejected by the no-usable-targeting check. It reaches a
-// successful create against the full-flow mock.
-func TestCreateCampaign_AllowsCustomFallbackWithEmptyTargeting(t *testing.T) {
-	srv := fullFlowServer(t)
-	defer srv.Close()
-
-	// No targeting profiles configured at all; "custom" must still be allowed.
-	cfg := testConfig()
-	cfg.TargetingProfiles = nil
-	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
-
-	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+// TestCreateCampaign_CustomProfileRequiresCloudNativePresent verifies the TS
+// validateLinkedInPrerequisites contract: "custom" aliases "cloud-native", which
+// must EXIST in the runtime config. When present, custom is exempt from the
+// no-usable-targeting rejection (it may resolve to empty facets); when the
+// aliased profile is absent entirely, custom is rejected before any POST.
+func TestCreateCampaign_CustomProfileRequiresCloudNativePresent(t *testing.T) {
+	base := CampaignInput{
 		EventName:        "KubeCon",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
@@ -1516,8 +1508,38 @@ func TestCreateCampaign_AllowsCustomFallbackWithEmptyTargeting(t *testing.T) {
 		TargetingProfile: "custom",
 		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
 		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
-	})
-	if err != nil {
-		t.Fatalf("custom fallback with empty targeting must be allowed, got error: %v", err)
+	}
+
+	// (a) cloud-native present (even with empty facets): custom is allowed.
+	srv := fullFlowServer(t)
+	defer srv.Close()
+	cfgPresent := testConfig()
+	cfgPresent.TargetingProfiles = []TargetingProfileConfig{{ID: "cloud-native"}}
+	cPresent := NewClient(Credentials{AccessToken: "t"}, cfgPresent, WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if _, err := cPresent.CreateCampaign(context.Background(), base); err != nil {
+		t.Fatalf("custom with cloud-native present must be allowed, got error: %v", err)
+	}
+
+	// (b) cloud-native absent: custom is rejected before any POST.
+	noPost := noPOSTServer(t)
+	defer noPost.Close()
+	cfgAbsent := testConfig()
+	cfgAbsent.TargetingProfiles = nil
+	cAbsent := NewClient(Credentials{AccessToken: "t"}, cfgAbsent, WithBaseURL(noPost.URL), WithClock(fixedClock()))
+	if _, err := cAbsent.CreateCampaign(context.Background(), base); err == nil {
+		t.Fatal("custom with no cloud-native profile configured must be rejected before any POST")
+	}
+}
+
+// TestValidateRegistrationURL_RejectsEmptyHostname verifies a URL whose Host is
+// present but Hostname() is empty (e.g. https://:443/path) is rejected.
+func TestValidateRegistrationURL_RejectsEmptyHostname(t *testing.T) {
+	for _, bad := range []string{"https://:443/path", "https://:80", "http://:/x"} {
+		if err := validateRegistrationURL(bad); err == nil {
+			t.Errorf("validateRegistrationURL(%q) = nil, want rejection (empty hostname)", bad)
+		}
+	}
+	if err := validateRegistrationURL("https://events.example.org/reg"); err != nil {
+		t.Errorf("valid URL rejected: %v", err)
 	}
 }
