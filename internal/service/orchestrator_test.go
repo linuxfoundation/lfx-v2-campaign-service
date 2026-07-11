@@ -57,6 +57,20 @@ func (r *fakeJobRepo) UpdateJobStatus(_ context.Context, id string, status model
 	return nil
 }
 
+func (r *fakeJobRepo) FailStuckJobs(_ context.Context, jobErr string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var n int64
+	for _, j := range r.jobs {
+		if j.Status == model.JobQueued || j.Status == model.JobRunning {
+			j.Status = model.JobFailed
+			j.Error = jobErr
+			n++
+		}
+	}
+	return n, nil
+}
+
 // fakeCampaignRepo records upserted campaigns.
 type fakeCampaignRepo struct {
 	mu       sync.Mutex
@@ -84,6 +98,11 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, briefID stri
 	}
 	return nil, domain.ErrNotFound
 }
+func (r *fakeCampaignRepo) WithDispatchLock(ctx context.Context, _ string, _ model.Provider, fn func(context.Context) error) error {
+	// No real lock in tests; just run fn. Serialization is exercised separately.
+	return fn(ctx)
+}
+
 func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -394,5 +413,125 @@ func TestOrchestrator_PersistErrorIsSanitized(t *testing.T) {
 	}
 	if !strings.Contains(string(j.Result), "could not persist campaign") {
 		t.Errorf("result = %s, want the sanitized message", j.Result)
+	}
+}
+
+// lockCountingCampaignRepo records that WithDispatchLock wrapped the dispatch.
+type lockCountingCampaignRepo struct {
+	fakeCampaignRepo
+	mu    sync.Mutex
+	locks int
+}
+
+func (r *lockCountingCampaignRepo) WithDispatchLock(ctx context.Context, briefID string, p model.Provider, fn func(context.Context) error) error {
+	r.mu.Lock()
+	r.locks++
+	r.mu.Unlock()
+	return fn(ctx)
+}
+
+// TestOrchestrator_DispatchRunsUnderLock verifies dispatch is wrapped in the
+// (brief, platform) advisory lock.
+func TestOrchestrator_DispatchRunsUnderLock(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &lockCountingCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds:   okDispatcher{},
+		model.ProviderLinkedInAds: okDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	waitForTerminal(t, jobs, id)
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	if camps.locks != 2 {
+		t.Errorf("WithDispatchLock called %d times, want 2 (one per platform)", camps.locks)
+	}
+}
+
+// blockingDispatcher blocks until released, to test shutdown draining.
+type blockingDispatcher struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (d *blockingDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	close(d.started)
+	<-d.release
+	return &model.Campaign{PlatformCampaignID: "pc-" + string(p), Status: "active", CampaignName: "n"}, nil
+}
+
+// TestOrchestrator_ShutdownDrainsInFlight verifies Shutdown waits for an
+// in-flight dispatch to finish before returning.
+func TestOrchestrator_ShutdownDrainsInFlight(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	disp := &blockingDispatcher{started: make(chan struct{}), release: make(chan struct{})}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	<-disp.started // dispatch is now in-flight
+
+	shutdownReturned := make(chan error, 1)
+	go func() {
+		shutdownReturned <- orch.Shutdown(context.Background())
+	}()
+
+	// Shutdown must NOT return while the dispatch is blocked.
+	select {
+	case <-shutdownReturned:
+		t.Fatal("Shutdown returned before in-flight dispatch finished")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(disp.release) // let dispatch complete
+	select {
+	case err := <-shutdownReturned:
+		if err != nil {
+			t.Errorf("Shutdown err = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not return after dispatch completed")
+	}
+}
+
+// TestOrchestrator_StartRejectedAfterShutdown verifies Start refuses new work
+// once Shutdown has been initiated.
+func TestOrchestrator_StartRejectedAfterShutdown(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: okDispatcher{},
+	})
+	if err := orch.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	if _, err := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil); err == nil {
+		t.Fatal("expected Start to be rejected after Shutdown")
+	}
+}
+
+// TestFailStuckJobs verifies the recovery scan fails only non-terminal jobs.
+func TestFailStuckJobs(t *testing.T) {
+	jobs := newFakeJobRepo()
+	jobs.jobs["j-queued"] = &model.CampaignJob{ID: "j-queued", Status: model.JobQueued}
+	jobs.jobs["j-running"] = &model.CampaignJob{ID: "j-running", Status: model.JobRunning}
+	jobs.jobs["j-done"] = &model.CampaignJob{ID: "j-done", Status: model.JobSucceeded}
+
+	n, err := jobs.FailStuckJobs(context.Background(), "restarted")
+	if err != nil {
+		t.Fatalf("FailStuckJobs: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("failed %d jobs, want 2 (queued+running)", n)
+	}
+	if jobs.jobs["j-done"].Status != model.JobSucceeded {
+		t.Errorf("terminal job was altered: %s", jobs.jobs["j-done"].Status)
+	}
+	if jobs.jobs["j-queued"].Status != model.JobFailed || jobs.jobs["j-running"].Status != model.JobFailed {
+		t.Error("non-terminal jobs were not failed")
 	}
 }

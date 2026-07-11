@@ -24,6 +24,41 @@ func NewCampaignRepo(pool *Pool) *CampaignRepo { return &CampaignRepo{db: pool} 
 
 var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 
+// WithDispatchLock runs fn while holding a transaction-scoped Postgres advisory
+// lock keyed on (briefID, platform). pg_advisory_xact_lock blocks until the lock
+// is available and releases it automatically when the transaction ends, so it is
+// safe against a crashing worker (no orphaned lock). The two-key form derives
+// stable int4 keys from hashtext so distinct pairs rarely collide; a rare hash
+// collision only serializes two unrelated pairs, which is harmless.
+//
+// fn runs inside the transaction and receives that transaction's context; the
+// idempotency read + upstream create + persist happen under the lock, so two
+// concurrent create-campaigns for the same pair cannot both create an upstream
+// campaign (cross-replica, since the lock lives in the database).
+func (r *CampaignRepo) WithDispatchLock(ctx context.Context, briefID string, platform model.Provider, fn func(context.Context) error) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin dispatch-lock tx: %w", err)
+	}
+	// Roll back on any early return; a committed tx makes Rollback a no-op.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
+		briefID, string(platform),
+	); err != nil {
+		return fmt.Errorf("acquire dispatch lock: %w", err)
+	}
+
+	if err := fn(ctx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit dispatch-lock tx: %w", err)
+	}
+	return nil
+}
+
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
 	created_at, updated_at`

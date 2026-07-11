@@ -26,6 +26,13 @@ must also be mounted in `server.go`, or its routes 404 despite compiling.
 **Creation** — Added the `internal/platform/reddit` concept doc for the new
 Reddit Ads API v3 client (OAuth2 token refresh + Campaign -> Ad Group -> Ad
 creation) and listed it in the code index.
+**Update** — Durable campaign dispatch (LFXV2-2665): per-platform dispatch now
+runs under a cross-replica Postgres advisory lock keyed on (brief, platform) so
+concurrent create-campaigns can't double-create upstream; the orchestrator
+drains in-flight runs on graceful shutdown before the pool closes; and startup
+fails-forward jobs left non-terminal by a restart. Added CampaignRepository.
+WithDispatchLock and JobRepository.FailStuckJobs.
+
 **Update** — PR #11 review round 3: validate brief_id/campaign_id/job_id path
 params as UUIDs (400 instead of a PostgreSQL cast 500); make brief approval
 version-gated via If-Match (rejects approving stale content, 412/428); type the

@@ -25,6 +25,11 @@ import (
 // restart it) rather than wedging startup indefinitely.
 const startupDBTimeout = 15 * time.Second
 
+// dispatchDrainTimeout bounds how long shutdown waits for in-flight campaign
+// dispatch to finish before the pool is closed. Kept under the server's overall
+// shutdown budget so draining can't outlast the graceful-shutdown window.
+const dispatchDrainTimeout = 20 * time.Second
+
 // Container holds all application dependencies.
 type Container struct {
 	Config      *config.Config
@@ -33,6 +38,7 @@ type Container struct {
 	Briefs      briefsvc.Service
 
 	pool *postgres.Pool
+	orch *service.Orchestrator
 }
 
 // NewContainer creates and wires all application dependencies.
@@ -107,7 +113,18 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		slog.Warn("no platform dispatchers registered; campaign creation will record jobs but perform no upstream dispatch")
 	}
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
+	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
+
+	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
+	// dispatch goroutine lived only in that process, so fail them forward now
+	// rather than leaving them non-terminal forever. Bounded by the startup
+	// deadline; a failure here is logged but not fatal (the service can still run).
+	if n, rerr := jobRepo.FailStuckJobs(startupCtx, "job did not complete before a service restart"); rerr != nil {
+		slog.Warn("failed to recover stuck jobs on startup", "error", rerr)
+	} else if n > 0 {
+		slog.Info("recovered stuck jobs on startup", "count", n)
+	}
 
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
@@ -120,8 +137,17 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	return c, nil
 }
 
-// Close releases any resources held by the container.
+// Close releases any resources held by the container. It first drains in-flight
+// campaign dispatch (bounded) so a dispatch that already created an upstream
+// campaign isn't cut off before it persists, THEN closes the database pool.
 func (c *Container) Close() error {
+	if c.orch != nil {
+		drainCtx, cancel := context.WithTimeout(context.Background(), dispatchDrainTimeout)
+		defer cancel()
+		if err := c.orch.Shutdown(drainCtx); err != nil {
+			slog.Warn("timed out draining in-flight dispatch on shutdown", "error", err)
+		}
+	}
 	if c.pool != nil {
 		c.pool.Close()
 	}

@@ -26,4 +26,12 @@ failure rather than risking a duplicate. Replacing a brief's content resets it t
 `draft` (re-approval required). Optimistic concurrency is enforced via
 version/If-Match (`428` when missing, `412` on mismatch).
 
+Dispatch is durable (LFXV2-2665): each per-platform create runs under a
+cross-replica Postgres advisory lock keyed on (brief, platform), so two
+concurrent create-campaigns requests cannot both create an upstream campaign.
+The orchestrator tracks in-flight runs and its `Shutdown` drains them (bounded)
+before the DB pool closes, and on startup non-terminal jobs orphaned by a
+restart are failed-forward (they cannot be safely resumed without provider
+idempotency keys).
+
 See [internal/service](../../../internal/service).

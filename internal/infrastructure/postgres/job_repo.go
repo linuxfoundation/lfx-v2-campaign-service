@@ -71,6 +71,21 @@ func (r *JobRepo) UpdateJobStatus(ctx context.Context, id string, status model.J
 	return nil
 }
 
+// FailStuckJobs marks every non-terminal job as failed. Run once on startup:
+// a queued/running job's dispatch goroutine lives only in the process that
+// created it, so after a restart such a job would otherwise stay non-terminal
+// forever. Fail-forward (rather than resume) because a partially-dispatched job
+// cannot be safely re-driven without provider-side idempotency keys.
+func (r *JobRepo) FailStuckJobs(ctx context.Context, jobErr string) (int64, error) {
+	q := `UPDATE campaign_jobs SET status='failed', error=$1, updated_at=now()
+		WHERE status IN ('queued','running')`
+	tag, err := r.db.Exec(ctx, q, nullStr(jobErr))
+	if err != nil {
+		return 0, fmt.Errorf("fail stuck jobs: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func scanJob(row pgx.Row) (*model.CampaignJob, error) {
 	var (
 		j        model.CampaignJob

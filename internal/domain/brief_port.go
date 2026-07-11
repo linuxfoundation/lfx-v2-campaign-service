@@ -44,6 +44,13 @@ type CampaignReader interface {
 	// ErrNotFound. Used to make dispatch idempotent: a brief already dispatched to
 	// a platform must not create a second upstream (paid) campaign on retry.
 	GetCampaignByPlatform(ctx context.Context, briefID string, platform model.Provider) (*model.Campaign, error)
+	// WithDispatchLock runs fn while holding a cross-connection (cross-replica)
+	// advisory lock keyed on (briefID, platform), serializing dispatch for that
+	// pair so two concurrent create-campaigns requests can't both create an
+	// upstream campaign. The lock is released when fn returns. fn's error is
+	// propagated; a failure to acquire the lock returns an error without running
+	// fn.
+	WithDispatchLock(ctx context.Context, briefID string, platform model.Provider, fn func(context.Context) error) error
 }
 
 // CampaignWriter mutates campaigns.
@@ -70,4 +77,8 @@ type JobRepository interface {
 	// UpdateJobStatus sets a job's status (any JobStatus, e.g. running or a
 	// terminal succeeded/partial/failed) and its result/error.
 	UpdateJobStatus(ctx context.Context, id string, status model.JobStatus, result []byte, jobErr string) error
+	// FailStuckJobs marks every non-terminal (queued/running) job as failed with
+	// the given error, returning the count. Called on startup to recover jobs
+	// orphaned by a pod restart (their in-memory dispatch goroutine is gone).
+	FailStuckJobs(ctx context.Context, jobErr string) (int64, error)
 }

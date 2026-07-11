@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
+	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
@@ -32,6 +34,14 @@ type Orchestrator struct {
 	campaigns   domain.CampaignRepository
 	jobs        domain.JobRepository
 	dispatchers map[model.Provider]PlatformDispatcher
+
+	// wg tracks in-flight dispatch runs so Shutdown can wait for them before the
+	// process (and the DB pool) goes away. mu guards the shutting-down flag so a
+	// Start racing with Shutdown either registers on wg or is rejected, never
+	// launches an untracked goroutine after Shutdown has stopped waiting.
+	mu       sync.Mutex
+	wg       sync.WaitGroup
+	draining bool
 }
 
 // NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
@@ -41,6 +51,29 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 		dispatchers = map[model.Provider]PlatformDispatcher{}
 	}
 	return &Orchestrator{campaigns: campaigns, jobs: jobs, dispatchers: dispatchers}
+}
+
+// Shutdown waits (bounded by ctx) for in-flight dispatch runs to finish, so a
+// graceful shutdown doesn't close the database pool out from under a dispatch
+// that already created an upstream campaign but hasn't persisted it yet. After
+// Shutdown is called, Start rejects new work. Returns ctx.Err() if the deadline
+// elapses before all runs complete.
+func (o *Orchestrator) Shutdown(ctx context.Context) error {
+	o.mu.Lock()
+	o.draining = true
+	o.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		o.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // platformResult is the per-platform outcome recorded in the job result.
@@ -57,13 +90,28 @@ type platformResult struct {
 // The dispatch goroutine uses context.WithoutCancel so it survives the request
 // context ending, matching the documented async model.
 func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage) (string, error) {
+	// Register the run with the drain WaitGroup under the lock so a concurrent
+	// Shutdown can't start waiting between the draining check and wg.Add (which
+	// would let an untracked goroutine outlive Shutdown).
+	o.mu.Lock()
+	if o.draining {
+		o.mu.Unlock()
+		return "", &briefs.ConnServiceUnavailableError{Code: "503", Message: "service is shutting down; try again"}
+	}
+	o.wg.Add(1)
+	o.mu.Unlock()
+
 	job, err := o.jobs.CreateJob(ctx, brief.ID)
 	if err != nil {
+		o.wg.Done()
 		return "", err
 	}
 
 	dispatchCtx := context.WithoutCancel(ctx)
-	go o.run(dispatchCtx, job.ID, brief, platforms, config)
+	go func() {
+		defer o.wg.Done()
+		o.run(dispatchCtx, job.ID, brief, platforms, config)
+	}()
 
 	return job.ID, nil
 }
@@ -101,87 +149,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				}
 			}()
 
-			// Idempotency guard FIRST, before resolving the dispatcher: if this
-			// brief already has a campaign for this platform with an upstream id, a
-			// prior run (or a re-POST of create-campaigns) already created the paid
-			// campaign, so reuse it. This must precede the dispatcher lookup so an
-			// already-persisted platform is reported ok on retry even if its
-			// dispatcher is no longer registered. A not-found is the normal
-			// first-time path; a transient lookup error is recorded as a failure
-			// rather than risking a duplicate create.
-			//
-			// This read-before-dispatch check narrows — but does not fully close —
-			// the duplicate window: two concurrent create-campaigns requests for the
-			// same (brief, platform) can both observe not-found and both dispatch.
-			// The (brief_id, platform) unique index keeps persistence single-rowed,
-			// but the upstream create is not transactional with it. Fully closing
-			// this requires provider-side idempotency keys and single-flight job
-			// ownership, tracked in LFXV2-2665. campaign_id below is always the
-			// upstream platform id so the field means the same on reuse and create.
-			if existing, lerr := o.campaigns.GetCampaignByPlatform(gctx, brief.ID, p); lerr == nil {
-				if existing.PlatformCampaignID != "" {
-					res.OK = true
-					res.CampaignID = existing.PlatformCampaignID
-					results[i] = res
-					return nil
-				}
-			} else if !errors.Is(lerr, domain.ErrNotFound) {
-				// Log the underlying repository error server-side; return a generic
-				// message so raw DB error text isn't surfaced to clients via GetJob.
-				slog.ErrorContext(gctx, "existing-campaign lookup failed", "platform", p, "job_id", jobID, "error", lerr)
-				res.Error = "could not verify existing campaign"
-				results[i] = res
-				return nil
-			}
-
-			d, ok := o.dispatchers[p]
-			if !ok {
-				res.Error = "no dispatcher registered for platform"
-				results[i] = res
-				return nil
-			}
-			campaign, err := d.Dispatch(gctx, brief, p, config)
-			if err != nil {
-				res.Error = err.Error()
-				results[i] = res
-				return nil
-			}
-			if campaign == nil {
-				// Defensive: a dispatcher must return a non-nil campaign on success.
-				// A nil campaign with no error would panic on the ownership stamp
-				// below (in a detached goroutine); record it as a platform failure.
-				res.Error = "dispatcher returned no campaign"
-				results[i] = res
-				return nil
-			}
-			if campaign.PlatformCampaignID == "" {
-				// A successful dispatch must yield an upstream campaign id; without
-				// one the result can't honestly be reported ok (campaign_id is
-				// documented as present when ok), and a later retry couldn't
-				// recognize it via the idempotency guard. Treat as a failure.
-				res.Error = "dispatcher returned no upstream campaign id"
-				results[i] = res
-				return nil
-			}
-			// Stamp ownership before persisting so a dispatcher can't cause a
-			// campaign to be written with missing/wrong ownership. Set on a
-			// fresh reference the dispatcher returned; the invariant is one
-			// campaign per (brief, platform) owned by exactly this job.
-			campaign.JobID = &jobID
-			campaign.BriefID = brief.ID
-			campaign.ProjectID = brief.ProjectID
-			campaign.Platform = p
-			if _, err := o.campaigns.UpsertCampaign(gctx, campaign); err != nil {
-				// Log the raw persistence error; return a generic message so DB
-				// error text isn't leaked to clients via the job result.
-				slog.ErrorContext(gctx, "persist campaign failed", "platform", p, "job_id", jobID, "error", err)
-				res.Error = "could not persist campaign"
-				results[i] = res
-				return nil
-			}
-			res.OK = true
-			res.CampaignID = campaign.PlatformCampaignID
-			results[i] = res
+			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config)
 			return nil
 		})
 	}
@@ -207,6 +175,85 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 	if err := o.jobs.UpdateJobStatus(ctx, jobID, status, payload, ""); err != nil {
 		slog.ErrorContext(ctx, "failed to finalize campaign job", "job_id", jobID, "error", err)
 	}
+}
+
+// dispatchPlatform creates (or reuses) the campaign for a single platform. The
+// idempotency read, the upstream create, and the persist all run under a
+// cross-replica advisory lock keyed on (brief, platform), so two concurrent
+// create-campaigns requests for the same pair cannot both create an upstream
+// campaign: the second waits on the lock, then observes the first's persisted
+// row and reuses it. campaign_id is always the upstream platform id, so the
+// field means the same on the reuse and create paths.
+func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage) platformResult {
+	res := platformResult{Platform: string(p)}
+
+	lockErr := o.campaigns.WithDispatchLock(ctx, brief.ID, p, func(ctx context.Context) error {
+		// Idempotency guard FIRST, before resolving the dispatcher, so an
+		// already-persisted platform is reported ok even if its dispatcher is no
+		// longer registered. Under the lock, a concurrent request's persisted row
+		// is visible here, closing the duplicate-create window.
+		if existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ID, p); lerr == nil {
+			if existing.PlatformCampaignID != "" {
+				res.OK = true
+				res.CampaignID = existing.PlatformCampaignID
+				return nil
+			}
+		} else if !errors.Is(lerr, domain.ErrNotFound) {
+			// Log the underlying repository error server-side; return a generic
+			// message so raw DB error text isn't surfaced to clients via GetJob.
+			slog.ErrorContext(ctx, "existing-campaign lookup failed", "platform", p, "job_id", jobID, "error", lerr)
+			res.Error = "could not verify existing campaign"
+			return nil
+		}
+
+		d, ok := o.dispatchers[p]
+		if !ok {
+			res.Error = "no dispatcher registered for platform"
+			return nil
+		}
+		campaign, err := d.Dispatch(ctx, brief, p, config)
+		if err != nil {
+			res.Error = err.Error()
+			return nil
+		}
+		if campaign == nil {
+			// Defensive: a dispatcher must return a non-nil campaign on success.
+			res.Error = "dispatcher returned no campaign"
+			return nil
+		}
+		if campaign.PlatformCampaignID == "" {
+			// A successful dispatch must yield an upstream campaign id; without one
+			// the result can't honestly be reported ok, and a later retry couldn't
+			// recognize it via the idempotency guard. Treat as a failure.
+			res.Error = "dispatcher returned no upstream campaign id"
+			return nil
+		}
+		// Stamp ownership before persisting so a dispatcher can't cause a campaign
+		// to be written with missing/wrong ownership.
+		campaign.JobID = &jobID
+		campaign.BriefID = brief.ID
+		campaign.ProjectID = brief.ProjectID
+		campaign.Platform = p
+		if _, err := o.campaigns.UpsertCampaign(ctx, campaign); err != nil {
+			// Log the raw persistence error; return a generic message so DB error
+			// text isn't leaked to clients via the job result. Return the error so
+			// the advisory-lock transaction rolls back rather than committing after
+			// a failed write.
+			slog.ErrorContext(ctx, "persist campaign failed", "platform", p, "job_id", jobID, "error", err)
+			res.Error = "could not persist campaign"
+			return err
+		}
+		res.OK = true
+		res.CampaignID = campaign.PlatformCampaignID
+		return nil
+	})
+	if lockErr != nil && res.Error == "" {
+		// The lock itself failed (couldn't begin/acquire); record a generic failure.
+		slog.ErrorContext(ctx, "dispatch lock failed", "platform", p, "job_id", jobID, "error", lockErr)
+		res.Error = "could not acquire dispatch lock"
+		res.OK = false
+	}
+	return res
 }
 
 // aggregateStatus folds per-platform outcomes into the job's terminal status.
