@@ -177,16 +177,23 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 	// and only then closes the DB pool). Running these concurrently risks a
 	// just-accepted request Starting a dispatch while the pool is being closed.
 	//
-	// Both phases share ONE overall deadline (DefaultShutdownTimeout) so the total
-	// graceful-shutdown time is bounded and stays within a standard Kubernetes
-	// terminationGracePeriodSeconds — a sequential sum of two independent timeouts
-	// could otherwise exceed it and get SIGKILLed mid-drain.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.DefaultShutdownTimeout)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	// Each phase gets its OWN bounded deadline rather than sharing one context.
+	// A shared context would not bound the total: srv.Shutdown could consume the
+	// whole budget draining HTTP handlers, leaving Container.Close's drain+grace
+	// (whose orchestrator grace timer is otherwise wall-clock, not ctx-bound) to
+	// add its full window on top — pushing the real total past
+	// DefaultShutdownTimeout and risking a SIGKILL mid-drain. Budgeting the
+	// phases separately makes the total a true sum: httpShutdownTimeout +
+	// (dispatchDrainTimeout + CancelGracePeriod) <= DefaultShutdownTimeout, which
+	// container.go asserts at init.
+	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), container.HTTPShutdownTimeout)
+	defer cancelHTTP()
+	if err := srv.Shutdown(httpCtx); err != nil {
 		slog.ErrorContext(ctx, "HTTP server shutdown error", log.ErrKey, err)
 	}
-	if err := cont.Close(shutdownCtx); err != nil {
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), container.ContainerCloseTimeout)
+	defer cancelClose()
+	if err := cont.Close(closeCtx); err != nil {
 		slog.ErrorContext(ctx, "container close error", log.ErrKey, err)
 	}
 	return nil

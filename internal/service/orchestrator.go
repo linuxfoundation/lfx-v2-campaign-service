@@ -128,7 +128,22 @@ func (o *Orchestrator) Shutdown(ctx context.Context) error {
 		// closes the DB pool). Without this wait, Container.Close could close the
 		// pool while a just-cancelled run is still mid-statement.
 		o.rootCancel()
-		grace := time.NewTimer(CancelGracePeriod)
+		// Cap the grace wait at whatever the caller's context budget still allows,
+		// so the post-cancel unwind can never push total shutdown past the deadline
+		// the caller reserved for this phase (Container.Close budgets exactly
+		// dispatchDrainTimeout + CancelGracePeriod). Without the cap the timer is
+		// pure wall-clock and would add its full CancelGracePeriod on top of a
+		// deadline that may already be near-exhausted.
+		graceDur := CancelGracePeriod
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(deadline); remaining < graceDur {
+				graceDur = remaining
+			}
+		}
+		if graceDur <= 0 {
+			return ctx.Err()
+		}
+		grace := time.NewTimer(graceDur)
 		defer grace.Stop()
 		select {
 		case <-done:

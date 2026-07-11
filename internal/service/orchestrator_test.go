@@ -628,6 +628,40 @@ func TestOrchestrator_ShutdownCancelsOnTimeout(t *testing.T) {
 	close(disp.release)
 }
 
+// TestOrchestrator_ShutdownGraceBoundedByContext verifies that when the drain
+// deadline elapses while a dispatch is still stuck, the post-cancel grace wait
+// does not exceed the caller's context budget (it must not add a full,
+// wall-clock CancelGracePeriod on top of an already-expired deadline).
+func TestOrchestrator_ShutdownGraceBoundedByContext(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	ctxSeen := make(chan context.Context, 1)
+	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	<-disp.started
+	<-ctxSeen // drain the captured ctx so Dispatch can proceed to <-release
+
+	// Short drain budget; the dispatch never releases, so Shutdown must hit the
+	// deadline path and then wait at most the remaining budget for the grace,
+	// NOT the full CancelGracePeriod (which is >> this budget).
+	const budget = 50 * time.Millisecond
+	deadctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+
+	start := time.Now()
+	_ = orch.Shutdown(deadctx)
+	elapsed := time.Since(start)
+
+	// Allow generous slack for scheduling, but it must be far below the full
+	// wall-clock CancelGracePeriod that the old (unbounded) timer would impose.
+	if elapsed >= CancelGracePeriod {
+		t.Errorf("Shutdown waited %v (>= full CancelGracePeriod %v); grace not bounded by context", elapsed, CancelGracePeriod)
+	}
+	close(disp.release)
+}
+
 type ctxCapturingDispatcher struct {
 	started chan struct{}
 	release chan struct{}

@@ -26,18 +26,37 @@ import (
 // restart it) rather than wedging startup indefinitely.
 const startupDBTimeout = 15 * time.Second
 
-// dispatchDrainTimeout bounds how long shutdown waits for in-flight campaign
-// dispatch to finish before the pool is closed. Kept under the server's overall
-// shutdown budget so draining can't outlast the graceful-shutdown window.
-// dispatchDrainTimeout must leave room for the orchestrator's post-cancel grace
-// (service.CancelGracePeriod) within the overall graceful-shutdown budget
-// (constants.DefaultShutdownTimeout), so drain + grace can't overrun it and get
-// SIGKILLed. It is validated against that budget in an init() below.
-const dispatchDrainTimeout = 12 * time.Second
+// dispatchDrainTimeout bounds how long Container.Close waits for in-flight
+// campaign dispatch to finish before the pool is closed. Together with the
+// orchestrator's post-cancel grace (service.CancelGracePeriod) it forms
+// ContainerCloseTimeout, which is reserved out of the overall graceful-shutdown
+// budget (constants.DefaultShutdownTimeout) so the HTTP-drain phase and this
+// phase can't sum past it and get SIGKILLed. Validated by the init() below.
+const dispatchDrainTimeout = 8 * time.Second
+
+// ContainerCloseTimeout is the wall-clock budget for Container.Close: the
+// orchestrator drain (dispatchDrainTimeout) plus its post-cancel grace
+// (service.CancelGracePeriod). The server budgets the HTTP-shutdown phase and
+// this container-close phase separately (see HTTPShutdownTimeout), so the total
+// graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
+const ContainerCloseTimeout = dispatchDrainTimeout + service.CancelGracePeriod
+
+// HTTPShutdownTimeout is the wall-clock budget for draining in-flight HTTP
+// handlers before the container is closed. It is whatever remains of the overall
+// graceful-shutdown budget after the container-close phase is reserved, so the
+// two sequential phases can never sum past DefaultShutdownTimeout (which would
+// otherwise risk a SIGKILL mid-drain — the orchestrator's grace timer is
+// wall-clock, not bound by a shared context).
+const HTTPShutdownTimeout = constants.DefaultShutdownTimeout - ContainerCloseTimeout
 
 func init() {
 	if dispatchDrainTimeout+service.CancelGracePeriod > constants.DefaultShutdownTimeout {
 		panic("dispatchDrainTimeout + service.CancelGracePeriod exceeds DefaultShutdownTimeout")
+	}
+	// The HTTP phase must have a positive budget once the container-close phase
+	// is reserved; otherwise HTTP handlers would get no drain window at all.
+	if HTTPShutdownTimeout <= 0 {
+		panic("HTTPShutdownTimeout is non-positive: ContainerCloseTimeout consumes the entire DefaultShutdownTimeout")
 	}
 }
 

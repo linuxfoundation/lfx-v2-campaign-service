@@ -8,9 +8,24 @@ import (
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestShutdownBudgetComposes verifies the two graceful-shutdown phases sum to at
+// most the overall budget, so the sequential srv.Shutdown then Container.Close
+// can never overrun DefaultShutdownTimeout (which would risk a SIGKILL
+// mid-drain). This guards the invariant the init() in container.go panics on.
+func TestShutdownBudgetComposes(t *testing.T) {
+	// The container-close phase reserves drain + post-cancel grace.
+	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod, ContainerCloseTimeout)
+	// The HTTP phase gets a positive share of the remaining budget.
+	assert.Positive(t, HTTPShutdownTimeout, "HTTP shutdown phase must have a positive budget")
+	// The two phases together stay within the overall budget.
+	assert.LessOrEqual(t, HTTPShutdownTimeout+ContainerCloseTimeout, constants.DefaultShutdownTimeout)
+}
 
 func TestNewContainer_NoDatabase(t *testing.T) {
 	cfg := &config.Config{
