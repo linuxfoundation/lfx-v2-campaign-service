@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -147,33 +148,16 @@ type linkedInResponse struct {
 	Name     string            `json:"name"`
 	Status   string            `json:"status"`
 	Elements []responseElement `json:"elements"`
-	Paging   linkedInPaging    `json:"paging"`
+	Metadata linkedInMetadata  `json:"metadata"`
 }
 
-// linkedInPaging mirrors the RestLi paging block. The presence of a "next" link
-// in Links signals another page is available; the client follows it until no
-// next link remains. Count/Start/Total are decoded for completeness.
-type linkedInPaging struct {
-	Start int                `json:"start"`
-	Count int                `json:"count"`
-	Total int                `json:"total"`
-	Links []linkedInPageLink `json:"links"`
-}
-
-// linkedInPageLink is one entry in paging.links (rel="next" marks the next page).
-type linkedInPageLink struct {
-	Rel  string `json:"rel"`
-	Href string `json:"href"`
-}
-
-// hasNextPage reports whether the paging block advertises a further page.
-func (p linkedInPaging) hasNextPage() bool {
-	for _, l := range p.Links {
-		if l.Rel == "next" {
-			return true
-		}
-	}
-	return false
+// linkedInMetadata carries the cursor-pagination block used by the LinkedIn
+// search APIs at LinkedIn-Version 202602: the response advertises the next
+// page via metadata.nextPageToken, which the client echoes back as the
+// `pageToken` request param. An empty nextPageToken means the result set is
+// exhausted.
+type linkedInMetadata struct {
+	NextPageToken string `json:"nextPageToken"`
 }
 
 // flexibleID decodes a LinkedIn resource identifier that the API returns as
@@ -406,21 +390,31 @@ const maxListPages = 25
 // skipStatuses are ignored. Mirrors findByName() (paginated search across all
 // statuses).
 //
+// At LinkedIn-Version 202602 the search APIs use CURSOR pagination, not offset
+// pagination: each response carries metadata.nextPageToken, and the client
+// echoes that token back as the `pageToken` request param to fetch the next
+// page. Pagination stops when nextPageToken comes back empty. An offset-based
+// walk (start/count) or a "full page" heuristic is the wrong model for this API
+// version and can miss results or loop, so it is not used.
+//
 // Unlike the TypeScript original, transient/unexpected search failures are NOT
 // swallowed: a non-404 HTTP error, network error, or decode error is returned so
 // the find-or-create caller aborts instead of proceeding to a create POST that
 // would produce a duplicate. Pagination is followed to exhaustion (up to
-// maxListPages); reaching the cap with more pages remaining also returns an
-// error rather than a false no-match.
+// maxListPages); reaching the cap with a next-page token still present also
+// returns an error rather than a false no-match.
 func (c *Client) findByName(ctx context.Context, nestedPath, name string) (string, error) {
 	const pageSize = 50
-	start := 0
+	pageToken := ""
 	for page := 0; page < maxListPages; page++ {
-		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, map[string]string{
+		params := map[string]string{
 			"q":     "search",
 			"count": strconv.Itoa(pageSize),
-			"start": strconv.Itoa(start),
-		})
+		}
+		if pageToken != "" {
+			params["pageToken"] = pageToken
+		}
+		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params)
 		if err != nil {
 			// A 404 means the collection/resource genuinely isn't there: treat as
 			// a clean no-match. Any other error (401/429/5xx, network, decode) is
@@ -451,18 +445,14 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 			}
 			return trailingID(raw), nil
 		}
-		// Decide whether to fetch another page. A normal LinkedIn offset-paginated
-		// response omits paging.links entirely, so relying on a "next" link alone
-		// would stop after page one. Mirror the TS behavior: keep paginating while
-		// EITHER the paging block advertises a next link OR the page came back full
-		// (>= pageSize elements, i.e. there is very likely another page). A short
-		// page means the result set is exhausted.
-		if len(resp.Elements) < pageSize && !resp.Paging.hasNextPage() {
+		// Cursor pagination: an empty nextPageToken marks the end of the result
+		// set. Otherwise carry the token into the next request.
+		if resp.Metadata.NextPageToken == "" {
 			return "", nil
 		}
-		start += pageSize
+		pageToken = resp.Metadata.NextPageToken
 	}
-	// Cap reached with more pages still available: refuse to report a false
+	// Cap reached with a next-page token still present: refuse to report a false
 	// no-match, which would let the caller create a duplicate resource.
 	return "", fmt.Errorf("search %q by name: exceeded %d pages without exhausting results — aborting to avoid creating a duplicate", nestedPath, maxListPages)
 }
@@ -871,11 +861,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 
+	// Trim the registration URL ONCE up front and use the trimmed value both for
+	// validation and everywhere downstream (BuildUTMURL). Validating a trimmed
+	// value but then building the UTM URL from the original untrimmed field let a
+	// value with surrounding whitespace pass validation yet produce a malformed
+	// UTM URL (embedded spaces).
+	reg := strings.TrimSpace(in.RegistrationURL)
+
 	// Validate the registration URL BEFORE any POST so an empty/relative/malformed
 	// URL is rejected up front rather than after the campaign group and campaign
 	// (permanent resources) already exist.
-	if err := validateRegistrationURL(in.RegistrationURL); err != nil {
+	if err := validateRegistrationURL(reg); err != nil {
 		return nil, err
+	}
+
+	// Validate the budget BEFORE any POST. BudgetUSD is formatted straight into
+	// the campaign body, so a non-positive, NaN, or Inf value would otherwise be
+	// rejected by LinkedIn only AFTER the campaign group (a permanent resource)
+	// already exists, orphaning it.
+	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) {
+		return nil, fmt.Errorf("budget must be a finite number, got %v", in.BudgetUSD)
+	}
+	if in.BudgetUSD <= 0 {
+		return nil, fmt.Errorf("budget must be greater than zero, got %v", in.BudgetUSD)
 	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
@@ -892,17 +900,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	steps := []string{}
 
+	// Build the geo URN set and refuse to create anything with no usable geo
+	// targeting BEFORE the first create POST. ResolveGeoTargets deliberately drops
+	// unknown geos, so a caller passing only unknown geos arrives here with an
+	// empty URN set. Creating the campaign group/campaign anyway (both permanent
+	// side effects) would leave an orphaned campaign with empty geo targeting.
+	geoURNs := make([]string, 0, len(in.GeoTargets))
+	for _, g := range in.GeoTargets {
+		if g.URN == "" {
+			continue
+		}
+		geoURNs = append(geoURNs, g.URN)
+	}
+	if len(geoURNs) == 0 {
+		return nil, fmt.Errorf("no usable geo targets: all supplied geos resolved to nothing — refusing to create a campaign with empty geo targeting")
+	}
+
 	groupName := fmt.Sprintf("Events | %s | %s", in.EventName, project)
 	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, err
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
-
-	geoURNs := make([]string, 0, len(in.GeoTargets))
-	for _, g := range in.GeoTargets {
-		geoURNs = append(geoURNs, g.URN)
-	}
 
 	campaignName := fmt.Sprintf("Events | %s | LinkedIn | Conversions | Prospecting | Static | %s | MoFU", in.EventName, project)
 	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, in.StartDate, in.EndDate, in.LifetimeBudget)
@@ -913,7 +932,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	creativeCount := 0
 	for i, variant := range in.Variants {
-		destURL := BuildUTMURL(in.RegistrationURL, in.HSToken, campaignName, i+1)
+		destURL := BuildUTMURL(reg, in.HSToken, campaignName, i+1)
 		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, variant.ImageURN)
 		if err != nil {
 			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),

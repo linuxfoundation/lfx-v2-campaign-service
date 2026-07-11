@@ -226,39 +226,28 @@ func TestFindOrCreateCampaignGroup_TransientSearchErrorNoCreate(t *testing.T) {
 
 // TestFindByName_MatchOnLaterPage verifies that a same-name resource that only
 // appears beyond the old fixed 5-page cap is still found (name-based
-// idempotency), so no duplicate is created. Each full page advertises a "next"
-// link so the client keeps paginating.
+// idempotency), so no duplicate is created. Each page advertises a
+// metadata.nextPageToken so the cursor walk keeps going.
 func TestFindByName_MatchOnLaterPage(t *testing.T) {
-	const pageSize = 50
-	// Place the match on page index 7 (start=350), well past the old 5-page cap.
-	const matchStart = 7 * pageSize
+	// Place the match on page index 7, well past the old 5-page cap.
+	const matchPage = 7
 
 	var mu sync.Mutex
 	var getCount int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		getCount++
+		n := getCount
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 
-		start, _ := strconv.Atoi(r.URL.Query().Get("start"))
-
-		if start == matchStart {
-			// The page carrying the live match.
-			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Late | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:777"}],"paging":{"links":[]}}`)
+		if n-1 == matchPage {
+			// The page carrying the live match; empty nextPageToken ends the walk.
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Late | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:777"}],"metadata":{"nextPageToken":""}}`)
 			return
 		}
-		// A full page of non-matching elements, advertising a next page.
-		var sb strings.Builder
-		sb.WriteString(`{"elements":[`)
-		for i := 0; i < pageSize; i++ {
-			if i > 0 {
-				sb.WriteString(",")
-			}
-			sb.WriteString(`{"name":"Other","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:1"}`)
-		}
-		sb.WriteString(`],"paging":{"links":[{"rel":"next","href":"?start="}]}}`)
-		_, _ = io.WriteString(w, sb.String())
+		// A page of non-matching elements, advertising a further cursor page.
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:1"}],"metadata":{"nextPageToken":"cursor-`+strconv.Itoa(n)+`"}}`)
 	}))
 	defer srv.Close()
 
@@ -273,7 +262,7 @@ func TestFindByName_MatchOnLaterPage(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if getCount <= 5 {
-		t.Errorf("expected pagination past the old 5-page cap, only made %d GETs", getCount)
+		t.Errorf("expected cursor pagination past the old 5-page cap, only made %d GETs", getCount)
 	}
 }
 
@@ -447,6 +436,7 @@ func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
 		StartDate:        "2099-01-01",
 		EndDate:          "2099-02-01",
 		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
 		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
 	})
 	if err != nil {

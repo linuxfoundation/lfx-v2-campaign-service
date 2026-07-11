@@ -5,10 +5,12 @@ package linkedin
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
+	neturl "net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -40,62 +42,55 @@ func TestFindByName_NumericID(t *testing.T) {
 	}
 }
 
-// TestFindByName_OffsetPaginationNoLinks verifies that a normal offset-paginated
-// response that OMITS paging.links still advances past page one: full pages
-// (len == pageSize) keep pagination going, and a later-page match is found. This
-// is the shape LinkedIn returns in practice.
-func TestFindByName_OffsetPaginationNoLinks(t *testing.T) {
-	const pageSize = 50
-	const matchStart = 3 * pageSize // match on page index 3
+// TestFindByName_CursorPagination verifies that findByName follows LinkedIn's
+// 202602 CURSOR pagination: page 1 returns metadata.nextPageToken and no match,
+// the client re-requests carrying that token as the `pageToken` param, and the
+// match on page 2 (with an empty nextPageToken) is found.
+func TestFindByName_CursorPagination(t *testing.T) {
+	const wantToken = "cursor-abc-123"
 
 	var mu sync.Mutex
 	var getCount int
+	var sawPageToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		getCount++
+		n := getCount
+		if tok := r.URL.Query().Get("pageToken"); tok != "" {
+			sawPageToken = tok
+		}
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
 
-		start, _ := strconv.Atoi(r.URL.Query().Get("start"))
-		if start == matchStart {
-			// The match arrives on a full page (still pageSize elements) but with
-			// NO paging block at all — the client must have paginated here purely
-			// on the "full page" heuristic.
-			var sb strings.Builder
-			sb.WriteString(`{"elements":[{"name":"Events | Deep | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:888"}`)
-			for i := 1; i < pageSize; i++ {
-				sb.WriteString(`,{"name":"Other","status":"ACTIVE","id":1}`)
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			// Page 1: no match, but a nextPageToken advertising a further page.
+			// The offset param `start` must NOT be used by the client.
+			if r.URL.Query().Get("start") != "" {
+				t.Errorf("cursor pagination must not send offset `start`, got %q", r.URL.Query().Get("start"))
 			}
-			sb.WriteString(`]}`)
-			_, _ = io.WriteString(w, sb.String())
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":1}],"metadata":{"nextPageToken":"`+wantToken+`"}}`)
 			return
 		}
-		// A FULL page of non-matching elements, with NO paging.links whatsoever.
-		var sb strings.Builder
-		sb.WriteString(`{"elements":[`)
-		for i := 0; i < pageSize; i++ {
-			if i > 0 {
-				sb.WriteString(",")
-			}
-			sb.WriteString(`{"name":"Other","status":"ACTIVE","id":1}`)
-		}
-		sb.WriteString(`]}`)
-		_, _ = io.WriteString(w, sb.String())
+		// Page 2: the match, with an empty nextPageToken (end of results).
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Cursor | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:888"}],"metadata":{"nextPageToken":""}}`)
 	}))
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaigns", "Events | Deep | CNCF")
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaigns", "Events | Cursor | CNCF")
 	if err != nil {
 		t.Fatalf("findByName: %v", err)
 	}
 	if id != "888" {
-		t.Errorf("expected later-page match id 888, got %q", id)
+		t.Errorf("expected cursor-page-2 match id 888, got %q", id)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if getCount < 4 {
-		t.Errorf("expected pagination past page 1 without paging.links, only made %d GETs", getCount)
+	if getCount != 2 {
+		t.Errorf("expected exactly 2 GETs (page 1 + cursor page 2), got %d", getCount)
+	}
+	if sawPageToken != wantToken {
+		t.Errorf("second request must carry pageToken=%q, got %q", wantToken, sawPageToken)
 	}
 }
 
@@ -218,6 +213,7 @@ func TestCreateCampaign_PartialVariantFailureReported(t *testing.T) {
 		StartDate:        "2099-01-01",
 		EndDate:          "2099-02-01",
 		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
 		Variants: []CreativeVariant{
 			{IntroText: "a", Headline: "one"},
 			{IntroText: "b", Headline: "two"}, // this variant's dark post fails
@@ -280,5 +276,155 @@ func TestCreateCampaign_UnknownAccountFailsClosed(t *testing.T) {
 	defer mu.Unlock()
 	if postCount != 0 {
 		t.Errorf("no POST should be issued for an unknown account, got %d", postCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Third-round Copilot findings
+// ---------------------------------------------------------------------------
+
+// noPOSTServer returns an httptest.Server that answers GETs with an empty
+// element set and fails the test on any POST, proving the code under test
+// rejected the input before attempting a create.
+func noPOSTServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("unexpected POST %s — input should have been rejected first", r.URL.Path)
+			http.Error(w, "should not POST", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[]}`)
+	}))
+}
+
+// TestCreateCampaign_RejectsBadBudgetBeforeAnyPOST verifies that a zero,
+// negative, NaN, or Inf budget is rejected up front — before any POST that would
+// create a permanent campaign group. The server fails on any POST.
+func TestCreateCampaign_RejectsBadBudgetBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	budgets := []float64{0, -1, math.NaN(), math.Inf(1), math.Inf(-1)}
+	for _, b := range budgets {
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:        "E",
+			RegistrationURL:  "https://events.example.org/reg",
+			BudgetUSD:        b,
+			StartDate:        "2099-01-01",
+			EndDate:          "2099-02-01",
+			TargetingProfile: "cloud-native",
+			GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+			Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+		})
+		if err == nil {
+			t.Errorf("CreateCampaign with budget %v: expected error, got nil", b)
+		}
+	}
+}
+
+// TestCreateCampaign_RejectsEmptyGeoBeforeAnyPOST verifies that an input whose
+// geo targets all resolve to nothing (empty URN set) is rejected before any POST
+// — creating a campaign with empty geo targeting is refused up front.
+func TestCreateCampaign_RejectsEmptyGeoBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	// ResolveGeoTargets drops "Atlantis" (unknown), leaving an empty slice.
+	geos := ResolveGeoTargets([]string{"Atlantis"})
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "E",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       geos,
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("CreateCampaign with only unknown geos: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "geo") {
+		t.Errorf("error should mention empty geo targeting, got: %v", err)
+	}
+}
+
+// TestCreateCampaign_TrimsRegistrationURLForUTM verifies that a registration URL
+// with surrounding whitespace passes validation AND produces a well-formed UTM
+// URL (no embedded spaces) — the trimmed value must be used downstream in
+// BuildUTMURL, not the original untrimmed field.
+func TestCreateCampaign_TrimsRegistrationURLForUTM(t *testing.T) {
+	var mu sync.Mutex
+	var darkPostSource string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			b, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(b, &body)
+			if content, ok := body["content"].(map[string]any); ok {
+				if article, ok := content["article"].(map[string]any); ok {
+					if src, ok := article["source"].(string); ok {
+						mu.Lock()
+						darkPostSource = src
+						mu.Unlock()
+					}
+				}
+			}
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "  https://events.example.org/reg  ", // surrounding whitespace
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign with whitespace-padded URL: %v", err)
+	}
+
+	mu.Lock()
+	src := darkPostSource
+	mu.Unlock()
+	if src == "" {
+		t.Fatal("dark post source URL was never captured")
+	}
+	if strings.ContainsAny(src, " \t\n") {
+		t.Errorf("built UTM URL must not contain whitespace, got %q", src)
+	}
+	// The built URL must parse cleanly and keep its scheme/host intact.
+	u, perr := neturl.Parse(src)
+	if perr != nil {
+		t.Fatalf("built UTM URL does not parse: %v (url=%q)", perr, src)
+	}
+	if u.Scheme != "https" || u.Host != "events.example.org" {
+		t.Errorf("built UTM URL malformed: scheme=%q host=%q (url=%q)", u.Scheme, u.Host, src)
 	}
 }
