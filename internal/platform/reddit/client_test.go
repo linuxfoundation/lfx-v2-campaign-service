@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1018,12 +1019,16 @@ func TestExtractRedditPostID_HostSpoofRejected(t *testing.T) {
 // bogus value like "true" or "map[]" that a caller might mistake for a valid ID.
 func TestDecodeID_RejectsNonStringID(t *testing.T) {
 	cases := map[string]string{
-		"boolean id": `{"id": true}`,
-		"object id":  `{"id": {"nested": 1}}`,
-		"number id":  `{"id": 123}`,
-		"array id":   `{"id": ["a"]}`,
-		"null id":    `{"id": null}`,
-		"absent id":  `{"other": "x"}`,
+		"boolean id":     `{"id": true}`,
+		"object id":      `{"id": {"nested": 1}}`,
+		"number id":      `{"id": 123}`,
+		"array id":       `{"id": ["a"]}`,
+		"null id":        `{"id": null}`,
+		"absent id":      `{"other": "x"}`,
+		"empty id":       `{"id": ""}`,
+		"whitespace id":  `{"id": " "}`,
+		"multi-space id": `{"id": "   "}`,
+		"tab/newline id": `{"id": "\t\n"}`,
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1033,9 +1038,12 @@ func TestDecodeID_RejectsNonStringID(t *testing.T) {
 			}
 		})
 	}
-	// A genuine string id is still returned.
+	// A genuine string id is still returned (and surrounding whitespace trimmed).
 	if got := decodeID(&apiResponse{Data: json.RawMessage(`{"id": "camp_1"}`)}); got != "camp_1" {
 		t.Errorf("decodeID string id = %q, want camp_1", got)
+	}
+	if got := decodeID(&apiResponse{Data: json.RawMessage(`{"id": "  camp_1  "}`)}); got != "camp_1" {
+		t.Errorf("decodeID padded id = %q, want camp_1", got)
 	}
 }
 
@@ -1301,5 +1309,132 @@ func TestRefreshToken_DoesNotBlockOnSlowRefresh(t *testing.T) {
 	case <-firstDone:
 	case <-time.After(3 * time.Second):
 		t.Fatal("caller 1 did not finish after the handler was released")
+	}
+}
+
+// TestExtractRedditPostID_EncodedDelimiterRejected verifies FINDING 3: the
+// post-path regex runs against EscapedPath(), so an encoded delimiter cannot act
+// as a segment boundary and smuggle trailing junk into an otherwise-valid id.
+// "/comments/abc123%3Fjunk" (the encoded '?' is part of the id segment) must be
+// REJECTED, while a real literal query "/comments/abc123?x=1" still parses.
+func TestExtractRedditPostID_EncodedDelimiterRejected(t *testing.T) {
+	rejected := []string{
+		"https://www.reddit.com/comments/abc123%3Fjunk", // %3F = encoded '?'
+		"https://www.reddit.com/r/golang/comments/abc123%3Fjunk",
+		"https://www.reddit.com/comments/abc123%2Fjunk", // %2F = encoded '/'
+		"https://www.reddit.com/comments/abc123%23junk", // %23 = encoded '#'
+	}
+	for _, in := range rejected {
+		if got, err := extractRedditPostID(in); err == nil {
+			t.Errorf("%s: expected rejection (encoded delimiter is part of the id segment), got %q", in, got)
+		}
+	}
+
+	// A real literal query delimiter (parsed off into RawQuery, absent from
+	// EscapedPath) still yields a clean id.
+	valid := map[string]string{
+		"https://www.reddit.com/comments/abc123?x=1":          "t3_abc123",
+		"https://www.reddit.com/r/golang/comments/abc123?x=1": "t3_abc123",
+		"https://www.reddit.com/comments/abc123#frag":         "t3_abc123",
+	}
+	for in, want := range valid {
+		got, err := extractRedditPostID(in)
+		if err != nil {
+			t.Errorf("%s: unexpected error %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s -> %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestRefreshToken_SingleFlightCoalesces verifies FINDING 1: N concurrent cold
+// callers coalesce into exactly ONE upstream token request whose result they all
+// share, rather than firing one refresh per caller (rate-limit amplification).
+func TestRefreshToken_SingleFlightCoalesces(t *testing.T) {
+	var hits int32
+	// gate blocks the single in-flight handler until all callers are parked on
+	// the shared result, maximizing the window in which a per-caller refresh
+	// (the bug) would show up as extra hits.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	toks := make(chan string, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tok, err := c.refreshToken(context.Background())
+			errs <- err
+			toks <- tok
+		}()
+	}
+
+	// Give all callers time to reach and park on the shared single-flight call,
+	// then release the one handler that's blocked inside it.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	close(errs)
+	close(toks)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("cold caller failed: %v", err)
+		}
+	}
+	for tok := range toks {
+		if tok != "tok" {
+			t.Errorf("caller got token %q, want tok", tok)
+		}
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("token endpoint hit %d times, want exactly 1 (refresh not coalesced)", got)
+	}
+}
+
+// TestRefreshToken_CancelledContextReturnsPromptly verifies FINDING 1(b): a
+// caller whose context is already cancelled returns promptly with its own ctx
+// error and never triggers or blocks on a refresh.
+func TestRefreshToken_CancelledContextReturnsPromptly(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.refreshToken(ctx)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected cancelled-context caller to return an error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled-context caller did not return promptly")
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Errorf("cancelled caller triggered %d token requests, want 0", got)
 	}
 }

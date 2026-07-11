@@ -25,6 +25,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // ---------------------------------------------------------------------------
@@ -157,6 +159,11 @@ type Client struct {
 	mu            sync.Mutex
 	cachedToken   string
 	tokenExpireAt time.Time
+
+	// tokenGroup coalesces concurrent token refreshes: a cold start or
+	// expiry burst fires a single upstream refresh whose result is shared by
+	// all waiters, rather than one refresh per in-flight campaign call.
+	tokenGroup singleflight.Group
 }
 
 // NewClient builds a Client from injected credentials and account config.
@@ -273,14 +280,19 @@ type tokenResponse struct {
 
 // refreshToken returns a cached access token when it is still valid past the
 // expiry buffer, otherwise it requests a new one. Mirrors refreshRedditToken.
+//
+// Concurrent refreshes are coalesced with a single-flight group so a cold start
+// or an expiry burst fires exactly one upstream token request whose result is
+// shared by all waiters, rather than one refresh per in-flight campaign call
+// (which would amplify rate-limit pressure). Crucially, the lock is NOT held
+// across the network call: the fast path reads the cache under a brief lock,
+// and a caller waiting on the shared refresh selects on ctx.Done() so it can
+// still return promptly with its own context error instead of blocking on the
+// shared request indefinitely.
 func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	// Fast path: reuse the cached token while it remains valid past the buffer.
 	// Hold the lock only long enough to read the cache -- NOT across the network
-	// call below, so a concurrent caller blocked here isn't prevented from
-	// observing its own context cancellation/deadline while a refresh is in
-	// flight. Two concurrent cold callers may both refresh (last-writer-wins),
-	// which is harmless and preferable to serializing everyone behind one
-	// in-flight request that ignores their contexts.
+	// call below.
 	c.mu.Lock()
 	if c.cachedToken != "" && c.now().Before(c.tokenExpireAt.Add(-redditTokenExpiryBuffer)) {
 		token := c.cachedToken
@@ -289,6 +301,39 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	}
 	c.mu.Unlock()
 
+	// Bail out early if the caller's context is already done, so a cancelled
+	// caller never triggers or joins a refresh.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	// Coalesce concurrent refreshes. DoChan (rather than Do) lets a waiter
+	// select on ctx.Done() so it can abandon the shared call on cancellation.
+	// The single-flight function itself is context-free (it uses a bounded
+	// background context) so one caller's cancellation can't tear down the
+	// shared refresh other waiters still depend on.
+	ch := c.tokenGroup.DoChan("refresh", func() (any, error) {
+		fetchCtx, cancel := context.WithTimeout(context.Background(), redditRequestTimeout)
+		defer cancel()
+		return c.fetchToken(fetchCtx)
+	})
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return "", res.Err
+		}
+		token, _ := res.Val.(string)
+		return token, nil
+	}
+}
+
+// fetchToken performs the actual upstream token request and caches the result.
+// It is only ever invoked from within the single-flight group, so at most one
+// call is in flight at a time.
+func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	credentials := base64.StdEncoding.EncodeToString([]byte(c.creds.ClientID + ":" + c.creds.ClientSecret))
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
@@ -742,7 +787,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // decodeID extracts data.id from a Reddit API envelope, returning "" if absent.
 // Reddit IDs are strings; a non-string id (bool, number, object, array) is
 // treated as absent rather than coerced into a bogus value like "true" or
-// "map[]" that a caller might mistake for a valid resource ID.
+// "map[]" that a caller might mistake for a valid resource ID. The id is
+// trimmed of surrounding whitespace so a blank/whitespace-only id (e.g.
+// {"data":{"id":" "}}) is treated as absent rather than as a created resource.
 func decodeID(resp *apiResponse) string {
 	if resp == nil || len(resp.Data) == 0 {
 		return ""
@@ -755,7 +802,7 @@ func decodeID(resp *apiResponse) string {
 	if !ok {
 		return ""
 	}
-	return id
+	return strings.TrimSpace(id)
 }
 
 // toMicrodollars mirrors toMicrodollars: USD -> integer micro-dollars.
@@ -1021,7 +1068,13 @@ func extractRedditPostID(urlOrID string) (string, error) {
 				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
 			}
 			// reddit.com: extract the comments/<id> segment from the path.
-			if m := postPathRe.FindStringSubmatch(u.Path); m != nil {
+			// Match against EscapedPath(), not the decoded u.Path: an encoded
+			// delimiter like %3F ('?') or %2F ('/') stays literal in EscapedPath
+			// but decodes to a real delimiter in u.Path. Matching the decoded
+			// path would let "/comments/abc123%3Fjunk" (whose id segment really
+			// ends in "%3Fjunk") look like "/comments/abc123?junk" and be
+			// accepted as t3_abc123, smuggling trailing junk into a valid id.
+			if m := postPathRe.FindStringSubmatch(u.EscapedPath()); m != nil {
 				return "t3_" + m[1], nil
 			}
 			return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
