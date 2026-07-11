@@ -95,6 +95,43 @@ func TestOAuthSignatureParamOrdering(t *testing.T) {
 	}
 }
 
+// TestOAuthSignaturePrefixNameOrdering proves parameters are sorted by (encoded
+// name, encoded value) as a TUPLE, not by the joined "name=value" string. When
+// one encoded name is a prefix of another the two rules diverge: RFC 5849
+// §3.4.1.3.2 orders by name first, so "a" < "a1" and the normalized string is
+// "a=<v>&a1=<v>". Sorting the joined form instead compares "a=<v>" against
+// "a1=<v>" and, at index 1, '=' (0x3D) loses to '1' (0x31) — so "a1=<v>" would
+// sort FIRST, producing the WRONG "a1=<v>&a=<v>". This test asserts the correct
+// tuple ordering and would fail under the old joined-string sort.
+func TestOAuthSignaturePrefixNameOrdering(t *testing.T) {
+	// Prove the two sort rules genuinely disagree for these inputs, so the test
+	// is meaningful: joined-string sort puts "a1=..." before "a=...".
+	joined := []string{"a=va", "a1=v1"}
+	if joined[1] >= joined[0] {
+		t.Fatalf("test premise wrong: joined-string sort should misorder %q before %q", joined[1], joined[0])
+	}
+
+	params := map[string]string{
+		"a":  "va",
+		"a1": "v1",
+	}
+	// RFC-correct normalization: by name first (a < a1), giving "a=va&a1=v1".
+	wantParamString := "a=va&a1=v1"
+
+	got := generateOAuthSignature("POST", "https://ads-api.x.com/12/accounts/acc1", params, "cs", "ts")
+	want := referenceSignature("POST", "https://ads-api.x.com/12/accounts/acc1", wantParamString, "cs", "ts")
+	if got != want {
+		t.Fatalf("prefix-name params not tuple-sorted (name then value):\n got=%q\nwant=%q", got, want)
+	}
+
+	// Guard against the specific wrong answer the joined-string sort would give,
+	// so a regression is caught even if referenceSignature ever changed shape.
+	wrong := referenceSignature("POST", "https://ads-api.x.com/12/accounts/acc1", "a1=v1&a=va", "cs", "ts")
+	if got == wrong {
+		t.Fatalf("signature matches the joined-string (misordered) normalization: %q", got)
+	}
+}
+
 // referenceSignature is an independent HMAC-SHA1/base64 over the OAuth 1.0a
 // base string, given an already-normalized param string, used to pin ordering.
 func referenceSignature(method, u, paramString, consumerSecret, tokenSecret string) string {
@@ -639,7 +676,6 @@ func TestCreateCampaignEventNameRuneLimit(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
 			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
@@ -773,7 +809,6 @@ func TestBudgetRoundToZeroBoundary(t *testing.T) {
 // create promoted tweet.
 func TestCreateCampaignFlow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
 			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
@@ -918,6 +953,72 @@ func TestFindByNamePagination(t *testing.T) {
 	}
 }
 
+// TestFindByNameMatchWithoutIDErrors verifies that a list element matching the
+// name but carrying no usable id is surfaced as a lookup ERROR, not ("", nil).
+// Returning "not found" would drive CreateCampaign into a create POST and risk
+// duplicating an element that already exists. The test also asserts that no
+// create POST is issued when the campaign lookup hits an id-less match.
+func TestFindByNameMatchWithoutIDErrors(t *testing.T) {
+	// The campaign lookup in CreateCampaign searches for this composed name, so
+	// the id-less element the server returns must carry the same name to be a
+	// genuine (id-less) match on the campaign lookup path.
+	in := CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+	}
+	campaignName := buildTwitterCampaignName(in)
+	idlessBody, err := json.Marshal(map[string]any{
+		"data": []map[string]any{{"name": campaignName}}, // matches by name, no id
+	})
+	if err != nil {
+		t.Fatalf("marshal id-less body: %v", err)
+	}
+
+	var createPosts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			// Name matches the composed campaign name but the element has no id.
+			_, _ = w.Write(idlessBody)
+		case r.Method == http.MethodPost:
+			createPosts++
+			_, _ = w.Write([]byte(`{"data":{"id":"should-not-happen"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	// Direct lookup: a name match with no id is an error, not ("", nil).
+	id, err := c.findCampaignByName(context.Background(), campaignName)
+	if err == nil {
+		t.Fatalf("expected error for id-less match, got id=%q, nil error", id)
+	}
+	if id != "" {
+		t.Errorf("expected empty id on error, got %q", id)
+	}
+
+	// End-to-end: CreateCampaign must abort and NOT issue a create POST.
+	_, err = c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("CreateCampaign should abort when the campaign lookup returns an id-less match")
+	}
+	if createPosts != 0 {
+		t.Errorf("expected no create POST on id-less match, got %d", createPosts)
+	}
+}
+
 // TestValidateDateStrict verifies validateDate rejects well-shaped but
 // impossible calendar dates (e.g. 2026-99-99) that the shape regex accepts.
 func TestValidateDateStrict(t *testing.T) {
@@ -947,7 +1048,6 @@ func TestCreateSendsQueryParams(t *testing.T) {
 	var campaignCT, lineItemCT string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
 			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
@@ -1053,9 +1153,16 @@ func TestCreateSendsQueryParams(t *testing.T) {
 		t.Errorf("line item create should not set JSON content-type, got %q", lineItemCT)
 	}
 
-	// Promoted-tweet create: the endpoint does not accept entity_status; the API
-	// creates the association ACTIVE and delivery is gated by the PAUSED line
-	// item, so we must not send entity_status here.
+	// Promoted-tweet create: assert the request actually hit the promoted_tweets
+	// path (promotedQuery non-nil) before checking the absence of entity_status —
+	// otherwise a misrouted request leaves promotedQuery nil and the absence-only
+	// check below would pass vacuously.
+	if promotedQuery == nil {
+		t.Fatal("promoted tweet create was never received on the promoted_tweets path")
+	}
+	// The endpoint does not accept entity_status; the API creates the association
+	// ACTIVE and delivery is gated by the PAUSED line item, so we must not send
+	// entity_status here.
 	if promotedQuery.Has("entity_status") {
 		t.Errorf("promoted tweet create should not send entity_status: %v", promotedQuery)
 	}
@@ -1105,7 +1212,6 @@ func TestRetryResetExceedsCapAborts(t *testing.T) {
 // flow returns nil error, PromotedTweetID is empty, and a step records the gap.
 func TestPromotedTweetMissingIDWarns(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
 			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))

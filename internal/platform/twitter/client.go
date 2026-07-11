@@ -184,12 +184,27 @@ func generateOAuthSignature(method, u string, params map[string]string, consumer
 	// PERCENT-ENCODED name, breaking ties on the percent-encoded value — not by
 	// the raw key. Sorting raw keys is wrong: e.g. "c@" encodes to "c%40" and
 	// must sort BEFORE "c2" because '%' (0x25) < '2' (0x32), yet raw '@' (0x40)
-	// sorts AFTER '2'. Encode first, then sort the encoded name=value pairs.
-	parts := make([]string, 0, len(params))
+	// sorts AFTER '2'. Encode first, then sort by (name, value) as a TUPLE.
+	//
+	// Sorting the joined "name=value" string is ALSO wrong: it misorders when one
+	// encoded name is a prefix of another. Names "a" and "a1" must order a < a1,
+	// but "a1=<v>" sorts BEFORE "a=<v>" on the joined form because '1' (0x31) <
+	// '=' (0x3D). Compare names first, then values as a tiebreak.
+	type encodedPair struct{ name, value string }
+	pairs := make([]encodedPair, 0, len(params))
 	for k, v := range params {
-		parts = append(parts, percentEncode(k)+"="+percentEncode(v))
+		pairs = append(pairs, encodedPair{percentEncode(k), percentEncode(v)})
 	}
-	sort.Strings(parts)
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].name != pairs[j].name {
+			return pairs[i].name < pairs[j].name
+		}
+		return pairs[i].value < pairs[j].value
+	})
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, p.name+"="+p.value)
+	}
 	paramString := strings.Join(parts, "&")
 
 	baseString := strings.ToUpper(method) + "&" + percentEncode(u) + "&" + percentEncode(paramString)
@@ -503,8 +518,11 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 // (id, nil) on a match, ("", nil) for a genuine not-found (the pages were read
 // successfully but held no match), and ("", err) when a page GET or decode
 // fails — so a transient error is never conflated with "not found" and the
-// caller can abort instead of creating a duplicate. It follows next_cursor so a
-// match beyond the first page is still found, bounded by maxListPages.
+// caller can abort instead of creating a duplicate. A name match whose element
+// carries no usable id is likewise returned as ("", err), not ("", nil), so the
+// caller does not follow with a create and duplicate an existing element. It
+// follows next_cursor so a match beyond the first page is still found, bounded
+// by maxListPages.
 func (c *Client) findByName(ctx context.Context, path, name string) (string, error) {
 	sep := "&"
 	if !strings.Contains(path, "?") {
@@ -529,6 +547,13 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 		}
 		for _, it := range items {
 			if it.Name == name {
+				// A match with no usable id cannot be reused. Returning ("", nil)
+				// here would read as "not found" and drive the caller into a create
+				// POST, risking a duplicate of an element that already exists.
+				// Surface it as a lookup error so the caller aborts instead.
+				if it.ID == "" {
+					return "", fmt.Errorf("lookup %q: matching element has no id; aborting to avoid creating a duplicate", name)
+				}
 				return it.ID, nil
 			}
 		}
