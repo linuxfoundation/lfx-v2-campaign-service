@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -196,7 +197,7 @@ func TestRetryOn429(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	resp, err := c.request(context.Background(), http.MethodPost, "campaigns", map[string]any{"name": "x"})
+	resp, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"})
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -261,7 +262,7 @@ func TestRetryExhausted(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	_, err := c.request(context.Background(), http.MethodGet, "campaigns", nil)
+	_, err := c.request(context.Background(), http.MethodGet, "campaigns")
 	if err == nil {
 		t.Fatal("expected error after exhausted retries")
 	}
@@ -298,7 +299,7 @@ func TestContextCancellationDuringRetry(t *testing.T) {
 	c.timeFn = staticTime
 
 	start := time.Now()
-	_, err := c.request(ctx, http.MethodGet, "campaigns", nil)
+	_, err := c.request(ctx, http.MethodGet, "campaigns")
 	if err == nil {
 		t.Fatal("expected context cancellation error")
 	}
@@ -326,7 +327,7 @@ func TestRequestSetsAuthHeader(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	if _, err := c.request(context.Background(), http.MethodGet, "campaigns", nil); err != nil {
+	if _, err := c.request(context.Background(), http.MethodGet, "campaigns"); err != nil {
 		t.Fatalf("request: %v", err)
 	}
 	if !strings.HasPrefix(gotAuth, "OAuth ") {
@@ -342,6 +343,11 @@ func TestCreateCampaignValidation(t *testing.T) {
 		{BudgetUsd: 100, StartDate: "bad", EndDate: "2026-01-02"},
 		{BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "bad"},
 		{BudgetUsd: 100, StartDate: "2026-01-02", EndDate: "2026-01-01"},
+		// Well-shaped but impossible calendar dates must be rejected before any
+		// mutating call (the regex alone would let these through).
+		{BudgetUsd: 100, StartDate: "2026-99-99", EndDate: "2026-12-31"},
+		{BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-99-99"},
+		{BudgetUsd: 100, StartDate: "2026-02-30", EndDate: "2026-12-31"},
 	}
 	for i, in := range cases {
 		if _, err := c.CreateCampaign(context.Background(), in); err == nil {
@@ -485,10 +491,173 @@ func TestFindByNamePagination(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	if id := c.findCampaignByName(context.Background(), "target"); id != "c2" {
+	id, err := c.findCampaignByName(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("findCampaignByName: %v", err)
+	}
+	if id != "c2" {
 		t.Errorf("findCampaignByName across pages = %q, want c2", id)
 	}
 	if calls != 2 {
 		t.Errorf("expected 2 pages fetched, got %d", calls)
+	}
+}
+
+// TestValidateDateStrict verifies validateDate rejects well-shaped but
+// impossible calendar dates (e.g. 2026-99-99) that the shape regex accepts.
+func TestValidateDateStrict(t *testing.T) {
+	valid := []string{"2026-01-01", "2026-12-31", "2024-02-29"} // 2024 is a leap year
+	for _, d := range valid {
+		if err := validateDate("start", d); err != nil {
+			t.Errorf("validateDate(%q) unexpected error: %v", d, err)
+		}
+	}
+	invalid := []string{"2026-99-99", "2026-13-01", "2026-02-30", "2026-00-10", "bad", "2026-1-1"}
+	for _, d := range invalid {
+		if err := validateDate("start", d); err == nil {
+			t.Errorf("validateDate(%q) expected error, got nil", d)
+		}
+	}
+}
+
+// TestCreateSendsQueryParams verifies X Ads create calls carry their params as
+// URL query parameters (not a JSON body), use entity_status=PAUSED (not
+// paused=true), and that the line-item create includes the required start_time
+// and end_time fields.
+func TestCreateSendsQueryParams(t *testing.T) {
+	var campaignQuery, lineItemQuery url.Values
+	var campaignBodyLen, lineItemBodyLen int64
+	var campaignCT, lineItemCT string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			campaignQuery = r.URL.Query()
+			campaignBodyLen = r.ContentLength
+			campaignCT = r.Header.Get("Content-Type")
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			lineItemQuery = r.URL.Query()
+			lineItemBodyLen = r.ContentLength
+			lineItemCT = r.Header.Get("Content-Type")
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+	}); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	// Campaign create: params on the query string, entity_status=PAUSED, no JSON body.
+	if campaignQuery.Get("name") == "" {
+		t.Errorf("campaign create missing name query param: %v", campaignQuery)
+	}
+	if campaignQuery.Get("funding_instrument_id") != "fi1" {
+		t.Errorf("campaign create funding_instrument_id = %q, want fi1", campaignQuery.Get("funding_instrument_id"))
+	}
+	if campaignQuery.Get("entity_status") != "PAUSED" {
+		t.Errorf("campaign create entity_status = %q, want PAUSED", campaignQuery.Get("entity_status"))
+	}
+	if campaignQuery.Has("paused") {
+		t.Errorf("campaign create should not send deprecated paused param: %v", campaignQuery)
+	}
+	if campaignBodyLen > 0 {
+		t.Errorf("campaign create should carry no body, got ContentLength=%d", campaignBodyLen)
+	}
+	if strings.Contains(campaignCT, "application/json") {
+		t.Errorf("campaign create should not set JSON content-type, got %q", campaignCT)
+	}
+
+	// Line-item create: required start_time/end_time present, entity_status=PAUSED,
+	// bid_strategy (not bid_type), params on the query string.
+	if lineItemQuery.Get("start_time") != "2026-03-01T00:00:00Z" {
+		t.Errorf("line item start_time = %q, want 2026-03-01T00:00:00Z", lineItemQuery.Get("start_time"))
+	}
+	if lineItemQuery.Get("end_time") != "2026-03-10T00:00:00Z" {
+		t.Errorf("line item end_time = %q, want 2026-03-10T00:00:00Z", lineItemQuery.Get("end_time"))
+	}
+	if lineItemQuery.Get("entity_status") != "PAUSED" {
+		t.Errorf("line item entity_status = %q, want PAUSED", lineItemQuery.Get("entity_status"))
+	}
+	if lineItemQuery.Get("bid_strategy") != "AUTO" {
+		t.Errorf("line item bid_strategy = %q, want AUTO", lineItemQuery.Get("bid_strategy"))
+	}
+	if lineItemQuery.Has("bid_type") {
+		t.Errorf("line item should not send deprecated bid_type param: %v", lineItemQuery)
+	}
+	if lineItemBodyLen > 0 {
+		t.Errorf("line item create should carry no body, got ContentLength=%d", lineItemBodyLen)
+	}
+	if strings.Contains(lineItemCT, "application/json") {
+		t.Errorf("line item create should not set JSON content-type, got %q", lineItemCT)
+	}
+}
+
+// TestCreateCampaignLookupErrorAborts verifies that a transient 500 during the
+// campaign name lookup aborts the flow with an error and does NOT proceed to a
+// create POST — so a failed lookup is never treated as "not found" (which would
+// create a duplicate).
+func TestCreateCampaignLookupErrorAborts(t *testing.T) {
+	var postCampaign int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			// Lookup fails hard.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"errors":["boom"]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			postCampaign++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"should-not-happen"}}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+	})
+	if err == nil {
+		t.Fatal("expected error when campaign lookup fails, got nil")
+	}
+	if postCampaign != 0 {
+		t.Errorf("expected no campaign create POST after lookup failure, got %d", postCampaign)
 	}
 }

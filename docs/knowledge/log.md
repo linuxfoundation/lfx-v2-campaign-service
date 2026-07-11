@@ -2,6 +2,15 @@
 
 ## 2026-07-10
 
+**Update** — Addressed Copilot review on the X/Twitter Ads client (PR #19):
+create calls now send params as URL query parameters (not a JSON body) per the
+X Ads v12 contract, use `entity_status=PAUSED`, and line items carry the
+required `start_time`/`end_time` with `bid_strategy` (not `bid_type`); dates are
+strictly parsed to reject impossible calendar values; name lookups propagate
+errors instead of masking them as not-found. Added the
+`internal/platform/twitter` code concept and index entry.
+
+
 **Update** — Dropped the Goa CLI path allowlist; twitter-api-secret FP is
 fingerprint-only in `.gitleaksignore`. Clarified `.grype.yaml` rationale
 (Engine fixes exist; Go module path not yet upgradeable via migrate/dktest).

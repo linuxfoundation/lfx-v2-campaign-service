@@ -159,8 +159,10 @@ func generateOAuthSignature(method, u string, params map[string]string, consumer
 }
 
 // buildOAuthHeader builds the "Authorization: OAuth ..." header for a request.
-// bodyParams is retained to mirror the TS signature but is unused in practice
-// (JSON bodies are not form params and are not signed by X Ads).
+// Query parameters present on rawURL are folded into the OAuth 1.0a signature
+// base string (X Ads create calls carry their params on the query string).
+// bodyParams is retained for callers that sign extra form params; callers here
+// pass nil since no request carries a body.
 func (c *Client) buildOAuthHeader(method, rawURL string, bodyParams map[string]string) (string, error) {
 	oauthParams := map[string]string{
 		"oauth_consumer_key":     c.creds.ConsumerKey,
@@ -236,19 +238,40 @@ func (c *Client) accountURL() string {
 	return fmt.Sprintf("%s/%s/accounts/%s", c.baseURL, c.apiVersion, c.account.AccountID)
 }
 
-// request performs an account-scoped X Ads API request with OAuth1 signing,
-// the 1-req/sec write delay handled by callers, and 429 exponential-backoff
-// retry. Mirrors twitterRequest in the TS.
-func (c *Client) request(ctx context.Context, method, path string, body map[string]any) (*apiResponse, error) {
+// request performs an account-scoped X Ads API GET/list request with OAuth1
+// signing and 429 exponential-backoff retry. Any parameters must be encoded
+// into path as a query string. Mirrors twitterRequest in the TS for reads.
+func (c *Client) request(ctx context.Context, method, path string) (*apiResponse, error) {
+	return c.doRequest(ctx, method, path, nil)
+}
+
+// createRequest performs an X Ads API create (POST) call. Per the X Ads v12
+// contract, create endpoints (campaigns, line_items, promoted_tweets) accept
+// their parameters as URL query parameters, not a JSON body. The params are
+// appended to the request URL and also folded into the OAuth signature base
+// string (OAuth 1.0a signs query params), and the request is sent with no
+// body. Callers own the 1-req/sec write delay.
+func (c *Client) createRequest(ctx context.Context, path string, params map[string]string) (*apiResponse, error) {
+	return c.doRequest(ctx, http.MethodPost, path, params)
+}
+
+// doRequest is the shared HTTP path with OAuth1 signing and 429
+// exponential-backoff retry. queryParams, when non-nil, are appended to the
+// request URL (create calls pass their params here); the request carries no
+// body in either mode.
+func (c *Client) doRequest(ctx context.Context, method, path string, queryParams map[string]string) (*apiResponse, error) {
 	reqURL := c.accountURL() + "/" + strings.TrimPrefix(path, "/")
 
-	var bodyBytes []byte
-	if body != nil {
-		var err error
-		bodyBytes, err = json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("marshal body: %w", err)
+	if len(queryParams) > 0 {
+		vals := url.Values{}
+		for k, v := range queryParams {
+			vals.Set(k, v)
 		}
+		sep := "?"
+		if strings.Contains(reqURL, "?") {
+			sep = "&"
+		}
+		reqURL += sep + vals.Encode()
 	}
 
 	for attempt := 0; attempt <= retryMax; attempt++ {
@@ -257,21 +280,11 @@ func (c *Client) request(ctx context.Context, method, path string, body map[stri
 			return nil, err
 		}
 
-		var bodyReader *strings.Reader
-		if bodyBytes != nil {
-			bodyReader = strings.NewReader(string(bodyBytes))
-		}
-		var req *http.Request
-		if bodyReader != nil {
-			req, err = http.NewRequestWithContext(ctx, method, reqURL, bodyReader)
-		} else {
-			req, err = http.NewRequestWithContext(ctx, method, reqURL, http.NoBody)
-		}
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, http.NoBody)
 		if err != nil {
 			return nil, fmt.Errorf("build request: %w", err)
 		}
 		req.Header.Set("Authorization", authHeader)
-		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -401,23 +414,29 @@ type campaignElement struct {
 	Name string `json:"name"`
 }
 
-// findCampaignByName returns the id of a campaign matching name, or "" if not
-// found. Errors are swallowed (returns "") to mirror the TS try/catch idiom.
-func (c *Client) findCampaignByName(ctx context.Context, name string) string {
+// findCampaignByName returns the id of a campaign matching name, or "" if no
+// such campaign exists. A non-nil error signals a transient/unexpected lookup
+// failure (failed GET or undecodable response) — the caller must abort rather
+// than treat it as "not found" and create a duplicate.
+func (c *Client) findCampaignByName(ctx context.Context, name string) (string, error) {
 	return c.findByName(ctx, "campaigns?with_deleted=false", name)
 }
 
 // findLineItemByName returns the id of a line item matching name within a
-// campaign, or "" if not found.
-func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string) string {
+// campaign, or "" if none exists. A non-nil error signals a lookup failure the
+// caller must not swallow (see findCampaignByName).
+func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string) (string, error) {
 	return c.findByName(ctx, "line_items?campaign_id="+url.QueryEscape(campaignID)+"&with_deleted=false", name)
 }
 
 // findByName pages through a cursor-paginated X Ads list endpoint (campaigns /
-// line_items) looking for an element whose name matches exactly, returning its
-// id or "". It follows next_cursor so a match beyond the first page is still
-// found (avoiding a duplicate create), bounded by maxListPages.
-func (c *Client) findByName(ctx context.Context, path, name string) string {
+// line_items) looking for an element whose name matches exactly. It returns
+// (id, nil) on a match, ("", nil) for a genuine not-found (the pages were read
+// successfully but held no match), and ("", err) when a page GET or decode
+// fails — so a transient error is never conflated with "not found" and the
+// caller can abort instead of creating a duplicate. It follows next_cursor so a
+// match beyond the first page is still found, bounded by maxListPages.
+func (c *Client) findByName(ctx context.Context, path, name string) (string, error) {
 	sep := "&"
 	if !strings.Contains(path, "?") {
 		sep = "?"
@@ -428,25 +447,28 @@ func (c *Client) findByName(ctx context.Context, path, name string) string {
 		if cursor != "" {
 			p = path + sep + "cursor=" + url.QueryEscape(cursor)
 		}
-		resp, err := c.request(ctx, http.MethodGet, p, nil)
-		if err != nil || resp == nil {
-			return ""
+		resp, err := c.request(ctx, http.MethodGet, p)
+		if err != nil {
+			return "", fmt.Errorf("lookup %q: %w", name, err)
+		}
+		if resp == nil {
+			return "", fmt.Errorf("lookup %q: empty response", name)
 		}
 		var items []campaignElement
 		if err := json.Unmarshal(resp.Data, &items); err != nil {
-			return ""
+			return "", fmt.Errorf("lookup %q: decode list: %w", name, err)
 		}
 		for _, it := range items {
 			if it.Name == name {
-				return it.ID
+				return it.ID, nil
 			}
 		}
 		if resp.NextCursor == "" {
-			return ""
+			return "", nil
 		}
 		cursor = resp.NextCursor
 	}
-	return ""
+	return "", nil
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +546,21 @@ type CampaignResult struct {
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// validateDate enforces both the YYYY-MM-DD shape and that the value is a real
+// calendar date. The regex alone accepts impossible dates like "2026-99-99",
+// which would be forwarded as a bogus ISO8601 timestamp to the X Ads API; a
+// strict time.Parse (which rejects out-of-range months/days) closes that gap
+// before any mutating call. label is "start" or "end" for the error message.
+func validateDate(label, date string) error {
+	if !dateRe.MatchString(date) {
+		return fmt.Errorf("invalid %s date format: %s — expected YYYY-MM-DD", label, date)
+	}
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return fmt.Errorf("invalid %s date: %s is not a real calendar date", label, date)
+	}
+	return nil
+}
+
 // CreateCampaign runs the campaign -> line_item -> promoted_tweet creation
 // flow, reusing existing entities by name for idempotency. It mirrors
 // executeTwitterCampaignCreation in the TS. Everything is created PAUSED.
@@ -534,11 +571,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if math.IsNaN(in.BudgetUsd) || math.IsInf(in.BudgetUsd, 0) || in.BudgetUsd <= 0 {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
 	}
-	if !dateRe.MatchString(in.StartDate) {
-		return nil, fmt.Errorf("invalid start date format: %s — expected YYYY-MM-DD", in.StartDate)
+	if err := validateDate("start", in.StartDate); err != nil {
+		return nil, err
 	}
-	if !dateRe.MatchString(in.EndDate) {
-		return nil, fmt.Errorf("invalid end date format: %s — expected YYYY-MM-DD", in.EndDate)
+	if err := validateDate("end", in.EndDate); err != nil {
+		return nil, err
 	}
 	if in.EndDate <= in.StartDate {
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
@@ -549,22 +586,27 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Step 2: create campaign (PAUSED), reusing by name.
 	campaignName := buildTwitterCampaignName(in)
-	campaignID := c.findCampaignByName(ctx, campaignName)
+	campaignID, err := c.findCampaignByName(ctx, campaignName)
+	if err != nil {
+		return nil, err
+	}
 	if campaignID != "" {
 		steps = append(steps, fmt.Sprintf("Reusing existing campaign: %s", campaignID))
 	} else {
-		campaignBody := map[string]any{
+		// X Ads v12 create endpoints take parameters as URL query params (not a
+		// JSON body), and use entity_status=PAUSED (not paused=true).
+		campaignParams := map[string]string{
 			"name":                            campaignName,
 			"funding_instrument_id":           c.account.FundingInstrumentID,
 			"start_time":                      toIso8601Utc(in.StartDate),
 			"end_time":                        toIso8601Utc(in.EndDate),
-			"daily_budget_amount_local_micro": toMicroCurrency(in.BudgetUsd),
-			"paused":                          true,
+			"daily_budget_amount_local_micro": strconv.FormatInt(toMicroCurrency(in.BudgetUsd), 10),
+			"entity_status":                   "PAUSED",
 		}
 		if err := sleepCtx(ctx, writeDelay); err != nil {
 			return nil, err
 		}
-		resp, err := c.request(ctx, http.MethodPost, "campaigns", campaignBody)
+		resp, err := c.createRequest(ctx, "campaigns", campaignParams)
 		if err != nil {
 			return nil, err
 		}
@@ -577,23 +619,32 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Step 3: create line item (ad group), reusing by name.
 	lineItemName := fmt.Sprintf("Events | %s | Promoted Tweets | AUTO", strings.ReplaceAll(in.EventName, "|", "-"))
-	lineItemID := c.findLineItemByName(ctx, campaignID, lineItemName)
+	lineItemID, err := c.findLineItemByName(ctx, campaignID, lineItemName)
+	if err != nil {
+		return nil, err
+	}
 	if lineItemID != "" {
 		steps = append(steps, fmt.Sprintf("Reusing existing line item: %s", lineItemID))
 	} else {
-		lineItemBody := map[string]any{
-			"campaign_id":  campaignID,
-			"name":         lineItemName,
-			"product_type": "PROMOTED_TWEETS",
-			"placements":   "ALL_ON_TWITTER",
-			"objective":    "WEBSITE_CLICKS",
-			"bid_type":     "AUTO",
-			"paused":       true,
+		// X Ads v12 line_items: params go on the query string; start_time and
+		// end_time are REQUIRED; bid_strategy=AUTO selects automatic bidding
+		// (the field is bid_strategy in v12, not bid_type); entity_status
+		// replaces the removed paused flag.
+		lineItemParams := map[string]string{
+			"campaign_id":   campaignID,
+			"name":          lineItemName,
+			"product_type":  "PROMOTED_TWEETS",
+			"placements":    "ALL_ON_TWITTER",
+			"objective":     "WEBSITE_CLICKS",
+			"bid_strategy":  "AUTO",
+			"start_time":    toIso8601Utc(in.StartDate),
+			"end_time":      toIso8601Utc(in.EndDate),
+			"entity_status": "PAUSED",
 		}
 		if err := sleepCtx(ctx, writeDelay); err != nil {
 			return nil, err
 		}
-		resp, err := c.request(ctx, http.MethodPost, "line_items", lineItemBody)
+		resp, err := c.createRequest(ctx, "line_items", lineItemParams)
 		if err != nil {
 			return nil, err
 		}
@@ -610,7 +661,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err := sleepCtx(ctx, writeDelay); err != nil {
 			return nil, err
 		}
-		resp, err := c.request(ctx, http.MethodPost, "promoted_tweets", map[string]any{
+		resp, err := c.createRequest(ctx, "promoted_tweets", map[string]string{
 			"line_item_id": lineItemID,
 			"tweet_ids":    in.TweetID,
 		})
