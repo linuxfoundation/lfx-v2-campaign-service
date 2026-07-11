@@ -141,6 +141,14 @@ func WithWriteDelay(d time.Duration) Option { return func(c *Client) { c.writeDe
 
 // NewClient constructs a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
+	// Normalize the account identifiers once, on the way in, so every method uses
+	// the cleaned values. A stored connection can persist a padded id (" acc1 ");
+	// left untrimmed it would validate non-empty yet corrupt the account path and
+	// the funding_instrument_id param (a space-containing path/param guarantees an
+	// API rejection). Trimming here keeps the trimmed value the one that is BOTH
+	// validated non-empty AND sent in every request path/param.
+	account.AccountID = strings.TrimSpace(account.AccountID)
+	account.FundingInstrumentID = strings.TrimSpace(account.FundingInstrumentID)
 	c := &Client{
 		creds:      creds,
 		account:    account,
@@ -677,6 +685,13 @@ type CampaignResult struct {
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// tweetIDRe matches an X Tweet id, which is a decimal (numeric) snowflake id.
+// A non-numeric value like "not-a-tweet" would otherwise reach the
+// promoted_tweets POST and be rejected AFTER the campaign and line item are
+// already created, leaving a partial/orphaned campaign — so the format is
+// validated up front, before any mutating call.
+var tweetIDRe = regexp.MustCompile(`^[0-9]+$`)
+
 // validateDate enforces both the YYYY-MM-DD shape and that the value is a real
 // calendar date. The regex alone accepts impossible dates like "2026-99-99",
 // which would be forwarded as a bogus ISO8601 timestamp to the X Ads API; a
@@ -737,16 +752,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
 	}
 
+	// Validate the tweet id FORMAT up front, before any mutating call. A blank
+	// TweetID is optional (it skips the promoted-tweet step below), so only a
+	// supplied value is checked. X Tweet ids are decimal snowflake ids; a
+	// non-numeric value ("not-a-tweet") would otherwise reach the promoted_tweets
+	// POST and be rejected only AFTER the campaign and line item are created,
+	// leaving a partial campaign. Trim and store the cleaned value so the same
+	// value is validated here and sent in Step 4.
+	in.TweetID = strings.TrimSpace(in.TweetID)
+	if in.TweetID != "" && !tweetIDRe.MatchString(in.TweetID) {
+		return nil, fmt.Errorf("invalid tweet id: %q must be a numeric X Tweet id", in.TweetID)
+	}
+
 	// Validate required account config before any mutating call. account_id and
 	// funding_instrument_id are both required by the X Ads campaign-create
-	// contract, but a stored connection may persist them as empty strings (the
-	// connection contract permits funding_instrument_id to be omitted). Failing
-	// fast client-side yields a clear error instead of an opaque X API rejection
-	// (and never issues a create with a missing funding instrument).
-	if strings.TrimSpace(c.account.AccountID) == "" {
+	// contract, but a stored connection may persist them as empty (or
+	// whitespace-only) strings (the connection contract permits
+	// funding_instrument_id to be omitted). NewClient already trimmed both, so a
+	// padded " acc1 " is now stored — and thus validated AND sent — as "acc1";
+	// checking the stored (trimmed) value here means a whitespace-only input is
+	// rejected outright rather than corrupting the account path / funding param.
+	if c.account.AccountID == "" {
 		return nil, fmt.Errorf("invalid account config: account_id must not be empty")
 	}
-	if strings.TrimSpace(c.account.FundingInstrumentID) == "" {
+	if c.account.FundingInstrumentID == "" {
 		return nil, fmt.Errorf("invalid account config: funding_instrument_id must not be empty")
 	}
 
@@ -847,11 +876,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
 	}
 
-	// Step 4: create promoted tweet if a tweet ID was provided. Trim first so a
-	// whitespace-only value ("   ") isn't treated as supplied (which would
-	// guarantee a rejected POST after the campaign + line item already exist) and
-	// a padded value (" 123 ") isn't sent verbatim and corrupted.
-	tweetID := strings.TrimSpace(in.TweetID)
+	// Step 4: create promoted tweet if a tweet ID was provided. in.TweetID was
+	// already trimmed AND format-validated (numeric) in the up-front validation
+	// block, so a whitespace-only value ("   ") is treated as absent, a padded
+	// value (" 123 ") is sent as "123", and a non-numeric value never reaches
+	// here — it fails before the campaign + line item are created.
+	tweetID := in.TweetID
 	var promotedTweetID string
 	var promotedTweetWarning string
 	if tweetID != "" {

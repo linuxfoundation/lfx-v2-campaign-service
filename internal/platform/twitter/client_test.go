@@ -1508,3 +1508,225 @@ func TestTweetIDWhitespaceNotPromoted(t *testing.T) {
 		t.Errorf("promoted_tweets hit %d times for a whitespace-only TweetID, want 0", got)
 	}
 }
+
+// TestAccountConfigTrimmedInRequests verifies NewClient trims AccountID and
+// FundingInstrumentID so the TRIMMED value is what is both validated non-empty
+// AND used in every request path/param. A padded " acc1 "/" fi1 " must produce
+// an account path containing "acc1" (no spaces) and a funding_instrument_id
+// param of "fi1", while a whitespace-only value is still rejected as empty.
+func TestAccountConfigTrimmedInRequests(t *testing.T) {
+	// NewClient must store the trimmed values.
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: " acc1 ", FundingInstrumentID: " fi1 "},
+	)
+	if c.account.AccountID != "acc1" {
+		t.Errorf("AccountID not trimmed on construction: %q", c.account.AccountID)
+	}
+	if c.account.FundingInstrumentID != "fi1" {
+		t.Errorf("FundingInstrumentID not trimmed on construction: %q", c.account.FundingInstrumentID)
+	}
+	// The account URL (used for every request path) must carry the trimmed id, so
+	// the path has no embedded spaces.
+	if got := c.accountURL(); !strings.HasSuffix(got, "/accounts/acc1") {
+		t.Errorf("account URL should end in /accounts/acc1 (trimmed), got %q", got)
+	}
+
+	// End-to-end: the padded ids must reach the server as trimmed values — the
+	// campaign create funding_instrument_id param and the account path.
+	var acctPathSeen string
+	var fundingParamSeen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/accounts/") && strings.HasSuffix(r.URL.Path, "acc1"):
+			acctPathSeen = r.URL.Path
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			fundingParamSeen = r.URL.Query().Get("funding_instrument_id")
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c2 := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: " acc1 ", FundingInstrumentID: " fi1 "},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c2.nonceFn = func() string { return "n" }
+	c2.timeFn = staticTime
+
+	if _, err := c2.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+	}); err != nil {
+		t.Fatalf("CreateCampaign with padded account config: %v", err)
+	}
+	if strings.Contains(acctPathSeen, " ") || strings.Contains(acctPathSeen, "%20") || !strings.HasSuffix(acctPathSeen, "/accounts/acc1") {
+		t.Errorf("account path should be trimmed (/accounts/acc1, no spaces), got %q", acctPathSeen)
+	}
+	if fundingParamSeen != "fi1" {
+		t.Errorf("funding_instrument_id param should be trimmed to fi1, got %q", fundingParamSeen)
+	}
+
+	// A whitespace-only id must still be rejected as empty before any network call.
+	whitespaceCases := []AccountConfig{
+		{AccountID: "   ", FundingInstrumentID: "fi1"},
+		{AccountID: "acc1", FundingInstrumentID: "   "},
+	}
+	for i, acct := range whitespaceCases {
+		var calls int32
+		wsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}))
+		cw := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			acct,
+			WithBaseURL(wsrv.URL),
+			WithWriteDelay(0),
+		)
+		cw.nonceFn = func() string { return "n" }
+		cw.timeFn = staticTime
+		_, err := cw.CreateCampaign(context.Background(), CampaignInput{
+			EventName: "E", BudgetUsd: 500, StartDate: "2026-03-01", EndDate: "2026-03-10",
+		})
+		if err == nil {
+			t.Errorf("case %d: whitespace-only account config should be rejected", i)
+		}
+		if got := atomic.LoadInt32(&calls); got != 0 {
+			t.Errorf("case %d: expected no network call before config guard, got %d", i, got)
+		}
+		wsrv.Close()
+	}
+}
+
+// TestTweetIDFormatValidatedUpFront verifies a supplied but non-numeric TweetID
+// is rejected in the up-front validation block, BEFORE any mutating call — so an
+// invalid tweet id can never leave a partial/orphaned campaign (campaign + line
+// item created, promoted_tweets POST rejected). A valid numeric id still flows
+// through, and a blank id still skips the promoted-tweet step.
+func TestTweetIDFormatValidatedUpFront(t *testing.T) {
+	newSrv := func(createPosts *int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+				_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+				atomic.AddInt32(createPosts, 1)
+				_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+				atomic.AddInt32(createPosts, 1)
+				_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+				atomic.AddInt32(createPosts, 1)
+				_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+	}
+	mkClient := func(url string) *Client {
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+			WithBaseURL(url),
+			WithWriteDelay(0),
+		)
+		c.nonceFn = func() string { return "n" }
+		c.timeFn = staticTime
+		return c
+	}
+	base := CampaignInput{
+		EventName: "E", Project: "tlf", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+	}
+
+	// Invalid (non-numeric) tweet ids must fail up front with ZERO create POSTs.
+	for _, bad := range []string{"not-a-tweet", "12x3", " 12x3 "} {
+		var createPosts int32
+		srv := newSrv(&createPosts)
+		c := mkClient(srv.URL)
+		in := base
+		in.TweetID = bad
+		_, err := c.CreateCampaign(context.Background(), in)
+		if err == nil {
+			t.Errorf("TweetID %q should be rejected as non-numeric", bad)
+		}
+		if !strings.Contains(err.Error(), "tweet id") {
+			t.Errorf("TweetID %q: expected a tweet-id error, got %v", bad, err)
+		}
+		if got := atomic.LoadInt32(&createPosts); got != 0 {
+			t.Errorf("TweetID %q: expected 0 create POSTs (fail before any mutation), got %d", bad, got)
+		}
+		srv.Close()
+	}
+
+	// A valid numeric tweet id still flows all the way through the promoted step.
+	{
+		var createPosts int32
+		srv := newSrv(&createPosts)
+		c := mkClient(srv.URL)
+		in := base
+		in.TweetID = "1234567890"
+		res, err := c.CreateCampaign(context.Background(), in)
+		if err != nil {
+			t.Fatalf("valid numeric TweetID should flow: %v", err)
+		}
+		if res.PromotedTweetID != "pt1" {
+			t.Errorf("expected promoted tweet pt1, got %q", res.PromotedTweetID)
+		}
+		srv.Close()
+	}
+
+	// A blank tweet id still skips the promoted step (no promoted_tweets POST),
+	// while the campaign + line item are still created.
+	{
+		var promotedPosts int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+				_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+				_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+				_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+				atomic.AddInt32(&promotedPosts, 1)
+				_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer srv.Close()
+		c := mkClient(srv.URL)
+		in := base
+		in.TweetID = ""
+		if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+			t.Fatalf("blank TweetID should still create campaign + line item: %v", err)
+		}
+		if got := atomic.LoadInt32(&promotedPosts); got != 0 {
+			t.Errorf("blank TweetID should skip promoted step, got %d POSTs", got)
+		}
+	}
+}
