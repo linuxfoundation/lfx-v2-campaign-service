@@ -32,6 +32,14 @@ const CancelGracePeriod = jobFinalizeTimeout + time.Second
 // a context detached from the (possibly-cancelled) dispatch context.
 const claimReleaseTimeout = 5 * time.Second
 
+// dispatchQueueTimeout bounds how long a platform waits for a semaphore slot
+// before it's recorded as failed. Without it, a large backlog could keep a job
+// queued longer than staleJobCutoff, so the recovery sweep would wrongly fail a
+// still-live job. Kept comfortably below staleJobCutoff (15m) even added to
+// providerCallTimeout and the finalize write, so a job that is actually
+// progressing always reaches a terminal state before it could look stuck.
+const dispatchQueueTimeout = 10 * time.Minute
+
 // providerCallTimeout bounds a single provider Dispatch call. The dispatch
 // context is otherwise only cancelled at shutdown, so a provider call that hangs
 // (unresponsive upstream, dropped connection with no client timeout) would leave
@@ -229,6 +237,10 @@ func (o *Orchestrator) Shutdown(ctx context.Context, drainTimeout time.Duration)
 		return nil
 	case <-grace.C:
 		return context.DeadlineExceeded
+	case <-ctx.Done():
+		// Caller cancelled (not just a deadline we already accounted for): stop
+		// waiting immediately rather than blocking out the whole grace window.
+		return ctx.Err()
 	}
 }
 
@@ -303,12 +315,22 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 
 			// Bound concurrent dispatches process-wide (across all jobs) via the
 			// shared semaphore. Honor cancellation so a draining shutdown doesn't
-			// block here.
+			// block here, and bound the wait so a large backlog can't keep a job
+			// queued so long it looks stuck to the recovery sweep (which would then
+			// wrongly fail a still-live job). If no slot frees in time, record this
+			// platform as failed and let the job finalize promptly.
+			queueCtx, cancelQueue := context.WithTimeout(gctx, dispatchQueueTimeout)
 			select {
 			case o.sem <- struct{}{}:
+				cancelQueue()
 				defer func() { <-o.sem }()
-			case <-gctx.Done():
-				res.Error = "dispatch cancelled"
+			case <-queueCtx.Done():
+				cancelQueue()
+				if gctx.Err() != nil {
+					res.Error = "dispatch cancelled"
+				} else {
+					res.Error = "dispatch queue timed out waiting for a slot"
+				}
 				results[i] = res
 				return nil
 			}

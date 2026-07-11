@@ -79,17 +79,19 @@ func (r *JobRepo) UpdateJobStatus(ctx context.Context, id string, status model.J
 }
 
 // FailStuckJobs marks non-terminal jobs older than staleJobCutoff as failed. Run
-// once on startup: a queued/running job's dispatch goroutine lives only in the
-// process that created it, so after a restart such a job would otherwise stay
-// non-terminal forever. Fail-forward (rather than resume) because a
-// partially-dispatched job cannot be safely re-driven without provider-side
-// idempotency keys.
+// on startup AND periodically (see Orchestrator.StartRecoverySweeper): a
+// queued/running job's dispatch goroutine lives only in the process that created
+// it, so after a crash such a job would otherwise stay non-terminal forever.
+// Fail-forward (rather than resume) because a partially-dispatched job cannot be
+// safely re-driven without provider-side idempotency keys.
 //
-// The age cutoff is important during rolling deploys: an old pod can still be
-// actively dispatching a recently-created job while a new pod boots, so only
-// jobs that have been idle (no update) longer than the cutoff — well beyond any
-// live dispatch — are considered orphaned. A live job is updated to running on
-// start and to terminal on finish, so a genuinely-stuck job stops being touched.
+// The age cutoff must exceed the longest a LIVE job can go without a status
+// write, or the sweep would wrongly fail an in-progress job. The orchestrator
+// bounds that: a platform waits at most dispatchQueueTimeout for a slot, then
+// the provider call is bounded by providerCallTimeout, then a terminal write
+// follows — all well within staleJobCutoff (15m). During a rolling deploy an old
+// pod can still be dispatching a recently-created job while a new pod boots, so
+// only jobs idle (no update) beyond the cutoff are treated as orphaned.
 func (r *JobRepo) FailStuckJobs(ctx context.Context, jobErr string) (int64, error) {
 	q := `UPDATE campaign_jobs SET status='failed', error=$1, updated_at=now()
 		WHERE status IN ('queued','running')

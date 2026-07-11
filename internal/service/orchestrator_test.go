@@ -568,6 +568,42 @@ func TestOrchestrator_ShutdownDrainsInFlight(t *testing.T) {
 	}
 }
 
+// TestOrchestrator_ShutdownGraceHonorsContextCancel verifies that during the
+// post-cancel grace wait, a caller CANCEL of ctx (not just its deadline) ends
+// the wait promptly instead of blocking the full CancelGracePeriod.
+func TestOrchestrator_ShutdownGraceHonorsContextCancel(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	ctxSeen := make(chan context.Context, 1)
+	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	<-disp.started
+	<-ctxSeen
+
+	// A cancelable ctx with no deadline; the dispatch never releases, so Shutdown
+	// enters the grace wait. Cancelling ctx must unblock it well before the full
+	// CancelGracePeriod.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- orch.Shutdown(ctx, 10*time.Millisecond) }()
+
+	// Let the drain window elapse so Shutdown is in the grace wait, then cancel.
+	time.Sleep(40 * time.Millisecond)
+	start := time.Now()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not return after ctx cancel during grace")
+	}
+	if elapsed := time.Since(start); elapsed >= CancelGracePeriod {
+		t.Errorf("grace wait took %v after cancel; did not observe ctx cancellation", elapsed)
+	}
+	close(disp.release)
+}
+
 // TestOrchestrator_RecoverySweeperStopsOnShutdown verifies the background
 // recovery sweeper is tracked by the wait group and stops promptly on Shutdown
 // (it must not block the drain until a ticker fires), so Shutdown returns
