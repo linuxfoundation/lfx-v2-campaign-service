@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -60,6 +61,13 @@ const (
 	// leaves AccountConfig.CurrencyOffset unset. 100 matches most currencies
 	// (USD/EUR/GBP); zero-decimal currencies (JPY/KRW/CLP, offset 1) MUST override.
 	defaultCurrencyOffset = 100
+	// Per-variant copy limits (in runes), mirroring the repo contract in
+	// docs/api-catalog.md. Over-limit copy is rejected up front so it fails before
+	// any paid campaign/ad-set resource is created rather than at creative
+	// creation (which is non-fatal and would leave an orphaned paid campaign).
+	maxPrimaryTextChars = 125
+	maxHeadlineChars    = 40
+	maxDescriptionChars = 30
 )
 
 // ---------------------------------------------------------------------------
@@ -359,15 +367,39 @@ type APIError struct {
 	Path       string
 	// Message is the Graph API error message when present, else the raw body.
 	Message string
+	// Type, Code, and FBTraceID carry the Graph error envelope's diagnostic
+	// fields. They let callers distinguish invalid-params from auth failures
+	// (which often share HTTP 400/400) and quote Meta's trace id in support
+	// tickets. They are zero-valued when the body isn't a Graph error envelope.
+	Type      string
+	Code      int
+	FBTraceID string
 }
 
 func (e *APIError) Error() string {
 	// Mirror the TS behavior of not leaking full bodies to callers while still
-	// surfacing status; include the parsed message when available.
+	// surfacing status; include the parsed message when available, plus the Graph
+	// diagnostic fields (type/code/fbtrace_id) when present — fbtrace_id in
+	// particular is essential when opening a Meta support ticket.
+	var b strings.Builder
 	if e.Message != "" {
-		return fmt.Sprintf("meta API request failed (%d): %s", e.StatusCode, e.Message)
+		fmt.Fprintf(&b, "meta API request failed (%d): %s", e.StatusCode, e.Message)
+	} else {
+		fmt.Fprintf(&b, "meta API request failed (%d) with no error details in the response body", e.StatusCode)
 	}
-	return fmt.Sprintf("meta API request failed (%d) with no error details in the response body", e.StatusCode)
+	if e.Type != "" {
+		fmt.Fprintf(&b, " (type: %s", e.Type)
+		if e.Code != 0 {
+			fmt.Fprintf(&b, ", code: %d", e.Code)
+		}
+		b.WriteString(")")
+	} else if e.Code != 0 {
+		fmt.Fprintf(&b, " (code: %d)", e.Code)
+	}
+	if e.FBTraceID != "" {
+		fmt.Fprintf(&b, " [fbtrace_id: %s]", e.FBTraceID)
+	}
+	return b.String()
 }
 
 // doRequest performs a Graph API call and decodes the JSON body into out.
@@ -453,6 +485,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 
 		if status < 200 || status >= 300 {
 			apiErr := &APIError{StatusCode: status, Method: method, Path: path}
+			if env.Error != nil {
+				// Preserve the Graph envelope's diagnostic fields so callers can
+				// distinguish invalid-params vs auth failures and quote the trace id.
+				apiErr.Type = env.Error.Type
+				apiErr.Code = env.Error.Code
+				apiErr.FBTraceID = env.Error.FBTraceID
+			}
 			if env.Error != nil && env.Error.Message != "" {
 				apiErr.Message = env.Error.Message
 			} else if snippet := strings.TrimSpace(string(raw)); snippet != "" {
@@ -863,15 +902,16 @@ type CampaignInput struct {
 	// deferred relative to the upstream contract.
 	Objective  string
 	GeoTargets []string
-	// BudgetUSD is the budget amount in whole currency units. NOTE: Meta interprets
-	// the ad set budget in the ad ACCOUNT's currency (set on the account), not
-	// necessarily USD. The value is converted to minor units using the account's
+	// Budget is the budget amount in whole units of the ad ACCOUNT's currency.
+	// IMPORTANT: this is NOT a USD amount and the client performs NO foreign-
+	// exchange conversion. Meta bills the ad set in the account's own currency, so
+	// the caller must supply an amount already denominated in that currency. The
+	// value is converted to minor units by multiplying by the account's Meta
 	// currency_offset (AccountConfig.CurrencyOffset, default 100; set 1 for
-	// zero-decimal currencies like JPY) and sent as-is; the "USD" suffix reflects
-	// the common case but the caller is responsible for passing an amount in the
-	// account's actual currency. Field name kept for cross-client consistency (all
-	// platform clients take BudgetUSD).
-	BudgetUSD      float64
+	// zero-decimal currencies like JPY) and sent as-is. (Renamed from BudgetUSD:
+	// the field never carried FX-converted USD — the old name implied a conversion
+	// this client does not do.)
+	Budget         float64
 	LifetimeBudget bool
 	StartDate      string // YYYY-MM-DD
 	EndDate        string // YYYY-MM-DD
@@ -917,11 +957,27 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("at least one variant must have non-empty primary text and headline")
 	}
 
+	// Enforce Meta's per-field copy limits (by rune count) up front, before any
+	// mutating call. Over-limit copy passes the blank checks above but would be
+	// rejected at (non-fatal) creative creation — after the paid campaign/ad-set
+	// already exist — leaving an orphaned campaign with no ads. Fail fast instead.
+	for i, v := range validVariants {
+		if n := utf8.RuneCountInString(v.PrimaryText); n > maxPrimaryTextChars {
+			return nil, fmt.Errorf("variant %d primary text is %d characters; Meta allows at most %d", i+1, n, maxPrimaryTextChars)
+		}
+		if n := utf8.RuneCountInString(v.Headline); n > maxHeadlineChars {
+			return nil, fmt.Errorf("variant %d headline is %d characters; Meta allows at most %d", i+1, n, maxHeadlineChars)
+		}
+		if n := utf8.RuneCountInString(v.Description); n > maxDescriptionChars {
+			return nil, fmt.Errorf("variant %d description is %d characters; Meta allows at most %d", i+1, n, maxDescriptionChars)
+		}
+	}
+
 	if err := validateRegistrationURL(in.RegistrationURL); err != nil {
 		return nil, err
 	}
 
-	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0 {
+	if math.IsNaN(in.Budget) || math.IsInf(in.Budget, 0) || in.Budget <= 0 {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
 	}
 	// Cap the budget below the int64 minor-unit overflow threshold before
@@ -929,17 +985,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// maxBudget (100M currency units) is far above any real campaign budget, and
 	// even multiplied by the largest realistic currency offset stays well inside
 	// int64.
-	if in.BudgetUSD > maxBudget {
+	if in.Budget > maxBudget {
 		return nil, fmt.Errorf("budget too large: must be at most %.0f", maxBudget)
 	}
-	// Convert whole currency units to Meta minor units using the ACCOUNT's
+	// Convert whole account-currency units to Meta minor units using the ACCOUNT's
 	// currency_offset (NOT a hardcoded 100): most currencies use 100, but
 	// zero-decimal currencies (JPY/KRW/CLP) use 1, so a hardcoded ×100 would
-	// over-send those accounts 100×. NewClient guarantees CurrencyOffset > 0.
+	// over-send those accounts 100×. This is NOT an FX conversion — the caller's
+	// amount is already in the account's currency. NewClient guarantees
+	// CurrencyOffset > 0.
 	offset := c.account.CurrencyOffset
 	// Reject budgets that round to zero minor units before any API call: a
 	// zero/invalid budget would otherwise be sent to Meta and create a bad ad set.
-	budgetMinor := int64(math.Round(in.BudgetUSD * float64(offset)))
+	budgetMinor := int64(math.Round(in.Budget * float64(offset)))
 	if budgetMinor < 1 {
 		return nil, fmt.Errorf("budget too small: must be at least one minor currency unit (offset %d)", offset)
 	}
@@ -1124,7 +1182,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	// Currency-neutral: Meta interprets the budget in the ad account's currency,
 	// which may not be USD, so don't prefix with '$'.
-	steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.BudgetUSD, budgetLabel, strings.Join(geoCountries, ", ")))
+	steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.Budget, budgetLabel, strings.Join(geoCountries, ", ")))
 
 	// Step 4: creative + ad per variant (per-variant failures are non-fatal).
 	adCount := 0
@@ -1141,6 +1199,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// ctx that per-creative timeout is an ordinary API failure and must stay
 			// non-fatal (skip + continue), like any other per-creative error.
 			if ctx.Err() != nil {
+				// If the creative was created before the ad call was cut short, surface
+				// its id in the fatal error too — otherwise this known orphaned creative
+				// is lost (the non-fatal path below already reports it).
+				if creativeID != "" {
+					return nil, fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED; orphaned creative: %s): %w", i+1, campaignID, creativeID, ctx.Err())
+				}
 				return nil, fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, ctx.Err())
 			}
 			// If the creative was created before the ad failed, surface its id so the

@@ -333,7 +333,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 		RegistrationURL: "https://events.example.org/kubecon",
 		Objective:       "traffic",
 		GeoTargets:      []string{"US", "DE"},
-		BudgetUSD:       500,
+		Budget:          500,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants: []AdVariant{
@@ -477,7 +477,7 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 		RegistrationURL: "https://events.example.org/kubecon",
 		Objective:       "traffic",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       500,
+		Budget:          500,
 		LifetimeBudget:  true,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
@@ -527,14 +527,15 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 			Objective:       "traffic",
 			RegistrationURL: "https://x.example.org/e",
 			GeoTargets:      []string{"US"},
-			BudgetUSD:       budget,
+			Budget:          budget,
 			StartDate:       "2026-08-01",
 			EndDate:         "2026-08-31",
 			Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
 		}
 	}
 
-	// JPY-like account: offset 1, so a 5000 (¥) budget stays 5000 minor units,
+	// JPY account: the budget is denominated in the ACCOUNT's currency (¥, no FX
+	// done by the client). With offset 1, a ¥5000 budget stays 5000 minor units,
 	// NOT 500000. A hardcoded ×100 would over-send this account 100×.
 	t.Run("jpy offset 1 does not multiply by 100", func(t *testing.T) {
 		cap := newBodyCapture()
@@ -553,9 +554,9 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 		}
 	})
 
-	// Default (unset) offset -> 100: a 500 (USD) budget becomes 50000 minor units,
-	// preserving the current behavior.
-	t.Run("default offset preserves usd x100", func(t *testing.T) {
+	// Default (unset) offset -> 100: a 500 account-currency budget (e.g. $500 for a
+	// USD account) becomes 50000 minor units, preserving the current behavior.
+	t.Run("default offset applies x100 to account-currency amount", func(t *testing.T) {
 		cap := newBodyCapture()
 		srv := newSrv(cap)
 		defer srv.Close()
@@ -598,7 +599,7 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US", "SG", "KR"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -626,7 +627,7 @@ func TestCreateCampaignAllGeosRegulated(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"SG", "KR"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -658,7 +659,7 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -675,6 +676,25 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 	}
 	if apiErr.Message != "Invalid parameter" {
 		t.Errorf("message = %q, want 'Invalid parameter'", apiErr.Message)
+	}
+	// The Graph envelope's diagnostic fields must be preserved so callers can
+	// distinguish invalid-params vs auth failures and quote Meta's trace id.
+	if apiErr.Type != "OAuthException" {
+		t.Errorf("type = %q, want 'OAuthException'", apiErr.Type)
+	}
+	if apiErr.Code != 100 {
+		t.Errorf("code = %d, want 100", apiErr.Code)
+	}
+	if apiErr.FBTraceID != "XYZ" {
+		t.Errorf("fbtrace_id = %q, want 'XYZ'", apiErr.FBTraceID)
+	}
+	// ...and they must appear in the error string (fbtrace_id is critical for
+	// Meta support tickets).
+	msg := apiErr.Error()
+	for _, want := range []string{"OAuthException", "code: 100", "fbtrace_id: XYZ"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error string %q missing %q", msg, want)
+		}
 	}
 }
 
@@ -700,7 +720,7 @@ func TestNonGraphErrorBodySurfaces(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -764,7 +784,7 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants: []AdVariant{
@@ -829,7 +849,7 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -842,6 +862,65 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+// TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan verifies that when
+// the caller ctx is cancelled DURING the /ads call — after the adcreative was
+// already created — the fatal error names the orphaned creative id, so the
+// known paid-adjacent resource isn't silently lost (the non-fatal path already
+// reports it; the fatal ctx-cancel path must too).
+func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	// Succeed through the adcreative (returning a real id), then cancel the caller
+	// ctx and fail the /ads call — mirroring http.Client.Do surfacing the cancel.
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/ads") {
+			cancel()
+			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
+		}
+		body := `{"id":"x"}`
+		switch {
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"id":"camp_1"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"adset_1"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_orphan_9"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	defer cancel()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(ctx, CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatalf("expected error after context cancellation, got success: %+v", res)
+	}
+	if res != nil {
+		t.Errorf("result must be nil on context cancellation, got %+v", res)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want it to wrap context.Canceled", err)
+	}
+	if !strings.Contains(err.Error(), "creative_orphan_9") {
+		t.Errorf("err = %v, want it to name the orphaned creative id creative_orphan_9", err)
 	}
 }
 
@@ -886,7 +965,7 @@ func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -940,7 +1019,7 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -969,7 +1048,7 @@ func TestCreateCampaignValidation(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -983,8 +1062,8 @@ func TestCreateCampaignValidation(t *testing.T) {
 		{"no variants", func(in *CampaignInput) { in.Variants = nil }, "at least one ad variant"},
 		{"empty variants", func(in *CampaignInput) { in.Variants = []AdVariant{{PrimaryText: " ", Headline: ""}} }, "non-empty primary text"},
 		{"bad url", func(in *CampaignInput) { in.RegistrationURL = "http://x.example" }, "must use HTTPS"},
-		{"bad budget", func(in *CampaignInput) { in.BudgetUSD = 0 }, "positive number"},
-		{"sub-cent budget rounds to zero", func(in *CampaignInput) { in.BudgetUSD = 0.001 }, "budget too small"},
+		{"bad budget", func(in *CampaignInput) { in.Budget = 0 }, "positive number"},
+		{"sub-cent budget rounds to zero", func(in *CampaignInput) { in.Budget = 0.001 }, "budget too small"},
 		{"bad start date", func(in *CampaignInput) { in.StartDate = "2026/08/01" }, "invalid start date"},
 		{"impossible calendar date", func(in *CampaignInput) { in.StartDate = "2026-13-40" }, "invalid start date"},
 		{"end before start", func(in *CampaignInput) { in.EndDate = "2026-07-01" }, "must be after start date"},
@@ -1025,13 +1104,98 @@ func TestCreateCampaignRejectsSubCentBudgetBeforeAnyPost(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       0.001,
+		Budget:          0.001,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "budget too small") {
 		t.Fatalf("err = %v, want 'budget too small'", err)
+	}
+}
+
+// TestCreateCampaignRejectsOverLimitCopyBeforeAnyPost verifies that a variant
+// whose copy exceeds Meta's per-field character limits is rejected during
+// pre-flight validation, before any mutating call — so over-limit copy fails
+// fast rather than after a paid campaign/ad-set already exists (the creative
+// call is non-fatal and would otherwise leave an orphaned paid campaign).
+func TestCreateCampaignRejectsOverLimitCopyBeforeAnyPost(t *testing.T) {
+	base := func() CampaignInput {
+		return CampaignInput{
+			EventName:       "E",
+			RegistrationURL: "https://x.example.org/e",
+			GeoTargets:      []string{"US"},
+			Budget:          10,
+			StartDate:       "2026-08-01",
+			EndDate:         "2026-08-31",
+			Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		}
+	}
+	cases := []struct {
+		name    string
+		mutate  func(in *CampaignInput)
+		wantSub string
+	}{
+		{"over-limit primary text", func(in *CampaignInput) {
+			in.Variants[0].PrimaryText = strings.Repeat("a", maxPrimaryTextChars+1)
+		}, "primary text"},
+		{"over-limit headline", func(in *CampaignInput) {
+			in.Variants[0].Headline = strings.Repeat("h", maxHeadlineChars+1)
+		}, "headline"},
+		{"over-limit description", func(in *CampaignInput) {
+			in.Variants[0].Description = strings.Repeat("d", maxDescriptionChars+1)
+		}, "description"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := noPostServer(t)
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			in := base()
+			tc.mutate(&in)
+			_, err := c.CreateCampaign(context.Background(), in)
+			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestCreateCampaignAtLimitCopyAllowed verifies that copy exactly at the limit
+// (and multi-byte runes counted by rune, not byte) passes validation.
+func TestCreateCampaignAtLimitCopyAllowed(t *testing.T) {
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			posts++
+			_, _ = io.WriteString(w, `{"id":"x"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"name":"x"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	// Use multi-byte runes to prove the check counts runes, not bytes: a headline
+	// of maxHeadlineChars 'é' runes is 2*maxHeadlineChars bytes but still valid.
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants: []AdVariant{{
+			PrimaryText: strings.Repeat("a", maxPrimaryTextChars),
+			Headline:    strings.Repeat("é", maxHeadlineChars),
+			Description: strings.Repeat("d", maxDescriptionChars),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("at-limit copy should be accepted, got err = %v", err)
+	}
+	if posts == 0 {
+		t.Errorf("expected mutating calls to proceed for at-limit copy")
 	}
 }
 
@@ -1044,7 +1208,7 @@ func TestCreateCampaignAllDisabledPlacementsMakesZeroPosts(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Placements:      Placement{FacebookFeed: &f, InstagramFeed: &f},
@@ -1064,7 +1228,7 @@ func TestCreateCampaignRequiresPageIDBeforeAnyPost(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1083,7 +1247,7 @@ func TestCreateCampaignRequiresAccountIDBeforeAnyPost(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1101,7 +1265,7 @@ func TestCreateCampaignImpossibleDateMakesZeroPosts(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-13-40",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1122,7 +1286,7 @@ func TestCreateCampaignRejectsPortOnlyURLBeforeAnyPost(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://:443",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1158,7 +1322,7 @@ func TestCreateCampaignAdSetFailureReportsOrphanCampaignID(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1401,7 +1565,7 @@ func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
 		Objective:       "leads",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1486,7 +1650,7 @@ func TestCreateCampaignRejectsPastStartDate(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01", // before the pinned "today" of 2026-08-15
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1506,7 +1670,7 @@ func TestCreateCampaignRejectsHugeBudget(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       1e18,
+		Budget:          1e18,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1637,7 +1801,7 @@ func TestCreateCampaignRejectsAllSanctionedGeos(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"IR", "KP"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1661,7 +1825,7 @@ func TestCreateCampaignRejectsRussiaOnlyGeo(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"RU"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
@@ -1711,7 +1875,7 @@ func TestCreateCampaignAdFailureSurfacesOrphanCreative(t *testing.T) {
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
 		GeoTargets:      []string{"US"},
-		BudgetUSD:       10,
+		Budget:          10,
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},

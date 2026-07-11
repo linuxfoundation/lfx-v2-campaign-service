@@ -32,11 +32,17 @@ LEAD_GENERATION / instant-form parity with the TS contract is deferred
 
 Inputs are validated up front, before any mutating call: geo targets are checked
 against ISO 3166-1 alpha-2 and comprehensively-sanctioned countries are
-excluded; budgets are bounded (rejecting rounds-to-zero and overflow-scale
-values) and converted to minor units using the ad account's Meta
-`currency_offset` (`AccountConfig.CurrencyOffset`, default 100; set 1 for
-zero-decimal currencies like JPY so the amount is not over-sent 100×) rather than
-a hardcoded ×100; dates are parsed strictly (impossible calendar dates rejected) and a
+excluded; per-variant copy is rejected up front when it exceeds Meta's limits
+(primary text 125, headline 40, description 30 characters, counted by rune) so
+over-limit copy fails before any paid campaign/ad-set exists rather than at
+non-fatal creative creation; `CampaignInput.Budget` is denominated in the ad
+ACCOUNT's own currency — the client does NO foreign-exchange conversion, so the
+caller must pass an amount already in that currency — and it is bounded
+(rejecting rounds-to-zero and overflow-scale values) then converted to minor
+units by multiplying by the account's Meta `currency_offset`
+(`AccountConfig.CurrencyOffset`, default 100; set 1 for zero-decimal currencies
+like JPY so the amount is not over-sent 100×) rather than a hardcoded ×100;
+dates are parsed strictly (impossible calendar dates rejected) and a
 past start date is refused, with a same-day ad-set `start_time` nudged to
 now+buffer. `doRequest` retries HTTP 429 and Graph rate-limit envelope codes
 (4/17/32/341/613) with bounded backoff, draining the body before close, and a
