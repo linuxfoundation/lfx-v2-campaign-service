@@ -1038,3 +1038,26 @@ func TestDoRequestRetriesOnGraphThrottleCode(t *testing.T) {
 		t.Errorf("server calls = %d, want 2 (one throttled 400 + one success)", got)
 	}
 }
+
+// TestCreateCampaignRejectsPastStartDate verifies a start date before today is
+// rejected before any mutating call.
+func TestCreateCampaignRejectsPastStartDate(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	// Pin the clock so "past" is deterministic.
+	now := func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) }
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL(srv.URL), WithClock(now))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01", // before the pinned "today" of 2026-08-15
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "past") {
+		t.Fatalf("err = %v, want past-start-date rejection", err)
+	}
+}

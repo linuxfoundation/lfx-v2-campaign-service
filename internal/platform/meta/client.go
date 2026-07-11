@@ -745,8 +745,14 @@ type CampaignInput struct {
 	RegistrationURL string
 	// Objective is one of awareness|traffic|engagement|leads|conversions.
 	// Empty defaults to "traffic".
-	Objective      string
-	GeoTargets     []string
+	Objective  string
+	GeoTargets []string
+	// BudgetUSD is the budget amount. NOTE: Meta interprets the ad set budget in
+	// the ad ACCOUNT's currency (set on the account), not necessarily USD. The
+	// value is converted to minor units (×100) and sent as-is; the "USD" suffix
+	// reflects the common case but the caller is responsible for passing an
+	// amount in the account's actual currency. Field name kept for cross-client
+	// consistency (all platform clients take BudgetUSD).
 	BudgetUSD      float64
 	LifetimeBudget bool
 	StartDate      string // YYYY-MM-DD
@@ -814,7 +820,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("invalid end date format: %s — expected YYYY-MM-DD", in.EndDate)
 	}
 	// Reject impossible calendar dates (e.g. 2026-13-40) that pass the shape check.
-	if _, err := time.Parse("2006-01-02", in.StartDate); err != nil {
+	startDate, err := time.Parse("2006-01-02", in.StartDate)
+	if err != nil {
 		return nil, fmt.Errorf("invalid start date format: %s — expected YYYY-MM-DD", in.StartDate)
 	}
 	if _, err := time.Parse("2006-01-02", in.EndDate); err != nil {
@@ -822,6 +829,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if in.EndDate <= in.StartDate {
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+	}
+	// Reject a start date already in the past (compared by calendar day in UTC):
+	// Meta rejects a past schedule, but only after the campaign is created, so
+	// fail fast here before any mutating call.
+	today := c.timeNow().UTC().Truncate(24 * time.Hour)
+	if startDate.Before(today) {
+		return nil, fmt.Errorf("start date %s is in the past", in.StartDate)
 	}
 
 	// AccountID is required to build every Graph endpoint (/{accountID}/campaigns
