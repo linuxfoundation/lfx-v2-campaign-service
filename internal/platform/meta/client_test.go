@@ -646,7 +646,7 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", Label: "LF Core"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", Label: "LF Core"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -675,7 +675,7 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateCampaignValidation(t *testing.T) {
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL("http://unused.invalid"))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL("http://unused.invalid"), WithClock(fixedMetaClock()))
 	base := CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -770,7 +770,7 @@ func TestCreateCampaignRequiresPageIDBeforeAnyPost(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
 	// PageID intentionally left empty.
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -789,7 +789,7 @@ func TestCreateCampaignRequiresAccountIDBeforeAnyPost(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
 	// AccountID intentionally left empty; an empty ID would build "//campaigns".
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -1181,5 +1181,19 @@ func TestAdSetStartTimeTodayUsesBuffer(t *testing.T) {
 	future := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	if got := adSetStartTime(future, now); got != "2026-09-01T00:00:00+0000" {
 		t.Errorf("future start_time = %q, want 2026-09-01T00:00:00+0000", got)
+	}
+}
+
+// TestValidateGeoTargetsExcludesSanctioned verifies comprehensively-sanctioned
+// countries are dropped even though they're valid ISO codes.
+func TestValidateGeoTargetsExcludesSanctioned(t *testing.T) {
+	got := validateGeoTargets([]string{"US", "IR", "KP", "CU", "SY", "DE"})
+	for _, bad := range []string{"IR", "KP", "CU", "SY"} {
+		if contains(got, bad) {
+			t.Errorf("sanctioned country %s leaked into %v", bad, got)
+		}
+	}
+	if !contains(got, "US") || !contains(got, "DE") {
+		t.Errorf("valid countries dropped: %v", got)
 	}
 }

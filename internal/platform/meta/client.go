@@ -489,10 +489,11 @@ func validateGeoTargets(geoTargets []string) []string {
 	valid := make([]string, 0, len(geoTargets))
 	for _, g := range geoTargets {
 		up := strings.ToUpper(strings.TrimSpace(g))
-		// Check both shape and ISO 3166-1 alpha-2 membership so a well-shaped but
-		// bogus code (e.g. "XX", "ZZ") is dropped rather than sent to Meta, where it
-		// would fail the targeting only after the campaign is already created.
-		if geoCodeRE.MatchString(up) && iso3166Alpha2[up] {
+		// Check shape and ISO 3166-1 alpha-2 membership (so a well-shaped but bogus
+		// code like "XX"/"ZZ" is dropped), and exclude comprehensively-sanctioned
+		// countries Meta does not allow as ad targets — ISO membership is not the
+		// same as Meta targeting eligibility.
+		if geoCodeRE.MatchString(up) && iso3166Alpha2[up] && !metaIneligibleCountries[up] {
 			valid = append(valid, up)
 		}
 	}
@@ -500,6 +501,16 @@ func validateGeoTargets(geoTargets []string) []string {
 		return []string{"US"}
 	}
 	return valid
+}
+
+// metaIneligibleCountries are comprehensively-sanctioned countries that Meta
+// does not permit as ad targets; ISO 3166-1 membership alone would otherwise
+// let them through and be rejected only after the campaign is created.
+var metaIneligibleCountries = map[string]bool{
+	"CU": true, // Cuba
+	"IR": true, // Iran
+	"KP": true, // North Korea
+	"SY": true, // Syria
 }
 
 // iso3166Alpha2 is the set of assigned ISO 3166-1 alpha-2 country codes, used to
