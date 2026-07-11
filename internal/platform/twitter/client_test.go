@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // staticTime is a fixed clock used to make OAuth signing deterministic in tests.
@@ -431,8 +432,14 @@ func TestRetryExhausted(t *testing.T) {
 	if calls != retryMax+1 {
 		t.Errorf("expected %d calls, got %d", retryMax+1, calls)
 	}
-	if !strings.Contains(err.Error(), "429") && !strings.Contains(err.Error(), "exhausted") {
-		t.Errorf("unexpected error: %v", err)
+	// A persistent 429 across every attempt must surface the intended
+	// exhausted-rate-limit error, not the generic non-2xx path. The message
+	// must name the exhausted retries and their count.
+	if !strings.Contains(err.Error(), "exhausted") {
+		t.Errorf("expected exhausted-rate-limit error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(retryMax)) {
+		t.Errorf("expected error to name %d retries, got: %v", retryMax, err)
 	}
 }
 
@@ -569,6 +576,78 @@ func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Errorf("expected no network call before name validation, got %d", calls)
+	}
+}
+
+// TestCreateCampaignEventNameRuneLimit verifies the EventName length guard
+// counts runes, not UTF-8 bytes. A multi-byte name that is under the 200-rune
+// limit but well over 200 bytes must pass the length guard (byte-counting would
+// wrongly reject it), while a name over 200 runes must be rejected.
+func TestCreateCampaignEventNameRuneLimit(t *testing.T) {
+	// 150 CJK runes = 450 bytes: under 200 runes but far over 200 bytes. The
+	// composed campaign name (with the default project) stays under 255 runes,
+	// so the whole create flow succeeds.
+	multiByteName := strings.Repeat("世", 150)
+	if utf8.RuneCountInString(multiByteName) > maxEventNameLen {
+		t.Fatalf("test premise wrong: %d runes exceeds %d", utf8.RuneCountInString(multiByteName), maxEventNameLen)
+	}
+	if len(multiByteName) <= maxEventNameLen {
+		t.Fatalf("test premise wrong: %d bytes should exceed %d to exercise the byte-vs-rune bug", len(multiByteName), maxEventNameLen)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       multiByteName,
+		BudgetUsd:       500,
+		StartDate:       "2026-03-01",
+		EndDate:         "2026-03-10",
+		TweetID:         "1234567890",
+		RegistrationURL: "https://events.lf.org/kubecon",
+	}); err != nil {
+		t.Fatalf("multi-byte name under rune limit should be accepted, got: %v", err)
+	}
+
+	// A name over 200 runes must be rejected by the length guard.
+	tooLong := strings.Repeat("世", maxEventNameLen+1)
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: tooLong,
+		BudgetUsd: 500,
+		StartDate: "2026-03-01",
+		EndDate:   "2026-03-10",
+	})
+	if err == nil {
+		t.Fatal("event name over the rune limit should be rejected")
+	}
+	if !strings.Contains(err.Error(), "event name") {
+		t.Errorf("expected event-name length error, got: %v", err)
 	}
 }
 

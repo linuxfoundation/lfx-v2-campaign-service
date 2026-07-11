@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -313,7 +314,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 			return nil, fmt.Errorf("x ads api %s %s: %w", method, path, err)
 		}
 
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			// If this was the last attempt, don't sleep+retry: the loop would
+			// exit and the 429 would otherwise fall through to the generic
+			// non-2xx return below. Surface the intended exhausted-rate-limit
+			// error instead.
+			if attempt >= retryMax {
+				_ = resp.Body.Close()
+				return nil, fmt.Errorf("x ads api %s %s -> exhausted %d retries after 429s", method, path, retryMax)
+			}
 			waitDur := c.parseRetryAfter(resp)
 			_ = resp.Body.Close()
 			if waitDur > 0 {
@@ -631,7 +640,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if in.EventName == "" {
 		return nil, fmt.Errorf("invalid event name: must not be empty")
 	}
-	if len(in.EventName) > maxEventNameLen {
+	if utf8.RuneCountInString(in.EventName) > maxEventNameLen {
 		return nil, fmt.Errorf("invalid event name: exceeds %d characters", maxEventNameLen)
 	}
 
