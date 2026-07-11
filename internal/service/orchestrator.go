@@ -32,6 +32,15 @@ const CancelGracePeriod = jobFinalizeTimeout + time.Second
 // a context detached from the (possibly-cancelled) dispatch context.
 const claimReleaseTimeout = 5 * time.Second
 
+// providerCallTimeout bounds a single provider Dispatch call. The dispatch
+// context is otherwise only cancelled at shutdown, so a provider call that hangs
+// (unresponsive upstream, dropped connection with no client timeout) would leave
+// its job "running" forever and permanently occupy one of the maxParallelDispatch
+// semaphore slots. This ceiling guarantees the slot and job are released. It is
+// generous: real ad-platform create flows are multi-request but complete in well
+// under a minute.
+const providerCallTimeout = 2 * time.Minute
+
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
@@ -78,6 +87,13 @@ type Orchestrator struct {
 	draining   bool
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
+	// stopSweeper signals the background recovery sweeper (if started) to stop.
+	// Closed once, guarded by sweeperOnce, at the start of Shutdown so the sweeper
+	// exits promptly without waiting for the dispatch-drain deadline. The sweeper
+	// is a periodic maintenance loop, not in-flight work, so it can stop
+	// immediately — unlike dispatch runs, which drain first.
+	stopSweeper chan struct{}
+	sweeperOnce sync.Once
 	// sem is a process-wide semaphore bounding concurrent provider dispatches
 	// across ALL jobs (a per-job errgroup limit would let N concurrent jobs each
 	// get maxParallelDispatch slots, leaving total provider calls unbounded).
@@ -97,8 +113,52 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 		dispatchers: dispatchers,
 		rootCtx:     rootCtx,
 		rootCancel:  rootCancel,
+		stopSweeper: make(chan struct{}),
 		sem:         make(chan struct{}, maxParallelDispatch),
 	}
+}
+
+// recoverySweepInterval is how often the background sweeper re-scans for stuck
+// jobs. The startup scan alone can't recover a job orphaned by a crash less than
+// staleJobCutoff ago (it's too young to be considered stuck at boot and is never
+// re-examined); a periodic sweep eventually catches it. Kept well below
+// staleJobCutoff so a newly-stuck job is picked up within roughly one cutoff
+// window rather than only on the next restart.
+const recoverySweepInterval = 5 * time.Minute
+
+// StartRecoverySweeper launches a background goroutine that periodically fails
+// jobs stuck past staleJobCutoff, complementing the one-time startup scan so a
+// job orphaned by a crash younger than the cutoff is still eventually recovered.
+// The goroutine is tracked by wg and stops when the root context is cancelled
+// (i.e. on Shutdown), so it never runs against a closing pool. Call once after
+// construction.
+func (o *Orchestrator) StartRecoverySweeper() {
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		ticker := time.NewTicker(recoverySweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-o.stopSweeper:
+				return
+			case <-o.rootCtx.Done():
+				return
+			case <-ticker.C:
+				// Bound each sweep so a slow DB can't wedge the goroutine. Detach from
+				// rootCtx so a sweep already in flight isn't cut mid-statement by the
+				// stop signal; the loop still exits on the next iteration.
+				sctx, cancel := context.WithTimeout(context.WithoutCancel(o.rootCtx), jobFinalizeTimeout)
+				n, err := o.jobs.FailStuckJobs(sctx, "job did not complete before a service restart")
+				cancel()
+				if err != nil {
+					slog.ErrorContext(o.rootCtx, "periodic stuck-job sweep failed", "error", err)
+				} else if n > 0 {
+					slog.InfoContext(o.rootCtx, "periodic stuck-job sweep recovered jobs", "count", n)
+				}
+			}
+		}
+	}()
 }
 
 // Shutdown drains in-flight dispatch runs so a graceful shutdown doesn't close
@@ -122,6 +182,11 @@ func (o *Orchestrator) Shutdown(ctx context.Context, drainTimeout time.Duration)
 	o.mu.Lock()
 	o.draining = true
 	o.mu.Unlock()
+
+	// Stop the periodic recovery sweeper immediately (it's maintenance, not
+	// in-flight work) so wg.Wait below only blocks on real dispatch runs. Safe to
+	// call whether or not the sweeper was started.
+	o.sweeperOnce.Do(func() { close(o.stopSweeper) })
 
 	done := make(chan struct{})
 	go func() {
@@ -367,7 +432,12 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		}
 	}
 
-	campaign, derr := d.Dispatch(ctx, brief, p, config)
+	// Bound the provider call so a hung upstream can't hold this job "running" and
+	// its semaphore slot indefinitely. Derived from the dispatch ctx so a shutdown
+	// cancel still propagates, but with its own ceiling.
+	callCtx, cancelCall := context.WithTimeout(ctx, providerCallTimeout)
+	defer cancelCall()
+	campaign, derr := d.Dispatch(callCtx, brief, p, config)
 	if derr != nil {
 		// A dispatch error usually does NOT prove the provider rejected the create —
 		// a timeout or dropped connection can leave a campaign created upstream — so

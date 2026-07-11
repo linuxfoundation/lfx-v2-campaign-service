@@ -156,6 +156,11 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		slog.Info("recovered stuck jobs on startup", "count", n)
 	}
 
+	// The startup scan can't recover a job orphaned by a crash younger than the
+	// stale cutoff (too new to look stuck at boot, never re-examined). A periodic
+	// sweep catches those; it stops on Shutdown via the orchestrator's root ctx.
+	orch.StartRecoverySweeper()
+
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
 

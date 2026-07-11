@@ -18,9 +18,10 @@ import (
 
 // fakeJobRepo records job status transitions.
 type fakeJobRepo struct {
-	mu      sync.Mutex
-	jobs    map[string]*model.CampaignJob
-	counter int
+	mu             sync.Mutex
+	jobs           map[string]*model.CampaignJob
+	counter        int
+	failStuckCalls int
 }
 
 func newFakeJobRepo() *fakeJobRepo { return &fakeJobRepo{jobs: map[string]*model.CampaignJob{}} }
@@ -57,9 +58,16 @@ func (r *fakeJobRepo) UpdateJobStatus(_ context.Context, id string, status model
 	return nil
 }
 
+func (r *fakeJobRepo) failStuckCallCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.failStuckCalls
+}
+
 func (r *fakeJobRepo) FailStuckJobs(_ context.Context, jobErr string) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.failStuckCalls++
 	var n int64
 	for _, j := range r.jobs {
 		if j.Status == model.JobQueued || j.Status == model.JobRunning {
@@ -557,6 +565,34 @@ func TestOrchestrator_ShutdownDrainsInFlight(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Shutdown did not return after dispatch completed")
+	}
+}
+
+// TestOrchestrator_RecoverySweeperStopsOnShutdown verifies the background
+// recovery sweeper is tracked by the wait group and stops promptly on Shutdown
+// (it must not block the drain until a ticker fires), so Shutdown returns
+// quickly with no in-flight dispatch.
+func TestOrchestrator_RecoverySweeperStopsOnShutdown(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, nil)
+	orch.StartRecoverySweeper()
+
+	done := make(chan error, 1)
+	go func() { done <- orch.Shutdown(context.Background(), 5*time.Second) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Shutdown err = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not return promptly; sweeper likely blocked the drain")
+	}
+	// The sweeper interval (5m) is far longer than this test, so FailStuckJobs
+	// must not have been called by a tick — it stopped on the stop signal.
+	if c := jobs.failStuckCallCount(); c != 0 {
+		t.Errorf("FailStuckJobs called %d times; sweeper should have stopped before any tick", c)
 	}
 }
 
