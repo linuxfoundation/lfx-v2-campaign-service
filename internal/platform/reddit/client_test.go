@@ -227,7 +227,7 @@ func TestCreateCampaign_TrimsGeoAndSubreddits(t *testing.T) {
 	apiSrv := httptest.NewServer(handler)
 	defer apiSrv.Close()
 
-	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL))
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "Trim Test",
@@ -331,6 +331,7 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	c := NewClient(testCreds, testAccount,
 		WithBaseURL(apiSrv.URL+"/api/v3"),
 		WithTokenURL(tokenSrv.URL),
+		WithNowFunc(fixedRedditClock()),
 	)
 
 	in := CampaignInput{
@@ -458,7 +459,7 @@ func TestCreateCampaign_CommunityFallback(t *testing.T) {
 	apiSrv := httptest.NewServer(handler)
 	defer apiSrv.Close()
 
-	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL))
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "KubeCon",
@@ -558,6 +559,15 @@ func TestBuildRedditUTMURL(t *testing.T) {
 // newBodyCaptureServers spins up token + API servers that capture the campaign and
 // ad-group request bodies, returning them plus the client. Used by the
 // start-time and ad-group-name tests.
+// fixedRedditClock pins "now" to a point before the 2026-08/09 campaign windows
+// used across the CreateCampaign tests, so those tests stay deterministic
+// (start dates remain in the future, end-after-start holds) regardless of the
+// real wall clock when the suite runs.
+func fixedRedditClock() func() time.Time {
+	fixed := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	return func() time.Time { return fixed }
+}
+
 func newBodyCaptureServers(t *testing.T) (*Client, func() (map[string]any, map[string]any), func()) {
 	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -596,7 +606,7 @@ func newBodyCaptureServers(t *testing.T) (*Client, func() (map[string]any, map[s
 	})
 	apiSrv := httptest.NewServer(handler)
 
-	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL))
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
 	get := func() (map[string]any, map[string]any) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -706,7 +716,7 @@ func TestCreateCampaign_AdWithoutIDIsWarning(t *testing.T) {
 	apiSrv := httptest.NewServer(handler)
 	defer apiSrv.Close()
 
-	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL))
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "No Ad ID",
 		RegistrationURL: "https://example.com/reg",

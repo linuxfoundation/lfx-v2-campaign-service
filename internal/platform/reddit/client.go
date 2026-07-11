@@ -53,7 +53,26 @@ const (
 	// redditMaxBudgetUSD caps the budget below the int64 micro-dollar overflow
 	// threshold so the ×1e6 conversion in toMicrodollars can't wrap.
 	redditMaxBudgetUSD = 1_000_000_000.0
+	// maxResponseBody bounds how much of any response body is read into memory,
+	// guarding against a hostile/oversized reply while comfortably exceeding any
+	// normal success or error envelope.
+	maxResponseBody = 10 << 20 // 10 MiB
 )
+
+// readResponseBody reads up to maxResponseBody bytes (plus one, so truncation is
+// detectable) from an HTTP response, surfacing both read and truncation errors
+// rather than silently discarding partial bytes. io.ReadAll can return bytes
+// together with an error, so a discarded error can hide a partial/corrupt body.
+func readResponseBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxResponseBody+1))
+	if err != nil {
+		return body, fmt.Errorf("read response body: %w", err)
+	}
+	if int64(len(body)) > maxResponseBody {
+		return body[:maxResponseBody], fmt.Errorf("response body exceeds %d bytes", maxResponseBody)
+	}
+	return body, nil
+}
 
 // ---------------------------------------------------------------------------
 // Injected configuration
@@ -272,9 +291,12 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := readResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("reddit token refresh failed: %d: %s", resp.StatusCode, truncate(string(body), 400))
+	}
+	if readErr != nil {
+		return "", fmt.Errorf("reddit token refresh: %w", readErr)
 	}
 
 	var data tokenResponse
@@ -343,9 +365,12 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	raw, _ := io.ReadAll(resp.Body)
+	raw, readErr := readResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("reddit API %s %s -> %d: %s", method, path, resp.StatusCode, truncate(string(raw), 400))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("reddit API %s %s: %w", method, path, readErr)
 	}
 
 	var out apiResponse
@@ -395,6 +420,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if !endDate.After(startDate) {
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+	}
+
+	// Validate the registration URL before any mutating call: it becomes the ad
+	// destination, so an empty/malformed value would otherwise be sent to Reddit
+	// (or embedded in a UTM URL) after paid resources already exist.
+	if err := validateRegistrationURL(in.RegistrationURL); err != nil {
+		return nil, err
 	}
 
 	// Validate the objective before any network round-trip, so an unsupported
@@ -716,6 +748,30 @@ func buildRedditCampaignName(in CampaignInput, objective, region string) string 
 	}
 	project = replacePipes(project)
 	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | ToFU", event, region, objectiveLabel, project)
+}
+
+// validateRegistrationURL ensures a user-supplied registration URL is an
+// absolute http/https URL with a real host before it is used as an ad
+// destination. url.Parse accepts "https://:443/path" (Host=":443") where
+// Hostname() is empty, so check Hostname() rather than just Host.
+func validateRegistrationURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("registration URL is required")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("registration URL %q is not a valid URL: %w", raw, err)
+	}
+	if !u.IsAbs() || u.Hostname() == "" {
+		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", raw, u.Scheme)
+	}
 }
 
 // buildRedditUTMURL mirrors buildRedditUtmUrl.
