@@ -1670,3 +1670,66 @@ func TestCreateCampaignRejectsRussiaOnlyGeo(t *testing.T) {
 		t.Fatalf("err = %v, want Russia-only rejection at preflight (no silent US fallback)", err)
 	}
 }
+
+// TestCreateCampaignAdFailureSurfacesOrphanCreative verifies that when the
+// creative is created but the subsequent /ads call fails (non-fatally), the
+// created creative's id is surfaced in the failure step rather than discarded,
+// so the orphaned creative is visible for cleanup/reuse.
+func TestCreateCampaignAdFailureSurfacesOrphanCreative(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		// /ads fails with a plain (non-context) error → non-fatal per-variant path.
+		if strings.HasSuffix(req.URL.Path, "/ads") {
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"bad ad"}}`)),
+				Request:    req,
+			}, nil
+		}
+		body := `{"id":"x"}`
+		switch {
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"id":"camp_1"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"adset_1"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_777"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	// Ad failure is non-fatal: campaign still returns.
+	if err != nil {
+		t.Fatalf("ad failure should be non-fatal, got err: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected a non-nil result on non-fatal ad failure")
+	}
+	var found bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "orphaned creative: creative_777") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a step surfacing the orphaned creative id, got steps: %v", res.Steps)
+	}
+}

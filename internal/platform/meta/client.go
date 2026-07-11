@@ -1143,7 +1143,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, ctx.Err())
 			}
-			steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, truncateErr(verr, 300)))
+			// If the creative was created before the ad failed, surface its id so the
+			// orphaned creative is visible (can be cleaned up / reused) rather than
+			// silently discarded.
+			if creativeID != "" {
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, truncateErr(verr, 300), creativeID))
+			} else {
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, truncateErr(verr, 300)))
+			}
 			continue
 		}
 		adCount++
@@ -1203,10 +1210,13 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		"creative": map[string]any{"creative_id": creativeResp.ID},
 		"status":   "PAUSED",
 	}, &adResp); err != nil {
-		return "", "", err
+		// The creative was already created; return its id alongside the error so
+		// the (non-fatal) caller can record the orphaned creative rather than
+		// silently discarding it.
+		return "", creativeResp.ID, err
 	}
 	if adResp.ID == "" {
-		return "", "", fmt.Errorf("ad creation returned no ID")
+		return "", creativeResp.ID, fmt.Errorf("ad creation returned no ID")
 	}
 	return adResp.ID, creativeResp.ID, nil
 }
