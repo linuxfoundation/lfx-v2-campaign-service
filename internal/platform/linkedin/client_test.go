@@ -24,7 +24,7 @@ func testConfig() RuntimeConfig {
 		Accounts: []Account{
 			{AccountID: "123456789", Label: "LF Events", OrgID: "987654321", Status: "ACTIVE"},
 		},
-		EmployerExclusions: []string{"urn:li:organization:1111"},
+		EmployerExclusions: []string{"urn:li:company:1111"},
 		TargetingProfiles: []TargetingProfileConfig{
 			{
 				ID:     "cloud-native",
@@ -139,8 +139,13 @@ func TestBuildTargetingCriteria_SkillsAndGroupsInOneOrBlock(t *testing.T) {
 
 	// Exclusions: employers + seniorities.
 	exclude := tc["exclude"].(map[string]any)["or"].(map[string]any)
-	if _, ok := exclude["urn:li:adTargetingFacet:employers"]; !ok {
+	employers, ok := exclude["urn:li:adTargetingFacet:employers"].([]any)
+	if !ok {
 		t.Errorf("exclude block missing employers facet")
+	} else if len(employers) != 1 || employers[0] != "urn:li:company:1111" {
+		// The documented urn:li:company:<id> exclusion (docs/api-catalog.md) must
+		// pass validation and flow verbatim into the employers targeting criteria.
+		t.Errorf("employers exclusion = %+v, want [urn:li:company:1111]", employers)
 	}
 	if _, ok := exclude["urn:li:adTargetingFacet:seniorities"]; !ok {
 		t.Errorf("exclude block missing seniorities facet")

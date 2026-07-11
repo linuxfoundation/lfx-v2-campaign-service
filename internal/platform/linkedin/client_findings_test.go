@@ -1823,7 +1823,17 @@ func TestValidFacets_NamespaceEnforced(t *testing.T) {
 		t.Errorf("valid group URN rejected: %v", err)
 	}
 	if _, err := validFacets("employer-exclusions", []string{"urn:li:organization:1111"}); err != nil {
-		t.Errorf("valid employer URN rejected: %v", err)
+		t.Errorf("valid organization employer URN rejected: %v", err)
+	}
+	// The documented service contract (docs/api-catalog.md) specifies employer
+	// exclusions as urn:li:company:<id>; that form MUST be accepted.
+	if _, err := validFacets("employer-exclusions", []string{"urn:li:company:33275771"}); err != nil {
+		t.Errorf("documented urn:li:company employer URN rejected: %v", err)
+	}
+	if out, err := validFacets("employer-exclusions", []string{"urn:li:company:33275771", "urn:li:organization:1111"}); err != nil {
+		t.Errorf("mixed company+organization employer URNs rejected: %v", err)
+	} else if len(out) != 2 {
+		t.Errorf("mixed employer URNs: got %d, want 2", len(out))
 	}
 	if _, err := validFacets("employer-exclusions", []string{"urn:li:skill:1"}); err == nil {
 		t.Error("skill URN under employer-exclusions should be rejected")
@@ -1848,6 +1858,9 @@ func TestValidFacets_RequiresNumericID(t *testing.T) {
 	}
 	if _, err := validFacets("employer-exclusions", []string{"urn:li:organization:not-real"}); err == nil {
 		t.Error("non-numeric organization id should be rejected")
+	}
+	if _, err := validFacets("employer-exclusions", []string{"urn:li:company:not-real"}); err == nil {
+		t.Error("non-numeric company id should be rejected")
 	}
 	if _, err := validFacets("skills", []string{"urn:li:skill:12345"}); err != nil {
 		t.Errorf("numeric skill id rejected: %v", err)
@@ -2327,6 +2340,80 @@ func TestCreateCampaign_IdlessGroupMatchIssuesNoCreate(t *testing.T) {
 	defer mu.Unlock()
 	if postCount != 0 {
 		t.Errorf("expected zero create POSTs on an id-less match, got %d", postCount)
+	}
+}
+
+// TestFindMatch_MatchWithTrailingEmptyIDIsError verifies the FINDING 1 refinement:
+// a search element that SATISFIES the match and carries a NON-EMPTY raw id/URN
+// whose TRAILING segment is empty (e.g. "urn:li:sponsoredCampaignGroup:") must
+// make findByName return an ERROR, not "". The raw field passes the non-empty
+// guard, but trailingID returns "" — reporting that empty id as a no-match would
+// let a find-or-create caller create a DUPLICATE.
+func TestFindMatch_MatchWithTrailingEmptyIDIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Matching element (right name, ACTIVE) whose $URN is a trailing-empty URN:
+		// non-empty overall, but trailingID("urn:li:sponsoredCampaignGroup:") == "".
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Trailing | TLF","status":"ACTIVE","$URN":"urn:li:sponsoredCampaignGroup:"}],"metadata":{"nextPageToken":""}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | Trailing | TLF")
+	if err == nil {
+		t.Fatalf("expected an error for a matched element with a trailing-empty id, got nil (id=%q)", id)
+	}
+	if id != "" {
+		t.Errorf("expected empty id alongside the error, got %q", id)
+	}
+	if !strings.Contains(err.Error(), "empty trailing segment") {
+		t.Errorf("error should explain the trailing-empty id, got: %v", err)
+	}
+}
+
+// TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate verifies the FINDING 1
+// refinement end to end: when the campaign-group name lookup returns a MATCHING
+// element whose raw URN is trailing-empty ("urn:li:sponsoredCampaignGroup:"),
+// CreateCampaign must abort with an error and issue NO create POST.
+func TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate(t *testing.T) {
+	var mu sync.Mutex
+	var postCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			postCount++
+			mu.Unlock()
+			t.Errorf("unexpected POST %s — a trailing-empty group match must abort before any create", r.URL.Path)
+			http.Error(w, "should not POST", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "adCampaignGroups") {
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | TLF","status":"ACTIVE","$URN":"urn:li:sponsoredCampaignGroup:"}],"metadata":{"nextPageToken":""}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"elements":[]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("expected CreateCampaign to fail on a trailing-empty group match, got nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if postCount != 0 {
+		t.Errorf("expected zero create POSTs on a trailing-empty match, got %d", postCount)
 	}
 }
 

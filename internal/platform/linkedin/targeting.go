@@ -45,31 +45,50 @@ var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):[A-Za-z0-
 // ids, so a value like urn:li:skill:abc (non-numeric) is rejected.
 var facetURNRE = regexp.MustCompile(`^[0-9]+$`)
 
-// facetNamespace is the required urn:li:<type>: prefix for each facet kind, so a
-// value from the wrong namespace (e.g. an organization URN under skills) is
+// facetNamespace is the accepted urn:li:<type>: prefix(es) for each facet kind, so
+// a value from the wrong namespace (e.g. an organization URN under skills) is
 // rejected rather than silently sent under the wrong facet.
-var facetNamespace = map[string]string{
-	"skills":              "urn:li:skill:",
-	"groups":              "urn:li:group:",
-	"employer-exclusions": "urn:li:organization:",
+//
+// employer-exclusions accepts BOTH urn:li:company:<id> and
+// urn:li:organization:<id>. The documented service contract
+// (docs/api-catalog.md) specifies the LF/CNCF employer exclusions as
+// urn:li:company:<id>, and LinkedIn's `employers` targeting facet is addressed by
+// the company namespace — so urn:li:company MUST be accepted. urn:li:organization
+// (the newer Marketing-API org entity, and what earlier config used) is also kept
+// so an existing runtime config that supplied organization URNs keeps working.
+var facetNamespace = map[string][]string{
+	"skills":              {"urn:li:skill:"},
+	"groups":              {"urn:li:group:"},
+	"employer-exclusions": {"urn:li:company:", "urn:li:organization:"},
 }
 
 // validFacets returns the non-blank entries of in and an error naming the first
-// entry that is non-blank but not a well-formed facet URN in the namespace
-// required for kind. Used to fail fast before any permanent resource is created.
+// entry that is non-blank but not a well-formed facet URN in one of the
+// namespaces accepted for kind. Used to fail fast before any permanent resource
+// is created.
 func validFacets(kind string, in []string) ([]string, error) {
-	prefix, ok := facetNamespace[kind]
+	prefixes, ok := facetNamespace[kind]
 	if !ok {
 		return nil, fmt.Errorf("unknown LinkedIn facet kind %q", kind)
 	}
 	out := nonBlankFacets(in)
 	for _, v := range out {
-		id, found := strings.CutPrefix(v, prefix)
-		if !found || !facetURNRE.MatchString(id) {
-			return nil, fmt.Errorf("malformed LinkedIn %s facet %q — expected a %s<id> value", kind, v, prefix)
+		if !matchesAnyFacetPrefix(v, prefixes) {
+			return nil, fmt.Errorf("malformed LinkedIn %s facet %q — expected a %s<id> value", kind, v, strings.Join(prefixes, "<id> or a "))
 		}
 	}
 	return out, nil
+}
+
+// matchesAnyFacetPrefix reports whether v is one of prefixes followed by a
+// well-formed (numeric) LinkedIn entity id.
+func matchesAnyFacetPrefix(v string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if id, found := strings.CutPrefix(v, prefix); found && facetURNRE.MatchString(id) {
+			return true
+		}
+	}
+	return false
 }
 
 // nonBlankFacets returns the entries of in with surrounding whitespace trimmed,

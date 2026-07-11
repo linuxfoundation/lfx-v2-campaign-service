@@ -561,7 +561,17 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 				// ERROR, not a not-found (mirrors the Twitter client's findByName fix).
 				return "", fmt.Errorf("search %q by name: matched element %q has no usable id (id/$URN/urn all empty) — aborting to avoid creating a duplicate", nestedPath, el.Name)
 			}
-			return trailingID(raw), nil
+			// Validate the EXTRACTED id, not just the raw field. A URN like
+			// "urn:li:sponsoredCampaignGroup:" is non-empty above, yet trailingID
+			// returns "" (empty trailing segment). Returning that empty id would look
+			// like ABSENCE to the find-or-create caller and trigger a DUPLICATE create
+			// POST. The element MATCHED, so a same-name resource exists; we just can't
+			// extract its id. Report an ERROR to abort, mirroring the id-less case above.
+			id := trailingID(raw)
+			if id == "" {
+				return "", fmt.Errorf("search %q by name: matched element %q has an id %q with an empty trailing segment — aborting to avoid creating a duplicate", nestedPath, el.Name, raw)
+			}
+			return id, nil
 		}
 		// Cursor pagination: an empty nextPageToken marks the end of the result
 		// set. Otherwise carry the token into the next request.
