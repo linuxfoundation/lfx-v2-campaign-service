@@ -289,7 +289,7 @@ func TestToIso8601Utc(t *testing.T) {
 
 func TestBuildTwitterCampaignName(t *testing.T) {
 	got := buildTwitterCampaignName(CampaignInput{EventName: "KubeCon | EU", Project: ""})
-	want := "Events | KubeCon - EU | Global | Awareness | Prospecting | Promoted Post | Linux Foundation | MoFU"
+	want := "Events | KubeCon - EU | Global | Awareness | Prospecting | Promoted Post | tlf | MoFU"
 	if got != want {
 		t.Errorf("campaign name = %q, want %q", got, want)
 	}
@@ -1121,6 +1121,9 @@ func TestPromotedTweetMissingIDWarns(t *testing.T) {
 	if res.PromotedTweetID != "" {
 		t.Errorf("expected empty PromotedTweetID, got %q", res.PromotedTweetID)
 	}
+	if res.PromotedTweetWarning == "" {
+		t.Errorf("expected PromotedTweetWarning to be set for malformed promoted-tweet response")
+	}
 	var found bool
 	for _, s := range res.Steps {
 		if strings.Contains(s, "no promoted-tweet ID") {
@@ -1130,6 +1133,130 @@ func TestPromotedTweetMissingIDWarns(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a warning step for missing promoted-tweet id, steps: %v", res.Steps)
+	}
+}
+
+// TestPromotedTweetPostErrorWarns verifies that a promoted-tweet POST that fails
+// with a non-2xx (non-duplicate) error is NOT reported as a clean success: the
+// campaign flow stays non-fatal, but PromotedTweetWarning is set and a warning
+// step records the gap.
+func TestPromotedTweetPostErrorWarns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"INVALID_PARAMETER","message":"bad tweet"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign should not be fatal on promoted-tweet POST failure: %v", err)
+	}
+	if res.PromotedTweetID != "" {
+		t.Errorf("expected empty PromotedTweetID on failed POST, got %q", res.PromotedTweetID)
+	}
+	if res.PromotedTweetWarning == "" {
+		t.Errorf("expected PromotedTweetWarning to be set on failed promoted-tweet POST (must not report clean success)")
+	}
+	var found bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "Promoted tweet creation failed") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning step for failed promoted-tweet POST, steps: %v", res.Steps)
+	}
+}
+
+// TestPromotedTweetDuplicateTreatedIdempotent verifies that a recognizable
+// duplicate-association error is treated as success (the association already
+// exists): no warning, and a step records the idempotent reuse.
+func TestPromotedTweetDuplicateTreatedIdempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"DUPLICATE_PROMOTABLE_ENTITY","message":"tweet already promoted on this line item"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign should not be fatal on duplicate promoted-tweet: %v", err)
+	}
+	if res.PromotedTweetWarning != "" {
+		t.Errorf("expected no PromotedTweetWarning for idempotent duplicate, got %q", res.PromotedTweetWarning)
+	}
+	var found bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "already associated") || strings.Contains(s, "idempotent") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected an idempotent-reuse step for duplicate promoted-tweet, steps: %v", res.Steps)
 	}
 }
 

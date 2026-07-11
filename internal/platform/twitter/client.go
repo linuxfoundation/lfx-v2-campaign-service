@@ -522,12 +522,15 @@ func buildTwitterCampaignName(in CampaignInput) string {
 }
 
 // boundProject trims the caller-supplied project name and caps its rune length,
-// defaulting to "Linux Foundation" when empty. Project is otherwise unbounded,
-// so bounding it here keeps the composed campaign name from ballooning.
+// defaulting to the canonical Linux Foundation project slug "tlf" when empty.
+// The data pipeline parses the campaign name for attribution and joins on the
+// canonical slug ("tlf", lowercase — not a display name); see docs/api-catalog.md.
+// Project is otherwise unbounded, so bounding it here keeps the composed campaign
+// name from ballooning.
 func boundProject(project string) string {
 	project = strings.TrimSpace(project)
 	if project == "" {
-		return "Linux Foundation"
+		return "tlf"
 	}
 	if r := []rune(project); len(r) > maxProjectLen {
 		project = string(r[:maxProjectLen])
@@ -604,8 +607,14 @@ type CampaignResult struct {
 	LineItemName    string
 	LineItemID      string
 	PromotedTweetID string
-	TwitterURL      string
-	Steps           []string
+	// PromotedTweetWarning is non-empty when the promoted-tweet association could
+	// not be confirmed (POST failed, or returned a malformed/empty response). The
+	// campaign and line item may still have been created, so the overall call is
+	// not fatal, but consumers MUST NOT treat a result with this set as an
+	// unqualified success — the promoted tweet may need to be added manually.
+	PromotedTweetWarning string
+	TwitterURL           string
+	Steps                []string
 }
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -718,6 +727,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			"daily_budget_amount_local_micro": strconv.FormatInt(toMicroCurrency(in.BudgetUsd), 10),
 			"entity_status":                   "PAUSED",
 		}
+		// These inter-request sleeps pace THIS dispatch's own sequential writes
+		// (campaign -> line item -> promoted tweet) to stay under X's per-second
+		// write rate. They do NOT enforce X's account-wide write limit across
+		// concurrent or replicated dispatches: this service dispatches jobs async
+		// (possibly across replicas), and separately-constructed clients in
+		// different goroutines/processes can wake and POST at the same instant.
+		// Correct account-wide limiting needs shared cross-replica coordination
+		// (a distributed limiter or the orchestrator serializing per account),
+		// which is out of scope for this stateless per-request client and is
+		// tracked by LFXV2-2665 (durable dispatch). If the account limit is hit
+		// anyway, the 429 exponential-backoff retry in doRequest is the backstop.
 		if err := sleepCtx(ctx, writeDelay); err != nil {
 			return nil, err
 		}
@@ -771,6 +791,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Step 4: create promoted tweet if a tweet ID was provided.
 	var promotedTweetID string
+	var promotedTweetWarning string
 	if in.TweetID != "" {
 		if err := sleepCtx(ctx, writeDelay); err != nil {
 			return nil, err
@@ -778,20 +799,33 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// The promoted_tweets endpoint does not accept entity_status; the API
 		// creates the association ACTIVE. Delivery is still gated by the PAUSED
 		// line item above, so we intentionally send only the association params.
+		// This POST is always re-issued on a repeated CreateCampaign (unlike the
+		// find-or-create campaign/line-item steps), so a lost first response can
+		// make the retry hit a duplicate — handled below.
 		resp, err := c.createRequest(ctx, "promoted_tweets", map[string]string{
 			"line_item_id": lineItemID,
 			"tweet_ids":    in.TweetID,
 		})
-		if err != nil {
+		switch {
+		case err != nil && isDuplicatePromotedTweetErr(err):
+			// The association already exists (e.g. a prior POST that succeeded but
+			// whose response was lost). Idempotent: treat as success, not a gap.
+			steps = append(steps, fmt.Sprintf("Promoted tweet already associated with line item %s (tweet: %s) — treating as created (idempotent)", lineItemID, in.TweetID))
+		case err != nil:
+			// A real POST failure. Do NOT report unqualified success: record a
+			// warning both in the step log and on the result so the caller can see
+			// the promoted tweet may not have been created/associated.
+			promotedTweetWarning = fmt.Sprintf("promoted-tweet POST failed for tweet %s: %s", in.TweetID, err.Error())
 			steps = append(steps, fmt.Sprintf("Promoted tweet creation failed: %s — add manually in X Ads Manager", err.Error()))
-		} else {
+		default:
 			promotedTweetID = extractPromotedTweetID(resp)
 			if promotedTweetID != "" {
 				steps = append(steps, fmt.Sprintf("Promoted tweet created: %s (tweet: %s; created ACTIVE by the API but held from serving by the PAUSED line item)", promotedTweetID, in.TweetID))
 			} else {
 				// A 2xx response missing data.id is a malformed success: don't
-				// silently treat it as done. Surface a warning step so the gap is
-				// visible without making the whole flow fatal.
+				// silently treat it as done. Surface a warning (step + result field)
+				// so the gap is visible without making the whole flow fatal.
+				promotedTweetWarning = fmt.Sprintf("promoted-tweet POST returned no ID (malformed response) for tweet %s", in.TweetID)
 				steps = append(steps, fmt.Sprintf("Promoted tweet creation returned no promoted-tweet ID (malformed response, tweet: %s) — add it manually in X Ads Manager", in.TweetID))
 			}
 		}
@@ -802,14 +836,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	return &CampaignResult{
-		Platform:        "twitter-ads",
-		CampaignName:    campaignName,
-		CampaignID:      campaignID,
-		LineItemName:    lineItemName,
-		LineItemID:      lineItemID,
-		PromotedTweetID: promotedTweetID,
-		TwitterURL:      AdsManagerURL,
-		Steps:           steps,
+		Platform:             "twitter-ads",
+		CampaignName:         campaignName,
+		CampaignID:           campaignID,
+		LineItemName:         lineItemName,
+		LineItemID:           lineItemID,
+		PromotedTweetID:      promotedTweetID,
+		PromotedTweetWarning: promotedTweetWarning,
+		TwitterURL:           AdsManagerURL,
+		Steps:                steps,
 	}, nil
 }
 
@@ -865,6 +900,27 @@ func extractID(resp *apiResponse) string {
 		return obj.ID
 	}
 	return ""
+}
+
+// isDuplicatePromotedTweetErr reports whether err from a promoted_tweets POST is
+// X's "this tweet is already promoted on this line item" rejection. On a repeated
+// CreateCampaign the campaign and line item are reused by name, but the
+// promoted-tweet association is always re-POSTed; if the first POST's response was
+// lost, the retry hits this duplicate. Because doRequest surfaces non-2xx bodies
+// as the error string, we pattern-match X's recognizable duplicate signals
+// (error code DUPLICATE_PROMOTABLE_ENTITY / message wording). When it matches the
+// association already exists, so we treat it as idempotent success rather than a
+// failure or a false unqualified success. NOTE: true cross-call idempotency
+// (idempotency keys sent to X) is tracked in LFXV2-2665.
+func isDuplicatePromotedTweetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "duplicate_promotable_entity") ||
+		strings.Contains(s, "already promoted") ||
+		strings.Contains(s, "already associated") ||
+		(strings.Contains(s, "duplicate") && strings.Contains(s, "promot"))
 }
 
 // extractPromotedTweetID reads the promoted tweet id, which the X Ads API
