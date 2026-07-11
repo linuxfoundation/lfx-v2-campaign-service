@@ -61,13 +61,22 @@ func TestFindByName_CursorPagination(t *testing.T) {
 		}
 		mu.Unlock()
 
+		// Every request must use cursor pagination: page size is carried by
+		// `pageSize`, never by the legacy offset param `count`, and no `start`
+		// offset is ever sent.
+		if r.URL.Query().Get("pageSize") == "" {
+			t.Errorf("cursor pagination must send `pageSize`, got none (query=%q)", r.URL.RawQuery)
+		}
+		if got := r.URL.Query().Get("count"); got != "" {
+			t.Errorf("cursor pagination must not send legacy offset `count`, got %q", got)
+		}
+		if got := r.URL.Query().Get("start"); got != "" {
+			t.Errorf("cursor pagination must not send offset `start`, got %q", got)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		if n == 1 {
 			// Page 1: no match, but a nextPageToken advertising a further page.
-			// The offset param `start` must NOT be used by the client.
-			if r.URL.Query().Get("start") != "" {
-				t.Errorf("cursor pagination must not send offset `start`, got %q", r.URL.Query().Get("start"))
-			}
 			_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":1}],"metadata":{"nextPageToken":"`+wantToken+`"}}`)
 			return
 		}
@@ -426,5 +435,170 @@ func TestCreateCampaign_TrimsRegistrationURLForUTM(t *testing.T) {
 	}
 	if u.Scheme != "https" || u.Host != "events.example.org" {
 		t.Errorf("built UTM URL malformed: scheme=%q host=%q (url=%q)", u.Scheme, u.Host, src)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fourth-round Copilot findings
+// ---------------------------------------------------------------------------
+
+// TestCreateSponsoredCampaign_SameNameDifferentGroupNotMatched verifies that the
+// find-existing-campaign lookup is scoped to the resolved campaign group: a
+// same-name campaign returned by the account-wide search but belonging to a
+// DIFFERENT group is NOT treated as an idempotent match, so a new campaign is
+// created under the correct group.
+func TestCreateSponsoredCampaign_SameNameDifferentGroupNotMatched(t *testing.T) {
+	const wantGroupID = "100"
+	const wrongGroupCampaignID = "999" // a same-name campaign under a different group
+	const newCampaignID = "200"
+
+	var mu sync.Mutex
+	var createdCampaign bool
+	var createdCampaignGroupURN string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			// The campaign search is account-wide and returns a same-name campaign
+			// that belongs to a DIFFERENT (old) group. The client must ignore it.
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Same Name","status":"ACTIVE","id":`+wrongGroupCampaignID+`,"campaignGroup":"urn:li:sponsoredCampaignGroup:777"}],"metadata":{"nextPageToken":""}}`)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		createdCampaign = true
+		b, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(b, &body)
+		if cg, ok := body["campaignGroup"].(string); ok {
+			createdCampaignGroupURN = cg
+		}
+		w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:"+newCampaignID)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.createSponsoredCampaign(
+		context.Background(),
+		"123456789", wantGroupID, "Same Name",
+		100, []string{"urn:li:geo:103644278"}, "cloud-native",
+		"2099-01-01", "2099-02-01", false,
+	)
+	if err != nil {
+		t.Fatalf("createSponsoredCampaign: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !createdCampaign {
+		t.Fatal("expected a new campaign to be created; the same-name campaign under a different group must not match")
+	}
+	if id != newCampaignID {
+		t.Errorf("expected the newly-created campaign id %q, got %q (matched the wrong-group campaign?)", newCampaignID, id)
+	}
+	if createdCampaignGroupURN != "urn:li:sponsoredCampaignGroup:"+wantGroupID {
+		t.Errorf("new campaign must reference the resolved group, got campaignGroup=%q", createdCampaignGroupURN)
+	}
+}
+
+// TestCreateSponsoredCampaign_SameNameSameGroupMatched is the positive counterpart:
+// a same-name campaign whose campaignGroup DOES resolve to the target group is
+// treated as an idempotent match, so no new campaign is created.
+func TestCreateSponsoredCampaign_SameNameSameGroupMatched(t *testing.T) {
+	const groupID = "100"
+	const existingCampaignID = "555"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("unexpected POST — a same-name campaign in the same group must match idempotently")
+			http.Error(w, "should not POST", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Same Name","status":"ACTIVE","id":`+existingCampaignID+`,"campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.createSponsoredCampaign(
+		context.Background(),
+		"123456789", groupID, "Same Name",
+		100, []string{"urn:li:geo:103644278"}, "cloud-native",
+		"2099-01-01", "2099-02-01", false,
+	)
+	if err != nil {
+		t.Fatalf("createSponsoredCampaign: %v", err)
+	}
+	if id != existingCampaignID {
+		t.Errorf("expected idempotent match of existing campaign %q, got %q", existingCampaignID, id)
+	}
+}
+
+// TestCreateDarkPost_TruncatesIntroTextTo600Runes verifies that intro/primary
+// (commentary) text longer than 600 characters is truncated rune-safely to 600
+// runes before the dark post is created, matching LinkedIn's single-image ad
+// limit and the TS source.
+func TestCreateDarkPost_TruncatesIntroTextTo600Runes(t *testing.T) {
+	// 700 multi-byte runes (é) — proves both the 600-rune cap and that
+	// truncation is rune-safe (no split into invalid UTF-8).
+	longIntro := strings.Repeat("é", 700)
+
+	var mu sync.Mutex
+	var commentary string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		b, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(b, &body)
+		if cm, ok := body["commentary"].(string); ok {
+			mu.Lock()
+			commentary = cm
+			mu.Unlock()
+		}
+		_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if _, err := c.createDarkPost(context.Background(), "123456789", longIntro, "Headline", "https://events.example.org/reg", ""); err != nil {
+		t.Fatalf("createDarkPost: %v", err)
+	}
+
+	mu.Lock()
+	got := commentary
+	mu.Unlock()
+	if n := len([]rune(got)); n != 600 {
+		t.Errorf("intro text must be truncated to 600 runes, got %d runes", n)
+	}
+	// Rune-safe truncation must yield exactly 600 "é" runes with no U+FFFD
+	// replacement chars from a split multi-byte rune.
+	if got != strings.Repeat("é", 600) {
+		t.Errorf("truncation corrupted multi-byte runes or wrong length: got %q", got)
+	}
+}
+
+// TestCreateCampaign_RejectsWhitespaceEventNameBeforeAnyPOST verifies that a
+// whitespace-only EventName is rejected up front, before any POST — an empty or
+// whitespace-only event name would collapse every campaign to the same
+// idempotency key ("Events |  | TLF").
+func TestCreateCampaign_RejectsWhitespaceEventNameBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	for _, name := range []string{"", "   ", "\t\n "} {
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:        name,
+			RegistrationURL:  "https://events.example.org/reg",
+			BudgetUSD:        100,
+			StartDate:        "2099-01-01",
+			EndDate:          "2099-02-01",
+			TargetingProfile: "cloud-native",
+			GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+			Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+		})
+		if err == nil {
+			t.Errorf("CreateCampaign with EventName=%q: expected error, got nil", name)
+		}
 	}
 }

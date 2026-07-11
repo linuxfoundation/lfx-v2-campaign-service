@@ -209,6 +209,12 @@ type responseElement struct {
 	ID     flexibleID `json:"id"`
 	URN    string     `json:"urn"`
 	DURN   string     `json:"$URN"`
+	// CampaignGroup is the parent campaign-group URN a campaign belongs to
+	// (e.g. "urn:li:sponsoredCampaignGroup:123"). It is only populated for
+	// campaign search results and is used to scope the find-existing-campaign
+	// lookup to the resolved group, so a same-name campaign under a DIFFERENT
+	// (e.g. archived/replaced) group is not treated as a match.
+	CampaignGroup string `json:"campaignGroup"`
 }
 
 var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:?=&.-]*$`)
@@ -404,12 +410,41 @@ const maxListPages = 25
 // maxListPages); reaching the cap with a next-page token still present also
 // returns an error rather than a false no-match.
 func (c *Client) findByName(ctx context.Context, nestedPath, name string) (string, error) {
+	return c.findMatch(ctx, nestedPath, func(el responseElement) bool {
+		return el.Name == name
+	})
+}
+
+// findCampaignByNameInGroup searches the campaign collection for a live campaign
+// whose name matches AND whose parent campaignGroup URN resolves to groupID. The
+// group constraint is essential: the campaign search is account-wide, so a
+// same-name campaign under a DIFFERENT (e.g. archived/replaced) group would
+// otherwise be returned as an idempotent match and the new campaign would never
+// be created under the correct group. Elements missing a campaignGroup are not
+// matched, since without it the parent cannot be confirmed.
+func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID string) (string, error) {
+	return c.findMatch(ctx, campaignsPath, func(el responseElement) bool {
+		return el.Name == name && el.CampaignGroup != "" && trailingID(el.CampaignGroup) == groupID
+	})
+}
+
+// findMatch runs the cursor-paginated search-by name walk shared by findByName
+// and findCampaignByNameInGroup, returning the trailing numeric ID of the first
+// element for which match reports true (and whose status is not in
+// skipStatuses), or "" when no such element exists. Error handling and the
+// max-pages guard match the findByName contract documented above.
+func (c *Client) findMatch(ctx context.Context, nestedPath string, match func(responseElement) bool) (string, error) {
 	const pageSize = 50
 	pageToken := ""
 	for page := 0; page < maxListPages; page++ {
 		params := map[string]string{
-			"q":     "search",
-			"count": strconv.Itoa(pageSize),
+			"q": "search",
+			// Cursor pagination at LinkedIn-Version 202602 uses `pageSize` (paired
+			// with `pageToken`), NOT the legacy offset param `count`. Sending
+			// `count` here was ignored by the cursor contract, so the page size the
+			// caller asked for silently did not take effect. No offset param
+			// (`start`/`count`) is sent — the cursor token alone advances pages.
+			"pageSize": strconv.Itoa(pageSize),
 		}
 		if pageToken != "" {
 			params["pageToken"] = pageToken
@@ -427,7 +462,7 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 			return "", fmt.Errorf("search %q by name: %w", nestedPath, err)
 		}
 		for _, el := range resp.Elements {
-			if el.Name != name {
+			if !match(el) {
 				continue
 			}
 			if _, skip := skipStatuses[el.Status]; skip {
@@ -564,7 +599,11 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile, startDate, endDate string, lifetimeBudget bool) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
-	existing, err := c.findByName(ctx, campaignsPath, name)
+	// Scope the idempotency lookup to the resolved campaign group: the campaign
+	// search is account-wide by name, so a same-name campaign under a DIFFERENT
+	// (e.g. archived/replaced) group must NOT be treated as a match — otherwise a
+	// new campaign is never created under the correct group.
+	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID)
 	if err != nil {
 		return "", err
 	}
@@ -641,6 +680,12 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 	}
 
 	intro := stripDashes(introText)
+	// LinkedIn single-image ad intro/primary (commentary) text is capped at 600
+	// characters; the TS source truncates intro_text too. Truncate rune-safely so
+	// a multi-byte rune is never split into invalid UTF-8.
+	if len([]rune(intro)) > 600 {
+		intro = truncateRunes(intro, 600)
+	}
 	head := stripDashes(headline)
 	if len([]rune(head)) > 200 {
 		head = truncateRunes(head, 200)
@@ -859,6 +904,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
 		return nil, err
+	}
+
+	// EventName is semantically required: it is the sole distinguishing token in
+	// both the campaign-group name ("Events | <EventName> | <Project>") and the
+	// campaign name, so an empty or whitespace-only value collapses every campaign
+	// to the same idempotency key (e.g. "Events |  | TLF"). Reject it up front,
+	// before any POST that would create a permanent, mislabeled resource.
+	if strings.TrimSpace(in.EventName) == "" {
+		return nil, fmt.Errorf("event name is required and must not be empty or whitespace-only")
 	}
 
 	// Trim the registration URL ONCE up front and use the trimmed value both for
