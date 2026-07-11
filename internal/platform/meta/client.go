@@ -14,7 +14,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -101,10 +100,16 @@ var objectiveParams = map[string]ObjectiveParams{
 		OptimizationGoal:   "POST_ENGAGEMENT",
 		PromotedObjectType: PromotedObjectPageID,
 	},
+	// "leads" runs a website-leads campaign: OUTCOME_LEADS optimizing for
+	// LINK_CLICKS to the registration (lead-capture) URL. It deliberately does NOT
+	// use the LEAD_GENERATION optimization goal, which requires an on-Facebook
+	// instant lead form (lead_gen_form_id) this client does not construct. The
+	// website-click creative already points at the registration URL, so LINK_CLICKS
+	// with no promoted object is a consistent, spendable configuration.
 	"leads": {
 		CampaignObjective:  "OUTCOME_LEADS",
-		OptimizationGoal:   "LEAD_GENERATION",
-		PromotedObjectType: PromotedObjectPageID,
+		OptimizationGoal:   "LINK_CLICKS",
+		PromotedObjectType: PromotedObjectNone,
 	},
 	"conversions": {
 		CampaignObjective:  "OUTCOME_SALES",
@@ -815,9 +820,11 @@ type CampaignInput struct {
 	EventSlug       string
 	Project         string
 	RegistrationURL string
-	// Objective is one of awareness|traffic|engagement|conversions. Empty
-	// defaults to "traffic". ("leads" is defined in the objective map but not
-	// accepted by CreateCampaign — it needs a lead form this client doesn't build.)
+	// Objective is one of awareness|traffic|engagement|leads|conversions. Empty
+	// defaults to "traffic". "leads" runs a website-leads campaign (OUTCOME_LEADS
+	// optimizing for LINK_CLICKS to the registration URL); it does not build an
+	// on-Facebook instant lead form. Only status-toggling and analytics remain
+	// deferred relative to the upstream contract.
 	Objective  string
 	GeoTargets []string
 	// BudgetUSD is the budget amount. NOTE: Meta interprets the ad set budget in
@@ -939,16 +946,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if !ok {
 		return nil, fmt.Errorf("unknown Meta objective: '%s'. Valid objectives: %s", objective, strings.Join(objectiveKeys(), ", "))
 	}
-	// The "leads" objective optimizes for LEAD_GENERATION with a page promoted
-	// object, but every variant is built as a website link_data creative pointing
-	// at the registration URL and the input carries no lead-form id. Creating that
-	// campaign would spend money on a lead-gen-optimized campaign wired to a
-	// website-click creative — a silent mismatch. Reject it up front (before any
-	// mutating call) until first-class lead-form support exists, rather than
-	// launching an inconsistent paid campaign.
-	if objective == "leads" {
-		return nil, fmt.Errorf("meta objective 'leads' is not yet supported: it requires a lead form, but this client builds website-click creatives; use 'traffic' or 'conversions'")
-	}
 	placementTargeting, err := buildPlacementTargeting(in.Placements)
 	if err != nil {
 		return nil, err
@@ -964,8 +961,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		label = accountID
 	}
 
-	// Step 1: Verify account access (non-fatal, mirrors TS try/catch).
+	// Step 1: Verify account access (non-fatal, mirrors TS try/catch). A benign
+	// verification failure stays a warning, but a genuine CALLER-context
+	// cancellation/deadline must short-circuit here — otherwise, for inputs that go
+	// on to fail the geo checks, CreateCampaign would return that geo-validation
+	// error and mask the fact that the caller cancelled. Distinguish the caller ctx
+	// (ctx.Err() != nil) from the client's own http.Client.Timeout, which surfaces
+	// as a DeadlineExceeded-wrapped error while the caller ctx is still live.
 	if err := c.doRequest(ctx, http.MethodGet, "/"+accountID+"?fields=name,account_status", nil, &map[string]any{}); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("meta campaign aborted during account verification: %w", ctx.Err())
+		}
 		steps = append(steps, fmt.Sprintf("Account verification warning: %s", truncateErr(err, 300)))
 	} else {
 		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
@@ -1082,11 +1088,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 		adID, creativeID, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i)
 		if verr != nil {
-			// A canceled or timed-out context is fatal: continuing would let us
-			// report a "successful" campaign after the caller's context died.
-			// Genuine per-creative API failures remain non-fatal (skip + continue).
-			if errors.Is(verr, context.Canceled) || errors.Is(verr, context.DeadlineExceeded) {
-				return nil, fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, verr)
+			// A cancelled or deadlined CALLER context is fatal: continuing would let
+			// us report a "successful" campaign after the caller's context died. Key
+			// the decision off the caller ctx directly (ctx.Err()), NOT errors.Is on
+			// the returned error: the client's own http.Client.Timeout also surfaces
+			// as a DeadlineExceeded-wrapped url error, but with a still-live caller
+			// ctx that per-creative timeout is an ordinary API failure and must stay
+			// non-fatal (skip + continue), like any other per-creative error.
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, ctx.Err())
 			}
 			steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, truncateErr(verr, 300)))
 			continue
@@ -1157,9 +1167,7 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 }
 
 func objectiveKeys() []string {
-	// The objectives CreateCampaign actually accepts. 'leads' is intentionally
-	// excluded: it's defined in objectiveParams (for labels) but rejected up front
-	// until lead-form support exists, so advertising it here would send callers
-	// into a second error.
-	return []string{"awareness", "traffic", "engagement", "conversions"}
+	// The objectives CreateCampaign accepts. All five are supported; 'leads' runs
+	// as a website-leads campaign (LINK_CLICKS to the registration URL).
+	return []string{"awareness", "traffic", "engagement", "leads", "conversions"}
 }

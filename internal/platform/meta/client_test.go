@@ -45,7 +45,7 @@ func TestObjectiveParamsMapping(t *testing.T) {
 		{"awareness", "OUTCOME_AWARENESS", "REACH", PromotedObjectNone},
 		{"traffic", "OUTCOME_TRAFFIC", "LINK_CLICKS", PromotedObjectNone},
 		{"engagement", "OUTCOME_ENGAGEMENT", "POST_ENGAGEMENT", PromotedObjectPageID},
-		{"leads", "OUTCOME_LEADS", "LEAD_GENERATION", PromotedObjectPageID},
+		{"leads", "OUTCOME_LEADS", "LINK_CLICKS", PromotedObjectNone},
 		{"conversions", "OUTCOME_SALES", "OFFSITE_CONVERSIONS", PromotedObjectPixelID},
 	}
 	for _, tc := range cases {
@@ -702,18 +702,79 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	}
 }
 
-// TestCreateCampaignContextCancelDuringAdsIsFatal verifies that a canceled (or
-// timed-out) context observed while creating a variant ad is FATAL: CreateCampaign
+// TestCreateCampaignContextCancelDuringAdsIsFatal verifies that a cancelled
+// CALLER context observed while creating a variant ad is FATAL: CreateCampaign
 // must return an error rather than reporting a "successful" result after its
-// context died. Genuine per-creative API failures stay non-fatal (covered above).
+// context died. The decision keys off the caller ctx (ctx.Err()), not errors.Is
+// on the returned error, so this test cancels the CALLER ctx directly.
 func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
 	// A RoundTripper that succeeds for the account GET, campaign, and ad-set calls
-	// but returns a context.Canceled error for the first /adcreatives call — the
-	// same error c.httpClient.Do surfaces when the caller's context is canceled
-	// mid-flight. Deterministic and non-blocking (no server goroutine to drain).
+	// but, on the first /adcreatives call, cancels the caller ctx and returns the
+	// context.Canceled error that c.httpClient.Do surfaces mid-flight. Deterministic
+	// and non-blocking (no server goroutine to drain).
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if strings.HasSuffix(req.URL.Path, "/adcreatives") {
+			cancel()
 			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
+		}
+		body := `{"id":"x"}`
+		switch {
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"id":"camp_1"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"adset_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	defer cancel()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(ctx, CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatalf("expected error after context cancellation, got success: %+v", res)
+	}
+	if res != nil {
+		t.Errorf("result must be nil on context cancellation, got %+v", res)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+// TestCreateCampaignPerCreativeTimeoutIsNonFatal verifies that a per-creative
+// request failing with a DeadlineExceeded-like error while the CALLER context is
+// still live stays NON-fatal: the campaign still returns and the failure is
+// recorded as a warning step. This is the client's own http.Client.Timeout case —
+// it must NOT abort the whole campaign (contrast with the caller-cancel test).
+func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
+	// The caller ctx is never cancelled. The first /adcreatives call fails with a
+	// url error wrapping context.DeadlineExceeded — exactly what http.Client.Timeout
+	// surfaces — but ctx.Err() stays nil, so it must be treated as an ordinary
+	// per-creative failure.
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/adcreatives") {
+			return nil, &url.Error{
+				Op:  "Post",
+				URL: req.URL.String(),
+				Err: fmt.Errorf("net/http: request canceled (Client.Timeout exceeded while awaiting headers): %w", context.DeadlineExceeded),
+			}
 		}
 		body := `{"id":"x"}`
 		switch {
@@ -743,14 +804,21 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil {
-		t.Fatalf("expected error after context cancellation, got success: %+v", res)
+	if err != nil {
+		t.Fatalf("per-creative timeout with a live caller ctx must be non-fatal: %v", err)
 	}
-	if res != nil {
-		t.Errorf("result must be nil on context cancellation, got %+v", res)
+	if res == nil {
+		t.Fatalf("expected a campaign result, got nil")
 	}
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("err = %v, want it to wrap context.Canceled", err)
+	if res.CampaignID != "camp_1" {
+		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
+	}
+	// The creative failed, so no ad was created, but the campaign still returns.
+	if res.AdCount != 0 {
+		t.Errorf("ad count = %d, want 0 (the only creative timed out)", res.AdCount)
+	}
+	if !anyStepContains(res.Steps, "Ad 1 failed") {
+		t.Errorf("expected an 'Ad 1 failed' warning step, got %v", res.Steps)
 	}
 }
 
@@ -1212,14 +1280,36 @@ func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
 	}
 }
 
-// TestCreateCampaignRejectsLeadsObjective verifies the leads objective is
-// rejected up front (before any mutating call) since it would create a
-// lead-gen-optimized campaign wired to a website-click creative.
-func TestCreateCampaignRejectsLeadsObjective(t *testing.T) {
-	srv := noPostServer(t)
+// TestCreateCampaignSupportsLeadsObjective verifies the leads objective creates a
+// website-leads campaign: OUTCOME_LEADS optimizing for LINK_CLICKS to the
+// registration URL, with no promoted object and no lead form required.
+func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
+	campaignCap := newBodyCapture()
+	adsetCap := newBodyCapture()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			campaignCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			adsetCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 	defer srv.Close()
+
 	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
-	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Objective:       "leads",
 		RegistrationURL: "https://x.example.org/e",
@@ -1229,8 +1319,23 @@ func TestCreateCampaignRejectsLeadsObjective(t *testing.T) {
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "leads") {
-		t.Fatalf("err = %v, want the leads-unsupported error", err)
+	if err != nil {
+		t.Fatalf("leads objective must be supported: %v", err)
+	}
+	if res.AdCount != 1 {
+		t.Errorf("ad count = %d, want 1", res.AdCount)
+	}
+	campaignBody := campaignCap.get()
+	adsetBody := adsetCap.get()
+	if campaignBody["objective"] != "OUTCOME_LEADS" {
+		t.Errorf("campaign objective = %v, want OUTCOME_LEADS", campaignBody["objective"])
+	}
+	if adsetBody["optimization_goal"] != "LINK_CLICKS" {
+		t.Errorf("optimization_goal = %v, want LINK_CLICKS", adsetBody["optimization_goal"])
+	}
+	// Website-leads needs no promoted object (no lead form / no pixel).
+	if _, ok := adsetBody["promoted_object"]; ok {
+		t.Errorf("leads ad set unexpectedly carried a promoted_object: %v", adsetBody["promoted_object"])
 	}
 }
 
