@@ -158,15 +158,26 @@ type Client struct {
 	cachedToken   string
 	tokenExpireAt time.Time
 
-	// refreshing coalesces concurrent token refreshes with the standard library
-	// only (no third-party single-flight): the first caller to find the cache
-	// empty/expired becomes the leader and sets refreshing=true; concurrent
-	// callers instead wait on refreshWait, which the leader closes when the
-	// refresh finishes (success or failure). This keeps a cold start or expiry
-	// burst to a single upstream refresh while holding no lock across the network
-	// call. Both guarded by mu.
-	refreshing  bool
-	refreshWait chan struct{}
+	// inflight coalesces concurrent token refreshes with the standard library
+	// only (no third-party single-flight). The first caller to find the cache
+	// empty/expired becomes the leader: it publishes a *tokenRefresh on inflight
+	// and kicks off the fetch in a detached goroutine. Every caller of the same
+	// in-flight window — leader and followers alike — selects on its own ctx
+	// against the shared tokenRefresh.done channel, then reads the SHARED result
+	// (token AND err). This keeps a cold start or expiry burst to a single
+	// upstream refresh whose exact outcome (success or failure) is shared by all
+	// current waiters, so a failed refresh fails all of them rather than each
+	// follower re-leading a fresh refresh in series. Guarded by mu.
+	inflight *tokenRefresh
+}
+
+// tokenRefresh holds the shared result of one in-flight token refresh. done is
+// closed exactly once when the fetch completes, after token/err are set under
+// mu; waiters read token/err only after done is closed.
+type tokenRefresh struct {
+	done  chan struct{}
+	token string
+	err   error
 }
 
 // NewClient builds a Client from injected credentials and account config.
@@ -284,14 +295,16 @@ type tokenResponse struct {
 // refreshToken returns a cached access token when it is still valid past the
 // expiry buffer, otherwise it requests a new one. Mirrors refreshRedditToken.
 //
-// Concurrent refreshes are coalesced with a single-flight group so a cold start
-// or an expiry burst fires exactly one upstream token request whose result is
-// shared by all waiters, rather than one refresh per in-flight campaign call
-// (which would amplify rate-limit pressure). Crucially, the lock is NOT held
-// across the network call: the fast path reads the cache under a brief lock,
-// and a caller waiting on the shared refresh selects on ctx.Done() so it can
-// still return promptly with its own context error instead of blocking on the
-// shared request indefinitely.
+// Concurrent refreshes are coalesced with a shared-result single-flight so a
+// cold start or an expiry burst fires exactly one upstream token request whose
+// exact outcome (token AND error) is shared by all current waiters, rather than
+// one refresh per in-flight campaign call (which would amplify rate-limit
+// pressure). A failed refresh therefore fails all of its current waiters at
+// once instead of each of them re-leading a fresh refresh in series. Crucially,
+// the lock is NOT held across the network call: the fast path reads the cache
+// under a brief lock, and every waiter (leader included) selects on ctx.Done()
+// so it can still return promptly with its own context error instead of blocking
+// on the shared request indefinitely.
 func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	// Bail out early if the caller's context is already done, so a cancelled
 	// caller never triggers or joins a refresh.
@@ -299,55 +312,53 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	for {
-		c.mu.Lock()
-		// Fast path: reuse the cached token while it remains valid past the buffer.
-		if c.cachedToken != "" && c.now().Before(c.tokenExpireAt.Add(-redditTokenExpiryBuffer)) {
-			token := c.cachedToken
-			c.mu.Unlock()
-			return token, nil
-		}
-		if c.refreshing {
-			// Another caller is already refreshing: wait on its broadcast channel
-			// rather than starting a duplicate refresh, then loop to re-read the
-			// cache (or become the leader if that refresh failed).
-			wait := c.refreshWait
-			c.mu.Unlock()
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-wait:
-				continue
-			}
-		}
-		// Become the leader: publish a wait channel for followers and refresh.
-		c.refreshing = true
-		c.refreshWait = make(chan struct{})
-		wait := c.refreshWait
+	c.mu.Lock()
+	// Fast path: reuse the cached token while it remains valid past the buffer.
+	if c.cachedToken != "" && c.now().Before(c.tokenExpireAt.Add(-redditTokenExpiryBuffer)) {
+		token := c.cachedToken
 		c.mu.Unlock()
-
-		// Refresh on a bounded context detached from this caller's ctx, so one
-		// caller's cancellation can't tear down a refresh other waiters depend on.
-		// No lock is held across this network call.
-		fetchCtx, cancel := context.WithTimeout(context.Background(), redditRequestTimeout)
-		token, err := c.fetchToken(fetchCtx)
-		cancel()
-
-		c.mu.Lock()
-		c.refreshing = false
-		close(wait) // wake all followers (they re-read the cache / retry)
-		c.mu.Unlock()
-
-		if err != nil {
-			return "", err
-		}
 		return token, nil
+	}
+
+	inflight := c.inflight
+	if inflight == nil {
+		// Become the leader: publish the shared result and kick off the fetch on a
+		// bounded context detached from this caller's ctx, so one caller's
+		// cancellation can't tear down a refresh other waiters depend on. No lock
+		// is held across the network call.
+		inflight = &tokenRefresh{done: make(chan struct{})}
+		c.inflight = inflight
+		go func() {
+			fetchCtx, cancel := context.WithTimeout(context.Background(), redditRequestTimeout)
+			token, err := c.fetchToken(fetchCtx)
+			cancel()
+
+			c.mu.Lock()
+			inflight.token = token
+			inflight.err = err
+			c.inflight = nil
+			close(inflight.done)
+			c.mu.Unlock()
+		}()
+	}
+	c.mu.Unlock()
+
+	// Leader and followers alike wait on the shared result, selecting on their own
+	// ctx so a cancelled caller returns promptly with its context error while the
+	// detached fetch still completes and populates the shared result and cache for
+	// the others. On failure, every current waiter gets the same error and none
+	// re-leads a serial refresh.
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-inflight.done:
+		return inflight.token, inflight.err
 	}
 }
 
 // fetchToken performs the actual upstream token request and caches the result.
-// It is only ever invoked from within the single-flight group, so at most one
-// call is in flight at a time.
+// It is only ever invoked from the leader's detached refresh goroutine, so at
+// most one call is in flight at a time.
 func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	credentials := base64.StdEncoding.EncodeToString([]byte(c.creds.ClientID + ":" + c.creds.ClientSecret))
 	form := url.Values{}

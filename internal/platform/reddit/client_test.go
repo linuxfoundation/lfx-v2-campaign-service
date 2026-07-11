@@ -1441,27 +1441,11 @@ func TestRefreshToken_SingleFlightCoalesces(t *testing.T) {
 	}
 }
 
-// TestRefreshToken_InFlightRechecksCache verifies FINDING 1 (round 8): the
-// single-flight work function re-checks the cached token under the lock before
-// any network call. This covers the "first completes before second dispatches"
-// ordering that plain coalescing misses: if a prior refresh COMPLETED (and
-// cached a valid token) in the window after this caller failed the fast path
-// but before its DoChan work function runs, single-flight will NOT coalesce
-// this caller with the prior one (that call already returned). Without the
-// in-flight re-check, this caller would then issue a duplicate token request.
-// With it, the work function observes the fresh cache and returns it -- no
-// network call at all.
-//
-// The exact interleaving is made deterministic by a call-counting clock: it
-// reports an EXPIRED time on its first observation (the fast-path check, which
-// must MISS so the caller proceeds into DoChan) and a VALID time on every
-// later observation (the work-function re-check, which must HIT and return the
-// seeded token). The token endpoint fails the test if it is ever contacted.
 // TestRefreshToken_FollowerUsesLeaderResult verifies that a caller arriving
 // while another caller's refresh is in flight waits for it and reuses its result
-// (via the freshly-populated cache) instead of issuing a second network refresh.
-// This is the stdlib coalescer's follower path: the leader holds refreshing=true
-// and closes refreshWait on completion; the follower then re-reads the cache.
+// instead of issuing a second network refresh. This is the shared-result
+// coalescer's follower path: the leader publishes an in-flight *tokenRefresh and
+// closes its done channel on completion; the follower shares that same result.
 func TestRefreshToken_FollowerUsesLeaderResult(t *testing.T) {
 	var hits int32
 	release := make(chan struct{})
@@ -1550,5 +1534,62 @@ func TestRefreshToken_CancelledContextReturnsPromptly(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&hits); got != 0 {
 		t.Errorf("cancelled caller triggered %d token requests, want 0", got)
+	}
+}
+
+// TestRefreshToken_FailureSharedNoSerialReLead verifies that a FAILED refresh is
+// shared across all current waiters: the leader's error is returned to every
+// follower of the same in-flight window, so a token-endpoint outage produces
+// exactly ONE upstream hit for the burst rather than N serialized re-leads (each
+// follower waking on an empty cache and refreshing again in turn). The endpoint
+// returns 500 on the first (and only) hit; if the coalescer re-led per follower
+// it would climb to a valid response and record N hits.
+func TestRefreshToken_FailureSharedNoSerialReLead(t *testing.T) {
+	var hits int32
+	// release gates the single in-flight handler until all N callers are parked on
+	// the shared result, so a per-follower re-lead (the bug) would surface as extra
+	// hits. The handler fails on its first (only) invocation.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		<-release
+		if n == 1 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		// Any subsequent hit would be a serial re-lead: succeed so the assertion on
+		// error/hit-count catches the regression clearly.
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := c.refreshToken(context.Background())
+			errs <- err
+		}()
+	}
+
+	// Give all callers time to park on the shared in-flight refresh, then release
+	// the single handler that's blocked inside it.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err == nil {
+			t.Error("waiter got a nil error; a failed refresh must fail all its current waiters")
+		}
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("token endpoint hit %d times, want exactly 1 (failure must be shared, not re-led per follower)", got)
 	}
 }
