@@ -491,7 +491,11 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 // campaign, or "" if none exists. A non-nil error signals a lookup failure the
 // caller must not swallow (see findCampaignByName).
 func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string) (string, error) {
-	return c.findByName(ctx, "line_items?campaign_id="+url.QueryEscape(campaignID)+"&with_deleted=false", name)
+	// The X Ads list endpoint filters line items with campaign_ids (plural);
+	// campaign_id (singular) is the CREATE parameter. Using the singular key here
+	// would leave the lookup unscoped and could reuse a same-named line item from
+	// another campaign.
+	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false", name)
 }
 
 // findByName pages through a cursor-paginated X Ads list endpoint (campaigns /

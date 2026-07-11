@@ -13,10 +13,14 @@ campaign -> line_item -> promoted_tweet creation flow. Credentials and account
 configuration are injected via `NewClient`; the package never reads environment
 variables or touches the database.
 
-`CreateCampaign` is idempotent: it reuses existing campaigns and line items by
-name (paged cursor lookups via `findByName`) before creating new ones. A lookup
-that fails transiently propagates an error so the caller aborts rather than
-creating a duplicate. Only the campaign and line item are created with
+`CreateCampaign` is only PARTIALLY idempotent: it reuses existing campaigns and
+line items by name (paged cursor lookups via `findByName`) before creating new
+ones, and a lookup that fails transiently propagates an error so the caller
+aborts rather than creating a duplicate. The promoted-tweet association, however,
+is always re-POSTed on a repeat call (a recognizable duplicate error is treated
+as success, but a lost/malformed first response can still produce a warning);
+true cross-call idempotency (idempotency keys) is explicitly deferred and tracked
+in LFXV2-2665. Only the campaign and line item are created with
 `entity_status=PAUSED`; the promoted-tweet endpoint does not accept
 `entity_status`, so the API creates that association `ACTIVE`. It cannot serve,
 though, because the parent line item is paused — delivery is gated by the paused
@@ -28,7 +32,11 @@ signature base string. Flight dates (`start_time`/`end_time`, ISO8601 UTC) are
 sent only on the line-item create, where they are required; the campaign
 endpoint does not accept them in v12, so the campaign create omits them. Dates
 are validated for both shape and real-calendar validity (`time.Parse`) before
-any mutating call. Writes honor the 1-req/sec limit and retry 429s with backoff
-bounded by `Retry-After` / `X-Rate-Limit-Reset`.
+any mutating call. The client paces sequential writes within a SINGLE dispatch
+toward the 1-req/sec limit; it does NOT enforce the account-wide write limit
+across concurrent dispatches or replicas (that needs cross-replica coordination,
+tracked in LFXV2-2665), so operators must not rely on this stateless client for
+cross-dispatch rate limiting. When the account limit is hit anyway, 429s are
+retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`.
 
 See [internal/platform/twitter](../../../internal/platform/twitter).

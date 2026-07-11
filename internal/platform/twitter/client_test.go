@@ -942,7 +942,7 @@ func TestValidateDateStrict(t *testing.T) {
 // create includes the required start_time/end_time, and that the promoted-tweet
 // create does not send entity_status (the API creates it ACTIVE).
 func TestCreateSendsQueryParams(t *testing.T) {
-	var campaignQuery, lineItemQuery, promotedQuery url.Values
+	var campaignQuery, lineItemQuery, promotedQuery, lineItemGetQuery url.Values
 	var campaignBodyLen, lineItemBodyLen int64
 	var campaignCT, lineItemCT string
 
@@ -954,6 +954,7 @@ func TestCreateSendsQueryParams(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			lineItemGetQuery = r.URL.Query()
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
 			campaignQuery = r.URL.Query()
@@ -988,6 +989,16 @@ func TestCreateSendsQueryParams(t *testing.T) {
 		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "111",
 	}); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	// The line-item lookup must scope by campaign_ids (plural list filter), not
+	// the singular create param campaign_id, or it runs unscoped and could reuse
+	// a same-named line item from another campaign.
+	if lineItemGetQuery.Get("campaign_ids") == "" {
+		t.Errorf("line-item lookup must send campaign_ids (plural): %v", lineItemGetQuery)
+	}
+	if lineItemGetQuery.Has("campaign_id") {
+		t.Errorf("line-item lookup should not use singular campaign_id: %v", lineItemGetQuery)
 	}
 
 	// Campaign create: params on the query string, entity_status=PAUSED, no JSON body.
