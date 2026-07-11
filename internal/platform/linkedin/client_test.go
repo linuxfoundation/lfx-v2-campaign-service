@@ -556,12 +556,131 @@ func TestBuildUTMURL_PreservesExistingQuery(t *testing.T) {
 	}
 }
 
+// TestBuildUTMURL_StripsOneTrailingSlash asserts that a single trailing slash on
+// the path is stripped before the UTM query is appended, mirroring the TS source
+// (".../reg/" -> ".../reg?utm_..."). On slash-sensitive sites this preserves the
+// intended destination.
+func TestBuildUTMURL_StripsOneTrailingSlash(t *testing.T) {
+	got := BuildUTMURL("https://example.com/reg/", "hs-1", "Events | KubeCon", 1)
+	u, err := neturl.Parse(got)
+	if err != nil {
+		t.Fatalf("result is not a valid URL: %q (%v)", got, err)
+	}
+	if u.Path != "/reg" {
+		t.Errorf("path should have one trailing slash stripped, want %q, got %q (full: %s)", "/reg", u.Path, got)
+	}
+	// The '/reg' must be immediately followed by '?', not by '/?'.
+	if !strings.Contains(got, "/reg?") {
+		t.Errorf("expected '/reg?' before the query, got: %s", got)
+	}
+	if strings.Contains(got, "/reg/?") {
+		t.Errorf("trailing slash was NOT stripped: %s", got)
+	}
+}
+
+// TestBuildUTMURL_PreservesEncodedSlash asserts that an ENCODED trailing slash
+// (%2F), which is not a real path separator, is NOT corrupted or stripped when
+// appending UTM params.
+func TestBuildUTMURL_PreservesEncodedSlash(t *testing.T) {
+	got := BuildUTMURL("https://example.com/reg%2F", "hs-1", "Events | KubeCon", 1)
+	if !strings.Contains(got, "reg%2F") {
+		t.Errorf("encoded slash %%2F must be preserved, got: %s", got)
+	}
+	if strings.Contains(got, "reg/") {
+		t.Errorf("encoded slash must not be decoded to a literal '/', got: %s", got)
+	}
+	u, err := neturl.Parse(got)
+	if err != nil {
+		t.Fatalf("result is not a valid URL: %q (%v)", got, err)
+	}
+	if u.Query().Get("utm_source") != "linkedin" {
+		t.Errorf("utm_source not appended: %s", got)
+	}
+}
+
+// TestBuildUTMURL_TrailingSlashPreservesQueryAndFragment asserts that stripping
+// the trailing path slash keeps any existing query params and fragment intact.
+func TestBuildUTMURL_TrailingSlashPreservesQueryAndFragment(t *testing.T) {
+	got := BuildUTMURL("https://example.com/reg/?ref=abc#tickets", "", "Events | KubeCon", 1)
+	u, err := neturl.Parse(got)
+	if err != nil {
+		t.Fatalf("result is not a valid URL: %q (%v)", got, err)
+	}
+	if u.Path != "/reg" {
+		t.Errorf("trailing slash should be stripped, want path %q, got %q (full: %s)", "/reg", u.Path, got)
+	}
+	q := u.Query()
+	if q.Get("ref") != "abc" {
+		t.Errorf("existing query param dropped: %s", got)
+	}
+	if q.Get("utm_source") != "linkedin" {
+		t.Errorf("utm_source not merged: %s", got)
+	}
+	if u.Fragment != "tickets" {
+		t.Errorf("fragment should be preserved, got %q (full: %s)", u.Fragment, got)
+	}
+}
+
 func TestResolveOrgID_CrossTenantRefusal(t *testing.T) {
 	cfg := testConfig()
 	c := NewClient(Credentials{AccessToken: "t"}, cfg)
 	// Unknown account that is not the default -> must refuse.
 	if _, err := c.resolveOrgID("000000"); err == nil {
 		t.Error("expected refusal for unknown non-default account")
+	}
+}
+
+// TestResolveOrgID_FailsClosedOnContradictoryDuplicateAccounts verifies that two
+// Accounts entries with the SAME account id but DIFFERENT orgId are rejected
+// rather than silently resolving to the first, honoring the fail-closed contract.
+func TestResolveOrgID_FailsClosedOnContradictoryDuplicateAccounts(t *testing.T) {
+	cfg := testConfig()
+	cfg.DefaultAccountID = ""
+	cfg.DefaultOrgID = ""
+	cfg.Accounts = []Account{
+		{AccountID: "555", OrgID: "111"},
+		{AccountID: "555", OrgID: "222"},
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	if _, err := c.resolveOrgID("555"); err == nil {
+		t.Error("expected error for contradictory duplicate account mappings, got nil")
+	}
+}
+
+// TestResolveOrgID_FailsClosedWhenAccountOrgConflictsWithDefaultOrg verifies that
+// when the resolved (default) account's orgId disagrees with a configured
+// DefaultOrgID, resolution fails closed rather than picking one.
+func TestResolveOrgID_FailsClosedWhenAccountOrgConflictsWithDefaultOrg(t *testing.T) {
+	cfg := testConfig()
+	cfg.DefaultAccountID = "555"
+	cfg.DefaultOrgID = "999"
+	cfg.Accounts = []Account{
+		{AccountID: "555", OrgID: "111"},
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	if _, err := c.resolveOrgID("555"); err == nil {
+		t.Error("expected error when account orgId conflicts with defaultOrgId, got nil")
+	}
+}
+
+// TestResolveOrgID_ConsistentMappingResolves verifies that a consistent mapping
+// (duplicate entries that agree, and a default account whose orgId matches
+// DefaultOrgID) resolves without error.
+func TestResolveOrgID_ConsistentMappingResolves(t *testing.T) {
+	cfg := testConfig()
+	cfg.DefaultAccountID = "555"
+	cfg.DefaultOrgID = "111"
+	cfg.Accounts = []Account{
+		{AccountID: "555", OrgID: "111"},
+		{AccountID: "555", OrgID: "111"}, // duplicate but consistent
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	org, err := c.resolveOrgID("555")
+	if err != nil {
+		t.Fatalf("consistent mapping should resolve, got error: %v", err)
+	}
+	if org != "111" {
+		t.Errorf("resolved orgId = %q, want %q", org, "111")
 	}
 }
 

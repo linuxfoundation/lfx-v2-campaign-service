@@ -1241,6 +1241,77 @@ func TestCreateCampaign_AcceptsMinimumBudget(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_BudgetMinimumChecksRoundedValue verifies that the budget
+// minimum is validated against the 2-decimal-rounded value actually SENT to
+// LinkedIn (strconv.FormatFloat(_, 'f', 2, 64)), not the raw float. A value just
+// under the minimum that ROUNDS UP to the minimum (e.g. 9.999 -> "10.00") is
+// accepted, while a value that rounds BELOW the minimum (e.g. 9.994 -> "9.99") is
+// rejected. Analogous for the lifetime minimum ($100).
+func TestCreateCampaign_BudgetMinimumChecksRoundedValue(t *testing.T) {
+	accepted := []struct {
+		name     string
+		budget   float64
+		lifetime bool
+	}{
+		{"9.999 daily rounds to 10.00", 9.999, false},
+		{"99.999 lifetime rounds to 100.00", 99.999, true},
+	}
+	for _, tc := range accepted {
+		t.Run("accepted/"+tc.name, func(t *testing.T) {
+			srv := fullFlowServer(t)
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:        "E",
+				RegistrationURL:  "https://events.example.org/reg",
+				BudgetUSD:        tc.budget,
+				LifetimeBudget:   tc.lifetime,
+				StartDate:        "2099-01-01",
+				EndDate:          "2099-02-01",
+				TargetingProfile: "cloud-native",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+			})
+			if err != nil {
+				t.Fatalf("CreateCampaign with %s should be accepted (rounds up to the minimum), got error: %v", tc.name, err)
+			}
+		})
+	}
+
+	rejected := []struct {
+		name     string
+		budget   float64
+		lifetime bool
+	}{
+		{"9.994 daily rounds to 9.99", 9.994, false},
+		{"99.994 lifetime rounds to 99.99", 99.994, true},
+	}
+	for _, tc := range rejected {
+		t.Run("rejected/"+tc.name, func(t *testing.T) {
+			srv := noPOSTServer(t)
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:        "E",
+				RegistrationURL:  "https://events.example.org/reg",
+				BudgetUSD:        tc.budget,
+				LifetimeBudget:   tc.lifetime,
+				StartDate:        "2099-01-01",
+				EndDate:          "2099-02-01",
+				TargetingProfile: "cloud-native",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+			})
+			if err == nil {
+				t.Fatalf("CreateCampaign with %s: expected rejection (rounds below the minimum), got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), "minimum") {
+				t.Errorf("error should mention the LinkedIn budget minimum, got: %v", err)
+			}
+		})
+	}
+}
+
 // TestCreateCampaign_RejectsMalformedImageURNBeforeAnyPOST verifies that a
 // variant carrying a non-empty but malformed ImageURN is rejected up front,
 // before any POST — an empty ImageURN stays allowed, but a bad digital-asset URN
@@ -1459,17 +1530,19 @@ func TestImageURNRE_TightId(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_RejectsProfileWithNoTargetingBeforeAnyPOST verifies that a
-// targeting profile PRESENT in the runtime config but with empty skills AND
-// groups is rejected up front, before any POST — a misconfigured injected profile
-// must not build a campaign whose only include facet is the hardcoded
-// jobFunctions fallback. The server fails on any POST.
-func TestCreateCampaign_RejectsProfileWithNoTargetingBeforeAnyPOST(t *testing.T) {
-	srv := noPOSTServer(t)
+// TestCreateCampaign_AcceptsEmptySkillsGroupsWhenJobFunctionsPresent verifies
+// that a targeting profile PRESENT in the runtime config but with empty skills
+// AND groups is ACCEPTED, mirroring the TS source: buildTargetingCriteria always
+// injects the hardcoded jobFunctions into the include block, so the assembled
+// targeting criteria is non-empty even without profile-specific skills/groups.
+// The full flow must succeed (no rejection before the POSTs).
+func TestCreateCampaign_AcceptsEmptySkillsGroupsWhenJobFunctionsPresent(t *testing.T) {
+	srv := fullFlowServer(t)
 	defer srv.Close()
 
 	cfg := testConfig()
-	// A present-but-empty profile: no skills, no groups.
+	// A present-but-empty profile: no skills, no groups. jobFunctions keep the
+	// assembled criteria non-empty, so this must be accepted.
 	cfg.TargetingProfiles = []TargetingProfileConfig{
 		{ID: "empty-profile", Label: "Empty"},
 	}
@@ -1485,11 +1558,40 @@ func TestCreateCampaign_RejectsProfileWithNoTargetingBeforeAnyPOST(t *testing.T)
 		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
 		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
 	})
-	if err == nil {
-		t.Fatal("CreateCampaign with an empty targeting profile: expected error, got nil")
+	if err != nil {
+		t.Fatalf("CreateCampaign with empty skills/groups but jobFunctions present must be accepted, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "usable targeting") {
-		t.Errorf("error should mention no usable targeting facets, got: %v", err)
+}
+
+// TestValidatePrerequisites_RejectsOnlyTrulyEmptyCriteria verifies that the
+// non-empty-criteria check keys off the FINAL assembled include facets: with
+// jobFunctions present (the normal case) an empty-skills/groups profile is
+// accepted, and only a truly-empty assembled criteria (no skills, groups, AND no
+// jobFunctions) is rejected. Both custom and cloud-native behave identically.
+func TestValidatePrerequisites_RejectsOnlyTrulyEmptyCriteria(t *testing.T) {
+	for _, profile := range []string{"cloud-native", "custom"} {
+		t.Run(profile, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.TargetingProfiles = []TargetingProfileConfig{
+				{ID: "cloud-native", Label: "Cloud Native"}, // empty skills/groups
+			}
+			c := NewClient(Credentials{AccessToken: "t"}, cfg, WithClock(fixedClock()))
+
+			// jobFunctions present: assembled criteria non-empty -> accepted.
+			if err := c.validatePrerequisites(cfg.DefaultAccountID, profile); err != nil {
+				t.Fatalf("profile %q with jobFunctions present must be accepted, got: %v", profile, err)
+			}
+
+			// Simulate a truly-empty assembled criteria by temporarily emptying the
+			// package-level jobFunctions: now skills, groups, AND jobFunctions are all
+			// empty, so the assembled criteria would be empty and must be rejected.
+			saved := jobFunctions
+			jobFunctions = nil
+			t.Cleanup(func() { jobFunctions = saved })
+			if err := c.validatePrerequisites(cfg.DefaultAccountID, profile); err == nil {
+				t.Fatalf("profile %q with truly-empty assembled criteria must be rejected", profile)
+			}
+		})
 	}
 }
 
@@ -1545,14 +1647,15 @@ func TestValidateRegistrationURL_RejectsEmptyHostname(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_RejectsBlankOnlyFacetsBeforeAnyPOST verifies that a
-// targeting profile whose skills/groups contain only blank/whitespace-only
-// entries (e.g. []string{""} or {"  "}) is treated as having NO usable targeting
-// and is rejected up front — before any POST — exactly like a genuinely empty
-// profile. Such a facet would be dropped before the wire, so it must never make a
-// profile look usable.
-func TestCreateCampaign_RejectsBlankOnlyFacetsBeforeAnyPOST(t *testing.T) {
-	srv := noPOSTServer(t)
+// TestCreateCampaign_AcceptsBlankOnlyFacetsWhenJobFunctionsPresent verifies that
+// a targeting profile whose skills/groups contain only blank/whitespace-only
+// entries (e.g. []string{""} or {"  "}) is ACCEPTED: those blanks are dropped
+// before the wire, but buildTargetingCriteria still injects the hardcoded
+// jobFunctions, so the assembled include criteria is non-empty. This mirrors the
+// TS source, which accepts empty/blank skills/groups as long as jobFunctions keep
+// the criteria non-empty.
+func TestCreateCampaign_AcceptsBlankOnlyFacetsWhenJobFunctionsPresent(t *testing.T) {
+	srv := fullFlowServer(t)
 	defer srv.Close()
 
 	cfg := testConfig()
@@ -1571,11 +1674,8 @@ func TestCreateCampaign_RejectsBlankOnlyFacetsBeforeAnyPOST(t *testing.T) {
 		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
 		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
 	})
-	if err == nil {
-		t.Fatal("CreateCampaign with blank-only skills/groups: expected rejection before any POST, got nil")
-	}
-	if !strings.Contains(err.Error(), "no usable targeting facets") {
-		t.Errorf("error should mention no usable targeting facets, got: %v", err)
+	if err != nil {
+		t.Fatalf("CreateCampaign with blank-only skills/groups but jobFunctions present must be accepted, got error: %v", err)
 	}
 }
 
@@ -1995,14 +2095,15 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_EmptyConfigRejectedIdenticallyForCustomAndCloudNative proves
-// the empty-config rejection is applied to the NORMALIZED profile name, so the
-// "custom" alias can no longer bypass it. "custom" normalizes to "cloud-native"
-// and thus describes identical targeting; an EMPTY cloud-native profile must be
-// rejected before any POST whether the caller asks for it directly
-// ("cloud-native") or via its alias ("custom"). Previously the check keyed on the
-// original name, so custom slipped past a rejection that direct cloud-native hit.
-func TestCreateCampaign_EmptyConfigRejectedIdenticallyForCustomAndCloudNative(t *testing.T) {
+// TestCreateCampaign_EmptyConfigHandledIdenticallyForCustomAndCloudNative proves
+// the empty-config decision is applied to the NORMALIZED profile name, so the
+// "custom" alias behaves EXACTLY like direct "cloud-native". "custom" normalizes
+// to "cloud-native" and thus describes identical targeting. Mirroring the TS
+// source: an empty cloud-native profile is ACCEPTED (jobFunctions keep the
+// assembled criteria non-empty) for BOTH names, and is REJECTED only if the
+// assembled criteria would be truly empty (jobFunctions also empty) for BOTH
+// names — never one but not the other.
+func TestCreateCampaign_EmptyConfigHandledIdenticallyForCustomAndCloudNative(t *testing.T) {
 	base := CampaignInput{
 		EventName:       "KubeCon",
 		RegistrationURL: "https://events.example.org/reg",
@@ -2013,14 +2114,13 @@ func TestCreateCampaign_EmptyConfigRejectedIdenticallyForCustomAndCloudNative(t 
 		Variants:        []CreativeVariant{{IntroText: "a", Headline: "b"}},
 	}
 
+	// (a) Empty cloud-native config but jobFunctions present: ACCEPTED for both.
 	for _, profile := range []string{"cloud-native", "custom"} {
-		t.Run(profile, func(t *testing.T) {
-			srv := noPOSTServer(t)
+		t.Run("accepted/"+profile, func(t *testing.T) {
+			srv := fullFlowServer(t)
 			defer srv.Close()
 
 			cfg := testConfig()
-			// Aliased profile EXISTS but has EMPTY facets (both nil and blank-only
-			// entries count as empty and must be rejected identically for both names).
 			cfg.TargetingProfiles = []TargetingProfileConfig{
 				{ID: "cloud-native", Label: "Cloud Native", Skills: []string{""}, Groups: nil},
 			}
@@ -2028,12 +2128,37 @@ func TestCreateCampaign_EmptyConfigRejectedIdenticallyForCustomAndCloudNative(t 
 
 			in := base
 			in.TargetingProfile = profile
+			if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+				t.Fatalf("profile %q with empty cloud-native config + jobFunctions present must be accepted, got: %v", profile, err)
+			}
+		})
+	}
+
+	// (b) Truly-empty assembled criteria (jobFunctions also empty): REJECTED for
+	// both, before any POST.
+	for _, profile := range []string{"cloud-native", "custom"} {
+		t.Run("rejected/"+profile, func(t *testing.T) {
+			srv := noPOSTServer(t)
+			defer srv.Close()
+
+			cfg := testConfig()
+			cfg.TargetingProfiles = []TargetingProfileConfig{
+				{ID: "cloud-native", Label: "Cloud Native", Skills: []string{""}, Groups: nil},
+			}
+			c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+			saved := jobFunctions
+			jobFunctions = nil
+			t.Cleanup(func() { jobFunctions = saved })
+
+			in := base
+			in.TargetingProfile = profile
 			_, err := c.CreateCampaign(context.Background(), in)
 			if err == nil {
-				t.Fatalf("profile %q with empty cloud-native config: expected rejection before any POST, got nil", profile)
+				t.Fatalf("profile %q with truly-empty assembled criteria: expected rejection before any POST, got nil", profile)
 			}
-			if !strings.Contains(err.Error(), "no usable targeting facets") {
-				t.Errorf("profile %q: error should mention no usable targeting facets, got: %v", profile, err)
+			if !strings.Contains(err.Error(), "empty targeting criteria") {
+				t.Errorf("profile %q: error should mention empty targeting criteria, got: %v", profile, err)
 			}
 		})
 	}

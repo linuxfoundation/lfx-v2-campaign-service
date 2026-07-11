@@ -835,6 +835,12 @@ func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shar
 // the end: naive string concatenation on "https://x.org/reg#tickets" would yield
 // "https://x.org/reg#tickets?utm_..." (query inside the fragment, which browsers
 // drop). Any existing query params are preserved.
+//
+// Mirroring the TS source, a single trailing slash is stripped from the path
+// before the UTM query is appended (so ".../reg/" becomes ".../reg?utm_...").
+// The strip operates on the escaped path so an encoded "%2F" is not corrupted,
+// and it only removes a literal, unencoded trailing "/". Query and fragment are
+// preserved.
 func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string {
 	term := strings.ReplaceAll(campaignName, " | ", "_")
 	term = strings.Join(strings.Fields(term), "-")
@@ -850,6 +856,18 @@ func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string
 			sep = "&"
 		}
 		return trimmed + sep + utmValues(hsToken, term, variantIndex).Encode()
+	}
+
+	// Strip one literal trailing slash from the path, mirroring the TS source.
+	// Operate on EscapedPath so an encoded "%2F" (which is NOT a real path
+	// separator) is preserved rather than being treated as a strippable slash.
+	if esc := u.EscapedPath(); strings.HasSuffix(esc, "/") {
+		trimmed := esc[:len(esc)-1]
+		// Re-decode into Path/RawPath so the URL re-marshals consistently.
+		if decoded, derr := url.PathUnescape(trimmed); derr == nil {
+			u.Path = decoded
+			u.RawPath = trimmed
+		}
 	}
 
 	q := u.Query()
@@ -920,26 +938,26 @@ func stripDashes(text string) string {
 // Mirrors validateLinkedInPrerequisites().
 //
 // Beyond confirming the targeting profile EXISTS, it validates that the resolved
-// profile actually yields usable targeting. RuntimeConfig is injected, so a
-// present-but-misconfigured profile (empty skills AND groups) would otherwise
-// build a campaign whose only include facet is the hardcoded jobFunctions
-// fallback — i.e. no profile-specific audience at all. buildTargetingCriteria
-// puts skills and groups (with jobFunctions) into the include block, so at least
-// one NON-BLANK skill or group entry must be present for the profile to
-// contribute real targeting: a slice of only blank/whitespace-only strings (e.g.
-// []string{""}) is dropped by buildTargetingCriteria before the wire, so it is
-// treated here as no targeting.
+// profile actually yields usable targeting — i.e. that the FINAL assembled
+// targeting criteria would be non-empty. Mirroring the TS source, an empty
+// skills/groups config is acceptable AS LONG AS the resulting include criteria
+// is non-empty: buildTargetingCriteria always adds the hardcoded jobFunctions
+// facets to the include block, so a profile with empty skills AND groups still
+// contributes real targeting (the jobFunctions) and is accepted. The rejection
+// keys off the ASSEMBLED include facets being empty, not merely off skills/groups
+// being empty. Because jobFunctions is always present, a config-only-blank
+// skills/groups profile is accepted, exactly as the TS does.
 //
 // The "custom" profile aliases "cloud-native": both are normalized to the same
 // lookup and evaluated identically. validatePrerequisites REQUIRES the resolved
-// profile to EXIST (it errors when absent, exactly like any other profile) AND to
-// yield at least one usable facet — so an EMPTY cloud-native profile is rejected
-// whether it is requested directly ("cloud-native") or via its alias ("custom").
-// There is no per-alias emptiness exemption: because the emptiness check keys on
-// the normalized name, custom and cloud-native are provably equivalent here. (The
-// lower-level buildTargetingCriteria additionally tolerates the aliased profile
-// being absent, but that branch is unreachable via this public flow, which fails
-// closed here first.)
+// profile to EXIST (it errors when absent, exactly like any other profile). The
+// non-empty-criteria check keys on the normalized profile (after custom ->
+// cloud-native aliasing) plus the always-present jobFunctions, so custom and
+// cloud-native are provably equivalent here: both are accepted when jobFunctions
+// keep the criteria non-empty, and both are rejected only if the assembled
+// criteria would be truly empty. (The lower-level buildTargetingCriteria
+// additionally tolerates the aliased profile being absent, but that branch is
+// unreachable via this public flow, which fails closed here first.)
 func (c *Client) validatePrerequisites(accountID, profile string) error {
 	if _, err := c.orgURN(accountID); err != nil {
 		return err
@@ -953,26 +971,29 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		if p.ID != lookup {
 			continue
 		}
-		// Profile found: require it to yield at least one usable targeting facet.
-		// Count only NON-BLANK entries — a config-supplied slice can contain blank
-		// strings (e.g. []string{""} or {"  "}) that are not usable facets and are
-		// dropped by buildTargetingCriteria before the wire, so a profile whose
-		// skills/groups are all blank contributes no real targeting and must be
-		// rejected here just like a genuinely empty profile.
+		// Profile found: require the FINAL assembled include targeting criteria to be
+		// non-empty. Count only NON-BLANK skill/group entries — a config-supplied
+		// slice can contain blank strings (e.g. []string{""} or {"  "}) that are not
+		// usable facets and are dropped by buildTargetingCriteria before the wire —
+		// then add the always-present hardcoded jobFunctions facets that
+		// buildTargetingCriteria injects into the SAME include `or` block. Mirroring
+		// the TS source, empty skills AND groups is acceptable so long as the
+		// assembled criteria is non-empty: because jobFunctions is always non-empty,
+		// the include criteria is never empty and such a profile is ACCEPTED. Only a
+		// truly-empty assembled criteria (no skills, no groups, AND no jobFunctions)
+		// is rejected.
 		//
-		// This emptiness check operates on the NORMALIZED profile (the resolved
-		// lookup after custom->cloud-native aliasing), so it does NOT special-case
-		// the ORIGINAL name. Previously the check was skipped when profile ==
-		// "custom", which let an EMPTY cloud-native config be rejected when requested
-		// directly (profile == "cloud-native") yet ACCEPTED via its "custom" alias —
-		// even though "custom" normalizes to "cloud-native" and thus describes the
-		// IDENTICAL targeting. Because both requests resolve to the same lookup and
-		// the same TargetingProfileConfig (p), they are now evaluated identically: an
-		// empty cloud-native profile is rejected whether requested as "cloud-native"
-		// or as "custom". (Absence of the aliased profile is still enforced in the
-		// not-found branch below for both names.)
-		if len(nonBlankFacets(p.Skills)) == 0 && len(nonBlankFacets(p.Groups)) == 0 {
-			return fmt.Errorf("LinkedIn targeting profile %q has no usable targeting facets (skills and groups are empty or blank) — refusing to create a campaign with no profile-specific targeting", lookup)
+		// This check operates on the NORMALIZED profile (the resolved lookup after
+		// custom->cloud-native aliasing) plus the shared jobFunctions, so it does NOT
+		// special-case the ORIGINAL name: custom and cloud-native resolve to the same
+		// lookup and the same TargetingProfileConfig (p) and are evaluated
+		// identically. Both are accepted when jobFunctions keep the criteria
+		// non-empty; both are rejected only if the assembled criteria would be truly
+		// empty. (Absence of the aliased profile is still enforced in the not-found
+		// branch below for both names.)
+		assembledIncludeFacets := len(nonBlankFacets(p.Skills)) + len(nonBlankFacets(p.Groups)) + len(nonBlankFacets(jobFunctions))
+		if assembledIncludeFacets == 0 {
+			return fmt.Errorf("LinkedIn targeting profile %q would yield empty targeting criteria (no skills, groups, or job functions) — refusing to create a campaign with no targeting", lookup)
 		}
 		// Validate facet URN shapes up front (skills, groups, employer exclusions),
 		// so a malformed value fails here rather than after the campaign group is
@@ -1121,13 +1142,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if in.BudgetUSD <= 0 {
 		return nil, fmt.Errorf("budget must be greater than zero, got %v", in.BudgetUSD)
 	}
-	// A sub-cent budget (e.g. 0.001) passes the > 0 / NaN / Inf checks yet
-	// createSponsoredCampaign formats it with strconv.FormatFloat(_, 'f', 2, 64)
-	// to a 2-decimal string, so it rounds to "0.00" — a zero budget LinkedIn
-	// would reject only AFTER the campaign group (a permanent resource) already
-	// exists, orphaning it. Reject any budget that formats to zero at the same
-	// precision used on the wire, up front, before any POST.
-	if strconv.FormatFloat(in.BudgetUSD, 'f', 2, 64) == "0.00" {
+	// Round the budget to the SAME 2-decimal precision createSponsoredCampaign
+	// serializes to the wire (strconv.FormatFloat(_, 'f', 2, 64)) and validate
+	// against THAT value, so the amount checked here is exactly the amount sent.
+	// Validating the raw float instead diverged from the wire value: e.g. 9.999
+	// is sent as "10.00" (meets the $10 minimum) yet the raw-float check rejected
+	// it, and 99.999 hit the same problem for the lifetime minimum.
+	roundedBudgetStr := strconv.FormatFloat(in.BudgetUSD, 'f', 2, 64)
+	roundedBudget, parseErr := strconv.ParseFloat(roundedBudgetStr, 64)
+	if parseErr != nil {
+		// Should be unreachable for a finite float already validated above, but
+		// fail closed rather than proceed with an unverified budget.
+		return nil, fmt.Errorf("budget %v could not be normalized to a 2-decimal amount: %w", in.BudgetUSD, parseErr)
+	}
+	// A sub-cent budget (e.g. 0.001) passes the > 0 / NaN / Inf checks yet rounds
+	// to "0.00" at the wire precision — a zero budget LinkedIn would reject only
+	// AFTER the campaign group (a permanent resource) already exists, orphaning
+	// it. Reject any budget that rounds to zero, up front, before any POST.
+	if roundedBudgetStr == "0.00" {
 		return nil, fmt.Errorf("budget %v is below the minimum billable amount (0.01) and would round to zero at the API boundary", in.BudgetUSD)
 	}
 	// Enforce LinkedIn's per-campaign budget minimums BEFORE any POST. LinkedIn
@@ -1135,12 +1167,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// only AFTER the campaign group (a permanent resource) already exists,
 	// orphaning it. LifetimeBudget selects the totalBudget field downstream (see
 	// createSponsoredCampaign), so the minimum tracks that choice. These minimums
-	// are USD-specific — the client only ever sends currencyCode "USD".
+	// are USD-specific — the client only ever sends currencyCode "USD". The check
+	// uses roundedBudget so the value checked matches the value sent.
 	if in.LifetimeBudget {
-		if in.BudgetUSD < minLifetimeBudgetUSD {
+		if roundedBudget < minLifetimeBudgetUSD {
 			return nil, fmt.Errorf("lifetime budget %v is below LinkedIn's minimum of $%.0f for a total (lifetime) budget", in.BudgetUSD, minLifetimeBudgetUSD)
 		}
-	} else if in.BudgetUSD < minDailyBudgetUSD {
+	} else if roundedBudget < minDailyBudgetUSD {
 		return nil, fmt.Errorf("daily budget %v is below LinkedIn's minimum of $%.0f for a daily budget", in.BudgetUSD, minDailyBudgetUSD)
 	}
 

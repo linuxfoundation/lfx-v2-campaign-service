@@ -126,17 +126,42 @@ func accountURN(accountID string) string {
 // into orgURN, which would build an invalid double-prefixed / malformed URN
 // that LinkedIn rejects only after permanent resources exist. This preserves
 // the configuration invariant the source client relies on.
+//
+// Rather than returning the FIRST matching Accounts entry, resolution FAILS
+// CLOSED on contradictory tenant mappings: returning the first match silently
+// accepted config where duplicate Accounts entries disagree on the orgId, or
+// where the default account's orgId conflicts with DefaultOrgID — violating the
+// advertised fail-closed / no-cross-tenant-pairing behavior. So all matching
+// entries are scanned for agreement, and (for the default account) the resolved
+// orgId is cross-checked against DefaultOrgID when that is set.
 func (c *Client) resolveOrgID(accountID string) (string, error) {
+	// Scan ALL entries so contradictory duplicate mappings are detected rather
+	// than silently resolving to whichever entry appears first.
+	resolved := ""
 	for _, a := range c.cfg.Accounts {
-		if a.AccountID == accountID {
-			if a.OrgID == "" {
-				return "", fmt.Errorf("LinkedIn account %q has no orgId configured", accountID)
-			}
-			if !orgIDRE.MatchString(a.OrgID) {
-				return "", fmt.Errorf("LinkedIn account %q has a malformed orgId %q — expected a numeric organization id", accountID, a.OrgID)
-			}
-			return a.OrgID, nil
+		if a.AccountID != accountID {
+			continue
 		}
+		if a.OrgID == "" {
+			return "", fmt.Errorf("LinkedIn account %q has no orgId configured", accountID)
+		}
+		if !orgIDRE.MatchString(a.OrgID) {
+			return "", fmt.Errorf("LinkedIn account %q has a malformed orgId %q — expected a numeric organization id", accountID, a.OrgID)
+		}
+		if resolved == "" {
+			resolved = a.OrgID
+		} else if resolved != a.OrgID {
+			return "", fmt.Errorf("LinkedIn account %q has contradictory orgId mappings (%q vs %q) in the configured accounts list — refusing to guess which tenant to use", accountID, resolved, a.OrgID)
+		}
+	}
+	if resolved != "" {
+		// For the default account, a configured DefaultOrgID that disagrees with the
+		// account's own orgId is a cross-tenant conflict; fail closed rather than
+		// silently preferring one.
+		if accountID == c.cfg.DefaultAccountID && c.cfg.DefaultOrgID != "" && c.cfg.DefaultOrgID != resolved {
+			return "", fmt.Errorf("LinkedIn default account %q has orgId %q that conflicts with defaultOrgId %q — refusing to guess which tenant to use", accountID, resolved, c.cfg.DefaultOrgID)
+		}
+		return resolved, nil
 	}
 	// Not in accounts list. Only fall back to the default org when this IS the
 	// default account; otherwise fail closed to avoid cross-tenant pairing
