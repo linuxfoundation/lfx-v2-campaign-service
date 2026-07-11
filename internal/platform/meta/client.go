@@ -260,6 +260,13 @@ func withRetryBaseDelay(d time.Duration) Option {
 
 // NewClient constructs a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
+	// Trim credential/account fields once at construction so validation (which
+	// uses TrimSpace) and request building (which used the raw values in URLs like
+	// "/"+accountID) can't disagree — surrounding whitespace would otherwise pass
+	// validation but produce malformed requests.
+	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
+	account.AccountID = strings.TrimSpace(account.AccountID)
+	account.PageID = strings.TrimSpace(account.PageID)
 	c := &Client{
 		creds:          creds,
 		account:        account,
@@ -363,14 +370,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		retryAfter := c.parseRetryAfter(resp)
 		status := resp.StatusCode
 		_ = resp.Body.Close()
-		// A read error (e.g. connection closed early on a mismatched Content-Length)
-		// must not be treated as a complete response: even if the partial body
-		// happens to parse, propagate the error rather than reporting a false
-		// success. Skip this for a throttle status handled below, where the body is
-		// discarded and the request is retried anyway.
-		if readErr != nil && status != http.StatusTooManyRequests {
-			return fmt.Errorf("meta API %s %s: read response body: %w", method, path, readErr)
-		}
 
 		// Meta reports throttling either as HTTP 429 or, commonly, as HTTP 400 with
 		// a Graph error envelope whose code is a known rate-limit code. Treat both
@@ -379,6 +378,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		_ = json.Unmarshal(raw, &env)
 		throttled := status == http.StatusTooManyRequests ||
 			(status < 200 || status >= 300) && env.Error != nil && graphRateLimitCodes[env.Error.Code]
+
+		// A read error (e.g. connection closed early on a mismatched Content-Length)
+		// must not be treated as a complete response: even if the partial body
+		// happens to parse, propagate the error rather than reporting a false
+		// success. But do NOT short-circuit a throttled response we're about to
+		// retry (its body is discarded anyway) — only fail when we would otherwise
+		// consume this response as final.
+		if readErr != nil && (!throttled || attempt >= retryMax) {
+			return fmt.Errorf("meta API %s %s: read response body: %w", method, path, readErr)
+		}
 
 		if throttled && attempt < retryMax {
 			wait := retryAfter

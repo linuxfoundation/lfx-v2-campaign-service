@@ -1142,3 +1142,12 @@ func TestWithHTTPClientNilIsIgnored(t *testing.T) {
 		t.Fatal("WithHTTPClient(nil) nil-ed the default http client")
 	}
 }
+
+// TestNewClientTrimsCredentials verifies whitespace in AccountID/PageID/token is
+// trimmed at construction so it can't produce a malformed request URL.
+func TestNewClientTrimsCredentials(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "  tok  "}, AccountConfig{AccountID: "  act_1  ", PageID: "  p  "})
+	if c.creds.AccessToken != "tok" || c.account.AccountID != "act_1" || c.account.PageID != "p" {
+		t.Errorf("credentials not trimmed: token=%q account=%q page=%q", c.creds.AccessToken, c.account.AccountID, c.account.PageID)
+	}
+}
