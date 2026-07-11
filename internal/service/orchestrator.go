@@ -213,7 +213,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		}
 		campaign, err := d.Dispatch(ctx, brief, p, config)
 		if err != nil {
-			res.Error = err.Error()
+			// Log the raw dispatcher error (it may carry provider request/response
+			// detail or credentials) server-side, and store a stable, client-safe
+			// message in the job result, consistent with the persistence/panic paths.
+			slog.ErrorContext(ctx, "platform dispatch failed", "platform", p, "job_id", jobID, "error", err)
+			res.Error = "platform campaign creation failed"
 			return nil
 		}
 		if campaign == nil {

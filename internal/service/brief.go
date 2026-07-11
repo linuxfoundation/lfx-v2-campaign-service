@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -218,7 +219,14 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	}
 	existing.CampaignName = p.Campaign.CampaignName
 	existing.Status = p.Campaign.Status
-	existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
+	// Only overwrite the stored config when the caller actually supplied one.
+	// config is optional in CampaignUpdateInput, so an omitted value must leave
+	// the existing ConfigSnapshot intact rather than wiping it to NULL on a
+	// name/status-only edit (the GET response doesn't expose config, so a client
+	// can't round-trip it back).
+	if p.Campaign.Config != nil {
+		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
+	}
 	updated, uerr := s.campaigns.ReplaceCampaign(ctx, existing, version)
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
@@ -307,7 +315,13 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 	if ifMatch == nil || *ifMatch == "" {
 		return 0, &briefs.PreconditionRequiredError{Code: "428", Message: "an If-Match header is required"}
 	}
-	v, err := strconv.ParseInt(*ifMatch, 10, 64)
+	// Accept both the bare version we emit and a standards-compliant quoted
+	// entity-tag (RFC 7232 `If-Match: "3"`), plus the weak-tag `W/"3"` form, since
+	// caches and conformant clients may echo the ETag quoted.
+	raw := strings.TrimSpace(*ifMatch)
+	raw = strings.TrimPrefix(raw, "W/")
+	raw = strings.Trim(raw, `"`)
+	v, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be an integer version"}
 	}
@@ -324,6 +338,22 @@ func mapBriefErr(err error) error {
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):
 		return &briefs.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
+	}
+	// Preserve errors that are already typed briefs API errors (e.g. the typed
+	// 503 the orchestrator returns during graceful shutdown, or a 400/428/412
+	// constructed upstream) so their advertised status isn't flattened to 500.
+	var (
+		unavail   *briefs.ConnServiceUnavailableError
+		badReq    *briefs.BadRequestError
+		notFound  *briefs.NotFoundError
+		conflict  *briefs.ConflictError
+		preFailed *briefs.PreconditionFailedError
+		preReq    *briefs.PreconditionRequiredError
+	)
+	switch {
+	case errors.As(err, &unavail), errors.As(err, &badReq), errors.As(err, &notFound),
+		errors.As(err, &conflict), errors.As(err, &preFailed), errors.As(err, &preReq):
+		return err
 	default:
 		return &briefs.InternalServerError{Code: "500", Message: "an internal server error occurred"}
 	}

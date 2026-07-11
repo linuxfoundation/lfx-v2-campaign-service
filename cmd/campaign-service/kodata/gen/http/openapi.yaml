@@ -367,7 +367,7 @@ paths:
                   type: string
                 - name: If-Match
                   in: header
-                  description: Version being approved (ETag); approval is rejected if the brief changed
+                  description: If-Match header carrying the current ETag/version
                   required: false
                   type: string
             responses:
@@ -4131,10 +4131,11 @@ definitions:
                 $ref: '#/definitions/CampaignCreateInput'
         example:
             input:
-                config: Adipisci consequuntur omnis a.
+                config: Et exercitationem soluta possimus a aliquid.
                 platforms:
-                    - reddit-ads
-                    - meta-ads
+                    - microsoft-ads
+                    - twitter-ads
+                    - google-ads
                     - google-ads
         required:
             - input

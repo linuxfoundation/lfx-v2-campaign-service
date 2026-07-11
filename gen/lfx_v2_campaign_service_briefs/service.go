@@ -67,7 +67,7 @@ type ApproveBriefPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
-	// Version being approved (ETag); approval is rejected if the brief changed
+	// If-Match header carrying the current ETag/version
 	IfMatch *string
 }
 

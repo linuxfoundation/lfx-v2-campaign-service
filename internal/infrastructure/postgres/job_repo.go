@@ -7,12 +7,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
+
+// staleJobCutoff is how long a queued/running job must have been idle (no update)
+// before startup recovery treats it as orphaned. It must exceed the longest
+// realistic dispatch so a job still being actively worked by another replica
+// during a rolling deploy is never failed out from under it.
+const staleJobCutoff = 15 * time.Minute
 
 // JobRepo is a pgx-backed implementation of domain.JobRepository.
 type JobRepo struct {
@@ -71,15 +78,23 @@ func (r *JobRepo) UpdateJobStatus(ctx context.Context, id string, status model.J
 	return nil
 }
 
-// FailStuckJobs marks every non-terminal job as failed. Run once on startup:
-// a queued/running job's dispatch goroutine lives only in the process that
-// created it, so after a restart such a job would otherwise stay non-terminal
-// forever. Fail-forward (rather than resume) because a partially-dispatched job
-// cannot be safely re-driven without provider-side idempotency keys.
+// FailStuckJobs marks non-terminal jobs older than staleJobCutoff as failed. Run
+// once on startup: a queued/running job's dispatch goroutine lives only in the
+// process that created it, so after a restart such a job would otherwise stay
+// non-terminal forever. Fail-forward (rather than resume) because a
+// partially-dispatched job cannot be safely re-driven without provider-side
+// idempotency keys.
+//
+// The age cutoff is important during rolling deploys: an old pod can still be
+// actively dispatching a recently-created job while a new pod boots, so only
+// jobs that have been idle (no update) longer than the cutoff — well beyond any
+// live dispatch — are considered orphaned. A live job is updated to running on
+// start and to terminal on finish, so a genuinely-stuck job stops being touched.
 func (r *JobRepo) FailStuckJobs(ctx context.Context, jobErr string) (int64, error) {
 	q := `UPDATE campaign_jobs SET status='failed', error=$1, updated_at=now()
-		WHERE status IN ('queued','running')`
-	tag, err := r.db.Exec(ctx, q, nullStr(jobErr))
+		WHERE status IN ('queued','running')
+		  AND updated_at < now() - make_interval(secs => $2)`
+	tag, err := r.db.Exec(ctx, q, nullStr(jobErr), staleJobCutoff.Seconds())
 	if err != nil {
 		return 0, fmt.Errorf("fail stuck jobs: %w", err)
 	}

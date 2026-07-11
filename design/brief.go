@@ -193,7 +193,10 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			bearerToken()
 			projectIDAttr()
 			briefIDAttr()
-			Attribute("if_match", String, "Version being approved (ETag); approval is rejected if the brief changed")
+			// Reuse the shared If-Match attribute (carries Example("3")) so Goa
+			// generates a valid numeric CLI example instead of a prose placeholder
+			// that parseBriefIfMatch would reject.
+			ifMatchAttr()
 			Required("project_id", "brief_id")
 		})
 		Result(Brief)

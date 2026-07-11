@@ -244,3 +244,75 @@ func TestBriefService_ApproveBrief_VersionGated(t *testing.T) {
 		t.Errorf("status = %q, want approved", got.Status)
 	}
 }
+
+// parseBriefIfMatch must accept a bare version, a quoted entity-tag, and a weak
+// tag; and reject non-numeric input.
+func TestParseBriefIfMatch_AcceptsQuotedETag(t *testing.T) {
+	cases := map[string]int64{`3`: 3, `"3"`: 3, `W/"3"`: 3, ` "42" `: 42}
+	for in, want := range cases {
+		v, err := parseBriefIfMatch(&in)
+		if err != nil {
+			t.Errorf("parseBriefIfMatch(%q) error: %v", in, err)
+			continue
+		}
+		if v != want {
+			t.Errorf("parseBriefIfMatch(%q) = %d, want %d", in, v, want)
+		}
+	}
+	bad := `abc`
+	if _, err := parseBriefIfMatch(&bad); err == nil {
+		t.Errorf("parseBriefIfMatch(%q) = nil error, want BadRequest", bad)
+	}
+	var nilp *string
+	if _, err := parseBriefIfMatch(nilp); err == nil {
+		t.Error("parseBriefIfMatch(nil) = nil error, want PreconditionRequired")
+	}
+}
+
+// campaignEditRepo is a minimal CampaignRepository for UpdateCampaign tests.
+type campaignEditRepo struct {
+	got *model.Campaign // the campaign passed to ReplaceCampaign
+	cur *model.Campaign // the stored campaign returned by GetCampaign
+}
+
+func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
+	cp := *r.cur
+	return &cp, nil
+}
+func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, model.Provider) (*model.Campaign, error) {
+	return nil, domain.ErrNotFound
+}
+func (r *campaignEditRepo) WithDispatchLock(ctx context.Context, _ string, _ model.Provider, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
+	return c, nil
+}
+func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64) (*model.Campaign, error) {
+	r.got = c
+	return c, nil
+}
+
+// UpdateCampaign must NOT wipe the stored config when the caller omits config.
+func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
+	camps := &campaignEditRepo{cur: &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 2,
+		CampaignName: "old", Status: "active",
+		ConfigSnapshot: []byte(`{"budget":100}`),
+	}}
+	s := &BriefService{briefs: &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}}, campaigns: camps, jobs: newFakeJobRepo(), orch: NewOrchestrator(camps, newFakeJobRepo(), nil)}
+	v := "2"
+	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "paused"}, // Config omitted
+	})
+	if err != nil {
+		t.Fatalf("UpdateCampaign: %v", err)
+	}
+	if string(camps.got.ConfigSnapshot) != `{"budget":100}` {
+		t.Errorf("config was overwritten: %s, want the stored {\"budget\":100}", camps.got.ConfigSnapshot)
+	}
+	if camps.got.CampaignName != "new" || camps.got.Status != "paused" {
+		t.Errorf("name/status not applied: %q/%q", camps.got.CampaignName, camps.got.Status)
+	}
+}
