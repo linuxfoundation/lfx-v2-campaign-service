@@ -239,12 +239,17 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		campaign.ProjectID = brief.ProjectID
 		campaign.Platform = p
 		if _, err := o.campaigns.UpsertCampaign(ctx, campaign); err != nil {
-			// Log the raw persistence error; return a generic message so DB error
-			// text isn't leaked to clients via the job result. Return the error so
-			// the advisory-lock transaction rolls back rather than committing after
-			// a failed write.
-			slog.ErrorContext(ctx, "persist campaign failed", "platform", p, "job_id", jobID, "error", err)
-			res.Error = "could not persist campaign"
+			// The upstream (paid) campaign was already created but we failed to
+			// persist its row. Log the raw error AND the orphaned upstream id at
+			// ERROR so the campaign is recoverable/reconcilable out of band — a
+			// bare retry would otherwise re-create it (the read-before-dispatch
+			// guard has no row to find). Store a client-safe message but keep the
+			// upstream id in the result so it isn't lost. Return the error so
+			// WithDispatchLock releases the lock and the caller records a failure.
+			slog.ErrorContext(ctx, "persist campaign failed after upstream create — orphaned upstream campaign",
+				"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", err)
+			res.Error = "created upstream campaign but failed to record it; see logs"
+			res.CampaignID = campaign.PlatformCampaignID
 			return err
 		}
 		res.OK = true

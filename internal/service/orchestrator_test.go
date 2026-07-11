@@ -411,8 +411,13 @@ func TestOrchestrator_PersistErrorIsSanitized(t *testing.T) {
 	if strings.Contains(string(j.Result), "pq:") || strings.Contains(string(j.Result), "constraint") {
 		t.Errorf("result leaked raw DB error: %s", j.Result)
 	}
-	if !strings.Contains(string(j.Result), "could not persist campaign") {
+	// The message is sanitized but the upstream id is preserved so the orphaned
+	// campaign isn't lost.
+	if !strings.Contains(string(j.Result), "failed to record it") {
 		t.Errorf("result = %s, want the sanitized message", j.Result)
+	}
+	if !strings.Contains(string(j.Result), "pc-google-ads") {
+		t.Errorf("result = %s, want the upstream id preserved for reconciliation", j.Result)
 	}
 }
 
