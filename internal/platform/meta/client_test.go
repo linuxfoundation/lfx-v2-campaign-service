@@ -1151,3 +1151,27 @@ func TestNewClientTrimsCredentials(t *testing.T) {
 		t.Errorf("credentials not trimmed: token=%q account=%q page=%q", c.creds.AccessToken, c.account.AccountID, c.account.PageID)
 	}
 }
+
+// TestAdSetStartTimeTodayUsesBuffer verifies that a campaign starting today gets
+// an ad-set start_time of now+buffer (not 00:00 UTC, which would be in the past),
+// while a future start date uses start-of-day.
+func TestAdSetStartTimeTodayUsesBuffer(t *testing.T) {
+	now := time.Date(2026, 8, 15, 14, 30, 0, 0, time.UTC)
+
+	// Start today: must be after now (buffered), not 00:00.
+	today := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
+	got := adSetStartTime(today, now)
+	parsed, err := time.Parse("2006-01-02T15:04:05-0700", got)
+	if err != nil {
+		t.Fatalf("unparseable start_time %q: %v", got, err)
+	}
+	if !parsed.After(now) {
+		t.Errorf("today start_time = %q, want after now (%v)", got, now)
+	}
+
+	// Future date: start-of-day.
+	future := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	if got := adSetStartTime(future, now); got != "2026-09-01T00:00:00+0000" {
+		t.Errorf("future start_time = %q, want 2026-09-01T00:00:00+0000", got)
+	}
+}

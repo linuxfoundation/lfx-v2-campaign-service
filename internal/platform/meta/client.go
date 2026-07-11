@@ -53,6 +53,9 @@ const (
 	// maxBudget caps the accepted budget (in currency units) well below the
 	// int64-cents overflow threshold so the ×100 conversion can't wrap.
 	maxBudget = 100_000_000.0
+	// adSetStartBuffer is added to "now" when a campaign starts today, so the ad
+	// set start_time isn't already in the past by the time Meta receives it.
+	adSetStartBuffer = 5 * time.Minute
 )
 
 // ---------------------------------------------------------------------------
@@ -746,6 +749,20 @@ func truncate(s string, max int) string {
 	return string(runes[:max]) + "…"
 }
 
+// adSetStartTime returns the ad set start_time (RFC3339-ish, Meta format) for a
+// start date. When the start date is today, 00:00 UTC is already in the past by
+// the time the request reaches Meta (which rejects a past start_time), so use
+// now + a small buffer instead; otherwise use start-of-day for the future date.
+func adSetStartTime(startDate, now time.Time) string {
+	startOfDay := startDate.UTC().Truncate(24 * time.Hour)
+	buffered := now.UTC().Add(adSetStartBuffer)
+	t := startOfDay
+	if buffered.After(startOfDay) {
+		t = buffered
+	}
+	return t.Format("2006-01-02T15:04:05-0700")
+}
+
 func defaultObjective(objective string) string {
 	if objective == "" {
 		return "traffic"
@@ -770,8 +787,9 @@ type CampaignInput struct {
 	EventSlug       string
 	Project         string
 	RegistrationURL string
-	// Objective is one of awareness|traffic|engagement|leads|conversions.
-	// Empty defaults to "traffic".
+	// Objective is one of awareness|traffic|engagement|conversions. Empty
+	// defaults to "traffic". ("leads" is defined in the objective map but not
+	// accepted by CreateCampaign — it needs a lead form this client doesn't build.)
 	Objective  string
 	GeoTargets []string
 	// BudgetUSD is the budget amount. NOTE: Meta interprets the ad set budget in
@@ -979,7 +997,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"optimization_goal": objParams.OptimizationGoal,
 		"bid_strategy":      "LOWEST_COST_WITHOUT_CAP",
 		"targeting":         targeting,
-		"start_time":        in.StartDate + "T00:00:00+0000",
+		"start_time":        adSetStartTime(startDate, c.timeNow()),
 		"end_time":          in.EndDate + "T23:59:59+0000",
 	}
 
