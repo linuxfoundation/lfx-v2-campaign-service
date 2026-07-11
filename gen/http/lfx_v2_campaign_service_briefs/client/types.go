@@ -779,7 +779,9 @@ type PlatformResultResponseBody struct {
 	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
 	// Whether the campaign was created (or reused) successfully
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
-	// Upstream platform campaign id (present when ok)
+	// Upstream platform campaign id. Present when ok; also set on the specific
+	// failure where the upstream campaign was created but recording it failed, so
+	// the orphaned id isn't lost.
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
 	// Failure reason (present when not ok)
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`

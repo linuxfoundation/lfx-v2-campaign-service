@@ -588,3 +588,45 @@ func TestFailStuckJobs(t *testing.T) {
 		t.Error("non-terminal jobs were not failed")
 	}
 }
+
+// TestOrchestrator_ShutdownCancelsOnTimeout verifies that when the drain deadline
+// expires, Shutdown cancels the in-flight run's context (rather than leaving it
+// running against a closing pool).
+func TestOrchestrator_ShutdownCancelsOnTimeout(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	ctxSeen := make(chan context.Context, 1)
+	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	<-disp.started
+	dctx := <-ctxSeen
+
+	// Drain with an already-past deadline so Shutdown times out immediately and
+	// cancels the run context.
+	deadctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	_ = orch.Shutdown(deadctx)
+
+	select {
+	case <-dctx.Done():
+		// good: the dispatch context was cancelled by Shutdown's timeout path.
+	case <-time.After(time.Second):
+		t.Error("dispatch context was not cancelled after drain timeout")
+	}
+	close(disp.release)
+}
+
+type ctxCapturingDispatcher struct {
+	started chan struct{}
+	release chan struct{}
+	ctxSeen chan context.Context
+}
+
+func (d *ctxCapturingDispatcher) Dispatch(ctx context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	d.ctxSeen <- ctx
+	close(d.started)
+	<-d.release
+	return &model.Campaign{PlatformCampaignID: "pc-" + string(p), Status: "active", CampaignName: "n"}, nil
+}

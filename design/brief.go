@@ -86,7 +86,7 @@ var JobCreateResponse = Type("job-create-response", func() {
 var PlatformResult = Type("platform-result", func() {
 	Attribute("platform", String, "Platform this result is for")
 	Attribute("ok", Boolean, "Whether the campaign was created (or reused) successfully")
-	Attribute("campaign_id", String, "Upstream platform campaign id (present when ok)")
+	Attribute("campaign_id", String, "Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.")
 	Attribute("error", String, "Failure reason (present when not ok)")
 	Required("platform", "ok")
 })

@@ -258,7 +258,9 @@ type PlatformResult struct {
 	Platform string
 	// Whether the campaign was created (or reused) successfully
 	OK bool
-	// Upstream platform campaign id (present when ok)
+	// Upstream platform campaign id. Present when ok; also set on the specific
+	// failure where the upstream campaign was created but recording it failed, so
+	// the orphaned id isn't lost.
 	CampaignID *string
 	// Failure reason (present when not ok)
 	Error *string

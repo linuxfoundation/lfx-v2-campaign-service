@@ -6739,7 +6739,7 @@ components:
             properties:
                 campaign_id:
                     type: string
-                    description: Upstream platform campaign id (present when ok)
+                    description: Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.
                     example: Laudantium dolor ipsam recusandae maxime.
                 error:
                     type: string

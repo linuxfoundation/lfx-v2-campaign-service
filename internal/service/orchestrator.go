@@ -38,9 +38,14 @@ type Orchestrator struct {
 	// process (and the DB pool) goes away. mu guards the shutting-down flag so a
 	// Start racing with Shutdown either registers on wg or is rejected, never
 	// launches an untracked goroutine after Shutdown has stopped waiting.
-	mu       sync.Mutex
-	wg       sync.WaitGroup
-	draining bool
+	// rootCtx/rootCancel parent every dispatch run so Shutdown can cancel them if
+	// the drain deadline expires (rather than leaving them running against a
+	// closing pool).
+	mu         sync.Mutex
+	wg         sync.WaitGroup
+	draining   bool
+	rootCtx    context.Context
+	rootCancel context.CancelFunc
 }
 
 // NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
@@ -49,14 +54,17 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 	if dispatchers == nil {
 		dispatchers = map[model.Provider]PlatformDispatcher{}
 	}
-	return &Orchestrator{campaigns: campaigns, jobs: jobs, dispatchers: dispatchers}
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	return &Orchestrator{campaigns: campaigns, jobs: jobs, dispatchers: dispatchers, rootCtx: rootCtx, rootCancel: rootCancel}
 }
 
 // Shutdown waits (bounded by ctx) for in-flight dispatch runs to finish, so a
 // graceful shutdown doesn't close the database pool out from under a dispatch
 // that already created an upstream campaign but hasn't persisted it yet. After
-// Shutdown is called, Start rejects new work. Returns ctx.Err() if the deadline
-// elapses before all runs complete.
+// Shutdown is called, Start rejects new work. If the drain deadline (ctx)
+// elapses first, it cancels the in-flight runs (via the shared root context) so
+// they stop promptly instead of running against a closing pool, and returns
+// ctx.Err().
 func (o *Orchestrator) Shutdown(ctx context.Context) error {
 	o.mu.Lock()
 	o.draining = true
@@ -69,8 +77,10 @@ func (o *Orchestrator) Shutdown(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
+		o.rootCancel()
 		return nil
 	case <-ctx.Done():
+		o.rootCancel() // stop in-flight runs rather than leaving them detached
 		return ctx.Err()
 	}
 }
@@ -106,7 +116,10 @@ func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, pl
 		return "", err
 	}
 
-	dispatchCtx := context.WithoutCancel(ctx)
+	// Parent the run on the orchestrator's root context (not the request context),
+	// so it survives the request ending but can still be cancelled by Shutdown if
+	// the drain deadline expires.
+	dispatchCtx := o.rootCtx
 	go func() {
 		defer o.wg.Done()
 		o.run(dispatchCtx, job.ID, brief, platforms, config)
