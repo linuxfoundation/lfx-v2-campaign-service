@@ -29,6 +29,11 @@ const cancelGracePeriod = 2 * time.Second
 // a context detached from the (possibly-cancelled) dispatch context.
 const claimReleaseTimeout = 5 * time.Second
 
+// jobFinalizeTimeout bounds the terminal job-status write, which runs on a
+// context detached from the dispatch context so a cancelled run still reaches a
+// terminal state instead of being stuck queued/running.
+const jobFinalizeTimeout = 10 * time.Second
+
 // PlatformDispatcher creates a campaign on one ad platform. Implementations are
 // the per-provider adapters (added as those integrations land); the
 // orchestrator is agnostic to them.
@@ -230,19 +235,26 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 		slog.ErrorContext(ctx, "campaign dispatch returned an error", "job_id", jobID, "error", werr)
 	}
 
+	// Finalize on a context detached from cancellation: on the drain-timeout path
+	// Shutdown cancels this run's ctx, and using it for the terminal write would
+	// guarantee the write fails and leave the job stuck non-terminal. A bounded
+	// detached context lets the job always reach a terminal state.
+	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jobFinalizeTimeout)
+	defer cancel()
+
 	status := aggregateStatus(results)
 	payload, err := json.Marshal(results)
 	if err != nil {
 		// Don't store a null result (which would make the job unpollable);
 		// record the marshal failure in the job's error field and fail the job.
-		slog.ErrorContext(ctx, "failed to marshal job result", "job_id", jobID, "error", err)
-		if uerr := o.jobs.UpdateJobStatus(ctx, jobID, model.JobFailed, nil, "failed to serialize job result: "+err.Error()); uerr != nil {
-			slog.ErrorContext(ctx, "failed to finalize campaign job", "job_id", jobID, "error", uerr)
+		slog.ErrorContext(finCtx, "failed to marshal job result", "job_id", jobID, "error", err)
+		if uerr := o.jobs.UpdateJobStatus(finCtx, jobID, model.JobFailed, nil, "failed to serialize job result: "+err.Error()); uerr != nil {
+			slog.ErrorContext(finCtx, "failed to finalize campaign job", "job_id", jobID, "error", uerr)
 		}
 		return
 	}
-	if err := o.jobs.UpdateJobStatus(ctx, jobID, status, payload, ""); err != nil {
-		slog.ErrorContext(ctx, "failed to finalize campaign job", "job_id", jobID, "error", err)
+	if err := o.jobs.UpdateJobStatus(finCtx, jobID, status, payload, ""); err != nil {
+		slog.ErrorContext(finCtx, "failed to finalize campaign job", "job_id", jobID, "error", err)
 	}
 }
 

@@ -176,12 +176,17 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 	// can be Started), THEN close the container (which drains in-flight dispatch
 	// and only then closes the DB pool). Running these concurrently risks a
 	// just-accepted request Starting a dispatch while the pool is being closed.
+	//
+	// Both phases share ONE overall deadline (DefaultShutdownTimeout) so the total
+	// graceful-shutdown time is bounded and stays within a standard Kubernetes
+	// terminationGracePeriodSeconds — a sequential sum of two independent timeouts
+	// could otherwise exceed it and get SIGKILLed mid-drain.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.DefaultShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.ErrorContext(ctx, "HTTP server shutdown error", log.ErrKey, err)
 	}
-	if err := cont.Close(); err != nil {
+	if err := cont.Close(shutdownCtx); err != nil {
 		slog.ErrorContext(ctx, "container close error", log.ErrKey, err)
 	}
 	return nil

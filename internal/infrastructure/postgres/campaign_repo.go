@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -18,6 +19,11 @@ import (
 type CampaignRepo struct {
 	db *Pool
 }
+
+// claimRollbackTimeout bounds the best-effort rollback of a just-inserted pending
+// claim when the follow-up read fails; it runs on a context detached from the
+// (possibly-cancelled) request context.
+const claimRollbackTimeout = 5 * time.Second
 
 // NewCampaignRepo returns a CampaignRepo backed by pool.
 func NewCampaignRepo(pool *Pool) *CampaignRepo { return &CampaignRepo{db: pool} }
@@ -49,9 +55,15 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 		// pair forever; report claimed=false so the caller treats it as a clean
 		// failure with nothing to release.
 		if claimed {
-			if derr := r.DeleteDispatchClaim(ctx, briefID, platform); derr != nil {
+			// Roll back on a context detached from ctx: the read likely failed
+			// BECAUSE ctx was cancelled, and reusing it for the DELETE would fail
+			// too, leaking the just-committed placeholder.
+			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
+			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform); derr != nil {
+				cancel()
 				return false, nil, fmt.Errorf("read campaign after claim: %w (and failed to roll back pending claim: %v)", gerr, derr)
 			}
+			cancel()
 		}
 		return false, nil, fmt.Errorf("read campaign after claim: %w", gerr)
 	}

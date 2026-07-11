@@ -4,6 +4,7 @@
 package container
 
 import (
+	"context"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -22,7 +23,7 @@ func TestNewContainer_NoDatabase(t *testing.T) {
 	require.NotNil(t, cont)
 	assert.NotNil(t, cont.Service)
 	assert.NotNil(t, cont.Connections)
-	require.NoError(t, cont.Close())
+	require.NoError(t, cont.Close(context.Background()))
 }
 
 func TestNewContainer_UnsupportedEngine(t *testing.T) {
