@@ -539,7 +539,7 @@ func TestOrchestrator_ShutdownDrainsInFlight(t *testing.T) {
 
 	shutdownReturned := make(chan error, 1)
 	go func() {
-		shutdownReturned <- orch.Shutdown(context.Background())
+		shutdownReturned <- orch.Shutdown(context.Background(), 5*time.Second)
 	}()
 
 	// Shutdown must NOT return while the dispatch is blocked.
@@ -568,7 +568,7 @@ func TestOrchestrator_StartRejectedAfterShutdown(t *testing.T) {
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
 		model.ProviderGoogleAds: okDispatcher{},
 	})
-	if err := orch.Shutdown(context.Background()); err != nil {
+	if err := orch.Shutdown(context.Background(), 5*time.Second); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
@@ -617,7 +617,7 @@ func TestOrchestrator_ShutdownCancelsOnTimeout(t *testing.T) {
 	// cancels the run context.
 	deadctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
-	_ = orch.Shutdown(deadctx)
+	_ = orch.Shutdown(deadctx, time.Millisecond)
 
 	select {
 	case <-dctx.Done():
@@ -651,7 +651,7 @@ func TestOrchestrator_ShutdownGraceBoundedByContext(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_ = orch.Shutdown(deadctx)
+	_ = orch.Shutdown(deadctx, time.Millisecond)
 	elapsed := time.Since(start)
 
 	// Allow generous slack for scheduling, but it must be far below the full
@@ -660,6 +660,56 @@ func TestOrchestrator_ShutdownGraceBoundedByContext(t *testing.T) {
 		t.Errorf("Shutdown waited %v (>= full CancelGracePeriod %v); grace not bounded by context", elapsed, CancelGracePeriod)
 	}
 	close(disp.release)
+}
+
+// TestOrchestrator_ShutdownGivesGraceWhenBudgetRemains verifies the two phases
+// are budgeted separately: when the drain window elapses but the OUTER ctx still
+// has budget, Shutdown actually spends a post-cancel grace waiting for the
+// cancelled dispatch to unwind — it must NOT return immediately (which would let
+// Container.Close close the pool mid-finalize). This guards the regression where
+// Close passed a ctx limited to only the drain timeout, leaving zero grace.
+func TestOrchestrator_ShutdownGivesGraceWhenBudgetRemains(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	ctxSeen := make(chan context.Context, 1)
+	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	<-disp.started
+	dctx := <-ctxSeen // the dispatch's own context, cancelled by rootCancel
+
+	// Outer budget comfortably exceeds the tiny drain window, so after drain
+	// times out there is real grace budget left.
+	outerCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	graceObserved := make(chan struct{})
+	go func() {
+		// The dispatch releases only once it observes its context cancellation —
+		// i.e. during the grace phase, proving grace actually ran.
+		<-dctx.Done()
+		close(graceObserved)
+		close(disp.release)
+	}()
+
+	start := time.Now()
+	_ = orch.Shutdown(outerCtx, 20*time.Millisecond)
+	elapsed := time.Since(start)
+
+	select {
+	case <-graceObserved:
+	default:
+		t.Fatal("dispatch context was never cancelled; grace phase did not run")
+	}
+	// Shutdown must have waited past the drain window (the grace phase happened),
+	// but well within the outer budget.
+	if elapsed < 20*time.Millisecond {
+		t.Errorf("Shutdown returned in %v, before the drain window elapsed; grace phase was skipped", elapsed)
+	}
+	if elapsed >= time.Second {
+		t.Errorf("Shutdown waited %v, at/over the full outer budget", elapsed)
+	}
 }
 
 type ctxCapturingDispatcher struct {

@@ -101,14 +101,24 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 	}
 }
 
-// Shutdown waits (bounded by ctx) for in-flight dispatch runs to finish, so a
-// graceful shutdown doesn't close the database pool out from under a dispatch
-// that already created an upstream campaign but hasn't persisted it yet. After
-// Shutdown is called, Start rejects new work. If the drain deadline (ctx)
-// elapses first, it cancels the in-flight runs (via the shared root context) so
-// they stop promptly instead of running against a closing pool, and returns
-// ctx.Err().
-func (o *Orchestrator) Shutdown(ctx context.Context) error {
+// Shutdown drains in-flight dispatch runs so a graceful shutdown doesn't close
+// the database pool out from under a dispatch that already created an upstream
+// campaign but hasn't persisted it yet. After Shutdown is called, Start rejects
+// new work.
+//
+// The two phases have SEPARATE budgets so neither starves the other:
+//   - Clean drain waits up to drainTimeout for all runs to finish on their own.
+//   - If that elapses, in-flight runs are cancelled (via the shared root
+//     context) and Shutdown then waits a post-cancel grace for them to observe
+//     cancellation and finalize before returning (and the caller closes the
+//     pool). That grace is bounded by CancelGracePeriod AND by whatever the
+//     outer ctx still allows, whichever is sooner — so the grace timer can
+//     never push total shutdown past the budget the caller reserved.
+//
+// ctx is the overall budget for BOTH phases (drain + grace); the caller sizes it
+// as dispatchDrainTimeout + CancelGracePeriod. Passing ctx already limited to
+// only drainTimeout would leave no room for the grace and defeat its purpose.
+func (o *Orchestrator) Shutdown(ctx context.Context, drainTimeout time.Duration) error {
 	o.mu.Lock()
 	o.draining = true
 	o.mu.Unlock()
@@ -118,38 +128,42 @@ func (o *Orchestrator) Shutdown(ctx context.Context) error {
 		o.wg.Wait()
 		close(done)
 	}()
+
+	// Phase 1: clean drain, bounded by drainTimeout and the outer ctx.
+	drainCtx, cancelDrain := context.WithTimeout(ctx, drainTimeout)
+	defer cancelDrain()
 	select {
 	case <-done:
 		o.rootCancel()
 		return nil
-	case <-ctx.Done():
-		// Drain deadline hit: cancel in-flight runs, then give them a brief bounded
-		// grace to observe cancellation and unwind before we return (and the caller
-		// closes the DB pool). Without this wait, Container.Close could close the
-		// pool while a just-cancelled run is still mid-statement.
-		o.rootCancel()
-		// Cap the grace wait at whatever the caller's context budget still allows,
-		// so the post-cancel unwind can never push total shutdown past the deadline
-		// the caller reserved for this phase (Container.Close budgets exactly
-		// dispatchDrainTimeout + CancelGracePeriod). Without the cap the timer is
-		// pure wall-clock and would add its full CancelGracePeriod on top of a
-		// deadline that may already be near-exhausted.
-		graceDur := CancelGracePeriod
-		if deadline, ok := ctx.Deadline(); ok {
-			if remaining := time.Until(deadline); remaining < graceDur {
-				graceDur = remaining
-			}
-		}
-		if graceDur <= 0 {
+	case <-drainCtx.Done():
+		if ctx.Err() != nil {
+			// The OUTER budget (not just the drain window) is exhausted: cancel and
+			// return without a grace wait we have no budget for.
+			o.rootCancel()
 			return ctx.Err()
 		}
-		grace := time.NewTimer(graceDur)
-		defer grace.Stop()
-		select {
-		case <-done:
-		case <-grace.C:
+	}
+
+	// Phase 2: drain deadline hit but outer budget remains. Cancel in-flight runs
+	// and give them a post-cancel grace to unwind before the pool is closed.
+	o.rootCancel()
+	graceDur := CancelGracePeriod
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining < graceDur {
+			graceDur = remaining
 		}
-		return ctx.Err()
+	}
+	if graceDur <= 0 {
+		return context.DeadlineExceeded
+	}
+	grace := time.NewTimer(graceDur)
+	defer grace.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-grace.C:
+		return context.DeadlineExceeded
 	}
 }
 

@@ -168,15 +168,19 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 }
 
 // Close releases any resources held by the container. It first drains in-flight
-// campaign dispatch (bounded by ctx and by dispatchDrainTimeout, whichever is
-// sooner) so a dispatch that already created an upstream campaign isn't cut off
-// before it persists, THEN closes the database pool. ctx is the shared
-// graceful-shutdown deadline, so the drain can't run past the overall budget.
+// campaign dispatch so a dispatch that already created an upstream campaign
+// isn't cut off before it persists, THEN closes the database pool.
+//
+// Orchestrator.Shutdown runs two separately-budgeted phases: a clean drain
+// bounded by dispatchDrainTimeout, then (only if that elapses) a post-cancel
+// grace bounded by CancelGracePeriod. Both must fit within ctx, so ctx MUST
+// carry the full ContainerCloseTimeout (= dispatchDrainTimeout +
+// CancelGracePeriod), not just the drain timeout — otherwise the grace phase
+// would have zero budget and the pool could close while a just-cancelled
+// dispatch is still finalizing job/campaign state.
 func (c *Container) Close(ctx context.Context) error {
 	if c.orch != nil {
-		drainCtx, cancel := context.WithTimeout(ctx, dispatchDrainTimeout)
-		defer cancel()
-		if err := c.orch.Shutdown(drainCtx); err != nil {
+		if err := c.orch.Shutdown(ctx, dispatchDrainTimeout); err != nil {
 			slog.Warn("timed out draining in-flight dispatch on shutdown", "error", err)
 		}
 	}
