@@ -1109,3 +1109,24 @@ func TestCreateCampaign_RejectsMalformedGeoURNBeforeAnyPOST(t *testing.T) {
 		t.Fatalf("err = %v, want malformed geo URN rejection", err)
 	}
 }
+
+// TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST verifies an event name
+// that pushes a resource name past 255 chars is rejected before any create.
+func TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        strings.Repeat("X", 300),
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-01-31",
+		GeoTargets:       []GeoTarget{{URN: "urn:li:geo:103644278"}},
+		TargetingProfile: "cloud-native",
+		Variants:         []CreativeVariant{{IntroText: "hi", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "exceeds the 255-character limit") {
+		t.Fatalf("err = %v, want name-length rejection", err)
+	}
+}

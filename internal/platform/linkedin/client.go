@@ -1090,13 +1090,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)
+	campaignName := fmt.Sprintf("Events | %s | LinkedIn | Conversions | Prospecting | Static | %s | MoFU", eventName, project)
+	// LinkedIn limits campaign-group and campaign names to 255 characters. Validate
+	// both generated names before the first create so an over-long event name/project
+	// fails fast instead of after the group is created.
+	if n := len([]rune(groupName)); n > maxNameLen {
+		return nil, fmt.Errorf("campaign group name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
+	}
+	if n := len([]rune(campaignName)); n > maxNameLen {
+		return nil, fmt.Errorf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
+	}
+
 	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, err
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
 
-	campaignName := fmt.Sprintf("Events | %s | LinkedIn | Conversions | Prospecting | Static | %s | MoFU", eventName, project)
 	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, in.StartDate, in.EndDate, in.LifetimeBudget)
 	if err != nil {
 		return nil, err

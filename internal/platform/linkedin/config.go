@@ -31,6 +31,9 @@ const requestTimeout = 30 * time.Second
 // above any legitimate LinkedIn API response, to prevent memory exhaustion.
 const maxResponseBytes = 10 << 20 // 10 MiB
 
+// maxNameLen is LinkedIn's limit on campaign-group and campaign names.
+const maxNameLen = 255
+
 // retryMax is the number of times a 429 (rate-limited) request is retried
 // before giving up. Mirrors the resilience the Twitter client (#19) applies.
 const retryMax = 3
@@ -61,12 +64,13 @@ var seniorityExclusions = []string{
 // skipStatuses are campaign/group statuses treated as "not a live match"
 // during idempotent search-by-name. Mirrors SKIP_STATUSES.
 var skipStatuses = map[string]struct{}{
-	"ARCHIVED":  {},
-	"CANCELED":  {},
-	"COMPLETED": {},
-	"DRAFT":     {},
-	"REMOVED":   {},
-	"DELETED":   {},
+	"ARCHIVED":         {},
+	"CANCELED":         {},
+	"COMPLETED":        {},
+	"DRAFT":            {},
+	"REMOVED":          {},
+	"DELETED":          {},
+	"PENDING_DELETION": {}, // terminal: a being-deleted resource is not a live match
 }
 
 // GeoTarget is a resolved geo location. Mirrors LinkedInGeoTarget.
