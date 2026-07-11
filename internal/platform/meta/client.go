@@ -220,7 +220,13 @@ type Option func(*Client)
 
 // WithHTTPClient overrides the HTTP client (useful for tests / timeouts).
 func WithHTTPClient(h *http.Client) Option {
-	return func(c *Client) { c.httpClient = h }
+	return func(c *Client) {
+		// Ignore a nil client so the safe default installed by NewClient isn't
+		// replaced with nil (which would panic on the next request).
+		if h != nil {
+			c.httpClient = h
+		}
+	}
 }
 
 // WithBaseURL overrides the Graph API base URL (useful for tests).

@@ -1133,3 +1133,12 @@ func TestDoRequestPropagatesBodyReadError(t *testing.T) {
 		t.Fatal("expected a read error, got nil (a truncated body must not be a success)")
 	}
 }
+
+// TestWithHTTPClientNilIsIgnored verifies a nil client doesn't clobber the
+// default (which would panic on the next request).
+func TestWithHTTPClientNilIsIgnored(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"}, WithHTTPClient(nil))
+	if c.httpClient == nil {
+		t.Fatal("WithHTTPClient(nil) nil-ed the default http client")
+	}
+}
