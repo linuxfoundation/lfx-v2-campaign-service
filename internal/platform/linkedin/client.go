@@ -371,6 +371,13 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 	}
 	if n, err := strconv.Atoi(v); err == nil {
 		if n > 0 {
+			// Cap before converting to Duration: a huge Retry-After (e.g.
+			// 10000000000) would overflow time.Duration(n)*time.Second into a
+			// negative value, defeating the maxRetryWait cap. maxRetryWait is the
+			// ceiling anyway, so clamp seconds first.
+			if int64(n) > int64(maxRetryWait/time.Second) {
+				return maxRetryWait
+			}
 			return time.Duration(n) * time.Second
 		}
 		return 0

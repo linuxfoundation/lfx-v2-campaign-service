@@ -40,9 +40,10 @@ var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
 // legitimate asset id.
 var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):[A-Za-z0-9_-]+$`)
 
-// facetURNRE matches a LinkedIn facet member id after its namespace prefix: no
-// spaces or URL delimiters.
-var facetURNRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+// facetURNRE matches a LinkedIn facet member id after its namespace prefix.
+// Skills, groups, and organizations are addressed by NUMERIC LinkedIn entity
+// ids, so a value like urn:li:skill:abc (non-numeric) is rejected.
+var facetURNRE = regexp.MustCompile(`^[0-9]+$`)
 
 // facetNamespace is the required urn:li:<type>: prefix for each facet kind, so a
 // value from the wrong namespace (e.g. an organization URN under skills) is

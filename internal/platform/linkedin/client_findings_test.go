@@ -1738,3 +1738,28 @@ func TestCampaignManagerURL_NoDanglingPath(t *testing.T) {
 		t.Errorf("URL = %q, want it to end in /campaigns/456", got)
 	}
 }
+
+// TestValidFacets_RequiresNumericID verifies non-numeric facet ids are rejected.
+func TestValidFacets_RequiresNumericID(t *testing.T) {
+	if _, err := validFacets("skills", []string{"urn:li:skill:abc"}); err == nil {
+		t.Error("non-numeric skill id should be rejected")
+	}
+	if _, err := validFacets("employer-exclusions", []string{"urn:li:organization:not-real"}); err == nil {
+		t.Error("non-numeric organization id should be rejected")
+	}
+	if _, err := validFacets("skills", []string{"urn:li:skill:12345"}); err != nil {
+		t.Errorf("numeric skill id rejected: %v", err)
+	}
+}
+
+// TestParseRetryAfter_NoOverflow verifies a huge Retry-After value is clamped to
+// maxRetryWait rather than overflowing to a negative duration.
+func TestParseRetryAfter_NoOverflow(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithClock(fixedClock()))
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("Retry-After", "10000000000")
+	got := c.parseRetryAfter(resp)
+	if got <= 0 || got > maxRetryWait {
+		t.Errorf("parseRetryAfter(huge) = %v, want a positive value <= maxRetryWait (%v)", got, maxRetryWait)
+	}
+}
