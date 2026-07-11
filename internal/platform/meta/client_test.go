@@ -177,6 +177,13 @@ func TestValidateRegistrationURL(t *testing.T) {
 	if err := validateRegistrationURL("not a url"); err == nil {
 		t.Errorf("expected error for invalid url")
 	}
+	// Port-only / empty-hostname authorities parse with a non-empty Host but an
+	// empty Hostname(); they must be rejected as invalid destinations.
+	for _, raw := range []string{"https://:443", "https://:443/register", "https://", "//events.example.org/x"} {
+		if err := validateRegistrationURL(raw); err == nil {
+			t.Errorf("expected error for port-only/empty-hostname url %q", raw)
+		}
+	}
 }
 
 func TestBuildCampaignName(t *testing.T) {
@@ -270,31 +277,34 @@ func TestBuildUTMURLPreservesSlashInQueryValue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateCampaignHappyPath(t *testing.T) {
-	var gotAuth string
-	var campaignBody map[string]any
-	var adsetBody map[string]any
-	creativeCount := 0
-	adCount := 0
+	authCapture := make(chan string, 8)
+	campaignCap := newBodyCapture()
+	adsetCap := newBodyCapture()
+	creativeCap := newBodyCapture()
+	adCap := newBodyCapture()
+	var creativeCount, adCount int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
+		authCapture <- r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_TEST") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			campaignBody = decodeBody(t, r)
+			campaignCap.set(decodeBody(t, r))
 			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
-			adsetBody = decodeBody(t, r)
+			adsetCap.set(decodeBody(t, r))
 			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
-			creativeCount++
-			_, _ = io.WriteString(w, `{"id":"creative_`+strconv.Itoa(creativeCount)+`"}`)
+			creativeCap.set(decodeBody(t, r))
+			n := atomic.AddInt32(&creativeCount, 1)
+			_, _ = io.WriteString(w, `{"id":"creative_`+strconv.Itoa(int(n))+`"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
-			adCount++
-			_, _ = io.WriteString(w, `{"id":"ad_`+strconv.Itoa(adCount)+`"}`)
+			adCap.set(decodeBody(t, r))
+			n := atomic.AddInt32(&adCount, 1)
+			_, _ = io.WriteString(w, `{"id":"ad_`+strconv.Itoa(int(n))+`"}`)
 		default:
 			t.Errorf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 			w.WriteHeader(http.StatusNotFound)
@@ -325,6 +335,21 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign error: %v", err)
 	}
+
+	// Read all captures after CreateCampaign has returned (all requests done).
+	gotAuth := ""
+	for done := false; !done; {
+		select {
+		case a := <-authCapture:
+			gotAuth = a
+		default:
+			done = true
+		}
+	}
+	campaignBody := campaignCap.get()
+	adsetBody := adsetCap.get()
+	creativeBody := creativeCap.get()
+	adBody := adCap.get()
 
 	if gotAuth != "Bearer tok-abc" {
 		t.Errorf("Authorization header = %q", gotAuth)
@@ -360,10 +385,57 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if adsetBody["optimization_goal"] != "LINK_CLICKS" {
 		t.Errorf("optimization_goal = %v", adsetBody["optimization_goal"])
 	}
+
+	// Creative body assertions: object_story_spec.page_id and the UTM link/copy
+	// must be present so a regression that drops them is caught. creativeBody is
+	// the last (second) variant, "Register"/"See you there".
+	if creativeBody == nil {
+		t.Fatalf("no creative body captured")
+	}
+	oss, ok := creativeBody["object_story_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("creative object_story_spec missing or wrong type: %v", creativeBody["object_story_spec"])
+	}
+	if oss["page_id"] != "PAGE99" {
+		t.Errorf("creative object_story_spec.page_id = %v, want PAGE99", oss["page_id"])
+	}
+	linkData, ok := oss["link_data"].(map[string]any)
+	if !ok {
+		t.Fatalf("creative link_data missing or wrong type: %v", oss["link_data"])
+	}
+	link, _ := linkData["link"].(string)
+	if !strings.Contains(link, "utm_source=meta") {
+		t.Errorf("creative link = %q, want UTM link with utm_source=meta", link)
+	}
+	if !strings.HasPrefix(link, "https://events.example.org/kubecon") {
+		t.Errorf("creative link = %q, want registration URL base", link)
+	}
+	if linkData["message"] != "Register" {
+		t.Errorf("creative link_data.message = %v, want 'Register'", linkData["message"])
+	}
+	if linkData["name"] != "See you there" {
+		t.Errorf("creative link_data.name = %v, want 'See you there'", linkData["name"])
+	}
+
+	// Ad body assertions: adset_id and creative_id must wire the ad to the ad set
+	// and creative just created.
+	if adBody == nil {
+		t.Fatalf("no ad body captured")
+	}
+	if adBody["adset_id"] != "adset_456" {
+		t.Errorf("ad adset_id = %v, want adset_456", adBody["adset_id"])
+	}
+	creative, ok := adBody["creative"].(map[string]any)
+	if !ok {
+		t.Fatalf("ad creative field missing or wrong type: %v", adBody["creative"])
+	}
+	if creative["creative_id"] != "creative_2" {
+		t.Errorf("ad creative.creative_id = %v, want creative_2", creative["creative_id"])
+	}
 }
 
 func TestCreateCampaignLifetimeBudget(t *testing.T) {
-	var adsetBody map[string]any
+	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -372,7 +444,7 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
-			adsetBody = decodeBody(t, r)
+			adsetCap.set(decodeBody(t, r))
 			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
@@ -405,6 +477,7 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign error: %v", err)
 	}
+	adsetBody := adsetCap.get()
 	if adsetBody["lifetime_budget"] != float64(50000) {
 		t.Errorf("lifetime_budget = %v, want 50000", adsetBody["lifetime_budget"])
 	}
@@ -414,7 +487,7 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 }
 
 func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
-	var adsetBody map[string]any
+	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -423,7 +496,7 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"c1"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			adsetBody = decodeBody(t, r)
+			adsetCap.set(decodeBody(t, r))
 			_, _ = io.WriteString(w, `{"id":"a1"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr1"}`)
@@ -446,6 +519,7 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
+	adsetBody := adsetCap.get()
 	geo := adsetBody["targeting"].(map[string]any)["geo_locations"].(map[string]any)["countries"].([]any)
 	if len(geo) != 1 || geo[0] != "US" {
 		t.Errorf("geo countries = %v, want [US]", geo)
@@ -882,17 +956,117 @@ func TestCreateCampaignImpossibleDateMakesZeroPosts(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignRejectsPortOnlyURLBeforeAnyPost verifies a port-only /
+// empty-hostname destination URL is rejected at preflight, before any mutating
+// call — so no campaign or ad set is created for an unreachable destination.
+func TestCreateCampaignRejectsPortOnlyURLBeforeAnyPost(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://:443",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a valid URL") {
+		t.Fatalf("err = %v, want 'not a valid URL'", err)
+	}
+}
+
+// TestCreateCampaignAdSetFailureReportsOrphanCampaignID verifies that when the
+// ad-set call fails AFTER the campaign was created, the returned error carries
+// the created (PAUSED) campaign id so the caller can identify the orphan.
+func TestCreateCampaignAdSetFailureReportsOrphanCampaignID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"bad ad set"}}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatalf("expected an error when the ad set fails")
+	}
+	if !strings.Contains(err.Error(), "camp_orphan") {
+		t.Errorf("error = %q, want it to mention the orphaned campaign id camp_orphan", err.Error())
+	}
+	if !strings.Contains(err.Error(), "PAUSED") {
+		t.Errorf("error = %q, want it to note the campaign is PAUSED", err.Error())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
+// decodeBody decodes a JSON request body inside an httptest handler goroutine.
+// It uses t.Errorf (not t.Fatalf): FailNow/Fatalf must only be called from the
+// test goroutine, so a malformed payload records a failure and returns an empty
+// map rather than trying to abort from the wrong goroutine.
 func decodeBody(t *testing.T, r *http.Request) map[string]any {
 	t.Helper()
 	var m map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-		t.Fatalf("decode body: %v", err)
+		t.Errorf("decode body: %v", err)
+		return map[string]any{}
 	}
 	return m
+}
+
+// bodyCapture provides a race-free handoff of a request body decoded inside an
+// httptest handler goroutine to the test goroutine. The handler calls set(); the
+// test calls get() after CreateCampaign returns. The buffered channel creates the
+// happens-before edge that -race requires (the send in the handler happens-before
+// the receive in the test), and buffering keeps the handler from blocking if the
+// body is captured more than once.
+type bodyCapture struct {
+	ch chan map[string]any
+}
+
+func newBodyCapture() *bodyCapture {
+	// Buffer generously so a handler never blocks even if the endpoint is hit
+	// more than once; get() drains to the most recent value.
+	return &bodyCapture{ch: make(chan map[string]any, 16)}
+}
+
+func (b *bodyCapture) set(m map[string]any) { b.ch <- m }
+
+// get returns the most recently captured body, or nil if nothing was captured.
+// It must be called from the test goroutine after the request(s) have completed.
+func (b *bodyCapture) get() map[string]any {
+	var last map[string]any
+	for {
+		select {
+		case m := <-b.ch:
+			last = m
+		default:
+			return last
+		}
+	}
 }
 
 func contains(s []string, v string) bool {

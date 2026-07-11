@@ -482,7 +482,10 @@ var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 func validateRegistrationURL(raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
+	// Require an absolute URL with a real hostname. parsed.Host can be a
+	// port-only authority (e.g. "https://:443" parses to Host==":443" with an
+	// empty Hostname()), which is not a valid destination — check Hostname().
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
 		return fmt.Errorf("registration URL is not a valid URL")
 	}
 	if parsed.Scheme != "https" {
@@ -1055,11 +1058,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	var adSetResp createResponse
 	if err := c.doRequest(ctx, http.MethodPost, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
-		return nil, err
+		// The campaign was already created (PAUSED). Surface its id so the caller can
+		// identify/clean up the orphan; auto-deleting here would race a retry that
+		// reuses it.
+		return nil, fmt.Errorf("meta ad set creation failed (campaign %s created, PAUSED): %w", campaignID, err)
 	}
 	adSetID := adSetResp.ID
 	if adSetID == "" {
-		return nil, fmt.Errorf("meta ad set creation succeeded but returned no ad set ID")
+		return nil, fmt.Errorf("meta ad set creation succeeded but returned no ad set ID (campaign %s created, PAUSED)", campaignID)
 	}
 	budgetLabel := "daily"
 	if in.LifetimeBudget {
@@ -1080,7 +1086,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// report a "successful" campaign after the caller's context died.
 			// Genuine per-creative API failures remain non-fatal (skip + continue).
 			if errors.Is(verr, context.Canceled) || errors.Is(verr, context.DeadlineExceeded) {
-				return nil, fmt.Errorf("meta campaign aborted while creating ad %d: %w", i+1, verr)
+				return nil, fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, verr)
 			}
 			steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, truncateErr(verr, 300)))
 			continue
