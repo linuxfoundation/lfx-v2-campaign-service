@@ -987,7 +987,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 		}
 		if !askedUS {
-			return nil, fmt.Errorf("no usable geo targets: all supplied geos are invalid or ineligible (sanctioned) — refusing to silently fall back to US")
+			return nil, fmt.Errorf("no usable geo targets: all supplied geos are invalid or ineligible for Meta ads targeting — refusing to silently fall back to US")
 		}
 	}
 	geoCountries := make([]string, 0, len(allGeo))
