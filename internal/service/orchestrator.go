@@ -83,10 +83,23 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 
 	for i, p := range platforms {
 		i, p := i, p
-		g.Go(func() error {
+		g.Go(func() (rerr error) {
 			// A single platform failure must not cancel the others, so we never
 			// return a non-nil error from the group; failures are recorded.
 			res := platformResult{Platform: string(p)}
+
+			// Recover from a panic in a dispatcher (or future code here): a panic
+			// in this detached goroutine would otherwise crash the whole process
+			// mid-job. Record it as a platform failure and keep the group intact.
+			defer func() {
+				if r := recover(); r != nil {
+					slog.ErrorContext(gctx, "panic during platform dispatch", "platform", p, "job_id", jobID, "panic", r)
+					res.OK = false
+					res.Error = "internal error during dispatch"
+					results[i] = res
+					rerr = nil
+				}
+			}()
 
 			// Idempotency guard FIRST, before resolving the dispatcher: if this
 			// brief already has a campaign for this platform with an upstream id, a
@@ -113,7 +126,10 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 					return nil
 				}
 			} else if !errors.Is(lerr, domain.ErrNotFound) {
-				res.Error = "check existing campaign: " + lerr.Error()
+				// Log the underlying repository error server-side; return a generic
+				// message so raw DB error text isn't surfaced to clients via GetJob.
+				slog.ErrorContext(gctx, "existing-campaign lookup failed", "platform", p, "job_id", jobID, "error", lerr)
+				res.Error = "could not verify existing campaign"
 				results[i] = res
 				return nil
 			}
@@ -156,7 +172,10 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			campaign.ProjectID = brief.ProjectID
 			campaign.Platform = p
 			if _, err := o.campaigns.UpsertCampaign(gctx, campaign); err != nil {
-				res.Error = "persist campaign: " + err.Error()
+				// Log the raw persistence error; return a generic message so DB
+				// error text isn't leaked to clients via the job result.
+				slog.ErrorContext(gctx, "persist campaign failed", "platform", p, "job_id", jobID, "error", err)
+				res.Error = "could not persist campaign"
 				results[i] = res
 				return nil
 			}

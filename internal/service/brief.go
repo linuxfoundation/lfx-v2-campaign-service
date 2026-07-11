@@ -40,7 +40,10 @@ func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j do
 // mounted in that mode so runtime matches the published OpenAPI contract,
 // consistent with the connection service.
 func (s *BriefService) ensureAvailable() error {
-	if s.briefs == nil {
+	// Check every collaborator the service methods dereference, not just briefs:
+	// in the no-database mode they are all nil together, but guarding only briefs
+	// would nil-panic if the service were ever partially wired.
+	if s.briefs == nil || s.campaigns == nil || s.jobs == nil || s.orch == nil {
 		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "brief storage is not configured"}
 	}
 	return nil

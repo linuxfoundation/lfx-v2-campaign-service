@@ -339,3 +339,60 @@ func TestOrchestrator_ReusesExistingWhenDispatcherGone(t *testing.T) {
 		t.Errorf("result = %s, want the reused upstream id", j.Result)
 	}
 }
+
+// panicDispatcher panics — a misbehaving dispatcher that must not crash the
+// process; the orchestrator must record it as a failure.
+type panicDispatcher struct{}
+
+func (panicDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	panic("boom in dispatcher")
+}
+
+// TestOrchestrator_RecoversFromDispatcherPanic verifies a panicking dispatcher
+// is recovered and recorded as a failure rather than crashing the goroutine.
+func TestOrchestrator_RecoversFromDispatcherPanic(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: panicDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+	// The panic value must not leak into the client-facing result.
+	if strings.Contains(string(j.Result), "boom in dispatcher") {
+		t.Errorf("result leaked the panic value: %s", j.Result)
+	}
+}
+
+// persistErrCampaignRepo fails UpsertCampaign with a raw DB-like error.
+type persistErrCampaignRepo struct{ fakeCampaignRepo }
+
+func (r *persistErrCampaignRepo) UpsertCampaign(context.Context, *model.Campaign) (*model.Campaign, error) {
+	return nil, errors.New("pq: duplicate key value violates unique constraint \"campaigns_pkey\"")
+}
+
+// TestOrchestrator_PersistErrorIsSanitized verifies a raw persistence error is
+// not surfaced verbatim in the client-facing job result.
+func TestOrchestrator_PersistErrorIsSanitized(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &persistErrCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: okDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+	if strings.Contains(string(j.Result), "pq:") || strings.Contains(string(j.Result), "constraint") {
+		t.Errorf("result leaked raw DB error: %s", j.Result)
+	}
+	if !strings.Contains(string(j.Result), "could not persist campaign") {
+		t.Errorf("result = %s, want the sanitized message", j.Result)
+	}
+}
