@@ -630,6 +630,81 @@ func TestExtractRedditPostID_SegmentBoundary(t *testing.T) {
 	}
 }
 
+// TestExtractRedditPostID_PathAnchored verifies the post-path regex is anchored
+// to the START of the parsed path: only "/r/<sub>/comments/<id>" or
+// "/comments/<id>" are accepted. A "comments/<id>" appearing elsewhere in the
+// path (e.g. a "/user/comments/<id>" overview) must NOT be promoted to a post ID.
+func TestExtractRedditPostID_PathAnchored(t *testing.T) {
+	valid := map[string]string{
+		"https://www.reddit.com/r/opensource/comments/abc123": "t3_abc123",
+		"https://www.reddit.com/comments/abc123":              "t3_abc123",
+		"https://www.reddit.com/r/x/comments/abc123/title":    "t3_abc123",
+		"https://www.reddit.com/comments/abc123?x=1":          "t3_abc123",
+	}
+	for in, want := range valid {
+		got, err := extractRedditPostID(in)
+		if err != nil {
+			t.Errorf("%s: unexpected error %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s -> %q, want %q", in, got, want)
+		}
+	}
+
+	rejected := []string{
+		"https://www.reddit.com/user/comments/abc123",
+		"https://www.reddit.com/foo/comments/abc123",
+	}
+	for _, in := range rejected {
+		if got, err := extractRedditPostID(in); err == nil {
+			t.Errorf("%s: expected rejection (comments/<id> not at path start), got %q", in, got)
+		}
+	}
+}
+
+// TestCreateCampaign_InvalidGeoRejectedBeforeNetwork verifies FINDING 2:
+// GeoTargets that are not ISO 3166-1 alpha-2 codes are rejected up front, before
+// any HTTP call (token or API), so a bad value can't create a campaign that then
+// orphans at ad-group creation. Valid lowercase/mixed codes still normalize.
+func TestCreateCampaign_InvalidGeoRejectedBeforeNetwork(t *testing.T) {
+	baseInput := func(geos []string) CampaignInput {
+		return CampaignInput{
+			EventName:       "Open Source Summit",
+			EventSlug:       "oss-2026",
+			RegistrationURL: "https://events.linuxfoundation.org/oss/",
+			BudgetUSD:       500,
+			StartDate:       "2026-08-01",
+			EndDate:         "2026-08-31",
+			GeoTargets:      geos,
+			Subreddits:      []string{"linux"},
+			Objective:       "conversions",
+		}
+	}
+
+	for _, bad := range []string{"USA", "US/CA", "XX"} {
+		// Any network call means validation ran too late; fail loudly if hit.
+		hit := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hit = true
+			http.Error(w, "should not be called", http.StatusInternalServerError)
+		}))
+		c := NewClient(testCreds, testAccount,
+			WithBaseURL(srv.URL+"/api/v3"),
+			WithTokenURL(srv.URL),
+			WithNowFunc(fixedRedditClock()),
+		)
+		_, err := c.CreateCampaign(context.Background(), baseInput([]string{bad}))
+		srv.Close()
+		if err == nil {
+			t.Errorf("geo %q: expected rejection, got nil error", bad)
+		}
+		if hit {
+			t.Errorf("geo %q: network call was made before geo validation", bad)
+		}
+	}
+}
+
 func TestBuildRedditUTMURL(t *testing.T) {
 	in := CampaignInput{
 		EventName:       "Cloud Native Con",

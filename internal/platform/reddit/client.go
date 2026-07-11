@@ -508,25 +508,31 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		label = accountID
 	}
 
-	// Step 1: Verify account (non-fatal, mirrors TS try/catch).
-	if _, err := c.request(ctx, http.MethodGet, "/ad_accounts/"+accountID, nil); err != nil {
-		steps = append(steps, "Account verification warning: "+err.Error())
-	} else {
-		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
-	}
-
-	// Normalize geo targets once, up front, so the ad-group label, targeting,
-	// and region all derive from a single source of truth.
+	// Normalize and validate geo targets BEFORE any mutating call. Reddit expects
+	// ISO 3166-1 alpha-2 codes; a bad value like "USA" or "US/CA" would otherwise
+	// pass local checks, create the campaign in Step 2, then fail at ad-group
+	// creation — orphaning the campaign. Reject up front, naming the bad value, so
+	// nothing is created. Empty/whitespace entries are skipped (not errors).
 	geos := make([]string, 0, len(in.GeoTargets))
 	for _, g := range in.GeoTargets {
 		g = strings.ToUpper(strings.TrimSpace(g))
 		if g == "" {
 			continue
 		}
+		if !geoCodeRE.MatchString(g) || !iso3166Alpha2[g] {
+			return nil, fmt.Errorf("invalid geo target %q: must be an ISO 3166-1 alpha-2 country code", g)
+		}
 		geos = append(geos, g)
 	}
 	if len(geos) == 0 {
 		geos = []string{"US"}
+	}
+
+	// Step 1: Verify account (non-fatal, mirrors TS try/catch).
+	if _, err := c.request(ctx, http.MethodGet, "/ad_accounts/"+accountID, nil); err != nil {
+		steps = append(steps, "Account verification warning: "+err.Error())
+	} else {
+		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
 	}
 
 	// Compute the effective start time ONCE, before the campaign POST. When the
@@ -904,18 +910,69 @@ var (
 	// separately (see isRedditHost) so a path segment can never masquerade as
 	// the authority (e.g. https://evil.example/.reddit.com/comments/abc123).
 	//
-	// The ID capture is anchored to a proper path-segment boundary: the ID must
-	// be followed by end-of-string, a "/", or the query/fragment delimiters
+	// The pattern is anchored to the START of the parsed path ("^/"), so only a
+	// canonical Reddit post route is accepted: "/r/<subreddit>/comments/<id>" or
+	// "/comments/<id>". Anchoring matters because "comments/<id>" can otherwise
+	// appear anywhere in a path — e.g. "/user/comments/abc123" (a user overview)
+	// or "/foo/comments/abc123" — and must NOT be promoted to a post ID; the
+	// caller did not supply a real post route.
+	//
+	// The ID capture is also anchored to a proper path-segment boundary: the ID
+	// must be followed by end-of-string, a "/", or the query/fragment delimiters
 	// "?"/"#". Without this, a malformed segment like "comments/abc123!!!" would
 	// match and be silently truncated to "t3_abc123"; the boundary makes such
 	// trailing junk fail to match so it is rejected rather than accepted.
-	postPathRe = regexp.MustCompile(`(?i)(?:^|/)(?:r/\w+/)?comments/([a-z0-9]+)(?:[/?#]|$)`)
+	postPathRe = regexp.MustCompile(`(?i)^/(?:r/\w+/)?comments/([a-z0-9]+)(?:[/?#]|$)`)
 	postIDRe   = regexp.MustCompile(`(?i)^[a-z0-9]+$`)
 	// accountIDRe restricts a Reddit ad-account ID to a safe charset (letters,
 	// digits, underscore) so it cannot inject extra path segments or "."/".."
 	// when concatenated into a request path.
 	accountIDRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	// geoCodeRE matches the shape of an ISO 3166-1 alpha-2 country code (two
+	// ASCII letters). Shape alone is insufficient — a well-shaped but bogus code
+	// like "XX" must still be rejected — so callers pair it with iso3166Alpha2.
+	geoCodeRE = regexp.MustCompile(`^[A-Z]{2}$`)
 )
+
+// iso3166Alpha2 is the set of assigned ISO 3166-1 alpha-2 country codes. Reddit
+// expects GeoTargets as alpha-2 codes (docs/api-catalog.md), so we reject
+// anything that is not a valid 2-letter code before any mutating call — a bad
+// value like "USA" or "US/CA" would otherwise pass local validation, create the
+// campaign, then fail at ad-group creation and orphan the campaign.
+var iso3166Alpha2 = map[string]bool{
+	"AD": true, "AE": true, "AF": true, "AG": true, "AI": true, "AL": true, "AM": true, "AO": true,
+	"AQ": true, "AR": true, "AS": true, "AT": true, "AU": true, "AW": true, "AX": true, "AZ": true,
+	"BA": true, "BB": true, "BD": true, "BE": true, "BF": true, "BG": true, "BH": true, "BI": true,
+	"BJ": true, "BL": true, "BM": true, "BN": true, "BO": true, "BQ": true, "BR": true, "BS": true,
+	"BT": true, "BV": true, "BW": true, "BY": true, "BZ": true, "CA": true, "CC": true, "CD": true,
+	"CF": true, "CG": true, "CH": true, "CI": true, "CK": true, "CL": true, "CM": true, "CN": true,
+	"CO": true, "CR": true, "CU": true, "CV": true, "CW": true, "CX": true, "CY": true, "CZ": true,
+	"DE": true, "DJ": true, "DK": true, "DM": true, "DO": true, "DZ": true, "EC": true, "EE": true,
+	"EG": true, "EH": true, "ER": true, "ES": true, "ET": true, "FI": true, "FJ": true, "FK": true,
+	"FM": true, "FO": true, "FR": true, "GA": true, "GB": true, "GD": true, "GE": true, "GF": true,
+	"GG": true, "GH": true, "GI": true, "GL": true, "GM": true, "GN": true, "GP": true, "GQ": true,
+	"GR": true, "GS": true, "GT": true, "GU": true, "GW": true, "GY": true, "HK": true, "HM": true,
+	"HN": true, "HR": true, "HT": true, "HU": true, "ID": true, "IE": true, "IL": true, "IM": true,
+	"IN": true, "IO": true, "IQ": true, "IR": true, "IS": true, "IT": true, "JE": true, "JM": true,
+	"JO": true, "JP": true, "KE": true, "KG": true, "KH": true, "KI": true, "KM": true, "KN": true,
+	"KP": true, "KR": true, "KW": true, "KY": true, "KZ": true, "LA": true, "LB": true, "LC": true,
+	"LI": true, "LK": true, "LR": true, "LS": true, "LT": true, "LU": true, "LV": true, "LY": true,
+	"MA": true, "MC": true, "MD": true, "ME": true, "MF": true, "MG": true, "MH": true, "MK": true,
+	"ML": true, "MM": true, "MN": true, "MO": true, "MP": true, "MQ": true, "MR": true, "MS": true,
+	"MT": true, "MU": true, "MV": true, "MW": true, "MX": true, "MY": true, "MZ": true, "NA": true,
+	"NC": true, "NE": true, "NF": true, "NG": true, "NI": true, "NL": true, "NO": true, "NP": true,
+	"NR": true, "NU": true, "NZ": true, "OM": true, "PA": true, "PE": true, "PF": true, "PG": true,
+	"PH": true, "PK": true, "PL": true, "PM": true, "PN": true, "PR": true, "PS": true, "PT": true,
+	"PW": true, "PY": true, "QA": true, "RE": true, "RO": true, "RS": true, "RU": true, "RW": true,
+	"SA": true, "SB": true, "SC": true, "SD": true, "SE": true, "SG": true, "SH": true, "SI": true,
+	"SJ": true, "SK": true, "SL": true, "SM": true, "SN": true, "SO": true, "SR": true, "SS": true,
+	"ST": true, "SV": true, "SX": true, "SY": true, "SZ": true, "TC": true, "TD": true, "TF": true,
+	"TG": true, "TH": true, "TJ": true, "TK": true, "TL": true, "TM": true, "TN": true, "TO": true,
+	"TR": true, "TT": true, "TV": true, "TW": true, "TZ": true, "UA": true, "UG": true, "UM": true,
+	"US": true, "UY": true, "UZ": true, "VA": true, "VC": true, "VE": true, "VG": true, "VI": true,
+	"VN": true, "VU": true, "WF": true, "WS": true, "YE": true, "YT": true, "ZA": true, "ZM": true,
+	"ZW": true,
+}
 
 // isRedditHost reports whether host is exactly reddit.com / redd.it or a
 // subdomain of either. Matching on the parsed authority (not a substring of the
