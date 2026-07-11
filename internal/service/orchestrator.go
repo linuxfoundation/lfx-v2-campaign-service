@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -18,6 +19,10 @@ import (
 
 // maxParallelDispatch bounds concurrent per-platform campaign creation.
 const maxParallelDispatch = 5
+
+// cancelGracePeriod is how long Shutdown waits, after cancelling in-flight runs
+// on a drain timeout, for them to unwind before it returns (and the pool closes).
+const cancelGracePeriod = 2 * time.Second
 
 // PlatformDispatcher creates a campaign on one ad platform. Implementations are
 // the per-provider adapters (added as those integrations land); the
@@ -91,7 +96,17 @@ func (o *Orchestrator) Shutdown(ctx context.Context) error {
 		o.rootCancel()
 		return nil
 	case <-ctx.Done():
-		o.rootCancel() // stop in-flight runs rather than leaving them detached
+		// Drain deadline hit: cancel in-flight runs, then give them a brief bounded
+		// grace to observe cancellation and unwind before we return (and the caller
+		// closes the DB pool). Without this wait, Container.Close could close the
+		// pool while a just-cancelled run is still mid-statement.
+		o.rootCancel()
+		grace := time.NewTimer(cancelGracePeriod)
+		defer grace.Stop()
+		select {
+		case <-done:
+		case <-grace.C:
+		}
 		return ctx.Err()
 	}
 }
@@ -107,8 +122,9 @@ type platformResult struct {
 // Start creates a queued job for the brief and launches dispatch asynchronously,
 // returning the job id immediately. The caller polls GetJob for progress.
 //
-// The dispatch goroutine uses context.WithoutCancel so it survives the request
-// context ending, matching the documented async model.
+// The dispatch goroutine runs under the orchestrator's root context (not the
+// request context), so it survives the request ending but can still be cancelled
+// by Shutdown when the drain deadline expires.
 func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage) (string, error) {
 	// Register the run with the drain WaitGroup under the lock so a concurrent
 	// Shutdown can't start waiting between the draining check and wg.Add (which
@@ -211,12 +227,13 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 	}
 }
 
-// dispatchPlatform creates (or reuses) the campaign for a single platform. The
-// idempotency read, the upstream create, and the persist all run under a
-// cross-replica advisory lock keyed on (brief, platform), so two concurrent
-// create-campaigns requests for the same pair cannot both create an upstream
-// campaign: the second waits on the lock, then observes the first's persisted
-// row and reuses it. campaign_id is always the upstream platform id, so the
+// dispatchPlatform creates (or reuses) the campaign for a single platform.
+// Single-flight is enforced by an atomic claim row (ClaimCampaignDispatch:
+// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING) — no held connection,
+// no blocking lock — so two concurrent create-campaigns for the same pair cannot
+// both create an upstream campaign: exactly one wins the claim (the unique index
+// arbitrates); the other reuses the existing row or, if it's still pending, is
+// reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage) platformResult {
 	res := platformResult{Platform: string(p)}
@@ -274,20 +291,25 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 
 	campaign, derr := d.Dispatch(ctx, brief, p, config)
 	if derr != nil {
-		// Dispatch failed; treat the upstream campaign as not created and release
-		// the claim so the pair can be retried rather than blocked. Log the raw
-		// dispatcher error server-side; store a stable, client-safe message.
-		slog.ErrorContext(ctx, "platform dispatch failed", "platform", p, "job_id", jobID, "error", derr)
-		releaseClaim()
+		// A dispatch error does NOT prove the provider rejected the create — a
+		// timeout or dropped connection can leave a campaign created upstream. So
+		// we deliberately do NOT release the claim here: the 'pending' row stays,
+		// blocking a blind retry from double-creating (and marking the pair for
+		// reconciliation). Log the raw dispatcher error server-side; store a
+		// stable, client-safe message.
+		slog.ErrorContext(ctx, "platform dispatch failed (claim retained; outcome unknown)", "platform", p, "job_id", jobID, "error", derr)
 		res.Error = "platform campaign creation failed"
 		return res
 	}
 	if campaign == nil {
+		// A nil campaign with no error is a dispatcher bug — no upstream campaign
+		// was created, so releasing the claim to allow a retry is safe.
 		releaseClaim()
 		res.Error = "dispatcher returned no campaign"
 		return res
 	}
 	if campaign.PlatformCampaignID == "" {
+		// Likewise: no upstream id means no created campaign — safe to release.
 		releaseClaim()
 		res.Error = "dispatcher returned no upstream campaign id"
 		return res

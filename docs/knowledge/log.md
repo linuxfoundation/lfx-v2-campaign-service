@@ -41,12 +41,14 @@ across the HTTP dispatch. The pending row is also the recovery signal for an
 upstream-create-then-crash. Recovery scan uses a staleness cutoff so a rolling
 deploy can't fail a job the old replica is still dispatching.
 
-**Update** — Durable campaign dispatch (LFXV2-2665): per-platform dispatch now
-runs under a cross-replica Postgres advisory lock keyed on (brief, platform) so
-concurrent create-campaigns can't double-create upstream; the orchestrator
-drains in-flight runs on graceful shutdown before the pool closes; and startup
-fails-forward jobs left non-terminal by a restart. Added CampaignRepository.
-WithDispatchLock and JobRepository.FailStuckJobs.
+**Update** — Durable campaign dispatch (LFXV2-2665): per-platform single-flight
+via an atomic claim row (ClaimCampaignDispatch — INSERT ON CONFLICT DO NOTHING of
+a 'pending' campaign; see the later hardening entries above for the final shape,
+which superseded an initial advisory-lock attempt), so concurrent
+create-campaigns can't double-create upstream; the orchestrator drains in-flight
+runs on graceful shutdown before the pool closes; and startup fails-forward jobs
+left non-terminal by a restart. Added CampaignRepository.ClaimCampaignDispatch /
+DeleteDispatchClaim and JobRepository.FailStuckJobs.
 
 **Update** — PR #11 review round 3: validate brief_id/campaign_id/job_id path
 params as UUIDs (400 instead of a PostgreSQL cast 500); make brief approval
