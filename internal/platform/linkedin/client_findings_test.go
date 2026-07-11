@@ -1896,8 +1896,8 @@ func TestDoRequest_SendsAuthAndVersionHeaders(t *testing.T) {
 	if gotAuth != "Bearer tok-abc" {
 		t.Errorf("Authorization = %q, want 'Bearer tok-abc'", gotAuth)
 	}
-	if gotVer == "" {
-		t.Error("LinkedIn-Version header missing")
+	if gotVer != apiVersion {
+		t.Errorf("LinkedIn-Version = %q, want the exact required contract value %q", gotVer, apiVersion)
 	}
 	if gotProto != "2.0.0" {
 		t.Errorf("X-RestLi-Protocol-Version = %q, want 2.0.0", gotProto)

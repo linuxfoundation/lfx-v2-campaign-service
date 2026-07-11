@@ -27,10 +27,13 @@ sub-cent/NaN/Inf; registration URL (absolute, http/https, real host); schedule
 (malformed/past/reversed); event name and project (trimmed, length-bounded);
 targeting facet URNs (numeric ids in the correct namespace); ad-account and org
 ids (numeric); geo URNs; and the aliased `cloud-native` profile must exist for
-`custom`. Idempotent find-or-create uses cursor pagination and propagates
-transient search errors (rather than treating them as "not found") to avoid
-duplicates; the residual non-atomicity of find-or-create is documented and the
-authoritative single-flight is the orchestrator's per-(brief, platform) claim.
-A 429 (idempotent methods only) is retried with bounded backoff.
+`custom`. Find-or-create uses cursor pagination and propagates transient search errors
+(rather than treating them as "not found") to reduce duplicates, but it is
+best-effort and NOT atomic across calls: `CreateCampaign` re-POSTs every dark
+post and creative on a repeat call, so this package does not itself guarantee
+cross-call idempotency. True single-flight/idempotency is a planned caller-side
+responsibility (the orchestrator's per-(brief, platform) claim), tracked
+separately and not provided here. A 429 (idempotent methods only) is retried
+with bounded backoff.
 
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
