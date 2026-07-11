@@ -1197,3 +1197,25 @@ func TestValidateGeoTargetsExcludesSanctioned(t *testing.T) {
 		t.Errorf("valid countries dropped: %v", got)
 	}
 }
+
+// TestCreateCampaignRejectsAllSanctionedGeos verifies that when every supplied
+// geo is invalid/sanctioned, CreateCampaign errors instead of silently
+// falling back to US.
+func TestCreateCampaignRejectsAllSanctionedGeos(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"IR", "KP"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no usable geo targets") {
+		t.Fatalf("err = %v, want all-sanctioned-geos rejection (no silent US fallback)", err)
+	}
+}

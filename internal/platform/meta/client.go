@@ -369,7 +369,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			return fmt.Errorf("meta API %s %s: %w", method, path, err)
 		}
 
-		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+		// Read one byte past the cap so a truncation is detectable: io.LimitReader
+		// returns EOF (not an error) at the limit, so an oversized body would
+		// otherwise be silently truncated and mis-parsed as a valid short response.
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+		if readErr == nil && int64(len(raw)) > maxResponseBody {
+			_ = resp.Body.Close()
+			return fmt.Errorf("meta API %s %s: response exceeds %d bytes", method, path, maxResponseBody)
+		}
 		retryAfter := c.parseRetryAfter(resp)
 		status := resp.StatusCode
 		_ = resp.Body.Close()
@@ -955,7 +962,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Step 2: geo filtering + campaign creation.
+	// If the caller supplied geo targets but NONE survive validation (all bogus or
+	// sanctioned), fail rather than silently falling back to US and targeting a
+	// country they didn't ask for. An empty input legitimately defaults to US.
 	allGeo := validateGeoTargets(in.GeoTargets)
+	if len(in.GeoTargets) > 0 && len(allGeo) == 1 && allGeo[0] == "US" {
+		// Only a real problem if the caller didn't actually ask for US: this means
+		// every supplied geo was invalid or sanctioned and we fell back to US.
+		askedUS := false
+		for _, g := range in.GeoTargets {
+			if strings.EqualFold(strings.TrimSpace(g), "US") {
+				askedUS = true
+				break
+			}
+		}
+		if !askedUS {
+			return nil, fmt.Errorf("no usable geo targets: all supplied geos are invalid or ineligible (sanctioned) — refusing to silently fall back to US")
+		}
+	}
 	geoCountries := make([]string, 0, len(allGeo))
 	skippedGeos := make([]string, 0)
 	for _, g := range allGeo {
