@@ -832,9 +832,9 @@ func TestCreateCampaignFlow(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		// WithWriteDelay(0) disables the inter-write pacing sleep so this
+		// end-to-end flow doesn't incur the real ~1s-per-write delay.
 		WithWriteDelay(0),
-		// Speed up: no real write delay needed since server is instant; the
-		// 1s delay still runs but is acceptable for a single test.
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
