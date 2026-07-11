@@ -72,7 +72,7 @@ var JobCreateResponse = Type("job-create-response", func() {
 		Enum("queued")
 	})
 	Attribute("platforms", ArrayOf(String), "Platforms this job will create on")
-	Required("job_id", "status")
+	Required("job_id", "status", "platforms")
 })
 
 // PlatformResult is one platform's outcome within a terminal job result. It

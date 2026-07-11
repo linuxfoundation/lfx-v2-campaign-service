@@ -478,6 +478,7 @@ paths:
                         required:
                             - job_id
                             - status
+                            - platforms
                 "400":
                     description: Bad Request response.
                     schema:
@@ -4039,6 +4040,7 @@ definitions:
         required:
             - job_id
             - status
+            - platforms
     JobPollResponse:
         title: JobPollResponse
         type: object

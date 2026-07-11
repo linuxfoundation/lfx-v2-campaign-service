@@ -5806,6 +5806,7 @@ components:
             required:
                 - job_id
                 - status
+                - platforms
         JobPollResponse:
             type: object
             properties:

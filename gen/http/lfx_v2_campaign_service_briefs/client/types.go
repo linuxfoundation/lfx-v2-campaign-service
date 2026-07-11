@@ -1262,11 +1262,9 @@ func NewCreateCampaignsJobCreateResponseAccepted(body *CreateCampaignsResponseBo
 		JobID:  *body.JobID,
 		Status: *body.Status,
 	}
-	if body.Platforms != nil {
-		v.Platforms = make([]string, len(body.Platforms))
-		for i, val := range body.Platforms {
-			v.Platforms[i] = val
-		}
+	v.Platforms = make([]string, len(body.Platforms))
+	for i, val := range body.Platforms {
+		v.Platforms[i] = val
 	}
 
 	return v
@@ -1698,6 +1696,9 @@ func ValidateCreateCampaignsResponseBody(body *CreateCampaignsResponseBody) (err
 	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Platforms == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platforms", "body"))
 	}
 	if body.Status != nil {
 		if !(*body.Status == "queued") {

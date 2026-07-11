@@ -291,3 +291,51 @@ func TestAggregateStatus(t *testing.T) {
 		})
 	}
 }
+
+// emptyIDDispatcher returns a non-nil campaign with no upstream id — a
+// misbehaving dispatcher that must be recorded as a failure, not ok.
+type emptyIDDispatcher struct{}
+
+func (emptyIDDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{PlatformCampaignID: "", Status: "active", CampaignName: "n"}, nil
+}
+
+// TestOrchestrator_EmptyUpstreamIDIsFailure verifies a dispatched campaign with
+// no PlatformCampaignID is reported as a failure (not ok) and not persisted.
+func TestOrchestrator_EmptyUpstreamIDIsFailure(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: emptyIDDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+	if len(camps.upserted) != 0 {
+		t.Errorf("upserted %d, want 0 (empty upstream id must not persist)", len(camps.upserted))
+	}
+}
+
+// TestOrchestrator_ReusesExistingWhenDispatcherGone verifies the idempotency
+// guard runs before dispatcher resolution: an already-persisted platform is
+// reported ok on retry even if its dispatcher is no longer registered.
+func TestOrchestrator_ReusesExistingWhenDispatcherGone(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
+		"b1|" + string(model.ProviderGoogleAds): {ID: "c1", PlatformCampaignID: "pc-google-ads"},
+	}}
+	// No dispatchers registered at all.
+	orch := NewOrchestrator(camps, jobs, nil)
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Errorf("status = %s, want succeeded (existing campaign reused despite no dispatcher)", j.Status)
+	}
+	if !strings.Contains(string(j.Result), "pc-google-ads") {
+		t.Errorf("result = %s, want the reused upstream id", j.Result)
+	}
+}

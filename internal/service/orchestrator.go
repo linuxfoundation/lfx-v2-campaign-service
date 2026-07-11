@@ -87,18 +87,15 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			// A single platform failure must not cancel the others, so we never
 			// return a non-nil error from the group; failures are recorded.
 			res := platformResult{Platform: string(p)}
-			d, ok := o.dispatchers[p]
-			if !ok {
-				res.Error = "no dispatcher registered for platform"
-				results[i] = res
-				return nil
-			}
-			// Idempotency guard: if this brief already has a campaign for this
-			// platform with an upstream id, a prior run (or a re-POST of
-			// create-campaigns) already created the paid campaign. Reuse it instead
-			// of calling the platform's create API again, which would spend money on
-			// a duplicate. A not-found is the normal first-time path; a transient
-			// lookup error is recorded as a failure rather than risking a duplicate.
+
+			// Idempotency guard FIRST, before resolving the dispatcher: if this
+			// brief already has a campaign for this platform with an upstream id, a
+			// prior run (or a re-POST of create-campaigns) already created the paid
+			// campaign, so reuse it. This must precede the dispatcher lookup so an
+			// already-persisted platform is reported ok on retry even if its
+			// dispatcher is no longer registered. A not-found is the normal
+			// first-time path; a transient lookup error is recorded as a failure
+			// rather than risking a duplicate create.
 			//
 			// This read-before-dispatch check narrows — but does not fully close —
 			// the duplicate window: two concurrent create-campaigns requests for the
@@ -106,9 +103,8 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			// The (brief_id, platform) unique index keeps persistence single-rowed,
 			// but the upstream create is not transactional with it. Fully closing
 			// this requires provider-side idempotency keys and single-flight job
-			// ownership, tracked with the job-recovery follow-up (see the goroutine
-			// lifecycle thread). campaign_id below is always the upstream platform id
-			// so the field's meaning is identical on the reuse and create paths.
+			// ownership, tracked in LFXV2-2665. campaign_id below is always the
+			// upstream platform id so the field means the same on reuse and create.
 			if existing, lerr := o.campaigns.GetCampaignByPlatform(gctx, brief.ID, p); lerr == nil {
 				if existing.PlatformCampaignID != "" {
 					res.OK = true
@@ -118,6 +114,13 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				}
 			} else if !errors.Is(lerr, domain.ErrNotFound) {
 				res.Error = "check existing campaign: " + lerr.Error()
+				results[i] = res
+				return nil
+			}
+
+			d, ok := o.dispatchers[p]
+			if !ok {
+				res.Error = "no dispatcher registered for platform"
 				results[i] = res
 				return nil
 			}
@@ -132,6 +135,15 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				// A nil campaign with no error would panic on the ownership stamp
 				// below (in a detached goroutine); record it as a platform failure.
 				res.Error = "dispatcher returned no campaign"
+				results[i] = res
+				return nil
+			}
+			if campaign.PlatformCampaignID == "" {
+				// A successful dispatch must yield an upstream campaign id; without
+				// one the result can't honestly be reported ok (campaign_id is
+				// documented as present when ok), and a later retry couldn't
+				// recognize it via the idempotency guard. Treat as a failure.
+				res.Error = "dispatcher returned no upstream campaign id"
 				results[i] = res
 				return nil
 			}

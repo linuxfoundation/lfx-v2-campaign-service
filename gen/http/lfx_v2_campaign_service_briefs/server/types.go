@@ -163,7 +163,7 @@ type CreateCampaignsResponseBody struct {
 	// Initial status (always 'queued' on create)
 	Status string `form:"status" json:"status" xml:"status"`
 	// Platforms this job will create on
-	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+	Platforms []string `form:"platforms" json:"platforms" xml:"platforms"`
 }
 
 // GetCampaignResponseBody is the type of the "lfx-v2-campaign-service-briefs"
@@ -898,6 +898,8 @@ func NewCreateCampaignsResponseBody(res *lfxv2campaignservicebriefs.JobCreateRes
 		for i, val := range res.Platforms {
 			body.Platforms[i] = val
 		}
+	} else {
+		body.Platforms = []string{}
 	}
 	return body
 }
