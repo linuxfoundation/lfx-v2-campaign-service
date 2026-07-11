@@ -353,10 +353,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			return fmt.Errorf("meta API %s %s: %w", method, path, err)
 		}
 
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 		retryAfter := c.parseRetryAfter(resp)
 		status := resp.StatusCode
 		_ = resp.Body.Close()
+		// A read error (e.g. connection closed early on a mismatched Content-Length)
+		// must not be treated as a complete response: even if the partial body
+		// happens to parse, propagate the error rather than reporting a false
+		// success. Skip this for a throttle status handled below, where the body is
+		// discarded and the request is retried anyway.
+		if readErr != nil && status != http.StatusTooManyRequests {
+			return fmt.Errorf("meta API %s %s: read response body: %w", method, path, readErr)
+		}
 
 		// Meta reports throttling either as HTTP 429 or, commonly, as HTTP 400 with
 		// a Graph error envelope whose code is a known rate-limit code. Treat both
@@ -982,7 +990,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if in.LifetimeBudget {
 		budgetLabel = "lifetime"
 	}
-	steps = append(steps, fmt.Sprintf("Ad set created: %s ($%.2f %s, geo: %s)", adSetID, in.BudgetUSD, budgetLabel, strings.Join(geoCountries, ", ")))
+	// Currency-neutral: Meta interprets the budget in the ad account's currency,
+	// which may not be USD, so don't prefix with '$'.
+	steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.BudgetUSD, budgetLabel, strings.Join(geoCountries, ", ")))
 
 	// Step 4: creative + ad per variant (per-variant failures are non-fatal).
 	adCount := 0
@@ -1060,6 +1070,9 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 }
 
 func objectiveKeys() []string {
-	// Stable order matching the TS objective set.
-	return []string{"awareness", "traffic", "engagement", "leads", "conversions"}
+	// The objectives CreateCampaign actually accepts. 'leads' is intentionally
+	// excluded: it's defined in objectiveParams (for labels) but rejected up front
+	// until lead-form support exists, so advertising it here would send callers
+	// into a second error.
+	return []string{"awareness", "traffic", "engagement", "conversions"}
 }

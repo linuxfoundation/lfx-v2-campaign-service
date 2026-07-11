@@ -1101,3 +1101,35 @@ func TestDoRequestReadsLargeSuccessBody(t *testing.T) {
 		t.Errorf("id = %q, want 123 (body must not be truncated before the id field)", out.ID)
 	}
 }
+
+// TestDoRequestPropagatesBodyReadError verifies a truncated response (declared
+// Content-Length larger than the body sent) is reported as an error, not a
+// false success, even if the partial body would parse.
+func TestDoRequestPropagatesBodyReadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Advertise more bytes than we actually write, then hijack-close so the
+		// client sees an unexpected EOF mid-body.
+		w.Header().Set("Content-Length", "1000")
+		_, _ = io.WriteString(w, `{"id":"123"}`)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodGet, "/x", nil, &out)
+	if err == nil {
+		t.Fatal("expected a read error, got nil (a truncated body must not be a success)")
+	}
+}
