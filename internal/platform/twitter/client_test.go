@@ -148,8 +148,8 @@ func TestBuildTwitterUtmURL(t *testing.T) {
 		EventName:       "Open Source Summit",
 		RegistrationURL: "https://events.lf.org/oss/",
 	})
-	if !strings.HasPrefix(got, "https://events.lf.org/oss?") {
-		t.Errorf("trailing slash not stripped / bad base: %q", got)
+	if !strings.HasPrefix(got, "https://events.lf.org/oss/?") {
+		t.Errorf("bad base: %q", got)
 	}
 	for _, want := range []string{
 		"utm_source=twitter",
@@ -163,13 +163,22 @@ func TestBuildTwitterUtmURL(t *testing.T) {
 		}
 	}
 
-	// Existing query string uses & separator.
+	// Existing query params are preserved (merged into the query).
 	got2 := buildTwitterUtmURL(CampaignInput{
 		EventName:       "Event",
 		RegistrationURL: "https://x.com/reg?ref=1",
 	})
-	if !strings.Contains(got2, "?ref=1&") {
-		t.Errorf("expected & separator when query already present: %s", got2)
+	if !strings.Contains(got2, "ref=1") || !strings.Contains(got2, "utm_source=twitter") {
+		t.Errorf("existing query param not preserved alongside utm: %s", got2)
+	}
+
+	// A URL fragment must stay at the END (query before #, not inside it).
+	got3 := buildTwitterUtmURL(CampaignInput{
+		EventName:       "Event",
+		RegistrationURL: "https://x.com/reg#details",
+	})
+	if !strings.HasSuffix(got3, "#details") || strings.Contains(got3, "#details?") {
+		t.Errorf("fragment not preserved at end: %s", got3)
 	}
 }
 

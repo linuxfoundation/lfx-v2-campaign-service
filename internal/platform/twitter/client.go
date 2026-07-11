@@ -468,7 +468,10 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 		}
 		cursor = resp.NextCursor
 	}
-	return "", nil
+	// Hit the page cap with a cursor still outstanding: we can't be sure the name
+	// doesn't exist further on, so return an error rather than "not found" (which
+	// would let the caller create a duplicate).
+	return "", fmt.Errorf("lookup %q: exceeded %d pages with more results remaining; aborting to avoid creating a duplicate", name, maxListPages)
 }
 
 // ---------------------------------------------------------------------------
@@ -488,8 +491,6 @@ func buildTwitterCampaignName(in CampaignInput) string {
 var spaceRe = regexp.MustCompile(`\s+`)
 
 func buildTwitterUtmURL(in CampaignInput) string {
-	base := strings.TrimRight(in.RegistrationURL, "/")
-
 	slug := in.EventSlug
 	if slug == "" {
 		slug = spaceRe.ReplaceAllString(strings.ToLower(in.EventName), "-")
@@ -499,18 +500,23 @@ func buildTwitterUtmURL(in CampaignInput) string {
 		campaign = slug
 	}
 
-	params := url.Values{}
-	params.Set("utm_source", "twitter")
-	params.Set("utm_medium", "paid-social")
-	params.Set("utm_campaign", campaign)
-	params.Set("utm_term", spaceRe.ReplaceAllString(strings.ToLower(in.EventName), "-"))
-	params.Set("utm_content", "promoted-tweet")
-
-	sep := "?"
-	if strings.Contains(base, "?") {
-		sep = "&"
+	raw := strings.TrimSpace(in.RegistrationURL)
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Unparseable URL: return it unchanged rather than corrupting it.
+		return raw
 	}
-	return base + sep + params.Encode()
+	// Merge UTM params into the URL's existing query and re-render, so the query
+	// lands before any fragment (a naive string append would put it inside the
+	// fragment, e.g. https://x/reg#a?utm_...).
+	q := u.Query()
+	q.Set("utm_source", "twitter")
+	q.Set("utm_medium", "paid-social")
+	q.Set("utm_campaign", campaign)
+	q.Set("utm_term", spaceRe.ReplaceAllString(strings.ToLower(in.EventName), "-"))
+	q.Set("utm_content", "promoted-tweet")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // ---------------------------------------------------------------------------
