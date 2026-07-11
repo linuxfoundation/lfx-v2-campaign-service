@@ -6,6 +6,7 @@ package linkedin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -1969,22 +1970,61 @@ func TestCreateCampaign_404OnSearchDoesNotCreate(t *testing.T) {
 	}
 }
 
-// TestFindMatch_InconclusiveCapIsError verifies that if the API keeps returning a
-// non-empty nextPageToken past the maxListPages cap, findByName returns an
-// explicit error rather than a false no-match — so the find-or-create caller does
-// NOT proceed to create a duplicate. This is the behavior that keeps a mature
-// account (whose matching collection exceeds one cap's worth of pages) safe.
-func TestFindMatch_InconclusiveCapIsError(t *testing.T) {
+// TestFindMatch_RepeatedTokenAborts verifies that a server which keeps returning
+// the SAME non-empty nextPageToken is detected as a pagination loop and aborted
+// with an inconclusive error after just the repeat — not replayed up to the cap.
+func TestFindMatch_RepeatedTokenAborts(t *testing.T) {
 	var mu sync.Mutex
 	var getCount int
-	// Never returns the sought match and always advertises a further page, so the
-	// walk can only terminate by hitting the cap.
+	// Always advertises the same next page token, simulating a stuck cursor.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		getCount++
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":1}],"metadata":{"nextPageToken":"more"}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaigns", "Never Matches")
+	if err == nil {
+		t.Fatal("repeated page token: expected an inconclusive error, got nil")
+	}
+	if id != "" {
+		t.Errorf("repeated page token must not report a match, got id %q", id)
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error should warn it aborts to avoid a duplicate, got: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// Page 1 fetches "more" (recorded); page 2 fetches with token "more" and its
+	// echoed "more" is detected as already-seen — so it stops at 2 GETs, far below
+	// the cap, instead of replaying the stuck cursor maxListPages times.
+	if getCount != 2 {
+		t.Errorf("expected the repeated-token guard to stop at 2 GETs, got %d", getCount)
+	}
+}
+
+// TestFindMatch_InconclusiveCapIsError verifies that if the API keeps returning a
+// non-empty (and DISTINCT) nextPageToken past the maxListPages cap, findByName
+// returns an explicit error rather than a false no-match — so the find-or-create
+// caller does NOT proceed to create a duplicate. This keeps a mature account
+// (whose matching collection exceeds one cap's worth of pages) safe.
+func TestFindMatch_InconclusiveCapIsError(t *testing.T) {
+	var mu sync.Mutex
+	var getCount int
+	// Never returns the sought match and always advertises a further page with a
+	// DISTINCT token (so the repeated-token guard doesn't trip); the walk can only
+	// terminate by hitting the cap.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		getCount++
+		n := getCount
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"elements":[{"name":"Other","status":"ACTIVE","id":1}],"metadata":{"nextPageToken":"tok-%d"}}`, n))
 	}))
 	defer srv.Close()
 
@@ -2022,7 +2062,9 @@ func TestFindMatch_LargeAccountUnderCapSucceeds(t *testing.T) {
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if n < matchPage {
-			_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":1}],"metadata":{"nextPageToken":"more"}}`)
+			// Distinct token per page (as a real cursor returns), so the
+			// repeated-token loop guard doesn't (correctly) trip on a stuck cursor.
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"elements":[{"name":"Other","status":"ACTIVE","id":1}],"metadata":{"nextPageToken":"page-%d"}}`, n))
 			return
 		}
 		// The match, with an empty nextPageToken (end of results).
@@ -2188,7 +2230,10 @@ func TestCreateCampaign_RejectsEmptyAccessTokenBeforeAnyRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	for _, tok := range []string{"", "   ", "\t\n"} {
+	// Empty/whitespace-only AND padded tokens must all be rejected before any
+	// HTTP call: a padded value like " token " can't be a valid bearer token, so
+	// it's a config error, not something to silently trim.
+	for _, tok := range []string{"", "   ", "\t\n", " token ", "token\n", "\ttoken"} {
 		c := NewClient(Credentials{AccessToken: tok}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
 			EventName:        "E",

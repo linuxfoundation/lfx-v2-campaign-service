@@ -485,6 +485,10 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 func (c *Client) findMatch(ctx context.Context, nestedPath string, match func(responseElement) bool) (string, error) {
 	const pageSize = 50
 	pageToken := ""
+	// Guard against a server that returns the same non-empty cursor repeatedly:
+	// without this, a stuck token would replay the same GET up to maxListPages
+	// times (each with its own retries), burning quota and stalling the request.
+	seenTokens := make(map[string]struct{})
 	for page := 0; page < maxListPages; page++ {
 		params := map[string]string{
 			"q": "search",
@@ -536,6 +540,14 @@ func (c *Client) findMatch(ctx context.Context, nestedPath string, match func(re
 		if resp.Metadata.NextPageToken == "" {
 			return "", nil
 		}
+		if _, seen := seenTokens[resp.Metadata.NextPageToken]; seen {
+			// The server handed back a cursor we've already followed: pagination is
+			// looping. Abort with the inconclusive-search error rather than replaying
+			// the same page — reporting a false no-match would let the caller create a
+			// duplicate.
+			return "", fmt.Errorf("search %q by name: pagination returned a repeated page token — aborting to avoid creating a duplicate", nestedPath)
+		}
+		seenTokens[resp.Metadata.NextPageToken] = struct{}{}
 		pageToken = resp.Metadata.NextPageToken
 	}
 	// Cap reached with a next-page token still present: refuse to report a false
@@ -1108,10 +1120,16 @@ func validateRegistrationURL(raw string) error {
 // CreateCampaign unchanged. A full idempotent-resume implementation is out of
 // scope for this fix.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
-	// Fail fast on a missing token rather than sending "Authorization: Bearer "
-	// and getting a less actionable API error after network round-trips.
-	if strings.TrimSpace(c.creds.AccessToken) == "" {
+	// Fail fast on a missing or malformed token rather than sending an invalid
+	// "Authorization: Bearer <...>" and getting a less actionable API error after
+	// network round-trips. A bearer token cannot contain surrounding whitespace,
+	// so a padded value (e.g. " token ") is a configuration error, not something
+	// to silently trim — reject it explicitly.
+	if c.creds.AccessToken == "" || strings.TrimSpace(c.creds.AccessToken) == "" {
 		return nil, fmt.Errorf("linkedin: access token is required")
+	}
+	if c.creds.AccessToken != strings.TrimSpace(c.creds.AccessToken) {
+		return nil, fmt.Errorf("linkedin: access token must not have leading or trailing whitespace")
 	}
 
 	accountID, err := c.resolveAccountID(in.AdAccountID)
