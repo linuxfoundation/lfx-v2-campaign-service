@@ -245,10 +245,11 @@ func TestBriefService_ApproveBrief_VersionGated(t *testing.T) {
 	}
 }
 
-// parseBriefIfMatch must accept a bare version, a quoted entity-tag, and a weak
-// tag; and reject non-numeric input.
+// parseBriefIfMatch accepts a bare version and a strong quoted entity-tag, and
+// rejects non-numeric input AND weak validators (If-Match requires strong
+// comparison per RFC 7232).
 func TestParseBriefIfMatch_AcceptsQuotedETag(t *testing.T) {
-	cases := map[string]int64{`3`: 3, `"3"`: 3, `W/"3"`: 3, ` "42" `: 42}
+	cases := map[string]int64{`3`: 3, `"3"`: 3, ` "42" `: 42}
 	for in, want := range cases {
 		v, err := parseBriefIfMatch(&in)
 		if err != nil {
@@ -257,6 +258,11 @@ func TestParseBriefIfMatch_AcceptsQuotedETag(t *testing.T) {
 		}
 		if v != want {
 			t.Errorf("parseBriefIfMatch(%q) = %d, want %d", in, v, want)
+		}
+	}
+	for _, weak := range []string{`W/"3"`, `w/"3"`} {
+		if _, err := parseBriefIfMatch(&weak); err == nil {
+			t.Errorf("parseBriefIfMatch(%q) = nil error, want weak-tag rejection", weak)
 		}
 	}
 	bad := `abc`

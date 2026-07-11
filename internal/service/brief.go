@@ -320,11 +320,14 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 	if ifMatch == nil || *ifMatch == "" {
 		return 0, &briefs.PreconditionRequiredError{Code: "428", Message: "an If-Match header is required"}
 	}
-	// Accept both the bare version we emit and a standards-compliant quoted
-	// entity-tag (RFC 7232 `If-Match: "3"`), plus the weak-tag `W/"3"` form, since
-	// caches and conformant clients may echo the ETag quoted.
+	// Accept the bare version we emit and a standards-compliant STRONG quoted
+	// entity-tag (RFC 7232 `If-Match: "3"`). Reject a weak validator (`W/"3"`):
+	// RFC 7232 §3.1 requires If-Match to use the strong comparison function, so a
+	// weak tag must NOT authorize a write.
 	raw := strings.TrimSpace(*ifMatch)
-	raw = strings.TrimPrefix(raw, "W/")
+	if strings.HasPrefix(raw, "W/") || strings.HasPrefix(raw, "w/") {
+		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be a strong validator; weak tags (W/\"…\") are not accepted"}
+	}
 	raw = strings.Trim(raw, `"`)
 	v, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
