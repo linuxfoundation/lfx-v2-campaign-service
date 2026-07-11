@@ -14,9 +14,11 @@ never reads the process environment and uses only the standard library.
 
 Authentication is a Graph API Bearer access token. `CreateCampaign` drives the
 Campaign -> Ad Set -> Ad(s) hierarchy, creating everything PAUSED, with
-objective->parameter mapping (awareness/traffic/engagement/conversions; `leads`
-is rejected until lead-form support exists), placement/promoted-object building,
-and UTM URL construction that preserves any URL fragment.
+objective->parameter mapping (awareness/traffic/engagement/leads/conversions;
+`leads` runs a website-leads campaign — OUTCOME_LEADS optimizing for LINK_CLICKS
+to the registration URL — rather than an on-Facebook instant-form flow),
+placement/promoted-object building, and UTM URL construction that preserves any
+URL fragment.
 
 Inputs are validated up front, before any mutating call: geo targets are checked
 against ISO 3166-1 alpha-2 and comprehensively-sanctioned countries are
