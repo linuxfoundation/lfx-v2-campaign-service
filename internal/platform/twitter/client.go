@@ -107,6 +107,11 @@ type Client struct {
 	// defaults installed by NewClient.
 	nonceFn func() string
 	timeFn  func() time.Time
+
+	// writeDelay paces sequential write requests within a single dispatch
+	// (Twitter allows ~1 write/sec). Injectable so tests can set it to 0 rather
+	// than incurring real per-request sleeps; defaults to the writeDelay const.
+	writeDelay time.Duration
 }
 
 // Option customizes a Client at construction time.
@@ -118,8 +123,21 @@ func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = u } }
 // WithAPIVersion overrides the API version segment (default DefaultAPIVersion).
 func WithAPIVersion(v string) Option { return func(c *Client) { c.apiVersion = v } }
 
-// WithHTTPClient overrides the underlying *http.Client (default has a 30s timeout).
-func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.httpClient = h } }
+// WithHTTPClient overrides the underlying *http.Client (default has a 30s
+// timeout). A nil client is ignored so the option can't produce an unusable
+// Client whose httpClient.Do would panic.
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *Client) {
+		if h != nil {
+			c.httpClient = h
+		}
+	}
+}
+
+// WithWriteDelay overrides the inter-write pacing delay. A zero (or negative)
+// value disables the pacing sleep entirely — useful in tests to avoid real
+// per-request sleeps.
+func WithWriteDelay(d time.Duration) Option { return func(c *Client) { c.writeDelay = d } }
 
 // NewClient constructs a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
@@ -131,6 +149,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		httpClient: &http.Client{Timeout: requestTimeout},
 		nonceFn:    defaultNonce,
 		timeFn:     time.Now,
+		writeDelay: writeDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -381,6 +400,16 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 		}
 	}
 	return 0
+}
+
+// pace waits c.writeDelay between sequential write requests within a single
+// dispatch, honoring context cancellation. A non-positive writeDelay disables
+// the sleep (used by tests).
+func (c *Client) pace(ctx context.Context) error {
+	if c.writeDelay <= 0 {
+		return nil
+	}
+	return sleepCtx(ctx, c.writeDelay)
 }
 
 // sleepCtx waits for d, honoring context cancellation.
@@ -738,7 +767,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// which is out of scope for this stateless per-request client and is
 		// tracked by LFXV2-2665 (durable dispatch). If the account limit is hit
 		// anyway, the 429 exponential-backoff retry in doRequest is the backstop.
-		if err := sleepCtx(ctx, writeDelay); err != nil {
+		if err := c.pace(ctx); err != nil {
 			return nil, err
 		}
 		resp, err := c.createRequest(ctx, "campaigns", campaignParams)
@@ -775,7 +804,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			"end_time":      toIso8601Utc(in.EndDate),
 			"entity_status": "PAUSED",
 		}
-		if err := sleepCtx(ctx, writeDelay); err != nil {
+		if err := c.pace(ctx); err != nil {
 			return nil, err
 		}
 		resp, err := c.createRequest(ctx, "line_items", lineItemParams)
@@ -793,7 +822,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var promotedTweetID string
 	var promotedTweetWarning string
 	if in.TweetID != "" {
-		if err := sleepCtx(ctx, writeDelay); err != nil {
+		if err := c.pace(ctx); err != nil {
 			return nil, err
 		}
 		// The promoted_tweets endpoint does not accept entity_status; the API

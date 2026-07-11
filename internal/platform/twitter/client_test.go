@@ -354,6 +354,7 @@ func TestRetryOn429(t *testing.T) {
 		AccountConfig{AccountID: "acc1"},
 		WithBaseURL(srv.URL),
 		WithAPIVersion("12"),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -419,6 +420,7 @@ func TestRetryExhausted(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -461,6 +463,7 @@ func TestContextCancellationDuringRetry(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -490,6 +493,7 @@ func TestRequestSetsAuthHeader(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -590,6 +594,7 @@ func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -658,6 +663,7 @@ func TestCreateCampaignEventNameRuneLimit(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -734,6 +740,7 @@ func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
 			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 			tc.acct,
 			WithBaseURL(srv.URL),
+			WithWriteDelay(0),
 		)
 		c.nonceFn = func() string { return "n" }
 		c.timeFn = staticTime
@@ -790,6 +797,7 @@ func TestCreateCampaignFlow(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 		// Speed up: no real write delay needed since server is instant; the
 		// 1s delay still runs but is acceptable for a single test.
 	)
@@ -853,6 +861,7 @@ func TestCreateCampaignIdempotent(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -892,6 +901,7 @@ func TestFindByNamePagination(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -968,6 +978,7 @@ func TestCreateSendsQueryParams(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -1056,6 +1067,7 @@ func TestRetryResetExceedsCapAborts(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -1107,6 +1119,7 @@ func TestPromotedTweetMissingIDWarns(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -1171,6 +1184,7 @@ func TestPromotedTweetPostErrorWarns(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -1234,6 +1248,7 @@ func TestPromotedTweetDuplicateTreatedIdempotent(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -1290,6 +1305,7 @@ func TestCreateCampaignLookupErrorAborts(t *testing.T) {
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -1303,5 +1319,28 @@ func TestCreateCampaignLookupErrorAborts(t *testing.T) {
 	}
 	if postCampaign != 0 {
 		t.Errorf("expected no campaign create POST after lookup failure, got %d", postCampaign)
+	}
+}
+
+// TestWithHTTPClientNilIgnored verifies WithHTTPClient(nil) does not install a
+// nil client (which would panic on the first httpClient.Do); the default client
+// is retained so the option can't produce an unusable Client.
+func TestWithHTTPClientNilIgnored(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{}, WithHTTPClient(nil))
+	if c.httpClient == nil {
+		t.Fatal("WithHTTPClient(nil) left a nil httpClient; expected the default to be retained")
+	}
+}
+
+// TestWithWriteDelayZeroDisablesPacing verifies a zero write delay makes pace a
+// no-op so tests don't incur real per-request sleeps.
+func TestWithWriteDelayZeroDisablesPacing(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{}, WithWriteDelay(0))
+	start := time.Now()
+	if err := c.pace(context.Background()); err != nil {
+		t.Fatalf("pace: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Errorf("pace slept %v with zero writeDelay; expected a no-op", elapsed)
 	}
 }
