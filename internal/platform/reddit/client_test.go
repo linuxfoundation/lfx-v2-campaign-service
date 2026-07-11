@@ -486,7 +486,7 @@ func TestCreateCampaign_CommunityFallback(t *testing.T) {
 	}
 	foundFallback := false
 	for _, s := range res.Steps {
-		if strings.Contains(s, "retrying with keywords only") {
+		if strings.Contains(s, "retrying without communities") {
 			foundFallback = true
 		}
 	}
@@ -505,7 +505,9 @@ func TestCreateCampaign_Validation(t *testing.T) {
 		{"bad start", CampaignInput{BudgetUSD: 10, StartDate: "01-01-2026", EndDate: "2026-01-02"}},
 		{"bad end", CampaignInput{BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "nope"}},
 		{"end before start", CampaignInput{BudgetUSD: 10, StartDate: "2026-01-02", EndDate: "2026-01-01"}},
-		{"bad objective", CampaignInput{BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", Objective: "nope"}},
+		// A valid RegistrationURL is required so validation reaches the objective
+		// check (URL validation runs before objective validation in CreateCampaign).
+		{"bad objective", CampaignInput{BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", RegistrationURL: "https://example.com/reg", Objective: "nope"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -556,9 +558,47 @@ func TestBuildRedditUTMURL(t *testing.T) {
 	}
 }
 
-// newBodyCaptureServers spins up token + API servers that capture the campaign and
-// ad-group request bodies, returning them plus the client. Used by the
-// start-time and ad-group-name tests.
+// TestBuildRedditUTMURL_PreservesQueryOnTrailingSlash verifies finding #1: a
+// trailing slash inside a query value (?next=/) is preserved (only a trailing
+// PATH slash is trimmed, not the raw URL string), and a path trailing slash is
+// still removed.
+func TestBuildRedditUTMURL_PreservesQueryOnTrailingSlash(t *testing.T) {
+	in := CampaignInput{
+		EventName:       "Query Slash",
+		EventSlug:       "qs",
+		RegistrationURL: "https://example.com/reg?next=/",
+		HSToken:         "hs123",
+	}
+	got := buildRedditUTMURL(in, 0)
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse %q: %v", got, err)
+	}
+	if u.Path != "/reg" {
+		t.Errorf("path = %q, want /reg (trailing path slash removed)", u.Path)
+	}
+	if u.Query().Get("next") != "/" {
+		t.Errorf("next = %q, want %q (query value not corrupted)", u.Query().Get("next"), "/")
+	}
+	if u.Query().Get("utm_source") != "reddit" {
+		t.Errorf("utm_source = %q, want reddit; url=%q", u.Query().Get("utm_source"), got)
+	}
+
+	// A pure path trailing slash (no query) must be trimmed.
+	got2 := buildRedditUTMURL(CampaignInput{
+		EventName:       "Path Slash",
+		RegistrationURL: "https://example.com/reg/",
+		HSToken:         "hs123",
+	}, 0)
+	u2, err := url.Parse(got2)
+	if err != nil {
+		t.Fatalf("parse %q: %v", got2, err)
+	}
+	if u2.Path != "/reg" {
+		t.Errorf("path = %q, want /reg (trailing slash removed)", u2.Path)
+	}
+}
+
 // fixedRedditClock pins "now" to a point before the 2026-08/09 campaign windows
 // used across the CreateCampaign tests, so those tests stay deterministic
 // (start dates remain in the future, end-after-start holds) regardless of the
@@ -568,6 +608,9 @@ func fixedRedditClock() func() time.Time {
 	return func() time.Time { return fixed }
 }
 
+// newBodyCaptureServers spins up token + API servers that capture the campaign and
+// ad-group request bodies, returning them plus the client. Used by the
+// start-time and ad-group-name tests.
 func newBodyCaptureServers(t *testing.T) (*Client, func() (map[string]any, map[string]any), func()) {
 	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -802,6 +845,32 @@ func TestExtractRedditPostID_HostSpoofRejected(t *testing.T) {
 		if _, err := extractRedditPostID(bad); err == nil {
 			t.Errorf("expected rejection of %q", bad)
 		}
+	}
+}
+
+// TestDecodeID_RejectsNonStringID verifies finding #3: a non-string data.id
+// (bool, object, number, array) is treated as absent rather than coerced into a
+// bogus value like "true" or "map[]" that a caller might mistake for a valid ID.
+func TestDecodeID_RejectsNonStringID(t *testing.T) {
+	cases := map[string]string{
+		"boolean id": `{"id": true}`,
+		"object id":  `{"id": {"nested": 1}}`,
+		"number id":  `{"id": 123}`,
+		"array id":   `{"id": ["a"]}`,
+		"null id":    `{"id": null}`,
+		"absent id":  `{"other": "x"}`,
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := decodeID(&apiResponse{Data: json.RawMessage(data)})
+			if got != "" {
+				t.Errorf("decodeID(%s) = %q, want empty", data, got)
+			}
+		})
+	}
+	// A genuine string id is still returned.
+	if got := decodeID(&apiResponse{Data: json.RawMessage(`{"id": "camp_1"}`)}); got != "camp_1" {
+		t.Errorf("decodeID string id = %q, want camp_1", got)
 	}
 }
 

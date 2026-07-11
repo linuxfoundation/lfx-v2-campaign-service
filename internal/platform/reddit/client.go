@@ -416,8 +416,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var steps []string
 
 	// Validation.
-	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0 || in.BudgetUSD > redditMaxBudgetUSD {
+	switch {
+	case math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0:
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
+	case in.BudgetUSD > redditMaxBudgetUSD:
+		return nil, fmt.Errorf("invalid budget: must be a finite value in (0, %.0f]", redditMaxBudgetUSD)
 	}
 	// Parse for calendar validity (rejects e.g. 2026-02-31), not just format.
 	startDate, err := time.Parse("2006-01-02", in.StartDate)
@@ -592,7 +595,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(targetingWithCommunities))
 	if err != nil {
 		if len(communityNames) > 0 && strings.Contains(err.Error(), "invalid communities") {
-			steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying with keywords only", strings.Join(communityNames, ", ")))
+			steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying without communities", strings.Join(communityNames, ", ")))
 			usedCommunities = false
 			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
 			if err != nil {
@@ -679,27 +682,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // ---------------------------------------------------------------------------
 
 // decodeID extracts data.id from a Reddit API envelope, returning "" if absent.
+// Reddit IDs are strings; a non-string id (bool, number, object, array) is
+// treated as absent rather than coerced into a bogus value like "true" or
+// "map[]" that a caller might mistake for a valid resource ID.
 func decodeID(resp *apiResponse) string {
 	if resp == nil || len(resp.Data) == 0 {
 		return ""
 	}
-	var obj struct {
-		ID any `json:"id"`
-	}
+	var obj map[string]any
 	if err := json.Unmarshal(resp.Data, &obj); err != nil {
 		return ""
 	}
-	switch v := obj.ID.(type) {
-	case string:
-		return v
-	case float64:
-		// Reddit IDs are strings, but guard against numeric widening.
-		return strings.TrimSuffix(fmt.Sprintf("%f", v), ".000000")
-	case nil:
+	id, ok := obj["id"].(string)
+	if !ok {
 		return ""
-	default:
-		return fmt.Sprintf("%v", v)
 	}
+	return id
 }
 
 // toMicrodollars mirrors toMicrodollars: USD -> integer micro-dollars.
@@ -786,7 +784,8 @@ func validateRegistrationURL(raw string) error {
 
 // buildRedditUTMURL mirrors buildRedditUtmUrl.
 func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
-	base := strings.TrimRight(in.RegistrationURL, "/")
+	// TrimSpace mirrors validateRegistrationURL, which accepts padded input.
+	base := strings.TrimSpace(in.RegistrationURL)
 	slug := in.EventSlug
 	if slug == "" {
 		slug = strings.Join(strings.Fields(strings.ToLower(in.EventName)), "-")
@@ -805,9 +804,10 @@ func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
 		"utm_content":  fmt.Sprintf("variant-%d", variantIndex+1),
 	}
 
-	// Parse and merge UTM params into the URL's query so a URL carrying a
-	// fragment (e.g. .../reg#tickets) keeps the fragment at the very end rather
-	// than embedding the query inside it.
+	// Parse FIRST, then trim a trailing slash from the PATH only. Trimming the
+	// raw URL string would corrupt a value like .../reg?next=/ (dropping the
+	// trailing query value). Parsing first also keeps a fragment (e.g.
+	// .../reg#tickets) at the very end rather than embedding the query inside it.
 	u, err := url.Parse(base)
 	if err != nil {
 		// Fall back to naive concatenation if the URL can't be parsed.
@@ -821,6 +821,7 @@ func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
 		}
 		return base + sep + params.Encode()
 	}
+	u.Path = strings.TrimRight(u.Path, "/")
 	q := u.Query()
 	for k, v := range utm {
 		q.Set(k, v)
