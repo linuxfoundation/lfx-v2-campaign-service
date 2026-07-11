@@ -187,14 +187,23 @@ func TestValidateRegistrationURL(t *testing.T) {
 }
 
 func TestBuildCampaignName(t *testing.T) {
+	// The Project segment carries the canonical LFX slug (docs/api-catalog.md),
+	// so the fixture uses the canonical "cncf" rather than a display label.
 	name := buildCampaignName(CampaignInput{
 		EventName: "Open|Source Summit",
-		Project:   "CNCF",
+		Project:   "cncf",
 		Objective: "leads",
 	}, []string{"DE"})
-	want := "Events | Open-Source Summit | EMEA | Leads | Intent | Social | CNCF | MoFU"
+	want := "Events | Open-Source Summit | EMEA | Leads | Intent | Social | cncf | MoFU"
 	if name != want {
 		t.Errorf("campaign name = %q, want %q", name, want)
+	}
+
+	// An omitted Project falls back to the canonical Linux Foundation slug "tlf",
+	// not a display label, so attribution parses.
+	fb := buildCampaignName(CampaignInput{EventName: "Summit", Objective: "leads"}, []string{"DE"})
+	if !strings.Contains(fb, "| tlf |") {
+		t.Errorf("empty-project fallback = %q, want the canonical slug 'tlf'", fb)
 	}
 }
 

@@ -695,7 +695,11 @@ func buildCampaignName(in CampaignInput, geoTargets []string) string {
 	objective := objectiveLabel(defaultObjective(in.Objective))
 	project := in.Project
 	if strings.TrimSpace(project) == "" {
-		project = "Linux Foundation"
+		// The naming contract's Project segment is the canonical LFX slug; the
+		// Linux Foundation slug is "tlf" (docs/api-catalog.md). Use it (not a
+		// display label) so name-based attribution parses. Matches the reddit and
+		// twitter clients.
+		project = "tlf"
 	}
 	project = strings.ReplaceAll(project, "|", "-")
 	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU", event, region, objective, project)
