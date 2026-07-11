@@ -441,11 +441,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("invalid budget: must be a finite value in (0, %.0f]", redditMaxBudgetUSD)
 	}
 	// A positive-but-tiny budget can still round to zero micro-dollars (e.g.
-	// 0.0000001 USD), which would send goal_value: 0 to Reddit. Reject anything
-	// that does not round to at least one micro-dollar.
+	// 0.0000001 USD), which would send goal_value: 0 to Reddit. Budgets are
+	// rounded to the nearest micro-dollar (round-half-up), so the effective
+	// floor is a value that rounds to at least one micro-dollar (>= 0.0000005
+	// USD); reject anything below that.
 	budgetMicros := toMicrodollars(in.BudgetUSD)
 	if budgetMicros <= 0 {
-		return nil, fmt.Errorf("invalid budget: %g USD rounds to zero micro-dollars; must be at least 0.000001 USD", in.BudgetUSD)
+		return nil, fmt.Errorf("invalid budget: %g USD rounds to zero micro-dollars; must round to at least one micro-dollar (>= 0.0000005 USD)", in.BudgetUSD)
 	}
 	// Parse for calendar validity (rejects e.g. 2026-02-31), not just format.
 	startDate, err := time.Parse("2006-01-02", in.StartDate)
@@ -629,12 +631,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	usedCommunities := len(communityNames) > 0
+	// suppliedCommunities records whether the caller actually supplied usable
+	// subreddits. Only in that case is a fallback (dropping communities) worth
+	// warning about; a keyword/geo-only campaign never intended communities.
+	suppliedCommunities := len(communityNames) > 0
+	usedCommunities := suppliedCommunities
+	droppedCommunities := false
 	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(targetingWithCommunities))
 	if err != nil {
-		if len(communityNames) > 0 && strings.Contains(err.Error(), "invalid communities") {
+		if suppliedCommunities && strings.Contains(err.Error(), "invalid communities") {
 			steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying without communities", strings.Join(communityNames, ", ")))
 			usedCommunities = false
+			droppedCommunities = true
 			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
 			if err != nil {
 				return nil, err
@@ -649,10 +657,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("reddit ad group creation succeeded but returned no ad group ID")
 	}
 	steps = append(steps, fmt.Sprintf("Ad group created: %s (PAUSED, geo: %s)", adGroupID, strings.Join(geos, ", ")))
-	if usedCommunities {
+	switch {
+	case usedCommunities:
 		steps = append(steps, fmt.Sprintf("Targeting: %d communities, %d keywords, %d geos", len(communityNames), len(in.Keywords), len(geos)))
-	} else {
+	case droppedCommunities:
+		// Communities were supplied but the lookup failed, so they were dropped
+		// and must be re-added manually.
 		steps = append(steps, fmt.Sprintf("Targeting: %d keywords, %d geos (communities skipped -- add manually in Reddit Ads Manager)", len(in.Keywords), len(geos)))
+	default:
+		// No subreddits were supplied; this is a normal keyword/geo-only campaign.
+		steps = append(steps, fmt.Sprintf("Targeting: %d keywords, %d geos", len(in.Keywords), len(geos)))
 	}
 
 	// Step 4: Create ad from post URL if provided, otherwise emit instructions.
@@ -790,7 +804,10 @@ func buildRedditCampaignName(in CampaignInput, objective, region string) string 
 	}
 	project := in.Project
 	if project == "" {
-		project = "Linux Foundation"
+		// The Project segment must be the canonical LFX slug that the data
+		// pipeline joins on for attribution; the Linux Foundation's slug is
+		// "tlf" (not a display name). See docs/api-catalog.md.
+		project = "tlf"
 	}
 	project = replacePipes(project)
 	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | ToFU", event, region, objectiveLabel, project)
