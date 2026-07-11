@@ -762,8 +762,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// leaving a partial campaign. Trim and store the cleaned value so the same
 	// value is validated here and sent in Step 4.
 	in.TweetID = strings.TrimSpace(in.TweetID)
-	if in.TweetID != "" && !tweetIDRe.MatchString(in.TweetID) {
-		return nil, fmt.Errorf("invalid tweet id: %q must be a numeric X Tweet id", in.TweetID)
+	if in.TweetID != "" {
+		if !tweetIDRe.MatchString(in.TweetID) {
+			return nil, fmt.Errorf("invalid tweet id: %q must be a numeric X Tweet id", in.TweetID)
+		}
+		// The 1–19 digit shape still admits values above the max positive int64
+		// snowflake (e.g. 9999999999999999999); parse to reject those before any
+		// mutating call rather than letting X reject tweet_ids after the campaign
+		// and line item exist.
+		if _, perr := strconv.ParseInt(in.TweetID, 10, 64); perr != nil {
+			return nil, fmt.Errorf("invalid tweet id: %q is out of range for an X Tweet id", in.TweetID)
+		}
 	}
 
 	// Validate required account config before any mutating call. account_id and

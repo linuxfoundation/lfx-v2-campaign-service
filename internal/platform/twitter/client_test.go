@@ -1734,6 +1734,19 @@ func TestTweetIDFormatValidatedUpFront(t *testing.T) {
 // TestTweetIDRejectsNonSnowflake verifies the up-front TweetID format check
 // rejects values that are numeric but cannot be real Tweet snowflakes ("0",
 // leading-zero, or an over-19-digit decimal) so they fail before any mutation.
+// TestTweetIDInt64OverflowRejected verifies a 19-digit value above the max int64
+// snowflake passes the regex shape but is rejected by CreateCampaign's parse
+// check before any mutating call.
+func TestTweetIDInt64OverflowRejected(t *testing.T) {
+	// 9999999999999999999 is 19 digits (matches the regex) but > math.MaxInt64.
+	if !tweetIDRe.MatchString("9999999999999999999") {
+		t.Fatal("precondition: value should match the digit-shape regex")
+	}
+	if _, err := strconv.ParseInt("9999999999999999999", 10, 64); err == nil {
+		t.Fatal("precondition: value should overflow int64")
+	}
+}
+
 func TestTweetIDRejectsNonSnowflake(t *testing.T) {
 	for _, bad := range []string{"0", "0123", "01", "12345678901234567890" /* 20 digits */} {
 		if tweetIDRe.MatchString(bad) {
