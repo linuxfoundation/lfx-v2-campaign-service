@@ -2470,3 +2470,106 @@ func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 		t.Errorf("expected pageSize=1000 (API max), got %q", sawPageSize)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Ninth-round Copilot findings: id-less CREATE responses
+// ---------------------------------------------------------------------------
+
+// baseValidInput returns a CampaignInput that passes all preflight validation so
+// tests exercise the create-response paths rather than tripping an earlier guard.
+func baseValidInput() CampaignInput {
+	return CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/kubecon",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "one"}},
+	}
+}
+
+// TestCreateCampaign_GroupCreateIDLessURNErrors verifies that a campaign-GROUP
+// create response of "urn:li:sponsoredCampaignGroup:" (non-empty but with an
+// empty trailing segment) makes CreateCampaign return an error rather than
+// proceeding with an invalid group URN.
+func TestCreateCampaign_GroupCreateIDLessURNErrors(t *testing.T) {
+	var mu sync.Mutex
+	var campaignPOSTs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			// Trailing-empty URN: passes the non-empty check but yields "" after
+			// trailingID extraction.
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			campaignPOSTs++
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:200"}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error for an id-less campaign group create response, got nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if campaignPOSTs != 0 {
+		t.Errorf("no campaign should be created after an id-less group create, got %d campaign POSTs", campaignPOSTs)
+	}
+}
+
+// TestCreateCampaign_CampaignCreateIDLessURNErrors verifies that a campaign
+// create response of "urn:li:sponsoredCampaign:" (non-empty but with an empty
+// trailing segment) makes CreateCampaign return an error and does NOT proceed to
+// dark-post/creative creation (which would leave an orphaned post).
+func TestCreateCampaign_CampaignCreateIDLessURNErrors(t *testing.T) {
+	var mu sync.Mutex
+	var postAndCreativePOSTs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			// Trailing-empty URN: passes the non-empty check but yields "" after
+			// trailingID extraction.
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:"}`)
+		case strings.Contains(r.URL.Path, "posts"), strings.Contains(r.URL.Path, "creatives"):
+			postAndCreativePOSTs++
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error for an id-less campaign create response, got nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if postAndCreativePOSTs != 0 {
+		t.Errorf("no dark post or creative should be created after an id-less campaign create, got %d POSTs", postAndCreativePOSTs)
+	}
+}

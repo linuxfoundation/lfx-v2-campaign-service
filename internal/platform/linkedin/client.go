@@ -379,11 +379,17 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		// A purely numeric Retry-After that overflows int64 (ErrRange) is still a
-		// "wait a very long time" delay, not an HTTP-date: clamp to the ceiling
-		// rather than falling through and losing the cap. Only a non-numeric value
-		// should be tried as an HTTP-date.
+		// numeric value, not an HTTP-date. ParseInt returns the clamped bound
+		// (MaxInt64 on positive overflow, MinInt64 on negative overflow) alongside
+		// ErrRange, so use the sign to stay consistent with the finite handling
+		// below: a positive-overflow is a "wait a very long time" delay → clamp to
+		// the ceiling; a negative-overflow mirrors a finite-negative value → no wait.
+		// Only a non-numeric value should fall through and be tried as an HTTP-date.
 		if errors.Is(err, strconv.ErrRange) {
-			return maxRetryWait
+			if n == math.MaxInt64 {
+				return maxRetryWait
+			}
+			return 0
 		}
 	} else if n > 0 {
 		// Cap before converting to Duration: a huge Retry-After (e.g.
@@ -706,10 +712,11 @@ func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int
 // exposes no upsert primitive). This is a GET-then-POST: two concurrent
 // CreateCampaign calls for the same name can both observe "not found" and both
 // POST, creating duplicate campaign groups. The client does NOT attempt to close
-// this window — the authoritative single-flight guarantee is enforced one layer
-// up by the orchestrator's per-(brief, platform) claim (LFXV2-2665), so in normal
-// operation only one dispatch per pair ever runs and this helper never races
-// itself. Callers invoking it outside that claim must serialize on their own.
+// this window and provides NO single-flight guarantee: this find-or-create is
+// best-effort and re-POSTs on a repeat call. An orchestrator per-(brief, platform)
+// single-flight claim is PLANNED but NOT provided here (tracked separately as
+// LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
+// must serialize concurrent calls for the same name on their own.
 func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name string, startMs, endMs int64) (string, error) {
 	groupsPath := fmt.Sprintf("adAccounts/%s/adCampaignGroups", accountID)
 
@@ -742,7 +749,17 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name 
 	if resp.ID == "" {
 		return "", fmt.Errorf("LinkedIn API returned no ID for campaign group creation")
 	}
-	return trailingID(resp.ID.String()), nil
+	// Validate the EXTRACTED id, not just the raw field: a create response like
+	// "urn:li:sponsoredCampaignGroup:" passes the non-empty check above yet
+	// trailingID returns "" (empty trailing segment). Proceeding would build an
+	// invalid group URN ("urn:li:sponsoredCampaignGroup:") for the campaign and
+	// lose the identifier of the group just created. The create response is
+	// malformed; abort rather than continue.
+	groupID := trailingID(resp.ID.String())
+	if groupID == "" {
+		return "", fmt.Errorf("LinkedIn API returned a campaign group ID %q with an empty trailing segment", resp.ID.String())
+	}
+	return groupID, nil
 }
 
 // createSponsoredCampaign returns an existing campaign's ID (idempotent by
@@ -757,10 +774,12 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name 
 // best-effort, not an atomic upsert. The findCampaignByNameInGroup lookup and the
 // subsequent create POST are separate calls, so two concurrent CreateCampaign
 // runs for the same (name, group) can both miss and both create a duplicate
-// campaign. LinkedIn offers no upsert primitive to close this window client-side;
-// the authoritative single-flight is the orchestrator's per-(brief, platform)
-// claim (LFXV2-2665), which ensures only one dispatch per pair runs in normal
-// operation. Callers outside that claim must serialize on their own.
+// campaign. LinkedIn offers no upsert primitive to close this window client-side,
+// and this client provides NO single-flight guarantee: the find-or-create is
+// best-effort and re-POSTs on a repeat call. An orchestrator per-(brief, platform)
+// single-flight claim is PLANNED but NOT provided here (tracked separately as
+// LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
+// must serialize concurrent calls for the same name on their own.
 func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile string, startMs, endMs int64, lifetimeBudget bool) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
@@ -818,7 +837,17 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	if resp.ID == "" {
 		return "", fmt.Errorf("LinkedIn API returned no ID for campaign creation")
 	}
-	return trailingID(resp.ID.String()), nil
+	// Validate the EXTRACTED id, not just the raw field: a create response like
+	// "urn:li:sponsoredCampaign:" passes the non-empty check above yet trailingID
+	// returns "" (empty trailing segment). Returning "" here would let CreateCampaign
+	// proceed to build the dark post + creative against "urn:li:sponsoredCampaign:",
+	// leaving an orphaned post. The create response is malformed; abort before any
+	// downstream resource is created.
+	campaignID := trailingID(resp.ID.String())
+	if campaignID == "" {
+		return "", fmt.Errorf("LinkedIn API returned a campaign ID %q with an empty trailing segment", resp.ID.String())
+	}
+	return campaignID, nil
 }
 
 // createDarkPost creates an unpublished-to-feed sponsored post

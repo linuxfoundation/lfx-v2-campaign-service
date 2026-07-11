@@ -796,6 +796,8 @@ func TestParseRetryAfter(t *testing.T) {
 		{"http-date past -> none", fixed.Add(-10 * time.Second).UTC().Format(http.TimeFormat), 0},
 		{"absent -> none", "", 0},
 		{"garbage -> none", "soon", 0},
+		{"positive overflow -> capped", "99999999999999999999999999", maxRetryWait},
+		{"negative overflow -> none", "-99999999999999999999999999", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
