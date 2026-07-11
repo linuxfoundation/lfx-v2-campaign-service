@@ -345,8 +345,8 @@ func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("Dispatch called %d times, want 0 (another worker holds the claim)", calls)
 	}
-	if !strings.Contains(string(j.Result), "already in progress") {
-		t.Errorf("result = %s, want an in-progress message", j.Result)
+	if !strings.Contains(string(j.Result), "another concurrent dispatch owns") {
+		t.Errorf("result = %s, want a concurrent-owner skip message", j.Result)
 	}
 }
 

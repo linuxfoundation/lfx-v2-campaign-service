@@ -58,7 +58,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	c := &Container{Config: cfg}
 
 	if cfg.DatabaseURL == "" {
-		slog.Warn("database URL not set; connection endpoints will return 503 Service Unavailable")
+		slog.Warn("database URL not set; connection and brief/campaign endpoints will return 503 Service Unavailable")
 		c.Service = service.NewCampaignService(nil)
 		// Wire the connection + brief services with nil repos so their routes are
 		// still mounted and return the typed 503 ServiceUnavailable advertised by
@@ -108,7 +108,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	// persistence) is exercised end to end regardless. Log a startup warning so
 	// this gap is visible in production logs rather than silently producing jobs
 	// that always finish "failed" with "no dispatcher registered".
-	dispatchers := map[model.Provider]service.PlatformDispatcher(nil)
+	dispatchers := map[model.Provider]service.PlatformDispatcher{}
 	if len(dispatchers) == 0 {
 		slog.Warn("no platform dispatchers registered; campaign creation will record jobs but perform no upstream dispatch")
 	}

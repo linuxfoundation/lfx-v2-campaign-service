@@ -25,6 +25,10 @@ const maxParallelDispatch = 5
 // on a drain timeout, for them to unwind before it returns (and the pool closes).
 const cancelGracePeriod = 2 * time.Second
 
+// claimReleaseTimeout bounds the best-effort pending-claim cleanup, which runs on
+// a context detached from the (possibly-cancelled) dispatch context.
+const claimReleaseTimeout = 5 * time.Second
+
 // PlatformDispatcher creates a campaign on one ad platform. Implementations are
 // the per-provider adapters (added as those integrations land); the
 // orchestrator is agnostic to them.
@@ -288,9 +292,13 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			res.CampaignID = existing.PlatformCampaignID
 			return res
 		}
-		// Still pending elsewhere: don't dispatch again (that's the whole point of
-		// the claim). Report it as in-progress rather than a failure or a duplicate.
-		res.Error = "another dispatch for this platform is already in progress"
+		// Another worker holds the pending claim: don't dispatch again (the point of
+		// the claim). This job did not create the campaign, so it's recorded as not
+		// ok (OK stays false) — which aggregates to failed/partial for THIS job —
+		// with a message making clear it's owned by a concurrent run, not a real
+		// failure. The other run will complete it; a poll of that run (or a re-poll
+		// after it finishes) reflects the true outcome.
+		res.Error = "skipped: another concurrent dispatch owns this platform"
 		return res
 	}
 
@@ -299,8 +307,13 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// blocked and can be retried. Once the upstream campaign exists, we do NOT
 	// release (the row is the record of the created campaign / recoverable orphan).
 	releaseClaim := func() {
-		if derr := o.campaigns.DeleteDispatchClaim(ctx, brief.ID, p); derr != nil {
-			slog.ErrorContext(ctx, "failed to release pending dispatch claim", "platform", p, "job_id", jobID, "error", derr)
+		// Use a fresh bounded context, not the dispatch ctx: on shutdown/timeout the
+		// dispatch ctx is already cancelled, and reusing it would make the cleanup
+		// DELETE fail and leak the pending claim exactly when we most need to free it.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReleaseTimeout)
+		defer cancel()
+		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p); derr != nil {
+			slog.ErrorContext(rctx, "failed to release pending dispatch claim", "platform", p, "job_id", jobID, "error", derr)
 		}
 	}
 
