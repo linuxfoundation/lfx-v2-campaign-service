@@ -313,6 +313,20 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	// background context) so one caller's cancellation can't tear down the
 	// shared refresh other waiters still depend on.
 	ch := c.tokenGroup.DoChan("refresh", func() (any, error) {
+		// Double-check the cache under the lock before any network call. If a
+		// prior refresh COMPLETED after this caller failed the fast path but
+		// before this work function ran, single-flight won't coalesce us with
+		// it (that call already returned), so without this re-check we'd issue
+		// a duplicate token request. Returning the freshly-cached token here
+		// keeps an expiry burst to a single upstream refresh.
+		c.mu.Lock()
+		if c.cachedToken != "" && c.now().Before(c.tokenExpireAt.Add(-redditTokenExpiryBuffer)) {
+			token := c.cachedToken
+			c.mu.Unlock()
+			return token, nil
+		}
+		c.mu.Unlock()
+
 		fetchCtx, cancel := context.WithTimeout(context.Background(), redditRequestTimeout)
 		defer cancel()
 		return c.fetchToken(fetchCtx)
@@ -1057,8 +1071,14 @@ func extractRedditPostID(urlOrID string) (string, error) {
 				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
 			}
 			// redd.it short links: the post ID is the first path segment.
+			// Match against EscapedPath(), not the decoded u.Path (same reason as
+			// the reddit.com branch below): an encoded delimiter like %2F stays
+			// literal in EscapedPath but decodes to a real '/' in u.Path, so
+			// matching the decoded path would let "redd.it/abc123%2Fjunk" (whose
+			// single segment really ends in "%2Fjunk") be split into "abc123" and
+			// wrongly accepted as t3_abc123.
 			if strings.EqualFold(u.Hostname(), "redd.it") || strings.HasSuffix(strings.ToLower(u.Hostname()), ".redd.it") {
-				id := strings.Trim(u.Path, "/")
+				id := strings.Trim(u.EscapedPath(), "/")
 				if i := strings.IndexByte(id, '/'); i >= 0 {
 					id = id[:i]
 				}

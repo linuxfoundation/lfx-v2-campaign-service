@@ -664,6 +664,43 @@ func TestExtractRedditPostID_PathAnchored(t *testing.T) {
 	}
 }
 
+// TestExtractRedditPostID_ShortLinkEscapedPath verifies FINDING 2 (round 8):
+// the redd.it short-link branch matches against EscapedPath(), not the decoded
+// u.Path (same fix already applied to the reddit.com branch). An encoded
+// delimiter like %2F stays literal in EscapedPath, so it cannot smuggle
+// trailing junk into an otherwise-valid base36 id. Valid short links still
+// parse to t3_<id>.
+func TestExtractRedditPostID_ShortLinkEscapedPath(t *testing.T) {
+	valid := map[string]string{
+		"https://redd.it/abc123":     "t3_abc123",
+		"https://redd.it/abc123?x=1": "t3_abc123",
+		"https://redd.it/abc123/":    "t3_abc123",
+	}
+	for in, want := range valid {
+		got, err := extractRedditPostID(in)
+		if err != nil {
+			t.Errorf("%s: unexpected error %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s -> %q, want %q", in, got, want)
+		}
+	}
+
+	rejected := []string{
+		// %2F is an encoded '/', part of the single path segment -- it must NOT
+		// be treated as a real separator that trims "junk" off a valid id.
+		"https://redd.it/abc123%2Fjunk",
+		// %21 is an encoded '!' -- also part of the segment, not base36.
+		"https://redd.it/abc123%21",
+	}
+	for _, in := range rejected {
+		if got, err := extractRedditPostID(in); err == nil {
+			t.Errorf("%s: expected rejection (encoded delimiter must stay in-segment), got %q", in, got)
+		}
+	}
+}
+
 // TestCreateCampaign_InvalidGeoRejectedBeforeNetwork verifies FINDING 2:
 // GeoTargets that are not ISO 3166-1 alpha-2 codes are rejected up front, before
 // any HTTP call (token or API), so a bad value can't create a campaign that then
@@ -1401,6 +1438,68 @@ func TestRefreshToken_SingleFlightCoalesces(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
 		t.Errorf("token endpoint hit %d times, want exactly 1 (refresh not coalesced)", got)
+	}
+}
+
+// TestRefreshToken_InFlightRechecksCache verifies FINDING 1 (round 8): the
+// single-flight work function re-checks the cached token under the lock before
+// any network call. This covers the "first completes before second dispatches"
+// ordering that plain coalescing misses: if a prior refresh COMPLETED (and
+// cached a valid token) in the window after this caller failed the fast path
+// but before its DoChan work function runs, single-flight will NOT coalesce
+// this caller with the prior one (that call already returned). Without the
+// in-flight re-check, this caller would then issue a duplicate token request.
+// With it, the work function observes the fresh cache and returns it -- no
+// network call at all.
+//
+// The exact interleaving is made deterministic by a call-counting clock: it
+// reports an EXPIRED time on its first observation (the fast-path check, which
+// must MISS so the caller proceeds into DoChan) and a VALID time on every
+// later observation (the work-function re-check, which must HIT and return the
+// seeded token). The token endpoint fails the test if it is ever contacted.
+func TestRefreshToken_InFlightRechecksCache(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "network-tok", "expires_in": 3600})
+	}))
+	defer srv.Close()
+
+	base := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+
+	// Call-counting clock. First call (the fast-path check) reports base+4000s,
+	// at which the seeded token below is already past its buffer -> fast path
+	// MISSES and the caller enters the single-flight work function. Every
+	// subsequent call reports base, at which the seeded token is comfortably
+	// valid -> the work-function re-check HITS and returns the cached token
+	// without any network request.
+	var calls int32
+	now := func() time.Time {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			return base.Add(4000 * time.Second)
+		}
+		return base
+	}
+
+	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(now))
+
+	// Seed a valid cached token (valid at base, expired at base+4000s). This
+	// stands in for a prior refresh that COMPLETED just before this caller's
+	// work function runs.
+	c.mu.Lock()
+	c.cachedToken = "seeded-tok"
+	c.tokenExpireAt = base.Add(3600 * time.Second)
+	c.mu.Unlock()
+
+	tok, err := c.refreshToken(context.Background())
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if tok != "seeded-tok" {
+		t.Fatalf("token = %q, want seeded-tok (work-function re-check should return the fresh cache, not a network token)", tok)
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Errorf("token endpoint hit %d times, want 0 (in-flight re-check must prevent the duplicate refresh)", got)
 	}
 }
 
