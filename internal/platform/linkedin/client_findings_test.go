@@ -1073,3 +1073,39 @@ func TestCreateDarkPost_TrimsWhitespaceInCreativeText(t *testing.T) {
 		t.Errorf("article title = %q, want trimmed 'Headline'", title)
 	}
 }
+
+// TestResolveAccountID_RejectsNonNumeric verifies a non-numeric ad-account id
+// (default or matched override) is rejected rather than interpolated into a URN.
+func TestResolveAccountID_RejectsNonNumeric(t *testing.T) {
+	cfg := testConfig()
+	cfg.DefaultAccountID = "acct-abc" // non-numeric
+	cfg.Accounts = []Account{{AccountID: "acct-abc", OrgID: "987654321", Status: "ACTIVE"}}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	if _, err := c.resolveAccountID(""); err == nil {
+		t.Error("expected non-numeric default account id to be rejected")
+	}
+	if _, err := c.resolveAccountID("acct-abc"); err == nil {
+		t.Error("expected non-numeric override account id to be rejected")
+	}
+}
+
+// TestCreateCampaign_RejectsMalformedGeoURNBeforeAnyPOST verifies a caller-
+// supplied malformed geo URN is rejected before any campaign is created.
+func TestCreateCampaign_RejectsMalformedGeoURNBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-01-31",
+		GeoTargets:       []GeoTarget{{URN: "invalid"}},
+		TargetingProfile: "cloud-native",
+		Variants:         []CreativeVariant{{IntroText: "hi", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid geo target URN") {
+		t.Fatalf("err = %v, want malformed geo URN rejection", err)
+	}
+}

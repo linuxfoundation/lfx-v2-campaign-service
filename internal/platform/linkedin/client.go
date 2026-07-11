@@ -1067,6 +1067,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if g.URN == "" {
 			continue
 		}
+		// A non-empty URN isn't necessarily valid: GeoTarget is public input, so a
+		// caller can pass a malformed URN. Reject it up front rather than sending an
+		// invalid location to LinkedIn only after the campaign group is created.
+		if !geoURNRE.MatchString(g.URN) {
+			return nil, fmt.Errorf("invalid geo target URN %q: expected urn:li:geo:<id>", g.URN)
+		}
 		geoURNs = append(geoURNs, g.URN)
 	}
 	if len(geoURNs) == 0 {

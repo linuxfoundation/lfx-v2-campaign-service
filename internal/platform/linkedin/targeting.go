@@ -16,6 +16,15 @@ import (
 // preserves the configuration invariant the source client relies on.
 var orgIDRE = regexp.MustCompile(`^[0-9]+$`)
 
+// accountIDRE matches a valid LinkedIn ad-account id (digit-only), mirroring the
+// invariant the source config parser enforces, so a malformed id can't be
+// interpolated into a request URN.
+var accountIDRE = regexp.MustCompile(`^[0-9]+$`)
+
+// geoURNRE matches a LinkedIn geo URN (urn:li:geo:<digits>), used to reject a
+// caller-supplied GeoTarget with a malformed URN before any campaign is created.
+var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
+
 // ResolveGeoTargets resolves location names to GeoTarget URNs using the static
 // geoResolveMap. Mirrors the cached branch of resolveGeoTargets: names are
 // lowercased and trimmed before lookup. Unknown geos are skipped (omitted from
@@ -94,12 +103,20 @@ func (c *Client) resolveAccountID(override string) (string, error) {
 	if override != "" {
 		for _, a := range c.cfg.Accounts {
 			if a.AccountID == override {
+				if !accountIDRE.MatchString(override) {
+					return "", fmt.Errorf("invalid LinkedIn ad account ID %q: must be numeric", override)
+				}
 				return override, nil
 			}
 		}
 		return "", fmt.Errorf("unsupported LinkedIn ad account ID %q — not in the runtime config", override)
 	}
 	if c.cfg.DefaultAccountID != "" {
+		// Enforce the digit-only invariant the source config parser guarantees, so
+		// a malformed configured id can't be interpolated into a request URN.
+		if !accountIDRE.MatchString(c.cfg.DefaultAccountID) {
+			return "", fmt.Errorf("invalid default LinkedIn ad account ID %q: must be numeric", c.cfg.DefaultAccountID)
+		}
 		return c.cfg.DefaultAccountID, nil
 	}
 	return "", fmt.Errorf("no LinkedIn ad account configured: provide defaultAccountId in the runtime config")
