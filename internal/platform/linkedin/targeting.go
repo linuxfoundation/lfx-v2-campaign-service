@@ -40,21 +40,32 @@ var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
 // legitimate asset id.
 var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):[A-Za-z0-9_-]+$`)
 
-// facetURNRE matches a LinkedIn targeting-facet member URN as used for skills,
-// groups, and employer/organization exclusions: urn:li:<type>:<id> with no
-// spaces or URL delimiters. A non-blank but malformed facet (e.g. "not-a-skill")
-// would otherwise pass the non-blank check and be rejected by LinkedIn only
-// after the campaign group is created.
-var facetURNRE = regexp.MustCompile(`^urn:li:[a-zA-Z]+:[A-Za-z0-9_-]+$`)
+// facetURNRE matches a LinkedIn facet member id after its namespace prefix: no
+// spaces or URL delimiters.
+var facetURNRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// facetNamespace is the required urn:li:<type>: prefix for each facet kind, so a
+// value from the wrong namespace (e.g. an organization URN under skills) is
+// rejected rather than silently sent under the wrong facet.
+var facetNamespace = map[string]string{
+	"skills":              "urn:li:skill:",
+	"groups":              "urn:li:group:",
+	"employer-exclusions": "urn:li:organization:",
+}
 
 // validFacets returns the non-blank entries of in and an error naming the first
-// entry that is non-blank but not a well-formed facet URN. Used to fail fast
-// before any permanent resource is created.
+// entry that is non-blank but not a well-formed facet URN in the namespace
+// required for kind. Used to fail fast before any permanent resource is created.
 func validFacets(kind string, in []string) ([]string, error) {
+	prefix, ok := facetNamespace[kind]
+	if !ok {
+		return nil, fmt.Errorf("unknown LinkedIn facet kind %q", kind)
+	}
 	out := nonBlankFacets(in)
 	for _, v := range out {
-		if !facetURNRE.MatchString(v) {
-			return nil, fmt.Errorf("malformed LinkedIn %s facet %q — expected a urn:li:<type>:<id> value", kind, v)
+		id, found := strings.CutPrefix(v, prefix)
+		if !found || !facetURNRE.MatchString(id) {
+			return nil, fmt.Errorf("malformed LinkedIn %s facet %q — expected a %s<id> value", kind, v, prefix)
 		}
 	}
 	return out, nil

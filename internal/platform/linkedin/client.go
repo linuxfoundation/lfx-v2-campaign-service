@@ -1211,7 +1211,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// created permanent resource is silently orphaned. On the next retry the
 		// group is found idempotently by name, so surfacing it is safe.
 		return c.buildResult(accountID, groupName, groupID, campaignName, "", 0, steps),
-			fmt.Errorf("campaign creation failed after campaign group %q (%q) was created: %w — the campaign group already exists; on retry it is found idempotently by name; inspect the returned partial result", groupID, groupName, err)
+			fmt.Errorf("campaign creation failed for campaign group %q (%q) (the group was created or already existed): %w — on retry the group is found idempotently by name; inspect the returned partial result", groupID, groupName, err)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created (PAUSED): %s (ID: %s)", campaignName, campaignID))
 
@@ -1249,6 +1249,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps), nil
 }
 
+// campaignManagerURL returns the Campaign Manager deep link. When no campaign was
+// created (empty id, e.g. a group-created-but-campaign-failed partial result), it
+// links to the account's campaigns list rather than a dangling /campaigns/ URL.
+func campaignManagerURL(accountID, campaignID string) string {
+	base := fmt.Sprintf("https://www.linkedin.com/campaignmanager/accounts/%s/campaigns", accountID)
+	if campaignID == "" {
+		return base
+	}
+	return base + "/" + campaignID
+}
+
 // buildResult assembles a CampaignResult from the created hierarchy pieces.
 func (c *Client) buildResult(accountID, groupName, groupID, campaignName, campaignID string, creativeCount int, steps []string) *CampaignResult {
 	return &CampaignResult{
@@ -1258,7 +1269,7 @@ func (c *Client) buildResult(accountID, groupName, groupID, campaignName, campai
 		CampaignName:      campaignName,
 		CampaignID:        campaignID,
 		CreativeCount:     creativeCount,
-		LinkedInURL:       fmt.Sprintf("https://www.linkedin.com/campaignmanager/accounts/%s/campaigns/%s", accountID, campaignID),
+		LinkedInURL:       campaignManagerURL(accountID, campaignID),
 		Steps:             steps,
 	}
 }

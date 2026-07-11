@@ -1707,3 +1707,34 @@ func TestCreateCampaign_RejectsMalformedFacetBeforeAnyPOST(t *testing.T) {
 		})
 	}
 }
+
+// TestValidFacets_NamespaceEnforced verifies a facet from the wrong namespace
+// (e.g. an organization URN under skills) is rejected.
+func TestValidFacets_NamespaceEnforced(t *testing.T) {
+	if _, err := validFacets("skills", []string{"urn:li:organization:1111"}); err == nil {
+		t.Error("organization URN under skills should be rejected")
+	}
+	if _, err := validFacets("skills", []string{"urn:li:skill:1"}); err != nil {
+		t.Errorf("valid skill URN rejected: %v", err)
+	}
+	if _, err := validFacets("groups", []string{"urn:li:group:100"}); err != nil {
+		t.Errorf("valid group URN rejected: %v", err)
+	}
+	if _, err := validFacets("employer-exclusions", []string{"urn:li:organization:1111"}); err != nil {
+		t.Errorf("valid employer URN rejected: %v", err)
+	}
+	if _, err := validFacets("employer-exclusions", []string{"urn:li:skill:1"}); err == nil {
+		t.Error("skill URN under employer-exclusions should be rejected")
+	}
+}
+
+// TestCampaignManagerURL_NoDanglingPath verifies the deep link doesn't end in a
+// dangling /campaigns/ when no campaign was created.
+func TestCampaignManagerURL_NoDanglingPath(t *testing.T) {
+	if got := campaignManagerURL("123", ""); strings.HasSuffix(got, "/") {
+		t.Errorf("empty campaignID URL = %q, should not end in a dangling slash", got)
+	}
+	if got := campaignManagerURL("123", "456"); !strings.HasSuffix(got, "/campaigns/456") {
+		t.Errorf("URL = %q, want it to end in /campaigns/456", got)
+	}
+}
