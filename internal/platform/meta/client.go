@@ -56,6 +56,10 @@ const (
 	// adSetStartBuffer is added to "now" when a campaign starts today, so the ad
 	// set start_time isn't already in the past by the time Meta receives it.
 	adSetStartBuffer = 5 * time.Minute
+	// defaultCurrencyOffset is the Meta currency_offset assumed when the caller
+	// leaves AccountConfig.CurrencyOffset unset. 100 matches most currencies
+	// (USD/EUR/GBP); zero-decimal currencies (JPY/KRW/CLP, offset 1) MUST override.
+	defaultCurrencyOffset = 100
 )
 
 // ---------------------------------------------------------------------------
@@ -100,12 +104,21 @@ var objectiveParams = map[string]ObjectiveParams{
 		OptimizationGoal:   "POST_ENGAGEMENT",
 		PromotedObjectType: PromotedObjectPageID,
 	},
-	// "leads" runs a website-leads campaign: OUTCOME_LEADS optimizing for
-	// LINK_CLICKS to the registration (lead-capture) URL. It deliberately does NOT
-	// use the LEAD_GENERATION optimization goal, which requires an on-Facebook
-	// instant lead form (lead_gen_form_id) this client does not construct. The
-	// website-click creative already points at the registration URL, so LINK_CLICKS
-	// with no promoted object is a consistent, spendable configuration.
+	// "leads" INTENTIONALLY DIVERGES from the @lfx-one/shared TS contract
+	// (campaign.constants.ts META_OBJECTIVE_PARAMS), which maps leads ->
+	// LEAD_GENERATION with a page_id promoted object. That mapping assumes an
+	// on-Facebook instant lead form: LEAD_GENERATION optimization requires the ad's
+	// creative to reference a lead_gen_form_id (an instant form). This Go client
+	// only builds a website-click creative (object_story_spec.link_data pointing at
+	// the registration URL — see createVariantAd); it never constructs an instant
+	// lead form. Adopting LEAD_GENERATION here would therefore FAIL at ad-set/ad
+	// creation time — AFTER the campaign (a paid resource) already exists — because
+	// no lead_gen_form_id is supplied. To stay fail-safe (never create a paid
+	// resource that can't run), leads is implemented as a WEBSITE-LEADS campaign:
+	// OUTCOME_LEADS optimizing for LINK_CLICKS to the registration (lead-capture)
+	// URL, with no promoted object. That is a consistent, spendable configuration
+	// end-to-end. Full LEAD_GENERATION / instant-form parity with the TS contract
+	// is deferred (LFXV2-2665) until this client can build an instant lead form.
 	"leads": {
 		CampaignObjective:  "OUTCOME_LEADS",
 		OptimizationGoal:   "LINK_CLICKS",
@@ -207,6 +220,18 @@ type AccountConfig struct {
 	PageID string
 	// Label is an optional human-readable account label.
 	Label string
+	// CurrencyOffset is the ad account's Meta currency_offset: the factor that
+	// converts a whole-currency-unit budget into the minor units Meta expects.
+	// Meta budgets are ALWAYS expressed in minor units scaled by the ACCOUNT's
+	// currency_offset, which is NOT universally 100 — zero-decimal currencies such
+	// as JPY, KRW, and CLP use an offset of 1 (no minor unit), while most (USD,
+	// EUR, GBP) use 100. The client cannot read the account currency itself: the
+	// account-verify call fetches only name/account_status, not currency. Callers
+	// that operate a non-100-offset account MUST set this (e.g. 1 for JPY) so the
+	// budget is not over-sent (a hardcoded ×100 would bill a JPY account 100× the
+	// intended amount). Zero/unset defaults to 100 for backward-compatible USD-like
+	// behavior; see NewClient, which normalizes it.
+	CurrencyOffset int64
 }
 
 // Client is a Meta Ads Graph API client.
@@ -276,6 +301,13 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
 	account.AccountID = strings.TrimSpace(account.AccountID)
 	account.PageID = strings.TrimSpace(account.PageID)
+	// Normalize the currency offset once: an unset (zero) or nonsensical negative
+	// offset falls back to the default (100) so budget conversion always uses a
+	// valid, positive minor-unit factor. A caller with a zero-decimal account (JPY)
+	// sets CurrencyOffset=1 explicitly, which is preserved.
+	if account.CurrencyOffset <= 0 {
+		account.CurrencyOffset = defaultCurrencyOffset
+	}
 	c := &Client{
 		creds:          creds,
 		account:        account,
@@ -831,12 +863,14 @@ type CampaignInput struct {
 	// deferred relative to the upstream contract.
 	Objective  string
 	GeoTargets []string
-	// BudgetUSD is the budget amount. NOTE: Meta interprets the ad set budget in
-	// the ad ACCOUNT's currency (set on the account), not necessarily USD. The
-	// value is converted to minor units (×100) and sent as-is; the "USD" suffix
-	// reflects the common case but the caller is responsible for passing an
-	// amount in the account's actual currency. Field name kept for cross-client
-	// consistency (all platform clients take BudgetUSD).
+	// BudgetUSD is the budget amount in whole currency units. NOTE: Meta interprets
+	// the ad set budget in the ad ACCOUNT's currency (set on the account), not
+	// necessarily USD. The value is converted to minor units using the account's
+	// currency_offset (AccountConfig.CurrencyOffset, default 100; set 1 for
+	// zero-decimal currencies like JPY) and sent as-is; the "USD" suffix reflects
+	// the common case but the caller is responsible for passing an amount in the
+	// account's actual currency. Field name kept for cross-client consistency (all
+	// platform clients take BudgetUSD).
 	BudgetUSD      float64
 	LifetimeBudget bool
 	StartDate      string // YYYY-MM-DD
@@ -890,17 +924,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0 {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
 	}
-	// Cap the budget below the int64-cents overflow threshold before converting,
-	// so an absurd value can't wrap to a negative/garbage cents amount. maxBudget
-	// (100M currency units) is far above any real campaign budget.
+	// Cap the budget below the int64 minor-unit overflow threshold before
+	// converting, so an absurd value can't wrap to a negative/garbage amount.
+	// maxBudget (100M currency units) is far above any real campaign budget, and
+	// even multiplied by the largest realistic currency offset stays well inside
+	// int64.
 	if in.BudgetUSD > maxBudget {
 		return nil, fmt.Errorf("budget too large: must be at most %.0f", maxBudget)
 	}
-	// Reject sub-cent budgets that round to zero cents before any API call: a
+	// Convert whole currency units to Meta minor units using the ACCOUNT's
+	// currency_offset (NOT a hardcoded 100): most currencies use 100, but
+	// zero-decimal currencies (JPY/KRW/CLP) use 1, so a hardcoded ×100 would
+	// over-send those accounts 100×. NewClient guarantees CurrencyOffset > 0.
+	offset := c.account.CurrencyOffset
+	// Reject budgets that round to zero minor units before any API call: a
 	// zero/invalid budget would otherwise be sent to Meta and create a bad ad set.
-	budgetCents := int64(math.Round(in.BudgetUSD * 100))
-	if budgetCents < 1 {
-		return nil, fmt.Errorf("budget too small: must be at least 0.01")
+	budgetMinor := int64(math.Round(in.BudgetUSD * float64(offset)))
+	if budgetMinor < 1 {
+		return nil, fmt.Errorf("budget too small: must be at least one minor currency unit (offset %d)", offset)
 	}
 
 	if !dateRE.MatchString(in.StartDate) {
@@ -1061,9 +1102,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	if in.LifetimeBudget {
-		adSetBody["lifetime_budget"] = budgetCents
+		adSetBody["lifetime_budget"] = budgetMinor
 	} else {
-		adSetBody["daily_budget"] = budgetCents
+		adSetBody["daily_budget"] = budgetMinor
 	}
 
 	var adSetResp createResponse

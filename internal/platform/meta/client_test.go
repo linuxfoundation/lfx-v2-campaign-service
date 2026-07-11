@@ -495,6 +495,84 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignCurrencyOffset verifies budget conversion honors the ad
+// account's Meta currency_offset instead of a hardcoded ×100: a zero-decimal
+// currency (JPY, offset 1) must NOT be multiplied by 100, while the default
+// (unset -> 100) preserves the existing USD-like behavior.
+func TestCreateCampaignCurrencyOffset(t *testing.T) {
+	newSrv := func(cap *bodyCapture) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.Method == http.MethodGet:
+				_, _ = io.WriteString(w, `{"name":"x"}`)
+			case strings.HasSuffix(r.URL.Path, "/campaigns"):
+				_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			case strings.HasSuffix(r.URL.Path, "/adsets"):
+				cap.set(decodeBody(t, r))
+				_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+				_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+			case strings.HasSuffix(r.URL.Path, "/ads"):
+				_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+			default:
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+	}
+	input := func(budget float64) CampaignInput {
+		return CampaignInput{
+			EventName:       "E",
+			Objective:       "traffic",
+			RegistrationURL: "https://x.example.org/e",
+			GeoTargets:      []string{"US"},
+			BudgetUSD:       budget,
+			StartDate:       "2026-08-01",
+			EndDate:         "2026-08-31",
+			Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		}
+	}
+
+	// JPY-like account: offset 1, so a 5000 (¥) budget stays 5000 minor units,
+	// NOT 500000. A hardcoded ×100 would over-send this account 100×.
+	t.Run("jpy offset 1 does not multiply by 100", func(t *testing.T) {
+		cap := newBodyCapture()
+		srv := newSrv(cap)
+		defer srv.Close()
+		c := NewClient(
+			Credentials{AccessToken: "t"},
+			AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 1},
+			WithBaseURL(srv.URL), WithClock(fixedMetaClock()),
+		)
+		if _, err := c.CreateCampaign(context.Background(), input(5000)); err != nil {
+			t.Fatalf("CreateCampaign error: %v", err)
+		}
+		if got := cap.get()["daily_budget"]; got != float64(5000) {
+			t.Errorf("daily_budget = %v, want 5000 (offset 1, no ×100)", got)
+		}
+	})
+
+	// Default (unset) offset -> 100: a 500 (USD) budget becomes 50000 minor units,
+	// preserving the current behavior.
+	t.Run("default offset preserves usd x100", func(t *testing.T) {
+		cap := newBodyCapture()
+		srv := newSrv(cap)
+		defer srv.Close()
+		c := NewClient(
+			Credentials{AccessToken: "t"},
+			AccountConfig{AccountID: "act_1", PageID: "p"}, // CurrencyOffset unset -> 100
+			WithBaseURL(srv.URL), WithClock(fixedMetaClock()),
+		)
+		if _, err := c.CreateCampaign(context.Background(), input(500)); err != nil {
+			t.Fatalf("CreateCampaign error: %v", err)
+		}
+		if got := cap.get()["daily_budget"]; got != float64(50000) {
+			t.Errorf("daily_budget = %v, want 50000 (default offset 100)", got)
+		}
+	})
+}
+
 func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
