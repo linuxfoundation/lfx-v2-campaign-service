@@ -506,6 +506,92 @@ func TestCreateCampaign_CommunityFallback(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_AdGroupFailureSurfacesCampaignID verifies that when the
+// campaign POST succeeds but ad-group creation then fails, CreateCampaign does
+// NOT discard the created (PAUSED) campaign: it returns a partial *CampaignResult
+// carrying the campaign id + steps so far, AND an error naming the created
+// campaign id + PAUSED status, so the orphan is identifiable for cleanup and a
+// retry can reconcile it. It also confirms exactly ONE campaign is created in
+// this flow (the failure is on the ad group, not a caller retry).
+func TestCreateCampaign_AdGroupFailureSurfacesCampaignID(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var mu sync.Mutex
+	var campaignPosts int
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/campaigns") && r.Method == http.MethodPost:
+			mu.Lock()
+			campaignPosts++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_orphan"}})
+		case strings.HasSuffix(path, "/ad_groups") && r.Method == http.MethodPost:
+			http.Error(w, "ad group quota exceeded", http.StatusBadRequest)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+
+	if err == nil {
+		t.Fatalf("expected ad-group failure error, got nil")
+	}
+	if !strings.Contains(err.Error(), "camp_orphan") {
+		t.Errorf("error must name the created campaign id for orphan cleanup; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "PAUSED") {
+		t.Errorf("error must note the campaign is PAUSED; got: %v", err)
+	}
+
+	// Partial result must be returned (not nil) and carry the created campaign id
+	// plus the campaign-created step, so callers can reconcile the orphan.
+	if res == nil {
+		t.Fatalf("expected partial *CampaignResult on post-campaign failure, got nil")
+	}
+	if res.CampaignID != "camp_orphan" {
+		t.Errorf("partial result CampaignID = %q, want camp_orphan", res.CampaignID)
+	}
+	foundCampaignStep := false
+	for _, s := range res.Steps {
+		if strings.Contains(s, "Campaign created: camp_orphan") {
+			foundCampaignStep = true
+		}
+	}
+	if !foundCampaignStep {
+		t.Errorf("partial result must retain the campaign-created step; got steps %v", res.Steps)
+	}
+
+	// Exactly one campaign was created: the failure is on the ad group, and this
+	// flow must not re-POST a second campaign.
+	mu.Lock()
+	posts := campaignPosts
+	mu.Unlock()
+	if posts != 1 {
+		t.Errorf("expected exactly 1 campaign POST, got %d", posts)
+	}
+}
+
 // TestCreateCampaign_NoSubredditsNoSkipWarning verifies FINDING 3: a normal
 // keyword/geo-only campaign (no subreddits supplied) must NOT be reported as
 // having skipped communities that need manual action.

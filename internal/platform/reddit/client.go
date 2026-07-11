@@ -654,6 +654,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f lifetime)", campaignID, in.BudgetUSD))
 
+	// partialResult builds a *CampaignResult carrying the already-created (PAUSED)
+	// campaign id and the steps completed so far. It is returned ALONGSIDE the
+	// error whenever an ad-group step fails after the campaign POST already
+	// succeeded, so the orphaned PAUSED campaign is identifiable for cleanup and a
+	// caller retry can reconcile it instead of blindly creating a duplicate. This
+	// only makes the orphan IDENTIFIABLE -- it does not resume creation. True
+	// retry-safe idempotency (not re-creating the campaign on retry) needs provider
+	// idempotency keys / the orchestrator claim, tracked in LFXV2-2665.
+	partialResult := func() *CampaignResult {
+		return &CampaignResult{
+			Platform:     "reddit-ads",
+			CampaignName: campaignName,
+			CampaignID:   campaignID,
+			RedditURL:    redditAdsManagerURL,
+			Steps:        steps,
+		}
+	}
+
 	// Step 3: Create ad group with targeting. The label is built from the same
 	// normalized (trimmed, uppercased) geos used in targeting, so a
 	// whitespace-padded input can't produce a name inconsistent with targeting.
@@ -722,16 +740,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			droppedCommunities = true
 			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
 			if err != nil {
-				return nil, err
+				return partialResult(), fmt.Errorf("reddit ad group creation failed (campaign %s created, PAUSED): %w", campaignID, err)
 			}
 		} else {
-			return nil, err
+			return partialResult(), fmt.Errorf("reddit ad group creation failed (campaign %s created, PAUSED): %w", campaignID, err)
 		}
 	}
 
 	adGroupID := decodeID(adGroupResp)
 	if adGroupID == "" {
-		return nil, fmt.Errorf("reddit ad group creation succeeded but returned no ad group ID")
+		return partialResult(), fmt.Errorf("reddit ad group creation succeeded but returned no ad group ID (campaign %s created, PAUSED)", campaignID)
 	}
 	steps = append(steps, fmt.Sprintf("Ad group created: %s (PAUSED, geo: %s)", adGroupID, strings.Join(geos, ", ")))
 	switch {
