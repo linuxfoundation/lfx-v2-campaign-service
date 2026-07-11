@@ -274,13 +274,20 @@ type tokenResponse struct {
 // refreshToken returns a cached access token when it is still valid past the
 // expiry buffer, otherwise it requests a new one. Mirrors refreshRedditToken.
 func (c *Client) refreshToken(ctx context.Context) (string, error) {
+	// Fast path: reuse the cached token while it remains valid past the buffer.
+	// Hold the lock only long enough to read the cache -- NOT across the network
+	// call below, so a concurrent caller blocked here isn't prevented from
+	// observing its own context cancellation/deadline while a refresh is in
+	// flight. Two concurrent cold callers may both refresh (last-writer-wins),
+	// which is harmless and preferable to serializing everyone behind one
+	// in-flight request that ignores their contexts.
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Reuse the cached token while it remains valid past the buffer.
 	if c.cachedToken != "" && c.now().Before(c.tokenExpireAt.Add(-redditTokenExpiryBuffer)) {
-		return c.cachedToken, nil
+		token := c.cachedToken
+		c.mu.Unlock()
+		return token, nil
 	}
+	c.mu.Unlock()
 
 	credentials := base64.StdEncoding.EncodeToString([]byte(c.creds.ClientID + ":" + c.creds.ClientSecret))
 	form := url.Values{}
@@ -303,6 +310,9 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 
 	body, readErr := readResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if readErr != nil {
+			return "", fmt.Errorf("reddit token refresh failed: %d: %s (body read error: %v)", resp.StatusCode, truncate(string(body), redditErrBodyMaxRunes), readErr)
+		}
 		return "", fmt.Errorf("reddit token refresh failed: %d: %s", resp.StatusCode, truncate(string(body), redditErrBodyMaxRunes))
 	}
 	if readErr != nil {
@@ -327,9 +337,14 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 		expiresIn = int64(redditFallbackTokenTTL.Seconds())
 	}
 
+	// Re-acquire the lock only to store the freshly obtained token. Touch
+	// cachedToken/tokenExpireAt exclusively under the lock to keep them
+	// thread-safe.
+	c.mu.Lock()
 	c.cachedToken = data.AccessToken
 	c.tokenExpireAt = c.now().Add(time.Duration(expiresIn) * time.Second)
-	return c.cachedToken, nil
+	c.mu.Unlock()
+	return data.AccessToken, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +392,9 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 
 	raw, readErr := readResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if readErr != nil {
+			return nil, fmt.Errorf("reddit API %s %s -> %d: %s (body read error: %v)", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes), readErr)
+		}
 		return nil, fmt.Errorf("reddit API %s %s -> %d: %s", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes))
 	}
 	if readErr != nil {
@@ -422,6 +440,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	case in.BudgetUSD > redditMaxBudgetUSD:
 		return nil, fmt.Errorf("invalid budget: must be a finite value in (0, %.0f]", redditMaxBudgetUSD)
 	}
+	// A positive-but-tiny budget can still round to zero micro-dollars (e.g.
+	// 0.0000001 USD), which would send goal_value: 0 to Reddit. Reject anything
+	// that does not round to at least one micro-dollar.
+	budgetMicros := toMicrodollars(in.BudgetUSD)
+	if budgetMicros <= 0 {
+		return nil, fmt.Errorf("invalid budget: %g USD rounds to zero micro-dollars; must be at least 0.000001 USD", in.BudgetUSD)
+	}
 	// Parse for calendar validity (rejects e.g. 2026-02-31), not just format.
 	startDate, err := time.Parse("2006-01-02", in.StartDate)
 	if err != nil {
@@ -462,7 +487,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		validatedPostID = id
 	}
 
-	accountID := c.account.AccountID
+	// Validate the account ID before any request path is built: an empty or
+	// whitespace-only ID would otherwise produce malformed URLs like
+	// "/ad_accounts/" and confusing downstream errors.
+	accountID := strings.TrimSpace(c.account.AccountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("reddit account ID is required")
+	}
 	label := c.account.Label
 	if label == "" {
 		label = accountID
@@ -519,7 +550,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"bid_type":                        objParams.bidType,
 		"optimization_goal":               objParams.optimizationGoal,
 		"goal_type":                       "LIFETIME_SPEND",
-		"goal_value":                      toMicrodollars(in.BudgetUSD),
+		"goal_value":                      budgetMicros,
 		"start_time":                      effectiveStart,
 		"end_time":                        campaignEndTime,
 	}
@@ -821,7 +852,21 @@ func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
 		}
 		return base + sep + params.Encode()
 	}
-	u.Path = strings.TrimRight(u.Path, "/")
+	// Strip a single genuine trailing "/" separator without corrupting an
+	// encoded %2F that is part of a path segment. u.Path is the DECODED path, so
+	// trimming it can't distinguish "/reg/" from "/reg%2F" and would also
+	// invalidate u.RawPath. Decide using EscapedPath(), which keeps %2F literal:
+	// only a literal trailing "/" is a real separator.
+	escaped := u.EscapedPath()
+	if strings.HasSuffix(escaped, "/") {
+		trimmed := strings.TrimSuffix(escaped, "/")
+		// Round-trip the trimmed escaped path so both u.Path (decoded) and
+		// u.RawPath (encoded) stay consistent and %2F is preserved.
+		if decoded, err := url.PathUnescape(trimmed); err == nil {
+			u.Path = decoded
+			u.RawPath = trimmed
+		}
+	}
 	q := u.Query()
 	for k, v := range utm {
 		q.Set(k, v)

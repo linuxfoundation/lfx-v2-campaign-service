@@ -882,3 +882,180 @@ func TestToMicrodollars(t *testing.T) {
 		t.Errorf("toMicrodollars(1.5) = %d", got)
 	}
 }
+
+// TestCreateCampaign_EmptyAccountIDFailsFast verifies FINDING 2: a client with an
+// empty/whitespace AccountID rejects CreateCampaign before building any request
+// path, with no network call at all.
+func TestCreateCampaign_EmptyAccountIDFailsFast(t *testing.T) {
+	for _, id := range []string{"", "   ", "\t\n"} {
+		var called bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			http.Error(w, "should not be called", http.StatusInternalServerError)
+		}))
+		c := NewClient(testCreds, AccountConfig{AccountID: id},
+			WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:       "No Account",
+			RegistrationURL: "https://example.com/reg",
+			BudgetUSD:       100,
+			StartDate:       "2026-09-01",
+			EndDate:         "2026-09-10",
+			GeoTargets:      []string{"us"},
+			Keywords:        []string{"k8s"},
+			Objective:       "traffic",
+		})
+		if err == nil {
+			srv.Close()
+			t.Fatalf("expected error for account ID %q", id)
+		}
+		if called {
+			srv.Close()
+			t.Errorf("account ID %q: a network call was made; expected fail-fast with none", id)
+		}
+		srv.Close()
+	}
+}
+
+// TestCreateCampaign_BudgetRoundsToZeroRejected verifies FINDING 3: a positive
+// budget that rounds to zero micro-dollars is rejected before any network call,
+// while the smallest budget that rounds to >=1 micro-dollar is accepted.
+func TestCreateCampaign_BudgetRoundsToZeroRejected(t *testing.T) {
+	// Round-to-zero: 0.0000001 USD * 1e6 = 0.1 -> rounds to 0.
+	cReject := NewClient(testCreds, testAccount, WithNowFunc(fixedRedditClock()))
+	_, err := cReject.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "Tiny Budget",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       0.0000001,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err == nil {
+		t.Fatal("expected error for budget that rounds to zero micro-dollars")
+	}
+
+	// Boundary: 0.0000005 USD * 1e6 = 0.5 -> rounds to 1 micro-dollar (accepted).
+	c, bodies, cleanup := newBodyCaptureServers(t)
+	defer cleanup()
+	_, err = c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "Min Budget",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       0.0000005,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err != nil {
+		t.Fatalf("smallest valid budget rejected: %v", err)
+	}
+	campaignBody, _ := bodies()
+	if gv, _ := campaignBody["goal_value"].(int64); gv != 1 {
+		// goal_value is set directly as int64 from budgetMicros before JSON marshal,
+		// but the captured map decodes JSON back to float64 -- check via float too.
+		if gvf, _ := campaignBody["goal_value"].(float64); gvf != 1 {
+			t.Errorf("goal_value = %v, want 1 micro-dollar", campaignBody["goal_value"])
+		}
+	}
+}
+
+// TestBuildRedditUTMURL_PreservesEncodedSlash verifies FINDING 4: an encoded
+// %2F in the path is preserved (not corrupted into a real separator that then
+// gets trimmed), while a genuine literal trailing slash is still removed. The
+// emitted URL must round-trip via url.Parse.
+func TestBuildRedditUTMURL_PreservesEncodedSlash(t *testing.T) {
+	// Encoded %2F must survive: /reg%2F is a single segment "reg/", not a
+	// trailing separator, so nothing should be stripped.
+	got := buildRedditUTMURL(CampaignInput{
+		EventName:       "Encoded Slash",
+		RegistrationURL: "https://example.com/reg%2F",
+		HSToken:         "hs123",
+	}, 0)
+	if !strings.Contains(got, "%2F") && !strings.Contains(got, "%2f") {
+		t.Errorf("url = %q, encoded %%2F not preserved", got)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse %q: %v", got, err)
+	}
+	if u.EscapedPath() != "/reg%2F" {
+		t.Errorf("escaped path = %q, want /reg%%2F (encoded slash corrupted)", u.EscapedPath())
+	}
+	if u.Query().Get("utm_source") != "reddit" {
+		t.Errorf("utm_source = %q, want reddit; url=%q", u.Query().Get("utm_source"), got)
+	}
+
+	// A genuine literal trailing slash is still trimmed.
+	got2 := buildRedditUTMURL(CampaignInput{
+		EventName:       "Real Slash",
+		RegistrationURL: "https://example.com/reg/",
+		HSToken:         "hs123",
+	}, 0)
+	u2, err := url.Parse(got2)
+	if err != nil {
+		t.Fatalf("parse %q: %v", got2, err)
+	}
+	if u2.Path != "/reg" {
+		t.Errorf("path = %q, want /reg (trailing slash removed)", u2.Path)
+	}
+}
+
+// TestRefreshToken_DoesNotBlockOnSlowRefresh verifies FINDING 5: refreshToken
+// does not hold the client mutex across the token-endpoint HTTP call, so a second
+// caller with an already-cancelled context returns promptly instead of blocking
+// behind a slow in-flight refresh.
+func TestRefreshToken_DoesNotBlockOnSlowRefresh(t *testing.T) {
+	release := make(chan struct{})
+	var hits int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		// Block until released (or the request context is cancelled) to simulate a
+		// slow token endpoint.
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+
+	// Caller 1: starts a cold refresh that will block in the (slow) HTTP call.
+	firstStarted := make(chan struct{})
+	go func() {
+		close(firstStarted)
+		_, _ = c.refreshToken(context.Background())
+	}()
+	<-firstStarted
+	// Give caller 1 a moment to reach the network call (past the brief lock).
+	time.Sleep(50 * time.Millisecond)
+
+	// Caller 2: an already-cancelled context. It must NOT block behind caller 1's
+	// in-flight request; it should observe its own cancellation promptly.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.refreshToken(ctx)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("expected caller 2 to fail with a cancelled context")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller 2 blocked behind caller 1's slow refresh (mutex held across network call)")
+	}
+}
