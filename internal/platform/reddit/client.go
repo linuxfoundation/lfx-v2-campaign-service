@@ -487,12 +487,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		validatedPostID = id
 	}
 
-	// Validate the account ID before any request path is built: an empty or
-	// whitespace-only ID would otherwise produce malformed URLs like
-	// "/ad_accounts/" and confusing downstream errors.
+	// Validate the account ID before any request path is built. It is
+	// concatenated into request paths ("/ad_accounts/<id>/...") before
+	// sanitizePath splits on "/", so an ID containing a slash would inject extra
+	// path segments and ID values like "." or ".." could be reinterpreted by an
+	// upstream server or proxy. A non-empty check is not enough; enforce a safe
+	// charset up front. Reddit account IDs look like "t2_xxxxx" (alphanumeric +
+	// underscore), so restrict to that charset.
 	accountID := strings.TrimSpace(c.account.AccountID)
 	if accountID == "" {
 		return nil, fmt.Errorf("reddit account ID is required")
+	}
+	if !accountIDRe.MatchString(accountID) {
+		return nil, fmt.Errorf("invalid reddit account ID %q: must contain only letters, digits, and underscores", accountID)
 	}
 	label := c.account.Label
 	if label == "" {
@@ -879,8 +886,18 @@ var (
 	// Extract the post ID from the URL PATH only. The host is validated
 	// separately (see isRedditHost) so a path segment can never masquerade as
 	// the authority (e.g. https://evil.example/.reddit.com/comments/abc123).
-	postPathRe = regexp.MustCompile(`(?i)(?:^|/)(?:r/\w+/)?comments/([a-z0-9]+)`)
+	//
+	// The ID capture is anchored to a proper path-segment boundary: the ID must
+	// be followed by end-of-string, a "/", or the query/fragment delimiters
+	// "?"/"#". Without this, a malformed segment like "comments/abc123!!!" would
+	// match and be silently truncated to "t3_abc123"; the boundary makes such
+	// trailing junk fail to match so it is rejected rather than accepted.
+	postPathRe = regexp.MustCompile(`(?i)(?:^|/)(?:r/\w+/)?comments/([a-z0-9]+)(?:[/?#]|$)`)
 	postIDRe   = regexp.MustCompile(`(?i)^[a-z0-9]+$`)
+	// accountIDRe restricts a Reddit ad-account ID to a safe charset (letters,
+	// digits, underscore) so it cannot inject extra path segments or "."/".."
+	// when concatenated into a request path.
+	accountIDRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 )
 
 // isRedditHost reports whether host is exactly reddit.com / redd.it or a

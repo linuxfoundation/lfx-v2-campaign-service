@@ -540,6 +540,39 @@ func TestExtractRedditPostID(t *testing.T) {
 	}
 }
 
+// TestExtractRedditPostID_SegmentBoundary verifies FINDING 2: the post-ID
+// capture is anchored to a path-segment boundary, so a URL whose comments/<id>
+// segment carries trailing junk (e.g. "abc123!!!") is REJECTED rather than
+// silently truncated to "t3_abc123". Valid boundary forms still parse.
+func TestExtractRedditPostID_SegmentBoundary(t *testing.T) {
+	valid := map[string]string{
+		"https://www.reddit.com/r/golang/comments/abc123":            "t3_abc123",
+		"https://www.reddit.com/r/golang/comments/abc123/":           "t3_abc123",
+		"https://www.reddit.com/r/golang/comments/abc123/title-slug": "t3_abc123",
+		"https://www.reddit.com/r/golang/comments/abc123?x=1":        "t3_abc123",
+	}
+	for in, want := range valid {
+		got, err := extractRedditPostID(in)
+		if err != nil {
+			t.Errorf("%s: unexpected error %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s -> %q, want %q", in, got, want)
+		}
+	}
+
+	rejected := []string{
+		"https://www.reddit.com/r/golang/comments/abc123!!!",
+		"https://www.reddit.com/comments/abc123!!!",
+	}
+	for _, in := range rejected {
+		if got, err := extractRedditPostID(in); err == nil {
+			t.Errorf("%s: expected rejection, got %q", in, got)
+		}
+	}
+}
+
 func TestBuildRedditUTMURL(t *testing.T) {
 	in := CampaignInput{
 		EventName:       "Cloud Native Con",
@@ -917,6 +950,64 @@ func TestCreateCampaign_EmptyAccountIDFailsFast(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_MalformedAccountIDRejected verifies FINDING 1: an account
+// ID whose format is unsafe (contains a path separator, is "."/"..", or carries
+// whitespace/control chars) is rejected up front, before any request path is
+// built and with no network call. A well-formed "t2_"-style ID passes the
+// format check.
+func TestCreateCampaign_MalformedAccountIDRejected(t *testing.T) {
+	baseInput := func() CampaignInput {
+		return CampaignInput{
+			EventName:       "Bad Account",
+			RegistrationURL: "https://example.com/reg",
+			BudgetUSD:       100,
+			StartDate:       "2026-09-01",
+			EndDate:         "2026-09-10",
+			GeoTargets:      []string{"us"},
+			Keywords:        []string{"k8s"},
+			Objective:       "traffic",
+		}
+	}
+
+	// Malformed IDs must fail fast with no network call.
+	// Note: leading/trailing whitespace is trimmed before validation, so these
+	// must carry the unsafe character INSIDE the token, not merely around it.
+	for _, id := range []string{"a/b", "..", ".", "t2_x/y", "t2 x", "t2\tx", "t2\nx", "t2.x", "%2e%2e"} {
+		var called bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			http.Error(w, "should not be called", http.StatusInternalServerError)
+		}))
+		c := NewClient(testCreds, AccountConfig{AccountID: id},
+			WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+		_, err := c.CreateCampaign(context.Background(), baseInput())
+		if err == nil {
+			srv.Close()
+			t.Fatalf("expected error for malformed account ID %q", id)
+		}
+		if called {
+			srv.Close()
+			t.Errorf("account ID %q: a network call was made; expected fail-fast with none", id)
+		}
+		srv.Close()
+	}
+
+	// A well-formed ID passes the format check: the request proceeds to the
+	// network layer, so any error must NOT be the format-rejection error.
+	{
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		c := NewClient(testCreds, AccountConfig{AccountID: "t2_abc"},
+			WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+		_, err := c.CreateCampaign(context.Background(), baseInput())
+		if err != nil && strings.Contains(err.Error(), "invalid reddit account ID") {
+			t.Errorf("valid account ID t2_abc was rejected by format check: %v", err)
+		}
+	}
+}
+
 // TestCreateCampaign_BudgetRoundsToZeroRejected verifies FINDING 3: a positive
 // budget that rounds to zero micro-dollars is rejected before any network call,
 // while the smallest budget that rounds to >=1 micro-dollar is accepted.
@@ -1009,13 +1100,19 @@ func TestBuildRedditUTMURL_PreservesEncodedSlash(t *testing.T) {
 // caller with an already-cancelled context returns promptly instead of blocking
 // behind a slow in-flight refresh.
 func TestRefreshToken_DoesNotBlockOnSlowRefresh(t *testing.T) {
+	// handlerEntered is closed the first time the token handler is entered, so the
+	// test can wait until caller 1 is provably inside the blocking network call
+	// before it starts caller 2. This makes the ordering deterministic: a sleep
+	// alone cannot prove caller 1 reached the handler, so on a loaded runner
+	// caller 2 could otherwise run first and let the test pass even if the
+	// mutex-across-network-call bug had returned.
 	release := make(chan struct{})
-	var hits int
-	var mu sync.Mutex
+	var releaseOnce sync.Once
+	releaseHandler := func() { releaseOnce.Do(func() { close(release) }) }
+	var once sync.Once
+	handlerEntered := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		hits++
-		mu.Unlock()
+		once.Do(func() { close(handlerEntered) })
 		// Block until released (or the request context is cancelled) to simulate a
 		// slow token endpoint.
 		select {
@@ -1026,22 +1123,29 @@ func TestRefreshToken_DoesNotBlockOnSlowRefresh(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
 	}))
 	defer srv.Close()
-	defer close(release)
+	defer releaseHandler()
 
 	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
 
-	// Caller 1: starts a cold refresh that will block in the (slow) HTTP call.
-	firstStarted := make(chan struct{})
+	// Caller 1: starts a cold refresh that will block inside the (slow) HTTP call.
+	firstDone := make(chan struct{})
 	go func() {
-		close(firstStarted)
+		defer close(firstDone)
 		_, _ = c.refreshToken(context.Background())
 	}()
-	<-firstStarted
-	// Give caller 1 a moment to reach the network call (past the brief lock).
-	time.Sleep(50 * time.Millisecond)
 
-	// Caller 2: an already-cancelled context. It must NOT block behind caller 1's
-	// in-flight request; it should observe its own cancellation promptly.
+	// Wait until caller 1 is provably inside the blocking handler before starting
+	// caller 2. If it never gets there, fail rather than hang.
+	select {
+	case <-handlerEntered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller 1 never reached the token handler")
+	}
+
+	// Caller 2: an already-cancelled context. With caller 1 confirmed blocked in
+	// the network call, caller 2 must NOT block behind it; it should observe its
+	// own cancellation promptly. If it blocks, the mutex is held across the
+	// network call (the bug).
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	done := make(chan error, 1)
@@ -1057,5 +1161,13 @@ func TestRefreshToken_DoesNotBlockOnSlowRefresh(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("caller 2 blocked behind caller 1's slow refresh (mutex held across network call)")
+	}
+
+	// Release the handler so caller 1 finishes, and confirm it does not hang.
+	releaseHandler()
+	select {
+	case <-firstDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller 1 did not finish after the handler was released")
 	}
 }
