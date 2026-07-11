@@ -40,6 +40,26 @@ var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
 // legitimate asset id.
 var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):[A-Za-z0-9_-]+$`)
 
+// nonBlankFacets returns the entries of in with surrounding whitespace trimmed,
+// dropping any entry that is blank (empty or whitespace-only) after trimming. A
+// targeting facet slice supplied through the injected RuntimeConfig can contain
+// blank strings (e.g. []string{""} or {"  "}); such an entry is not a usable
+// facet — LinkedIn would reject or silently ignore it — so it must never be sent
+// on the wire nor counted toward a profile being "usable". Both the usability
+// check (validatePrerequisites) and the wire builder (buildTargetingCriteria)
+// funnel their skills/groups through this helper so a blank facet can neither
+// make a profile look usable nor reach LinkedIn. The result is always non-nil so
+// it JSON-encodes as [] rather than null.
+func nonBlankFacets(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if t := strings.TrimSpace(v); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // ResolveGeoTargets resolves location names to GeoTarget URNs using the static
 // geoResolveMap. Mirrors the cached branch of resolveGeoTargets: names are
 // lowercased and trimmed before lookup. Unknown geos are skipped (omitted from
@@ -174,14 +194,13 @@ func (c *Client) buildTargetingCriteria(profile string, geoURNs []string) (map[s
 		groups = found.Groups
 	}
 
-	// Normalize nil slices to empty so the JSON encodes as [] not null, matching
-	// the TypeScript spread of possibly-empty arrays.
-	if skills == nil {
-		skills = []string{}
-	}
-	if groups == nil {
-		groups = []string{}
-	}
+	// Drop blank/whitespace-only entries and trim the rest before they reach
+	// LinkedIn: a config-supplied facet slice can carry blank strings (e.g.
+	// []string{""} or {"  "}) that are not usable facets. nonBlankFacets also
+	// normalizes a nil slice to a non-nil empty slice so the JSON encodes as []
+	// not null (matching the TypeScript spread of possibly-empty arrays).
+	skills = nonBlankFacets(skills)
+	groups = nonBlankFacets(groups)
 	if geoURNs == nil {
 		geoURNs = []string{}
 	}

@@ -901,8 +901,10 @@ func stripDashes(text string) string {
 // build a campaign whose only include facet is the hardcoded jobFunctions
 // fallback — i.e. no profile-specific audience at all. buildTargetingCriteria
 // puts skills and groups (with jobFunctions) into the include block, so at least
-// one of skills or groups must be non-empty for the profile to contribute real
-// targeting. The one documented exception is the "custom" profile, which aliases
+// one NON-BLANK skill or group entry must be present for the profile to
+// contribute real targeting: a slice of only blank/whitespace-only strings (e.g.
+// []string{""}) is dropped by buildTargetingCriteria before the wire, so it is
+// treated here as no targeting. The one documented exception is the "custom" profile, which aliases
 // "cloud-native" and is explicitly allowed to fall back to empty targeting when
 // that profile is absent (mirrors buildTargetingCriteria's custom branch).
 func (c *Client) validatePrerequisites(accountID, profile string) error {
@@ -919,9 +921,14 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 			continue
 		}
 		// Profile found: require it to yield at least one usable targeting facet.
-		// "custom" tolerates an empty resolved profile (documented fallback).
-		if len(p.Skills) == 0 && len(p.Groups) == 0 && profile != "custom" {
-			return fmt.Errorf("LinkedIn targeting profile %q has no usable targeting facets (empty skills and groups) — refusing to create a campaign with no profile-specific targeting", profile)
+		// Count only NON-BLANK entries — a config-supplied slice can contain blank
+		// strings (e.g. []string{""} or {"  "}) that are not usable facets and are
+		// dropped by buildTargetingCriteria before the wire, so a profile whose
+		// skills/groups are all blank contributes no real targeting and must be
+		// rejected here just like a genuinely empty profile. "custom" tolerates an
+		// empty resolved profile (documented fallback).
+		if len(nonBlankFacets(p.Skills)) == 0 && len(nonBlankFacets(p.Groups)) == 0 && profile != "custom" {
+			return fmt.Errorf("LinkedIn targeting profile %q has no usable targeting facets (skills and groups are empty or blank) — refusing to create a campaign with no profile-specific targeting", profile)
 		}
 		return nil
 	}
@@ -984,9 +991,22 @@ func validateRegistrationURL(raw string) error {
 //     lookups are NOT swallowed (see findByName), so a duplicate is never
 //     created off a hidden failure.
 //
-// Resumability limitation: variant creation is NOT idempotent. If a later
-// variant fails after earlier ones succeeded, the group and campaign are found
-// (idempotent by name) on a retry, but each already-created dark post is
+// Resumability limitation: creative creation is NOT idempotent, and neither is
+// the per-variant dark-post/creative loop as a whole. Unlike the campaign group
+// and campaign — which are found idempotently by name (see
+// findOrCreateCampaignGroup / createSponsoredCampaign) — dark posts and creatives
+// have NO name-based lookup and LinkedIn exposes no upsert primitive, so every
+// CreateCampaign re-call RE-CREATES all dark posts and creatives, duplicating
+// them. This is the same inherent client-level non-atomicity documented on
+// findOrCreateCampaignGroup and createSponsoredCampaign. The client does NOT
+// attempt per-creative idempotency; the authoritative dedup is the orchestrator's
+// per-(brief, platform) single-flight claim (LFXV2-2665), which ensures only one
+// dispatch per pair ever runs, so in normal operation the creative loop is never
+// re-executed against an already-populated campaign. A caller invoking
+// CreateCampaign outside that claim must serialize on its own.
+//
+// If a later variant fails after earlier ones succeeded, the group and campaign
+// are found (idempotent by name) on a retry, but each already-created dark post is
 // recreated because dark posts have no name-based lookup — a blind retry would
 // duplicate the surviving creatives. To keep the caller from retrying blindly,
 // a mid-variant failure returns an error that states how many variants
@@ -1170,10 +1190,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, startMs, endMs, in.LifetimeBudget)
 	if err != nil {
-		return nil, err
+		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
+		// (groupID) whose creation is a real side effect. Returning nil,err here
+		// would discard that known id, leaving the caller unable to see or reconcile
+		// the created group. Mirror the partial-variant-failure path: return a
+		// non-nil partial *CampaignResult carrying the created CampaignGroupID and
+		// the steps so far (campaignID is still empty), alongside the error, so no
+		// created permanent resource is silently orphaned. On the next retry the
+		// group is found idempotently by name, so surfacing it is safe.
+		return c.buildResult(accountID, groupName, groupID, campaignName, "", 0, steps),
+			fmt.Errorf("campaign creation failed after campaign group %q (%q) was created: %w — the campaign group already exists; on retry it is found idempotently by name; inspect the returned partial result", groupID, groupName, err)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created (PAUSED): %s (ID: %s)", campaignName, campaignID))
 
+	// NOT idempotent: dark posts and creatives have no name-based lookup and
+	// LinkedIn has no upsert, so re-running this loop duplicates every dark post
+	// and creative. Single-flight is enforced one layer up by the orchestrator's
+	// per-(brief, platform) claim (LFXV2-2665), the authoritative dedup — see the
+	// CreateCampaign godoc.
 	creativeCount := 0
 	for i, variant := range in.Variants {
 		destURL := BuildUTMURL(reg, in.HSToken, campaignName, i+1)

@@ -1543,3 +1543,124 @@ func TestValidateRegistrationURL_RejectsEmptyHostname(t *testing.T) {
 		t.Errorf("valid URL rejected: %v", err)
 	}
 }
+
+// TestCreateCampaign_RejectsBlankOnlyFacetsBeforeAnyPOST verifies that a
+// targeting profile whose skills/groups contain only blank/whitespace-only
+// entries (e.g. []string{""} or {"  "}) is treated as having NO usable targeting
+// and is rejected up front — before any POST — exactly like a genuinely empty
+// profile. Such a facet would be dropped before the wire, so it must never make a
+// profile look usable.
+func TestCreateCampaign_RejectsBlankOnlyFacetsBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	cfg := testConfig()
+	cfg.TargetingProfiles = []TargetingProfileConfig{
+		{ID: "cloud-native", Label: "Cloud Native", Skills: []string{""}, Groups: []string{"   "}},
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "E",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("CreateCampaign with blank-only skills/groups: expected rejection before any POST, got nil")
+	}
+	if !strings.Contains(err.Error(), "no usable targeting facets") {
+		t.Errorf("error should mention no usable targeting facets, got: %v", err)
+	}
+}
+
+// TestBuildTargetingCriteria_DropsBlankFacets verifies that blank/whitespace-only
+// skill/group entries are filtered out (and the rest trimmed) before reaching
+// LinkedIn, so a blank facet can never be sent on the wire.
+func TestBuildTargetingCriteria_DropsBlankFacets(t *testing.T) {
+	cfg := testConfig()
+	cfg.TargetingProfiles = []TargetingProfileConfig{
+		{ID: "cloud-native", Skills: []string{"urn:li:skill:1", "", "  urn:li:skill:2  "}, Groups: []string{"  "}},
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	if err != nil {
+		t.Fatalf("buildTargetingCriteria: %v", err)
+	}
+	b, _ := json.Marshal(crit)
+	var decoded map[string]any
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	tc := decoded["targetingCriteria"].(map[string]any)
+	and := tc["include"].(map[string]any)["and"].([]any)
+	second := and[1].(map[string]any)["or"].(map[string]any)
+
+	skills := second["urn:li:adTargetingFacet:skills"].([]any)
+	if len(skills) != 2 {
+		t.Fatalf("expected 2 non-blank trimmed skills, got %d: %v", len(skills), skills)
+	}
+	if skills[0].(string) != "urn:li:skill:1" || skills[1].(string) != "urn:li:skill:2" {
+		t.Errorf("blank dropped / trim failed, got skills=%v", skills)
+	}
+	groups := second["urn:li:adTargetingFacet:groups"].([]any)
+	if len(groups) != 0 {
+		t.Errorf("blank-only groups should filter to empty, got %v", groups)
+	}
+}
+
+// TestCreateCampaign_SurfacesGroupWhenCampaignCreateFails verifies that when the
+// campaign-create step fails AFTER the campaign group was created, CreateCampaign
+// returns a NON-NIL partial *CampaignResult carrying the created CampaignGroupID
+// (and the steps so far), so the created permanent group is not silently
+// discarded.
+func TestCreateCampaign_SurfacesGroupWhenCampaignCreateFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			// Campaign creation fails AFTER the group already exists.
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when campaign creation fails, got nil")
+	}
+	if res == nil {
+		t.Fatal("expected a non-nil partial CampaignResult carrying the created group, got nil")
+	}
+	if res.CampaignGroupID != "100" {
+		t.Errorf("partial result should carry the created campaign-group ID 100, got %q", res.CampaignGroupID)
+	}
+	if res.CampaignID != "" {
+		t.Errorf("campaign was not created; CampaignID should be empty, got %q", res.CampaignID)
+	}
+	if !strings.Contains(err.Error(), "100") {
+		t.Errorf("error should mention the created campaign-group ID, got: %v", err)
+	}
+}
