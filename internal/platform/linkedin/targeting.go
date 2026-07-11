@@ -5,8 +5,16 @@ package linkedin
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// orgIDRE matches a valid LinkedIn organization id: a non-empty run of ASCII
+// digits. The organization URN is built as "urn:li:organization:<id>", so a
+// non-numeric/malformed id would produce an invalid URN that LinkedIn rejects
+// only after a permanent resource already exists. Validating the shape up front
+// preserves the configuration invariant the source client relies on.
+var orgIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // ResolveGeoTargets resolves location names to GeoTarget URNs using the static
 // geoResolveMap. Mirrors the cached branch of resolveGeoTargets: names are
@@ -35,11 +43,21 @@ func accountURN(accountID string) string {
 // match in the runtime config's accounts list, then falls back to the default
 // org. Mirrors resolveOrgId()/getOrgId() minus the env-var branch (env is not
 // consulted in this package). Returns an error when no org can be resolved.
+//
+// The resolved org id is validated to be numeric (see orgIDRE) before it is
+// returned: checking only for an empty id let a present-but-malformed value
+// (e.g. a full "urn:li:organization:123" URN, or a non-numeric string) flow
+// into orgURN, which would build an invalid double-prefixed / malformed URN
+// that LinkedIn rejects only after permanent resources exist. This preserves
+// the configuration invariant the source client relies on.
 func (c *Client) resolveOrgID(accountID string) (string, error) {
 	for _, a := range c.cfg.Accounts {
 		if a.AccountID == accountID {
 			if a.OrgID == "" {
 				return "", fmt.Errorf("LinkedIn account %q has no orgId configured", accountID)
+			}
+			if !orgIDRE.MatchString(a.OrgID) {
+				return "", fmt.Errorf("LinkedIn account %q has a malformed orgId %q — expected a numeric organization id", accountID, a.OrgID)
 			}
 			return a.OrgID, nil
 		}
@@ -50,6 +68,9 @@ func (c *Client) resolveOrgID(accountID string) (string, error) {
 	// org).
 	if accountID == c.cfg.DefaultAccountID {
 		if c.cfg.DefaultOrgID != "" {
+			if !orgIDRE.MatchString(c.cfg.DefaultOrgID) {
+				return "", fmt.Errorf("LinkedIn defaultOrgId %q is malformed — expected a numeric organization id", c.cfg.DefaultOrgID)
+			}
 			return c.cfg.DefaultOrgID, nil
 		}
 		return "", fmt.Errorf("no LinkedIn org configured: provide defaultOrgId in the runtime config")

@@ -923,6 +923,26 @@ func validateRegistrationURL(raw string) error {
 // each variant create a dark post and a DRAFT creative. Mirrors
 // executeLinkedInCampaignCreation().
 //
+// Intentional divergences from the TypeScript source. All of these make the
+// contract stricter than the TS original in exactly one direction — they FAIL
+// FAST, before the first mutating POST, rather than after the campaign group
+// and/or campaign (permanent, paid resources) already exist. Failing before any
+// permanent resource is created is the safer contract, so these are deliberate:
+//   - Geo resolution is a pure, cache-only function: ResolveGeoTargets drops
+//     unknown geos and performs NO network fallback (see ResolveGeoTargets).
+//   - An input whose geo targets ALL resolve to nothing (empty URN set) is
+//     rejected up front. The TS source would proceed and create a campaign with
+//     empty geo targeting; here that is refused before the first create POST so
+//     no orphaned, un-targeted campaign is ever created.
+//   - Up-front validation of budget (finite, > 0, and non-zero at 2dp),
+//     registration URL, schedule (parseable/non-past/end-after-start), event
+//     name, project, per-variant mandatory content, and a non-empty variant set
+//     — each rejected before any POST rather than surfaced by LinkedIn only
+//     after permanent resources exist.
+//   - Transient/unexpected search failures during find-by-name idempotency
+//     lookups are NOT swallowed (see findByName), so a duplicate is never
+//     created off a hidden failure.
+//
 // Resumability limitation: variant creation is NOT idempotent. If a later
 // variant fails after earlier ones succeeded, the group and campaign are found
 // (idempotent by name) on a retry, but each already-created dark post is
@@ -983,6 +1003,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if in.BudgetUSD <= 0 {
 		return nil, fmt.Errorf("budget must be greater than zero, got %v", in.BudgetUSD)
+	}
+	// A sub-cent budget (e.g. 0.001) passes the > 0 / NaN / Inf checks yet
+	// createSponsoredCampaign formats it with strconv.FormatFloat(_, 'f', 2, 64)
+	// to a 2-decimal string, so it rounds to "0.00" — a zero budget LinkedIn
+	// would reject only AFTER the campaign group (a permanent resource) already
+	// exists, orphaning it. Reject any budget that formats to zero at the same
+	// precision used on the wire, up front, before any POST.
+	if strconv.FormatFloat(in.BudgetUSD, 'f', 2, 64) == "0.00" {
+		return nil, fmt.Errorf("budget %v is below the minimum billable amount (0.01) and would round to zero at the API boundary", in.BudgetUSD)
 	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and

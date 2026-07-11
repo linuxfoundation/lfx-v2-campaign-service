@@ -937,3 +937,98 @@ func TestCreateCampaign_PartialFailureReportsDarkPostWhenCreativeFails(t *testin
 		t.Errorf("partial result steps must include the created dark post %q, got steps=%v", shareURN, res.Steps)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Seventh-round Copilot findings
+// ---------------------------------------------------------------------------
+
+// TestCreateCampaign_RejectsSubCentBudgetBeforeAnyPOST verifies that a small
+// positive budget that rounds to zero at the 2-decimal API boundary (e.g. 0.001
+// formats to "0.00") is rejected up front — before any POST that would create a
+// permanent campaign group. It passes the > 0 / NaN / Inf checks but must still
+// be refused. The server fails on any POST.
+func TestCreateCampaign_RejectsSubCentBudgetBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "E",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        0.001,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("CreateCampaign with sub-cent budget 0.001: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "round") && !strings.Contains(err.Error(), "minimum") {
+		t.Errorf("error should mention rounding-to-zero / minimum, got: %v", err)
+	}
+}
+
+// TestResolveOrgID_RejectsNonNumericOrgID verifies that a config whose orgId is
+// present but not a numeric LinkedIn organization id is rejected, rather than
+// being used to build an invalid "urn:li:organization:<id>" URN.
+func TestResolveOrgID_RejectsNonNumericOrgID(t *testing.T) {
+	cfg := RuntimeConfig{
+		DefaultAccountID: "123456789",
+		DefaultOrgID:     "987654321",
+		Accounts: []Account{
+			{AccountID: "123456789", Label: "Bad Org", OrgID: "not-a-number", Status: "ACTIVE"},
+		},
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+
+	if _, err := c.resolveOrgID("123456789"); err == nil {
+		t.Fatal("resolveOrgID with non-numeric account orgId: expected error, got nil")
+	}
+
+	// The same invariant must hold for the default org fallback.
+	cfg2 := RuntimeConfig{
+		DefaultAccountID: "555",
+		DefaultOrgID:     "urn:li:organization:987654321",
+	}
+	c2 := NewClient(Credentials{AccessToken: "t"}, cfg2)
+	if _, err := c2.resolveOrgID("555"); err == nil {
+		t.Fatal("resolveOrgID with malformed defaultOrgId: expected error, got nil")
+	}
+}
+
+// TestCreateCampaign_RejectsNonNumericOrgBeforeAnyPOST verifies the malformed-org
+// invariant is enforced through the public CreateCampaign path (via
+// validatePrerequisites -> orgURN -> resolveOrgID) before any POST.
+func TestCreateCampaign_RejectsNonNumericOrgBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	cfg := RuntimeConfig{
+		DefaultAccountID: "123456789",
+		DefaultOrgID:     "987654321",
+		Accounts: []Account{
+			{AccountID: "123456789", Label: "Bad Org", OrgID: "bad org id", Status: "ACTIVE"},
+		},
+		TargetingProfiles: []TargetingProfileConfig{
+			{ID: "cloud-native", Label: "Cloud Native"},
+		},
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "E",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("CreateCampaign with malformed orgId: expected error, got nil")
+	}
+}
