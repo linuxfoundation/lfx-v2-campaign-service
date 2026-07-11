@@ -1763,3 +1763,28 @@ func TestParseRetryAfter_NoOverflow(t *testing.T) {
 		t.Errorf("parseRetryAfter(huge) = %v, want a positive value <= maxRetryWait (%v)", got, maxRetryWait)
 	}
 }
+
+// TestDoRequest_SendsAuthAndVersionHeaders verifies every request carries the
+// Bearer token and the LinkedIn-Version / X-RestLi-Protocol-Version headers.
+func TestDoRequest_SendsAuthAndVersionHeaders(t *testing.T) {
+	var gotAuth, gotVer, gotProto string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotVer = r.Header.Get("LinkedIn-Version")
+		gotProto = r.Header.Get("X-RestLi-Protocol-Version")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[]}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok-abc"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, _ = c.doRequest(context.Background(), http.MethodGet, "adAccounts/1", nil, nil)
+	if gotAuth != "Bearer tok-abc" {
+		t.Errorf("Authorization = %q, want 'Bearer tok-abc'", gotAuth)
+	}
+	if gotVer == "" {
+		t.Error("LinkedIn-Version header missing")
+	}
+	if gotProto != "2.0.0" {
+		t.Errorf("X-RestLi-Protocol-Version = %q, want 2.0.0", gotProto)
+	}
+}

@@ -214,8 +214,11 @@ func (c *Client) buildTargetingCriteria(profile string, geoURNs []string) (map[s
 
 	if found == nil {
 		if profile == "custom" {
-			// The TypeScript treats a missing cloud-native fallback as empty
-			// skills/groups rather than an error.
+			// Builder-level tolerance only: the public entry (CreateCampaign) calls
+			// validatePrerequisites, which REQUIRES the aliased cloud-native profile
+			// to exist even for "custom" (matching validateLinkedInPrerequisites), so
+			// this empty-fallback branch isn't reached via the public flow — it just
+			// keeps the low-level builder total for direct/test use.
 			skills = []string{}
 			groups = []string{}
 		} else {
