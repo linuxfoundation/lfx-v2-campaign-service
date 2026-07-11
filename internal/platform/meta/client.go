@@ -287,6 +287,13 @@ type graphError struct {
 	FBTraceID string `json:"fbtrace_id"`
 }
 
+// graphRateLimitCodes are Graph/Marketing API error codes that indicate
+// throttling, which Meta commonly returns as an HTTP 400 (not a 429): 4 =
+// application request-limit reached, 17 = user request-limit reached, 32 =
+// page-level throttling, 341 = temporary app-level limit, 613 = ad-account
+// rate limit. These are retried with the same backoff as a 429.
+var graphRateLimitCodes = map[int]bool{4: true, 17: true, 32: true, 341: true, 613: true}
+
 // APIError is returned when the Meta API responds with a non-2xx status.
 type APIError struct {
 	StatusCode int
@@ -342,13 +349,21 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			return fmt.Errorf("meta API %s %s: %w", method, path, err)
 		}
 
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
-			wait := c.parseRetryAfter(resp)
-			// Drain (bounded) before closing so the HTTP transport can reuse this
-			// connection for the retry instead of opening a fresh TCP/TLS conn while
-			// already rate-limited.
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, drainLimit))
-			_ = resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, drainLimit))
+		retryAfter := c.parseRetryAfter(resp)
+		status := resp.StatusCode
+		_ = resp.Body.Close()
+
+		// Meta reports throttling either as HTTP 429 or, commonly, as HTTP 400 with
+		// a Graph error envelope whose code is a known rate-limit code. Treat both
+		// as retryable with the same bounded backoff.
+		var env graphErrorEnvelope
+		_ = json.Unmarshal(raw, &env)
+		throttled := status == http.StatusTooManyRequests ||
+			(status < 200 || status >= 300) && env.Error != nil && graphRateLimitCodes[env.Error.Code]
+
+		if throttled && attempt < retryMax {
+			wait := retryAfter
 			if wait <= 0 {
 				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
 			}
@@ -361,13 +376,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			continue
 		}
 
-		raw, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			apiErr := &APIError{StatusCode: resp.StatusCode, Method: method, Path: path}
-			var env graphErrorEnvelope
-			if json.Unmarshal(raw, &env) == nil && env.Error != nil && env.Error.Message != "" {
+		if status < 200 || status >= 300 {
+			apiErr := &APIError{StatusCode: status, Method: method, Path: path}
+			if env.Error != nil && env.Error.Message != "" {
 				apiErr.Message = env.Error.Message
 			} else if snippet := strings.TrimSpace(string(raw)); snippet != "" {
 				// Non-Graph or malformed error body: surface a truncated snippet of
@@ -386,7 +397,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 	}
 
 	return &APIError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path,
-		Message: fmt.Sprintf("exhausted %d retries after 429s", retryMax)}
+		Message: fmt.Sprintf("exhausted %d retries after rate limiting", retryMax)}
 }
 
 // parseRetryAfter returns how long to wait before retrying a 429, or 0 if no
@@ -448,7 +459,10 @@ func validateGeoTargets(geoTargets []string) []string {
 	valid := make([]string, 0, len(geoTargets))
 	for _, g := range geoTargets {
 		up := strings.ToUpper(strings.TrimSpace(g))
-		if geoCodeRE.MatchString(up) {
+		// Check both shape and ISO 3166-1 alpha-2 membership so a well-shaped but
+		// bogus code (e.g. "XX", "ZZ") is dropped rather than sent to Meta, where it
+		// would fail the targeting only after the campaign is already created.
+		if geoCodeRE.MatchString(up) && iso3166Alpha2[up] {
 			valid = append(valid, up)
 		}
 	}
@@ -456,6 +470,43 @@ func validateGeoTargets(geoTargets []string) []string {
 		return []string{"US"}
 	}
 	return valid
+}
+
+// iso3166Alpha2 is the set of assigned ISO 3166-1 alpha-2 country codes, used to
+// reject well-shaped but non-existent codes before they reach Meta.
+var iso3166Alpha2 = map[string]bool{
+	"AD": true, "AE": true, "AF": true, "AG": true, "AI": true, "AL": true, "AM": true, "AO": true,
+	"AQ": true, "AR": true, "AS": true, "AT": true, "AU": true, "AW": true, "AX": true, "AZ": true,
+	"BA": true, "BB": true, "BD": true, "BE": true, "BF": true, "BG": true, "BH": true, "BI": true,
+	"BJ": true, "BL": true, "BM": true, "BN": true, "BO": true, "BQ": true, "BR": true, "BS": true,
+	"BT": true, "BV": true, "BW": true, "BY": true, "BZ": true, "CA": true, "CC": true, "CD": true,
+	"CF": true, "CG": true, "CH": true, "CI": true, "CK": true, "CL": true, "CM": true, "CN": true,
+	"CO": true, "CR": true, "CU": true, "CV": true, "CW": true, "CX": true, "CY": true, "CZ": true,
+	"DE": true, "DJ": true, "DK": true, "DM": true, "DO": true, "DZ": true, "EC": true, "EE": true,
+	"EG": true, "EH": true, "ER": true, "ES": true, "ET": true, "FI": true, "FJ": true, "FK": true,
+	"FM": true, "FO": true, "FR": true, "GA": true, "GB": true, "GD": true, "GE": true, "GF": true,
+	"GG": true, "GH": true, "GI": true, "GL": true, "GM": true, "GN": true, "GP": true, "GQ": true,
+	"GR": true, "GS": true, "GT": true, "GU": true, "GW": true, "GY": true, "HK": true, "HM": true,
+	"HN": true, "HR": true, "HT": true, "HU": true, "ID": true, "IE": true, "IL": true, "IM": true,
+	"IN": true, "IO": true, "IQ": true, "IR": true, "IS": true, "IT": true, "JE": true, "JM": true,
+	"JO": true, "JP": true, "KE": true, "KG": true, "KH": true, "KI": true, "KM": true, "KN": true,
+	"KP": true, "KR": true, "KW": true, "KY": true, "KZ": true, "LA": true, "LB": true, "LC": true,
+	"LI": true, "LK": true, "LR": true, "LS": true, "LT": true, "LU": true, "LV": true, "LY": true,
+	"MA": true, "MC": true, "MD": true, "ME": true, "MF": true, "MG": true, "MH": true, "MK": true,
+	"ML": true, "MM": true, "MN": true, "MO": true, "MP": true, "MQ": true, "MR": true, "MS": true,
+	"MT": true, "MU": true, "MV": true, "MW": true, "MX": true, "MY": true, "MZ": true, "NA": true,
+	"NC": true, "NE": true, "NF": true, "NG": true, "NI": true, "NL": true, "NO": true, "NP": true,
+	"NR": true, "NU": true, "NZ": true, "OM": true, "PA": true, "PE": true, "PF": true, "PG": true,
+	"PH": true, "PK": true, "PL": true, "PM": true, "PN": true, "PR": true, "PS": true, "PT": true,
+	"PW": true, "PY": true, "QA": true, "RE": true, "RO": true, "RS": true, "RU": true, "RW": true,
+	"SA": true, "SB": true, "SC": true, "SD": true, "SE": true, "SG": true, "SH": true, "SI": true,
+	"SJ": true, "SK": true, "SL": true, "SM": true, "SN": true, "SO": true, "SR": true, "SS": true,
+	"ST": true, "SV": true, "SX": true, "SY": true, "SZ": true, "TC": true, "TD": true, "TF": true,
+	"TG": true, "TH": true, "TJ": true, "TK": true, "TL": true, "TM": true, "TN": true, "TO": true,
+	"TR": true, "TT": true, "TV": true, "TW": true, "TZ": true, "UA": true, "UG": true, "UM": true,
+	"US": true, "UY": true, "UZ": true, "VA": true, "VC": true, "VE": true, "VG": true, "VI": true,
+	"VN": true, "VU": true, "WF": true, "WS": true, "YE": true, "YT": true, "ZA": true, "ZM": true,
+	"ZW": true,
 }
 
 // regulatedCountries require a Universal Ads Declaration / regional compliance
@@ -794,6 +845,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	objParams, ok := objectiveParams[objective]
 	if !ok {
 		return nil, fmt.Errorf("unknown Meta objective: '%s'. Valid objectives: %s", objective, strings.Join(objectiveKeys(), ", "))
+	}
+	// The "leads" objective optimizes for LEAD_GENERATION with a page promoted
+	// object, but every variant is built as a website link_data creative pointing
+	// at the registration URL and the input carries no lead-form id. Creating that
+	// campaign would spend money on a lead-gen-optimized campaign wired to a
+	// website-click creative — a silent mismatch. Reject it up front (before any
+	// mutating call) until first-class lead-form support exists, rather than
+	// launching an inconsistent paid campaign.
+	if objective == "leads" {
+		return nil, fmt.Errorf("meta objective 'leads' is not yet supported: it requires a lead form, but this client builds website-click creatives; use 'traffic' or 'conversions'")
 	}
 	placementTargeting, err := buildPlacementTargeting(in.Placements)
 	if err != nil {

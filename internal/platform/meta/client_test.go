@@ -969,3 +969,72 @@ func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
 		t.Errorf("doRequest blocked %v; should have aborted on cancel", elapsed)
 	}
 }
+
+// TestCreateCampaignRejectsLeadsObjective verifies the leads objective is
+// rejected up front (before any mutating call) since it would create a
+// lead-gen-optimized campaign wired to a website-click creative.
+func TestCreateCampaignRejectsLeadsObjective(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Objective:       "leads",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "leads") {
+		t.Fatalf("err = %v, want the leads-unsupported error", err)
+	}
+}
+
+// TestValidateGeoTargetsRejectsBogusISO verifies that a well-shaped but
+// non-existent code (XX) is dropped and does not reach Meta.
+func TestValidateGeoTargetsRejectsBogusISO(t *testing.T) {
+	got := validateGeoTargets([]string{"XX", "ZZ"})
+	// All inputs invalid -> defaults to US, and the bogus codes are absent.
+	if len(got) != 1 || got[0] != "US" {
+		t.Errorf("validateGeoTargets(XX,ZZ) = %v, want [US] (bogus codes dropped)", got)
+	}
+	if contains(got, "XX") || contains(got, "ZZ") {
+		t.Errorf("bogus codes leaked into %v", got)
+	}
+	// A mix keeps the real one, drops the bogus one.
+	got2 := validateGeoTargets([]string{"DE", "XX"})
+	if len(got2) != 1 || got2[0] != "DE" {
+		t.Errorf("validateGeoTargets(DE,XX) = %v, want [DE]", got2)
+	}
+}
+
+// TestDoRequestRetriesOnGraphThrottleCode verifies a 400 with a Graph rate-limit
+// envelope code (e.g. 4) is retried like a 429 and ultimately succeeds.
+func TestDoRequestRetriesOnGraphThrottleCode(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited","code":4}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"123"}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	if err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"k": "v"}, &out); err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	if out.ID != "123" {
+		t.Errorf("id = %q, want 123", out.ID)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("server calls = %d, want 2 (one throttled 400 + one success)", got)
+	}
+}
