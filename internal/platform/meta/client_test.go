@@ -1061,3 +1061,43 @@ func TestCreateCampaignRejectsPastStartDate(t *testing.T) {
 		t.Fatalf("err = %v, want past-start-date rejection", err)
 	}
 }
+
+// TestCreateCampaignRejectsHugeBudget verifies an overflow-scale budget is
+// rejected before any mutating call.
+func TestCreateCampaignRejectsHugeBudget(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       1e18,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "budget too large") {
+		t.Fatalf("err = %v, want 'budget too large'", err)
+	}
+}
+
+// TestDoRequestReadsLargeSuccessBody verifies a success body larger than the
+// old 64KiB drain cap is fully read (not truncated) and decoded.
+func TestDoRequestReadsLargeSuccessBody(t *testing.T) {
+	// Build a >64KiB JSON success body with a padded field plus the id.
+	pad := strings.Repeat("x", 100<<10) // 100 KiB
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"pad":"`+pad+`","id":"123"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"}, WithBaseURL(srv.URL))
+	var out createResponse
+	if err := c.doRequest(context.Background(), http.MethodGet, "/x", nil, &out); err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	if out.ID != "123" {
+		t.Errorf("id = %q, want 123 (body must not be truncated before the id field)", out.ID)
+	}
+}

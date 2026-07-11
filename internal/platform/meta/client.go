@@ -46,9 +46,13 @@ const (
 	// maxRetryWait caps how long a single 429 backoff waits, so an outsized
 	// Retry-After value can't stall a request past the point of usefulness.
 	maxRetryWait = 60 * time.Second
-	// drainLimit bounds how much of a 429 response body is drained before close
-	// so the connection can be reused, without reading an unbounded body.
-	drainLimit = 64 << 10
+	// maxResponseBody bounds how much of any response body is read into memory,
+	// far above any legitimate Graph API response, to prevent memory exhaustion
+	// while not truncating a normal success or error body.
+	maxResponseBody = 10 << 20 // 10 MiB
+	// maxBudget caps the accepted budget (in currency units) well below the
+	// int64-cents overflow threshold so the ×100 conversion can't wrap.
+	maxBudget = 100_000_000.0
 )
 
 // ---------------------------------------------------------------------------
@@ -349,7 +353,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			return fmt.Errorf("meta API %s %s: %w", method, path, err)
 		}
 
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, drainLimit))
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 		retryAfter := c.parseRetryAfter(resp)
 		status := resp.StatusCode
 		_ = resp.Body.Close()
@@ -805,6 +809,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0 {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
+	}
+	// Cap the budget below the int64-cents overflow threshold before converting,
+	// so an absurd value can't wrap to a negative/garbage cents amount. maxBudget
+	// (100M currency units) is far above any real campaign budget.
+	if in.BudgetUSD > maxBudget {
+		return nil, fmt.Errorf("budget too large: must be at most %.0f", maxBudget)
 	}
 	// Reject sub-cent budgets that round to zero cents before any API call: a
 	// zero/invalid budget would otherwise be sent to Meta and create a bad ad set.
