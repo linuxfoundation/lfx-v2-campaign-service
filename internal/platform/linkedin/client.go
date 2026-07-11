@@ -930,6 +930,18 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		if len(nonBlankFacets(p.Skills)) == 0 && len(nonBlankFacets(p.Groups)) == 0 && profile != "custom" {
 			return fmt.Errorf("LinkedIn targeting profile %q has no usable targeting facets (skills and groups are empty or blank) — refusing to create a campaign with no profile-specific targeting", profile)
 		}
+		// Validate facet URN shapes up front (skills, groups, employer exclusions),
+		// so a malformed value fails here rather than after the campaign group is
+		// created inside buildTargetingCriteria.
+		if _, err := validFacets("skills", p.Skills); err != nil {
+			return err
+		}
+		if _, err := validFacets("groups", p.Groups); err != nil {
+			return err
+		}
+		if _, err := validFacets("employer-exclusions", c.cfg.EmployerExclusions); err != nil {
+			return err
+		}
 		return nil
 	}
 	// Not found. Matching the TS validateLinkedInPrerequisites contract, the

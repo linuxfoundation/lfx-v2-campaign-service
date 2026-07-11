@@ -40,6 +40,26 @@ var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
 // legitimate asset id.
 var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):[A-Za-z0-9_-]+$`)
 
+// facetURNRE matches a LinkedIn targeting-facet member URN as used for skills,
+// groups, and employer/organization exclusions: urn:li:<type>:<id> with no
+// spaces or URL delimiters. A non-blank but malformed facet (e.g. "not-a-skill")
+// would otherwise pass the non-blank check and be rejected by LinkedIn only
+// after the campaign group is created.
+var facetURNRE = regexp.MustCompile(`^urn:li:[a-zA-Z]+:[A-Za-z0-9_-]+$`)
+
+// validFacets returns the non-blank entries of in and an error naming the first
+// entry that is non-blank but not a well-formed facet URN. Used to fail fast
+// before any permanent resource is created.
+func validFacets(kind string, in []string) ([]string, error) {
+	out := nonBlankFacets(in)
+	for _, v := range out {
+		if !facetURNRE.MatchString(v) {
+			return nil, fmt.Errorf("malformed LinkedIn %s facet %q — expected a urn:li:<type>:<id> value", kind, v)
+		}
+	}
+	return out, nil
+}
+
 // nonBlankFacets returns the entries of in with surrounding whitespace trimmed,
 // dropping any entry that is blank (empty or whitespace-only) after trimming. A
 // targeting facet slice supplied through the injected RuntimeConfig can contain
@@ -199,8 +219,17 @@ func (c *Client) buildTargetingCriteria(profile string, geoURNs []string) (map[s
 	// []string{""} or {"  "}) that are not usable facets. nonBlankFacets also
 	// normalizes a nil slice to a non-nil empty slice so the JSON encodes as []
 	// not null (matching the TypeScript spread of possibly-empty arrays).
-	skills = nonBlankFacets(skills)
-	groups = nonBlankFacets(groups)
+	var ferr error
+	if skills, ferr = validFacets("skills", skills); ferr != nil {
+		return nil, ferr
+	}
+	if groups, ferr = validFacets("groups", groups); ferr != nil {
+		return nil, ferr
+	}
+	employerExclusions, ferr := validFacets("employer-exclusions", c.cfg.EmployerExclusions)
+	if ferr != nil {
+		return nil, ferr
+	}
 	if geoURNs == nil {
 		geoURNs = []string{}
 	}
@@ -225,7 +254,7 @@ func (c *Client) buildTargetingCriteria(profile string, geoURNs []string) (map[s
 			},
 			"exclude": map[string]any{
 				"or": map[string]any{
-					"urn:li:adTargetingFacet:employers":   append([]string{}, c.cfg.EmployerExclusions...),
+					"urn:li:adTargetingFacet:employers":   employerExclusions,
 					"urn:li:adTargetingFacet:seniorities": seniorityExclusions,
 				},
 			},

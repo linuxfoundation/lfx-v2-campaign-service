@@ -1664,3 +1664,46 @@ func TestCreateCampaign_SurfacesGroupWhenCampaignCreateFails(t *testing.T) {
 		t.Errorf("error should mention the created campaign-group ID, got: %v", err)
 	}
 }
+
+// TestCreateCampaign_RejectsMalformedFacetBeforeAnyPOST verifies a non-blank but
+// malformed skill/group/employer facet is rejected before any POST.
+func TestCreateCampaign_RejectsMalformedFacetBeforeAnyPOST(t *testing.T) {
+	base := CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	}
+
+	cases := []struct {
+		name string
+		mut  func(cfg *RuntimeConfig)
+	}{
+		{"malformed skill", func(cfg *RuntimeConfig) {
+			cfg.TargetingProfiles = []TargetingProfileConfig{{ID: "cloud-native", Skills: []string{"not-a-skill-urn"}}}
+		}},
+		{"malformed group", func(cfg *RuntimeConfig) {
+			cfg.TargetingProfiles = []TargetingProfileConfig{{ID: "cloud-native", Groups: []string{"urn:li:group:a b"}}}
+		}},
+		{"malformed employer exclusion", func(cfg *RuntimeConfig) {
+			cfg.TargetingProfiles = []TargetingProfileConfig{{ID: "cloud-native", Skills: []string{"urn:li:skill:1"}}}
+			cfg.EmployerExclusions = []string{"nope"}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := noPOSTServer(t)
+			defer srv.Close()
+			cfg := testConfig()
+			tc.mut(&cfg)
+			c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
+			if _, err := c.CreateCampaign(context.Background(), base); err == nil {
+				t.Fatalf("expected %s to be rejected before any POST", tc.name)
+			}
+		})
+	}
+}
