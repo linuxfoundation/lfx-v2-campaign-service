@@ -576,6 +576,15 @@ func (c *Client) validateSchedule(startDate, endDate string) error {
 // cross-tenant fail-closed check (resolveAccountID) in CreateCampaign. Exposing
 // it would let a caller create resources under an arbitrary, unvalidated account
 // id, bypassing that check. All hierarchy helpers are internal for this reason.
+//
+// NOT ATOMIC: the find-then-create is best-effort, not an atomic upsert (LinkedIn
+// exposes no upsert primitive). This is a GET-then-POST: two concurrent
+// CreateCampaign calls for the same name can both observe "not found" and both
+// POST, creating duplicate campaign groups. The client does NOT attempt to close
+// this window — the authoritative single-flight guarantee is enforced one layer
+// up by the orchestrator's per-(brief, platform) claim (LFXV2-2665), so in normal
+// operation only one dispatch per pair ever runs and this helper never races
+// itself. Callers invoking it outside that claim must serialize on their own.
 func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate, endDate string) (string, error) {
 	groupsPath := fmt.Sprintf("adAccounts/%s/adCampaignGroups", accountID)
 
@@ -626,6 +635,15 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 //
 // Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
 // have passed resolveAccountID in CreateCampaign.
+//
+// NOT ATOMIC: like findOrCreateCampaignGroup, the find-then-create here is
+// best-effort, not an atomic upsert. The findCampaignByNameInGroup lookup and the
+// subsequent create POST are separate calls, so two concurrent CreateCampaign
+// runs for the same (name, group) can both miss and both create a duplicate
+// campaign. LinkedIn offers no upsert primitive to close this window client-side;
+// the authoritative single-flight is the orchestrator's per-(brief, platform)
+// claim (LFXV2-2665), which ensures only one dispatch per pair runs in normal
+// operation. Callers outside that claim must serialize on their own.
 func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile, startDate, endDate string, lifetimeBudget bool) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
@@ -1018,6 +1036,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if strconv.FormatFloat(in.BudgetUSD, 'f', 2, 64) == "0.00" {
 		return nil, fmt.Errorf("budget %v is below the minimum billable amount (0.01) and would round to zero at the API boundary", in.BudgetUSD)
 	}
+	// Enforce LinkedIn's per-campaign budget minimums BEFORE any POST. LinkedIn
+	// rejects a dailyBudget under $10 and a totalBudget (lifetime) under $100, but
+	// only AFTER the campaign group (a permanent resource) already exists,
+	// orphaning it. LifetimeBudget selects the totalBudget field downstream (see
+	// createSponsoredCampaign), so the minimum tracks that choice. These minimums
+	// are USD-specific — the client only ever sends currencyCode "USD".
+	if in.LifetimeBudget {
+		if in.BudgetUSD < minLifetimeBudgetUSD {
+			return nil, fmt.Errorf("lifetime budget %v is below LinkedIn's minimum of $%.0f for a total (lifetime) budget", in.BudgetUSD, minLifetimeBudgetUSD)
+		}
+	} else if in.BudgetUSD < minDailyBudgetUSD {
+		return nil, fmt.Errorf("daily budget %v is below LinkedIn's minimum of $%.0f for a daily budget", in.BudgetUSD, minDailyBudgetUSD)
+	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
@@ -1042,6 +1073,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		if normalizeCreativeText(variant.IntroText) == "" {
 			return nil, fmt.Errorf("variant-%d intro text is required and must not be empty, whitespace-only, or dash-only after normalization", i+1)
+		}
+		// ImageURN is optional public/AI-derived input. When non-empty it is sent
+		// verbatim as the article thumbnail by createDarkPost, so validate its
+		// digital-asset URN shape up front: unlike geo URNs, an unchecked malformed
+		// value would otherwise reach LinkedIn only AFTER the campaign group and
+		// campaign (permanent resources) already exist. An empty ImageURN stays
+		// allowed.
+		if variant.ImageURN != "" && !imageURNRE.MatchString(variant.ImageURN) {
+			return nil, fmt.Errorf("variant-%d image URN %q is malformed: expected urn:li:image:<id> or urn:li:digitalmediaAsset:<id>", i+1, variant.ImageURN)
 		}
 	}
 

@@ -25,6 +25,14 @@ var accountIDRE = regexp.MustCompile(`^[0-9]+$`)
 // caller-supplied GeoTarget with a malformed URN before any campaign is created.
 var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
 
+// imageURNRE matches a LinkedIn digital-asset URN as accepted by createDarkPost,
+// which sends a variant's ImageURN verbatim as the article thumbnail. LinkedIn
+// image assets are addressed as either urn:li:image:<id> or
+// urn:li:digitalmediaAsset:<id>. ImageURN is optional (an empty value is
+// allowed), but a non-empty malformed value is rejected up front — otherwise it
+// reaches LinkedIn only AFTER the campaign group and campaign already exist.
+var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):.+$`)
+
 // ResolveGeoTargets resolves location names to GeoTarget URNs using the static
 // geoResolveMap. Mirrors the cached branch of resolveGeoTargets: names are
 // lowercased and trimmed before lookup. Unknown geos are skipped (omitted from

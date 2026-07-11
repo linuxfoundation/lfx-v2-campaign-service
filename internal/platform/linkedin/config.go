@@ -34,6 +34,18 @@ const maxResponseBytes = 10 << 20 // 10 MiB
 // maxNameLen is LinkedIn's limit on campaign-group and campaign names.
 const maxNameLen = 255
 
+// minDailyBudgetUSD and minLifetimeBudgetUSD are LinkedIn's minimum campaign
+// budgets. LinkedIn requires at least $10 for a dailyBudget and at least $100
+// for a totalBudget (lifetime) campaign; a lower amount is rejected by LinkedIn
+// only AFTER the campaign group (a permanent resource) already exists, so the
+// client enforces these up front. NOTE: these minimums are USD-specific — the
+// client only ever sends currencyCode "USD", so a single pair of constants is
+// correct here; a multi-currency client would need per-currency minimums.
+const (
+	minDailyBudgetUSD    = 10.0
+	minLifetimeBudgetUSD = 100.0
+)
+
 // retryMax is the number of times a 429 (rate-limited) request is retried
 // before giving up. Mirrors the resilience the Twitter client (#19) applies.
 const retryMax = 3

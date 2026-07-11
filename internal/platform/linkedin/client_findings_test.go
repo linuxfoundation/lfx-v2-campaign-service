@@ -1130,3 +1130,133 @@ func TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST(t *testing.T) {
 		t.Fatalf("err = %v, want name-length rejection", err)
 	}
 }
+
+// fullFlowServer returns an httptest.Server that answers search GETs with an
+// empty element set (forcing the create path) and returns valid resource IDs for
+// every create POST, so a well-formed CreateCampaign call completes end to end.
+// It lets a test assert that an input passed the up-front validation gates
+// (e.g. the budget minimum) by reaching a successful create rather than a
+// validation error.
+func fullFlowServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+}
+
+// TestCreateCampaign_RejectsBelowMinimumBudgetBeforeAnyPOST verifies that a
+// budget below LinkedIn's per-campaign minimum ($10 daily, $100 lifetime) is
+// rejected up front, before any POST that would create a permanent campaign
+// group. The server fails on any POST.
+func TestCreateCampaign_RejectsBelowMinimumBudgetBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	cases := []struct {
+		name     string
+		budget   float64
+		lifetime bool
+	}{
+		{"$5 daily", 5, false},
+		{"$50 lifetime", 50, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:        "E",
+				RegistrationURL:  "https://events.example.org/reg",
+				BudgetUSD:        tc.budget,
+				LifetimeBudget:   tc.lifetime,
+				StartDate:        "2099-01-01",
+				EndDate:          "2099-02-01",
+				TargetingProfile: "cloud-native",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+			})
+			if err == nil {
+				t.Fatalf("CreateCampaign with %s: expected error, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), "minimum") {
+				t.Errorf("error should mention the LinkedIn budget minimum, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_AcceptsMinimumBudget verifies that a budget AT LinkedIn's
+// minimum ($10 daily, $100 lifetime) passes the up-front budget check and the
+// create flow proceeds (completes against a full-flow mock). If either value
+// were rejected at the budget gate, CreateCampaign would return an error before
+// any POST.
+func TestCreateCampaign_AcceptsMinimumBudget(t *testing.T) {
+	cases := []struct {
+		name     string
+		budget   float64
+		lifetime bool
+	}{
+		{"$10 daily", 10, false},
+		{"$100 lifetime", 100, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fullFlowServer(t)
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:        "E",
+				RegistrationURL:  "https://events.example.org/reg",
+				BudgetUSD:        tc.budget,
+				LifetimeBudget:   tc.lifetime,
+				StartDate:        "2099-01-01",
+				EndDate:          "2099-02-01",
+				TargetingProfile: "cloud-native",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+			})
+			if err != nil {
+				t.Fatalf("CreateCampaign with %s should pass the budget check, got error: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_RejectsMalformedImageURNBeforeAnyPOST verifies that a
+// variant carrying a non-empty but malformed ImageURN is rejected up front,
+// before any POST — an empty ImageURN stays allowed, but a bad digital-asset URN
+// must not reach LinkedIn only after the campaign group and campaign exist.
+func TestCreateCampaign_RejectsMalformedImageURNBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-01-31",
+		GeoTargets:       []GeoTarget{{URN: "urn:li:geo:103644278"}},
+		TargetingProfile: "cloud-native",
+		Variants:         []CreativeVariant{{IntroText: "hi", Headline: "h", ImageURN: "not-a-urn"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "image URN") {
+		t.Fatalf("err = %v, want malformed image URN rejection", err)
+	}
+}
