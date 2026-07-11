@@ -111,6 +111,7 @@ paths:
                   description: Brief UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -188,6 +189,7 @@ paths:
                   description: Brief UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -291,6 +293,7 @@ paths:
                   description: Brief UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -356,9 +359,15 @@ paths:
                   description: Brief UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+                - name: If-Match
+                  in: header
+                  description: Version being approved (ETag); approval is rejected if the brief changed
                   required: false
                   type: string
             responses:
@@ -398,6 +407,20 @@ paths:
                         required:
                             - code
                             - message
+                "412":
+                    description: Precondition Failed response.
+                    schema:
+                        $ref: '#/definitions/PreconditionFailedError'
+                        required:
+                            - code
+                            - message
+                "428":
+                    description: Precondition Required response.
+                    schema:
+                        $ref: '#/definitions/PreconditionRequiredError'
+                        required:
+                            - code
+                            - message
                 "500":
                     description: Internal Server Error response.
                     schema:
@@ -434,6 +457,7 @@ paths:
                   description: Brief UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -511,11 +535,13 @@ paths:
                   description: Brief UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -594,11 +620,13 @@ paths:
                   description: Brief UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -3350,6 +3378,7 @@ paths:
                   description: Job UUID
                   required: true
                   type: string
+                  format: uuid
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -3428,76 +3457,74 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Qui alias ea.
+                example: Molestiae est accusantium laudantium nostrum.
             event_details:
                 description: Extracted event/course details
-                example: Eos nesciunt ipsum et delectus dolorum.
+                example: Non quo necessitatibus.
             event_slug:
                 type: string
                 description: Event/course slug
-                example: Adipisci quaerat est nobis.
+                example: Facere qui omnis.
             id:
                 type: string
                 description: Brief UUID
-                example: Repellendus quo quidem.
+                example: Beatae harum similique corporis id eum.
             keywords:
                 description: Keyword list
-                example: Tempore maxime.
+                example: Dolores sit.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Et veritatis quisquam sed ratione et.
+                    example: Beatae quia qui excepturi minima.
                 description: Suggested default platforms
                 example:
-                    - Molestiae eos.
-                    - Aut iusto quos impedit eos.
-                    - Adipisci rerum consequatur placeat ea odio.
+                    - Natus a.
+                    - Quod sunt quae et nesciunt iure quis.
+                    - Ut mollitia nihil ducimus.
             program_type:
                 type: string
                 description: Funnel context
-                example: Illum rerum error incidunt.
+                example: Facilis qui libero.
             project_id:
                 type: string
                 description: Owning project
-                example: Cumque totam nulla aut reprehenderit.
+                example: Et itaque rem eos et deleniti dolores.
             status:
                 type: string
                 description: Lifecycle status
-                example: draft
+                example: approved
                 enum:
                     - draft
                     - approved
                     - archived
             targeting:
                 description: Targeting recommendation
-                example: Porro enim dolorum nobis.
+                example: Exercitationem accusantium nihil.
             url:
                 type: string
                 description: Event/course page URL
-                example: Fugit non fuga rem adipisci.
+                example: Enim vitae officia dolorem odio.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 6324133014862191516
+                example: 8012662392626135551
                 format: int64
         example:
-            copy: Aut facilis porro dolor ipsa velit.
-            event_details: Ut mollitia tempora minima voluptas quod.
-            event_slug: Aperiam voluptates.
-            id: Magnam pariatur explicabo est.
-            keywords: Hic quis facere exercitationem.
+            copy: Sed veniam dolores quidem necessitatibus voluptatem.
+            event_details: Earum minus autem omnis qui debitis eum.
+            event_slug: Modi possimus consequatur.
+            id: Ipsum voluptates pariatur magni atque.
+            keywords: Sit reiciendis et vel beatae molestiae.
             platforms:
-                - Aut perferendis natus.
-                - Eaque ipsam harum nisi nobis et et.
-                - Excepturi corporis ut.
-                - Odio eius sed qui deserunt perspiciatis.
-            program_type: Adipisci ullam pariatur ex voluptas.
-            project_id: Qui praesentium ipsam officiis cum ipsum recusandae.
-            status: archived
-            targeting: Exercitationem aut eaque.
-            url: Vero ducimus.
-            version: 5743767113243123162
+                - Aspernatur illo accusamus.
+                - Cupiditate mollitia hic vel ut.
+            program_type: Sit cupiditate non.
+            project_id: Omnis doloremque at fugit dolor et.
+            status: approved
+            targeting: Natus vitae consequatur eos sit aut ut.
+            url: Eveniet esse officia explicabo dolor deserunt.
+            version: 6761108389050444243
         required:
             - id
             - project_id
@@ -3511,56 +3538,53 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Commodi dicta.
+                example: Vel inventore aliquid aut non eligendi accusamus.
             event_details:
                 description: Extracted event/course details
-                example: Consequatur non cumque laudantium quod modi voluptas.
+                example: Explicabo repudiandae aut reiciendis recusandae molestias.
             event_slug:
                 type: string
                 description: Event/course slug (unique within the project)
-                example: Accusamus et provident provident.
+                example: Eos labore quia esse consectetur tenetur.
             keywords:
                 description: Keyword list
-                example: Ad non.
+                example: Quod impedit accusamus incidunt minus veritatis enim.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Sed voluptatum laborum.
+                    example: Et recusandae possimus.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
-                    - Quas sunt eos nulla et perferendis qui.
-                    - Aut reiciendis ullam laborum.
-                    - Et quidem nisi quasi.
-                    - Ab deserunt quia magnam temporibus minus et.
+                    - Praesentium voluptate.
+                    - Qui impedit temporibus eveniet eos omnis cumque.
+                    - Ipsam ut sed natus et unde.
             program_type:
                 type: string
                 description: Funnel context
-                example: events
+                example: education
                 enum:
                     - events
                     - education
                     - membership
             targeting:
                 description: Targeting recommendation
-                example: Dolores voluptatibus.
+                example: Hic est quia pariatur odit ullam.
             url:
                 type: string
                 description: Event/course page URL
-                example: Odit iusto ad animi eos doloribus autem.
+                example: Aliquam aut ut sit nisi architecto iure.
         example:
-            copy: Quos accusantium fugit.
-            event_details: Et expedita itaque quos.
-            event_slug: Consequatur est unde nihil.
-            keywords: Excepturi saepe sit vel perspiciatis neque.
+            copy: In aut nam rerum.
+            event_details: Quae qui inventore dolorem deserunt.
+            event_slug: Id corrupti sed quo perferendis nemo.
+            keywords: Distinctio magnam.
             platforms:
-                - Qui eveniet laboriosam possimus.
-                - Facere velit dolores eligendi.
-                - Ad voluptatem.
-                - Tempore impedit.
-            program_type: education
-            targeting: Qui molestias.
-            url: Laudantium quod est voluptas sequi voluptatem.
+                - Voluptatem nihil quaerat asperiores pariatur.
+                - Vel veritatis hic rerum accusamus velit error.
+            program_type: membership
+            targeting: Architecto deserunt vero ducimus distinctio.
+            url: Quisquam nisi repellendus quos magnam aut.
         required:
             - program_type
             - event_slug
@@ -3571,45 +3595,45 @@ definitions:
             brief_id:
                 type: string
                 description: Parent brief
-                example: Nihil dolore suscipit reprehenderit et aut animi.
+                example: Et dolorem quod.
             campaign_name:
                 type: string
                 description: Campaign name
-                example: Et aut consequatur inventore enim reiciendis.
+                example: Consequatur hic voluptatem.
             id:
                 type: string
                 description: Campaign UUID
-                example: Aut molestiae exercitationem et impedit at.
+                example: Placeat et minus et.
             platform:
                 type: string
                 description: Channel
-                example: Ullam omnis autem.
+                example: Iusto fugit non asperiores quidem natus.
             platform_campaign_id:
                 type: string
                 description: ID returned by the ad platform
-                example: Id laboriosam nihil ea.
+                example: Nostrum atque illum nesciunt adipisci odit corrupti.
             project_id:
                 type: string
                 description: Owning project
-                example: Quisquam perferendis autem ut alias.
+                example: Fugiat aliquid aspernatur voluptatem in cupiditate.
             status:
                 type: string
                 description: Campaign status
-                example: Neque ut rerum facilis quia molestiae ratione.
+                example: Omnis quidem dolor ipsum voluptas.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 3905678301175813319
+                example: 3737008917467127208
                 format: int64
         example:
-            brief_id: Consequatur qui molestiae velit ratione nesciunt et.
-            campaign_name: Enim qui officia id necessitatibus mollitia soluta.
-            id: Provident officia officiis.
-            platform: Rerum ut necessitatibus illum ratione.
-            platform_campaign_id: Mollitia atque atque dolores accusantium non dolor.
-            project_id: Ut mollitia accusantium dignissimos.
-            status: Nobis labore dicta.
-            version: 6819175354933615501
+            brief_id: Ut sint non eum expedita non.
+            campaign_name: Doloribus voluptas mollitia doloremque totam.
+            id: Id ea.
+            platform: Sit voluptatem ad ab.
+            platform_campaign_id: Tempora dolor quis totam hic quibusdam eveniet.
+            project_id: Dolorem necessitatibus neque consectetur occaecati earum.
+            status: Veniam et ducimus quos amet.
+            version: 1836828122944842672
         required:
             - id
             - project_id
@@ -3624,7 +3648,7 @@ definitions:
         properties:
             config:
                 description: Per-platform campaign configuration
-                example: Sunt totam incidunt sunt id ipsa.
+                example: Nobis nam velit quis rem.
             platforms:
                 type: array
                 items:
@@ -3640,15 +3664,14 @@ definitions:
                         - hubspot
                 description: Platforms to create campaigns on (binding selection)
                 example:
-                    - linkedin-ads
-                    - hubspot
                     - meta-ads
-                    - meta-ads
+                    - google-ads
+                    - reddit-ads
         example:
-            config: Voluptatibus aut.
+            config: Architecto quae error.
             platforms:
-                - hubspot
-                - microsoft-ads
+                - reddit-ads
+                - twitter-ads
         required:
             - platforms
     CampaignUpdateInput:
@@ -3658,18 +3681,18 @@ definitions:
             campaign_name:
                 type: string
                 description: Campaign name
-                example: Incidunt qui aut tempora dolor sequi quia.
+                example: Doloremque commodi rerum esse.
             config:
                 description: Campaign configuration snapshot
-                example: Culpa iste.
+                example: Laudantium quia.
             status:
                 type: string
                 description: Campaign status
-                example: Consequatur velit odio.
+                example: Omnis totam eos non.
         example:
-            campaign_name: Sit incidunt.
-            config: Qui quisquam voluptatibus sint quia.
-            status: Officiis est.
+            campaign_name: Maxime recusandae.
+            config: Laudantium error sit nihil iure officiis nemo.
+            status: Accusamus debitis explicabo praesentium.
         required:
             - campaign_name
             - status
@@ -3718,14 +3741,14 @@ definitions:
             message:
                 type: string
                 description: Human-readable detail
-                example: Sunt assumenda.
+                example: Est omnis iusto fugiat ad et ipsa.
             ok:
                 type: boolean
                 description: Whether the credential authenticated against the provider
-                example: true
+                example: false
         example:
-            message: Officia eligendi tempore provident dicta temporibus debitis.
-            ok: false
+            message: Veritatis mollitia.
+            ok: true
         required:
             - ok
     GoogleAdsConnection:
@@ -3735,31 +3758,31 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Est officia et.
+                example: Vero ut et neque soluta distinctio voluptas.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: true
+                example: false
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Velit in recusandae maiores et voluptatem voluptatem.
+                example: Rem asperiores eligendi vero.
             label:
                 type: string
                 description: Optional friendly name
-                example: Ex quo praesentium voluptas.
+                example: Facere quas qui aut rerum.
             login_customer_id:
                 type: string
                 description: Manager account used for API access
-                example: Eos et architecto voluptas.
+                example: Fugit eum.
             project_id:
                 type: string
                 description: Owning project
-                example: Mollitia omnis doloribus qui consequatur et.
+                example: Voluptatem fugiat et.
             status:
                 type: string
                 description: Connection status
-                example: error
+                example: active
                 enum:
                     - active
                     - inactive
@@ -3768,17 +3791,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 5274458285620360301
+                example: 5717670313645740058
                 format: int64
         example:
-            account_id: Nihil nihil quae porro qui rem autem.
+            account_id: Occaecati quaerat eum quia a excepturi.
             has_credentials: true
-            id: Vel natus provident.
-            label: Ut non error aut et fuga.
-            login_customer_id: Vitae perspiciatis eveniet quibusdam nobis ut asperiores.
-            project_id: Perspiciatis id.
+            id: Necessitatibus voluptatem incidunt et totam esse rerum.
+            label: Voluptatem incidunt cum.
+            login_customer_id: Eos culpa quaerat culpa inventore aut molestiae.
+            project_id: Dolorem delectus.
             status: deleted
-            version: 4918506778223386612
+            version: 4898302691270586418
         required:
             - id
             - project_id
@@ -3815,25 +3838,25 @@ definitions:
             client_id:
                 type: string
                 description: OAuth client id
-                example: Quis dicta voluptate aut in corporis.
+                example: Id vel iusto optio repellendus.
             client_secret:
                 type: string
                 description: OAuth client secret
-                example: Nobis soluta.
+                example: Ad dolorem et.
             developer_token:
                 type: string
                 description: Google Ads developer token
-                example: Vitae accusantium excepturi deleniti voluptas.
+                example: Rerum eveniet nam sunt.
             refresh_token:
                 type: string
                 description: OAuth refresh token
-                example: Aut enim et.
+                example: Hic quos inventore.
         description: Google Ads OAuth credential set. Write-only; never returned.
         example:
-            client_id: Laboriosam non id temporibus et provident.
-            client_secret: Neque quis illo minima.
-            developer_token: Earum eligendi.
-            refresh_token: Vel quae laudantium amet veritatis rerum itaque.
+            client_id: Nisi est magni odio aut.
+            client_secret: Vel omnis iure.
+            developer_token: Voluptatem doloremque ullam consequatur ut.
+            refresh_token: Inventore impedit unde voluptatem quia ab recusandae.
         required:
             - refresh_token
             - client_id
@@ -3846,39 +3869,39 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Deserunt repellendus corrupti itaque quo sit.
+                example: Incidunt voluptas non necessitatibus.
             brand_kit:
                 type: string
                 description: Per-project brand kit selector
-                example: Perspiciatis porro.
+                example: Provident porro.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: false
+                example: true
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Blanditiis mollitia dolores illo nostrum magnam.
+                example: Qui nemo nihil dolorum consequatur.
             label:
                 type: string
                 description: Optional friendly name
-                example: Omnis nobis.
+                example: Est ea sed sit.
             portal_id:
                 type: string
                 description: HubSpot portal/account ID
-                example: Eum et ipsum expedita reprehenderit eos.
+                example: Deserunt nostrum consectetur et sed praesentium libero.
             project_id:
                 type: string
                 description: Owning project
-                example: Nostrum tempore.
+                example: Tempora qui eum hic vel aspernatur at.
             sender_email:
                 type: string
                 description: Default sender address
-                example: Dolorum ut architecto deleniti nostrum.
+                example: Qui minima in nulla sunt autem eos.
             sender_name:
                 type: string
                 description: Default sender name
-                example: Aperiam et nihil.
+                example: Provident dicta tenetur voluptatem voluptate dolor.
             status:
                 type: string
                 description: Connection status
@@ -3891,20 +3914,20 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 6605548766358472787
+                example: 5710646536103854438
                 format: int64
         example:
-            account_id: Aperiam quos perferendis nisi blanditiis eveniet.
-            brand_kit: Optio labore omnis.
+            account_id: Est quis impedit.
+            brand_kit: Dolor quam dolor consectetur eos iste.
             has_credentials: true
-            id: Distinctio amet enim.
-            label: Deserunt quod.
-            portal_id: Corporis dolorum consequatur eius perferendis.
-            project_id: Rem error.
-            sender_email: Omnis vel voluptate necessitatibus enim et et.
-            sender_name: Sunt omnis mollitia aut rerum quis et.
-            status: active
-            version: 7462268971443661923
+            id: Odio sunt esse mollitia incidunt.
+            label: Veritatis itaque.
+            portal_id: Consequatur eligendi eum necessitatibus alias.
+            project_id: Dolores laborum sed.
+            sender_email: Ut aperiam voluptate voluptates.
+            sender_name: Sapiente molestiae dolorum repellat expedita ut.
+            status: inactive
+            version: 6098388766312520476
         required:
             - id
             - project_id
@@ -3919,34 +3942,34 @@ definitions:
             account_id:
                 type: string
                 description: HubSpot list/audience ID
-                example: Rem ab corporis.
+                example: Veniam iusto consequatur quia sed officia eligendi.
             brand_kit:
                 type: string
                 description: Per-project brand kit selector
-                example: Eaque dolor.
+                example: Veniam delectus repellendus omnis.
             label:
                 type: string
                 description: Optional friendly name
-                example: Nihil aut rerum est vel.
+                example: Praesentium et.
             portal_id:
                 type: string
                 description: HubSpot portal/account ID
-                example: Non dolorem.
+                example: Qui impedit.
             sender_email:
                 type: string
                 description: Default sender address
-                example: Porro et.
+                example: Ea alias.
             sender_name:
                 type: string
                 description: Default sender name
-                example: Dolor aut assumenda fugiat.
+                example: Reprehenderit dignissimos aut velit quis at sint.
         example:
-            account_id: Aut quas suscipit eos.
-            brand_kit: Dolor et corrupti voluptas neque vitae.
-            label: Inventore alias error aut maxime dicta.
-            portal_id: Ipsa rerum velit et impedit.
-            sender_email: Quaerat labore dolor.
-            sender_name: Velit quam omnis.
+            account_id: Quo necessitatibus necessitatibus.
+            brand_kit: Repudiandae tenetur aperiam saepe vel.
+            label: Amet cum.
+            portal_id: Sint dicta.
+            sender_email: Omnis voluptatem rerum praesentium.
+            sender_name: Blanditiis non totam temporibus.
         required:
             - account_id
     HubspotCredentials:
@@ -3956,10 +3979,10 @@ definitions:
             private_app_token:
                 type: string
                 description: HubSpot private app token
-                example: Omnis autem accusamus.
+                example: Animi sit esse ratione aliquid.
         description: HubSpot private app token. Write-only; never returned.
         example:
-            private_app_token: Est assumenda aut.
+            private_app_token: Laborum est quasi dignissimos.
         required:
             - private_app_token
     InternalServerError:
@@ -3988,18 +4011,18 @@ definitions:
             job_id:
                 type: string
                 description: Poll GET /projects/{projectId}/jobs/{jobId}
-                example: Molestiae minus dolor accusantium.
+                example: Quia magni aut nisi est.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Molestias fuga voluptatibus quis adipisci.
+                    example: Est sed.
                 description: Platforms this job will create on
                 example:
-                    - Ut blanditiis dolor modi nobis aliquid.
-                    - Consequatur officiis velit quasi dolores assumenda.
-                    - Mollitia fugiat dolore similique et.
-                    - Voluptates quaerat molestiae.
+                    - Dolorem necessitatibus illum.
+                    - Ex ipsa nihil esse voluptate in consectetur.
+                    - Culpa quaerat.
+                    - Sed voluptatum et impedit quod rem.
             status:
                 type: string
                 description: Initial status (always 'queued' on create)
@@ -4007,11 +4030,11 @@ definitions:
                 enum:
                     - queued
         example:
-            job_id: Cum porro architecto doloremque aperiam doloribus aut.
+            job_id: Omnis corrupti facere eum aliquid est repellat.
             platforms:
-                - Cumque iure veritatis cumque nisi.
-                - Distinctio ipsum ab.
-                - Natus placeat esse est in deserunt aliquid.
+                - Id incidunt mollitia non sed.
+                - Minima est distinctio accusamus.
+                - Perferendis culpa voluptatem nostrum eaque deleniti.
             status: queued
         required:
             - job_id
@@ -4023,29 +4046,33 @@ definitions:
             error:
                 type: string
                 description: Terminal error, if any
-                example: Distinctio voluptas ut ut nisi.
+                example: Ut voluptatem.
             job_id:
                 type: string
                 description: Job UUID
-                example: Tempore nemo illum ut maiores.
+                example: Molestias ducimus id.
             result:
                 type: array
                 items:
                     $ref: '#/definitions/PlatformResult'
                 description: Per-platform results, written once when the job reaches a terminal state
                 example:
-                    - campaign_id: Quidem qui iusto sed quaerat vel fuga.
-                      error: Odio nulla ut laboriosam vel rerum.
+                    - campaign_id: Officia et sint numquam accusamus.
+                      error: Eos et architecto voluptas.
                       ok: false
-                      platform: Dolor molestias ipsa dolorum est.
-                    - campaign_id: Quidem qui iusto sed quaerat vel fuga.
-                      error: Odio nulla ut laboriosam vel rerum.
+                      platform: Consequatur et dignissimos ex quo praesentium voluptas.
+                    - campaign_id: Officia et sint numquam accusamus.
+                      error: Eos et architecto voluptas.
                       ok: false
-                      platform: Dolor molestias ipsa dolorum est.
+                      platform: Consequatur et dignissimos ex quo praesentium voluptas.
+                    - campaign_id: Officia et sint numquam accusamus.
+                      error: Eos et architecto voluptas.
+                      ok: false
+                      platform: Consequatur et dignissimos ex quo praesentium voluptas.
             status:
                 type: string
                 description: Job status
-                example: partial
+                example: queued
                 enum:
                     - queued
                     - running
@@ -4053,26 +4080,22 @@ definitions:
                     - partial
                     - failed
         example:
-            error: Et atque dolor odio labore pariatur.
-            job_id: Nostrum velit hic excepturi omnis reprehenderit distinctio.
+            error: Aperiam facere voluptas quis nihil.
+            job_id: Vel iste aut cum voluptatem.
             result:
-                - campaign_id: Quidem qui iusto sed quaerat vel fuga.
-                  error: Odio nulla ut laboriosam vel rerum.
+                - campaign_id: Officia et sint numquam accusamus.
+                  error: Eos et architecto voluptas.
                   ok: false
-                  platform: Dolor molestias ipsa dolorum est.
-                - campaign_id: Quidem qui iusto sed quaerat vel fuga.
-                  error: Odio nulla ut laboriosam vel rerum.
+                  platform: Consequatur et dignissimos ex quo praesentium voluptas.
+                - campaign_id: Officia et sint numquam accusamus.
+                  error: Eos et architecto voluptas.
                   ok: false
-                  platform: Dolor molestias ipsa dolorum est.
-                - campaign_id: Quidem qui iusto sed quaerat vel fuga.
-                  error: Odio nulla ut laboriosam vel rerum.
+                  platform: Consequatur et dignissimos ex quo praesentium voluptas.
+                - campaign_id: Officia et sint numquam accusamus.
+                  error: Eos et architecto voluptas.
                   ok: false
-                  platform: Dolor molestias ipsa dolorum est.
-                - campaign_id: Quidem qui iusto sed quaerat vel fuga.
-                  error: Odio nulla ut laboriosam vel rerum.
-                  ok: false
-                  platform: Dolor molestias ipsa dolorum est.
-            status: queued
+                  platform: Consequatur et dignissimos ex quo praesentium voluptas.
+            status: partial
         required:
             - job_id
             - status
@@ -4084,17 +4107,18 @@ definitions:
                 $ref: '#/definitions/BriefInput'
         example:
             brief:
-                copy: Expedita unde molestiae.
-                event_details: Mollitia molestiae saepe qui ex commodi.
-                event_slug: Nesciunt unde ullam occaecati maxime.
-                keywords: Voluptas dolor et incidunt pariatur quod odit.
+                copy: Blanditiis quidem qui iusto sed.
+                event_details: Dolor molestias ipsa dolorum est.
+                event_slug: Accusantium ad.
+                keywords: Vel fuga recusandae.
                 platforms:
-                    - Ut expedita voluptatum sit.
-                    - Quasi voluptas corporis velit et.
-                    - Quia ut atque.
-                program_type: education
-                targeting: Velit ullam.
-                url: Similique vel nobis non molestias.
+                    - Iste autem veniam et enim unde.
+                    - Facere quam.
+                    - Rem quia consequuntur ut.
+                    - Consequatur quos atque voluptates quo sit.
+                program_type: membership
+                targeting: Nulla ut laboriosam.
+                url: Modi asperiores ut libero vel.
         required:
             - brief
     LfxV2CampaignServiceBriefsCreateCampaignsRequestBody:
@@ -4105,10 +4129,11 @@ definitions:
                 $ref: '#/definitions/CampaignCreateInput'
         example:
             input:
-                config: Vitae reiciendis voluptatem.
+                config: Adipisci consequuntur omnis a.
                 platforms:
                     - reddit-ads
-                    - microsoft-ads
+                    - meta-ads
+                    - google-ads
         required:
             - input
     LfxV2CampaignServiceBriefsUpdateBriefRequestBody:
@@ -4119,17 +4144,18 @@ definitions:
                 $ref: '#/definitions/BriefInput'
         example:
             brief:
-                copy: Expedita unde molestiae.
-                event_details: Mollitia molestiae saepe qui ex commodi.
-                event_slug: Nesciunt unde ullam occaecati maxime.
-                keywords: Voluptas dolor et incidunt pariatur quod odit.
+                copy: Blanditiis quidem qui iusto sed.
+                event_details: Dolor molestias ipsa dolorum est.
+                event_slug: Accusantium ad.
+                keywords: Vel fuga recusandae.
                 platforms:
-                    - Ut expedita voluptatum sit.
-                    - Quasi voluptas corporis velit et.
-                    - Quia ut atque.
-                program_type: education
-                targeting: Velit ullam.
-                url: Similique vel nobis non molestias.
+                    - Iste autem veniam et enim unde.
+                    - Facere quam.
+                    - Rem quia consequuntur ut.
+                    - Consequatur quos atque voluptates quo sit.
+                program_type: membership
+                targeting: Nulla ut laboriosam.
+                url: Modi asperiores ut libero vel.
         required:
             - brief
     LfxV2CampaignServiceBriefsUpdateCampaignRequestBody:
@@ -4140,9 +4166,9 @@ definitions:
                 $ref: '#/definitions/CampaignUpdateInput'
         example:
             campaign:
-                campaign_name: Alias ullam fugiat deserunt sint nihil iusto.
-                config: Necessitatibus expedita.
-                status: Voluptas inventore sit.
+                campaign_name: Itaque quos voluptatibus quos accusantium fugit.
+                config: Qui molestias.
+                status: Excepturi saepe sit vel perspiciatis neque.
         required:
             - campaign
     LfxV2CampaignServiceConnectionsCreateGoogleAdsRequestBody:
@@ -4159,10 +4185,10 @@ definitions:
                 label: TLF Main
                 login_customer_id: "9746983954"
             credentials:
-                client_id: Nihil quia omnis eaque aperiam eum.
-                client_secret: Quam et voluptatibus illum dolorem.
-                developer_token: Eum dolorum.
-                refresh_token: Et illo beatae soluta.
+                client_id: Quae porro qui rem autem quae.
+                client_secret: Nulla officia vitae perspiciatis eveniet.
+                developer_token: Nobis ut asperiores quo aut.
+                refresh_token: Fuga enim nihil.
         required:
             - config
             - credentials
@@ -4176,14 +4202,14 @@ definitions:
                 $ref: '#/definitions/HubspotCredentials'
         example:
             config:
-                account_id: Velit labore non.
-                brand_kit: Dolorem sapiente.
-                label: Sit quibusdam nulla adipisci aperiam dolorem molestias.
-                portal_id: Odit est esse.
-                sender_email: Ea cum et magni adipisci magnam.
-                sender_name: Atque labore qui odio et corporis.
+                account_id: Itaque fugit rerum cumque.
+                brand_kit: Ullam distinctio dolore velit.
+                label: Laudantium nostrum ratione id eius laborum aspernatur.
+                portal_id: Molestiae suscipit non iusto.
+                sender_email: Consequatur in vero soluta.
+                sender_name: Eius dicta.
             credentials:
-                private_app_token: Aut natus.
+                private_app_token: Non assumenda perspiciatis.
         required:
             - config
             - credentials
@@ -4198,10 +4224,10 @@ definitions:
         example:
             config:
                 account_id: "538170226"
-                label: Et placeat.
+                label: Assumenda quam deleniti et et nam quia.
                 org_id: "208777"
             credentials:
-                access_token: Qui esse.
+                access_token: Sunt est labore libero.
         required:
             - config
             - credentials
@@ -4216,12 +4242,12 @@ definitions:
         example:
             config:
                 account_id: act_193556282970417
-                app_id: Non praesentium voluptas saepe sit.
-                label: Aut assumenda unde occaecati eum tenetur nam.
-                page_id: Aliquid voluptatibus iste mollitia commodi libero atque.
+                app_id: Deleniti voluptates non sint inventore.
+                label: Mollitia odio et dolor et consectetur.
+                page_id: Error ipsam maiores et maiores laudantium aut.
             credentials:
-                access_token: Sed qui.
-                app_secret: Reiciendis qui id tenetur exercitationem aperiam incidunt.
+                access_token: Iure ut nostrum facilis suscipit.
+                app_secret: Porro voluptate.
         required:
             - config
             - credentials
@@ -4235,14 +4261,14 @@ definitions:
                 $ref: '#/definitions/MicrosoftAdsCredentials'
         example:
             config:
-                account_id: Perferendis quia possimus dolore vel qui et.
-                customer_id: Vero quis consequuntur.
-                label: Accusantium aspernatur facere tempora voluptatem dicta rerum.
+                account_id: Voluptate necessitatibus enim et et itaque.
+                customer_id: Omnis mollitia aut.
+                label: Nobis omnis.
             credentials:
-                client_id: Quis quo illum cum quod.
-                client_secret: Ut fugiat magnam quia.
-                developer_token: Distinctio beatae.
-                refresh_token: Ut tempora consequuntur cumque repudiandae omnis ut.
+                client_id: Quis et modi.
+                client_secret: Labore omnis provident nihil aut rerum est.
+                developer_token: Sint non.
+                refresh_token: Amet rem ab.
         required:
             - config
             - credentials
@@ -4257,11 +4283,11 @@ definitions:
         example:
             config:
                 account_id: t2_gv9wtbfa
-                label: Aut sed fugiat adipisci eos.
+                label: Rerum adipisci.
             credentials:
-                client_id: Ea ipsam temporibus.
-                client_secret: Et necessitatibus dolorem ut.
-                refresh_token: Expedita accusantium dolorum qui sed fugiat.
+                client_id: Enim accusantium labore esse numquam.
+                client_secret: Non laudantium sunt minima repudiandae illo harum.
+                refresh_token: Dolorum deserunt.
         required:
             - config
             - credentials
@@ -4276,13 +4302,13 @@ definitions:
         example:
             config:
                 account_id: 8r7gb
-                funding_instrument_id: Non possimus quos voluptatem doloremque consequatur deleniti.
-                label: Quaerat ut neque expedita nostrum.
+                funding_instrument_id: Qui cupiditate ullam ab suscipit et.
+                label: Necessitatibus non iste ad rem quidem.
             credentials:
-                access_token: Numquam quia.
-                access_token_secret: Dolorem autem ipsa autem provident est.
-                consumer_key: Pariatur voluptas odit fuga illo.
-                consumer_secret: Sit ex commodi sapiente a illum.
+                access_token: Quam officiis aut sit architecto ut unde.
+                access_token_secret: Sapiente possimus.
+                consumer_key: Harum corporis deleniti doloribus.
+                consumer_secret: Assumenda dignissimos beatae vitae aut ea dolor.
         required:
             - config
             - credentials
@@ -4294,10 +4320,10 @@ definitions:
                 $ref: '#/definitions/GoogleAdsCredentials'
         example:
             credentials:
-                client_id: Nihil quia omnis eaque aperiam eum.
-                client_secret: Quam et voluptatibus illum dolorem.
-                developer_token: Eum dolorum.
-                refresh_token: Et illo beatae soluta.
+                client_id: Quae porro qui rem autem quae.
+                client_secret: Nulla officia vitae perspiciatis eveniet.
+                developer_token: Nobis ut asperiores quo aut.
+                refresh_token: Fuga enim nihil.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialHubspotRequestBody:
@@ -4308,7 +4334,7 @@ definitions:
                 $ref: '#/definitions/HubspotCredentials'
         example:
             credentials:
-                private_app_token: Aut natus.
+                private_app_token: Non assumenda perspiciatis.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialLinkedinAdsRequestBody:
@@ -4319,7 +4345,7 @@ definitions:
                 $ref: '#/definitions/LinkedinAdsCredentials'
         example:
             credentials:
-                access_token: Qui esse.
+                access_token: Sunt est labore libero.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialMetaAdsRequestBody:
@@ -4330,8 +4356,8 @@ definitions:
                 $ref: '#/definitions/MetaAdsCredentials'
         example:
             credentials:
-                access_token: Sed qui.
-                app_secret: Reiciendis qui id tenetur exercitationem aperiam incidunt.
+                access_token: Iure ut nostrum facilis suscipit.
+                app_secret: Porro voluptate.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsRequestBody:
@@ -4342,10 +4368,10 @@ definitions:
                 $ref: '#/definitions/MicrosoftAdsCredentials'
         example:
             credentials:
-                client_id: Quis quo illum cum quod.
-                client_secret: Ut fugiat magnam quia.
-                developer_token: Distinctio beatae.
-                refresh_token: Ut tempora consequuntur cumque repudiandae omnis ut.
+                client_id: Quis et modi.
+                client_secret: Labore omnis provident nihil aut rerum est.
+                developer_token: Sint non.
+                refresh_token: Amet rem ab.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialRedditAdsRequestBody:
@@ -4356,9 +4382,9 @@ definitions:
                 $ref: '#/definitions/RedditAdsCredentials'
         example:
             credentials:
-                client_id: Ea ipsam temporibus.
-                client_secret: Et necessitatibus dolorem ut.
-                refresh_token: Expedita accusantium dolorum qui sed fugiat.
+                client_id: Enim accusantium labore esse numquam.
+                client_secret: Non laudantium sunt minima repudiandae illo harum.
+                refresh_token: Dolorum deserunt.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialTwitterAdsRequestBody:
@@ -4369,10 +4395,10 @@ definitions:
                 $ref: '#/definitions/TwitterAdsCredentials'
         example:
             credentials:
-                access_token: Numquam quia.
-                access_token_secret: Dolorem autem ipsa autem provident est.
-                consumer_key: Pariatur voluptas odit fuga illo.
-                consumer_secret: Sit ex commodi sapiente a illum.
+                access_token: Quam officiis aut sit architecto ut unde.
+                access_token_secret: Sapiente possimus.
+                consumer_key: Harum corporis deleniti doloribus.
+                consumer_secret: Assumenda dignissimos beatae vitae aut ea dolor.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsUpdateGoogleAdsRequestBody:
@@ -4396,12 +4422,12 @@ definitions:
                 $ref: '#/definitions/HubspotConnectionConfig'
         example:
             config:
-                account_id: Velit labore non.
-                brand_kit: Dolorem sapiente.
-                label: Sit quibusdam nulla adipisci aperiam dolorem molestias.
-                portal_id: Odit est esse.
-                sender_email: Ea cum et magni adipisci magnam.
-                sender_name: Atque labore qui odio et corporis.
+                account_id: Itaque fugit rerum cumque.
+                brand_kit: Ullam distinctio dolore velit.
+                label: Laudantium nostrum ratione id eius laborum aspernatur.
+                portal_id: Molestiae suscipit non iusto.
+                sender_email: Consequatur in vero soluta.
+                sender_name: Eius dicta.
         required:
             - config
     LfxV2CampaignServiceConnectionsUpdateLinkedinAdsRequestBody:
@@ -4413,7 +4439,7 @@ definitions:
         example:
             config:
                 account_id: "538170226"
-                label: Et placeat.
+                label: Assumenda quam deleniti et et nam quia.
                 org_id: "208777"
         required:
             - config
@@ -4426,9 +4452,9 @@ definitions:
         example:
             config:
                 account_id: act_193556282970417
-                app_id: Non praesentium voluptas saepe sit.
-                label: Aut assumenda unde occaecati eum tenetur nam.
-                page_id: Aliquid voluptatibus iste mollitia commodi libero atque.
+                app_id: Deleniti voluptates non sint inventore.
+                label: Mollitia odio et dolor et consectetur.
+                page_id: Error ipsam maiores et maiores laudantium aut.
         required:
             - config
     LfxV2CampaignServiceConnectionsUpdateMicrosoftAdsRequestBody:
@@ -4439,9 +4465,9 @@ definitions:
                 $ref: '#/definitions/MicrosoftAdsConnectionConfig'
         example:
             config:
-                account_id: Perferendis quia possimus dolore vel qui et.
-                customer_id: Vero quis consequuntur.
-                label: Accusantium aspernatur facere tempora voluptatem dicta rerum.
+                account_id: Voluptate necessitatibus enim et et itaque.
+                customer_id: Omnis mollitia aut.
+                label: Nobis omnis.
         required:
             - config
     LfxV2CampaignServiceConnectionsUpdateRedditAdsRequestBody:
@@ -4453,7 +4479,7 @@ definitions:
         example:
             config:
                 account_id: t2_gv9wtbfa
-                label: Aut sed fugiat adipisci eos.
+                label: Rerum adipisci.
         required:
             - config
     LfxV2CampaignServiceConnectionsUpdateTwitterAdsRequestBody:
@@ -4465,8 +4491,8 @@ definitions:
         example:
             config:
                 account_id: 8r7gb
-                funding_instrument_id: Non possimus quos voluptatem doloremque consequatur deleniti.
-                label: Quaerat ut neque expedita nostrum.
+                funding_instrument_id: Qui cupiditate ullam ab suscipit et.
+                label: Necessitatibus non iste ad rem quidem.
         required:
             - config
     LinkedinAdsConnection:
@@ -4476,7 +4502,7 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Aut est.
+                example: Esse et labore earum.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
@@ -4484,23 +4510,23 @@ definitions:
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: At odio incidunt distinctio sint qui.
+                example: Velit ea eum perferendis qui qui.
             label:
                 type: string
                 description: Optional friendly name
-                example: Cumque saepe sint quidem odio ab.
+                example: Tempore rem quo fuga accusantium voluptas ratione.
             org_id:
                 type: string
                 description: LinkedIn organization URN id
-                example: Esse praesentium voluptatibus deserunt aliquam.
+                example: Velit quod cumque perspiciatis.
             project_id:
                 type: string
                 description: Owning project
-                example: Quis quis reprehenderit non quae omnis qui.
+                example: Repudiandae quae aut.
             status:
                 type: string
                 description: Connection status
-                example: error
+                example: active
                 enum:
                     - active
                     - inactive
@@ -4509,17 +4535,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 1342488242351916696
+                example: 7189689836865162887
                 format: int64
         example:
-            account_id: Necessitatibus magni et molestiae.
-            has_credentials: true
-            id: Eos ut et eligendi.
-            label: Est et eum est.
-            org_id: Dolorum quas.
-            project_id: Numquam dolorum consequatur.
-            status: active
-            version: 6946177746341876830
+            account_id: Tenetur veniam repellat.
+            has_credentials: false
+            id: Iste possimus ipsam perspiciatis enim id expedita.
+            label: Doloribus at vel necessitatibus vel.
+            org_id: Cumque optio impedit.
+            project_id: Quia voluptatem impedit.
+            status: error
+            version: 5803043317553025654
         required:
             - id
             - project_id
@@ -4538,14 +4564,14 @@ definitions:
             label:
                 type: string
                 description: Optional friendly name
-                example: Nulla fuga fugit repellendus et accusamus sed.
+                example: Aut repudiandae voluptatibus odit autem.
             org_id:
                 type: string
                 description: LinkedIn organization URN id
                 example: "208777"
         example:
             account_id: "538170226"
-            label: Sequi error.
+            label: Dicta qui.
             org_id: "208777"
         required:
             - account_id
@@ -4557,10 +4583,10 @@ definitions:
             access_token:
                 type: string
                 description: OAuth access token
-                example: Quam deleniti et et.
+                example: Et earum id.
         description: LinkedIn Ads credential. Write-only; never returned.
         example:
-            access_token: Quia aperiam sunt est labore.
+            access_token: Voluptate dolorum id ut molestias id.
         required:
             - access_token
     MetaAdsConnection:
@@ -4570,35 +4596,35 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Delectus voluptatem iste nisi in.
+                example: Autem aliquam voluptatibus assumenda mollitia molestias eos.
             app_id:
                 type: string
                 description: Meta app ID
-                example: Iste qui rerum est sed sed similique.
+                example: Fugit eum et sint possimus omnis.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: false
+                example: true
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Ut est rerum.
+                example: Ipsa aut.
             label:
                 type: string
                 description: Optional friendly name
-                example: Natus expedita aspernatur consequuntur quod ducimus molestias.
+                example: Impedit vitae molestiae.
             page_id:
                 type: string
                 description: Facebook page ID
-                example: Dolor occaecati earum iusto rerum sit cupiditate.
+                example: Et consequatur vel quisquam.
             project_id:
                 type: string
                 description: Owning project
-                example: Occaecati et.
+                example: Non assumenda molestiae.
             status:
                 type: string
                 description: Connection status
-                example: error
+                example: active
                 enum:
                     - active
                     - inactive
@@ -4607,18 +4633,18 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 3681253484013323435
+                example: 1948493999542129316
                 format: int64
         example:
-            account_id: Qui quidem exercitationem.
-            app_id: Necessitatibus laudantium est ut.
+            account_id: Vel temporibus sunt nulla esse sed.
+            app_id: Sed ea qui pariatur adipisci doloremque.
             has_credentials: false
-            id: Ea maiores quidem molestiae deleniti omnis.
-            label: Nostrum corporis quasi magnam.
-            page_id: Architecto quas eligendi impedit qui sed.
-            project_id: Expedita voluptatum commodi fuga ipsa.
-            status: active
-            version: 8272760528024179326
+            id: Neque hic voluptatem ad similique sunt.
+            label: Ratione impedit recusandae dolor consequatur.
+            page_id: Veritatis perferendis veritatis libero.
+            project_id: Doloremque dicta.
+            status: deleted
+            version: 8079523500580416969
         required:
             - id
             - project_id
@@ -4637,20 +4663,20 @@ definitions:
             app_id:
                 type: string
                 description: Meta app ID
-                example: Exercitationem illum et quisquam.
+                example: Recusandae est perferendis eos et cumque.
             label:
                 type: string
                 description: Optional friendly name
-                example: Neque facilis est qui possimus eligendi.
+                example: Esse dolores aut.
             page_id:
                 type: string
                 description: Facebook page ID
-                example: Possimus et corrupti et nobis voluptas.
+                example: Exercitationem voluptate quia esse nihil.
         example:
             account_id: act_193556282970417
-            app_id: Quia quisquam corrupti distinctio voluptas eius.
-            label: Est facilis qui.
-            page_id: Modi ut culpa excepturi blanditiis.
+            app_id: Laborum omnis.
+            label: Esse neque maiores quo aliquam.
+            page_id: Rem eveniet in autem neque.
         required:
             - account_id
     MetaAdsCredentials:
@@ -4660,15 +4686,15 @@ definitions:
             access_token:
                 type: string
                 description: Meta access token
-                example: Autem est est distinctio sunt aliquid harum.
+                example: Voluptatem possimus veniam dignissimos consequatur.
             app_secret:
                 type: string
                 description: Meta app secret
-                example: Nam rerum eaque eius.
+                example: Delectus enim quas id porro.
         description: Meta Ads credential. Write-only; never returned.
         example:
-            access_token: Rerum illo mollitia odio et dolor.
-            app_secret: Consectetur sint error ipsam maiores.
+            access_token: Est porro eos ipsa quia.
+            app_secret: Quo repudiandae.
         required:
             - access_token
             - app_secret
@@ -4679,31 +4705,31 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Et rerum in expedita.
+                example: Modi esse voluptatibus.
             customer_id:
                 type: string
                 description: Microsoft Advertising customer ID
-                example: Repellat assumenda nesciunt distinctio eaque aliquam.
+                example: Quo veritatis id accusamus hic.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: true
+                example: false
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Consequatur dolore unde illum.
+                example: Veniam molestias.
             label:
                 type: string
                 description: Optional friendly name
-                example: Quo veritatis quis delectus est.
+                example: Tenetur cumque rerum.
             project_id:
                 type: string
                 description: Owning project
-                example: Dolores tenetur ut illum.
+                example: Accusamus quia velit commodi.
             status:
                 type: string
                 description: Connection status
-                example: active
+                example: inactive
                 enum:
                     - active
                     - inactive
@@ -4712,17 +4738,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 4673192311933251173
+                example: 2983004504871549622
                 format: int64
         example:
-            account_id: Aperiam cum possimus.
-            customer_id: Omnis sed dolore dolorem voluptatibus quod.
-            has_credentials: false
-            id: Veniam consectetur deserunt in hic dolorum facere.
-            label: Magni consequatur dignissimos itaque quia.
-            project_id: Et reprehenderit dignissimos.
-            status: error
-            version: 3475949958922975875
+            account_id: Inventore quisquam praesentium nihil atque et nihil.
+            customer_id: Ad ex.
+            has_credentials: true
+            id: Officia et optio sed omnis aut voluptatem.
+            label: Maxime et ea et.
+            project_id: Nisi eum omnis est.
+            status: inactive
+            version: 3453857184328446715
         required:
             - id
             - project_id
@@ -4737,19 +4763,19 @@ definitions:
             account_id:
                 type: string
                 description: Microsoft Advertising account ID
-                example: Ullam ab suscipit et labore harum.
+                example: Atque reprehenderit.
             customer_id:
                 type: string
                 description: Microsoft Advertising customer ID
-                example: Deleniti doloribus debitis assumenda dignissimos.
+                example: Eligendi incidunt accusamus excepturi.
             label:
                 type: string
                 description: Optional friendly name
-                example: Non iste ad rem quidem sunt qui.
+                example: Dolore delectus ut beatae eaque.
         example:
-            account_id: Quisquam quam officiis aut.
-            customer_id: Architecto ut unde.
-            label: Vitae aut ea.
+            account_id: Molestiae id aut debitis iure.
+            customer_id: Dolore est dolorem quod enim pariatur.
+            label: Qui est ut voluptas quod minima dolor.
         required:
             - account_id
     MicrosoftAdsCredentials:
@@ -4759,25 +4785,25 @@ definitions:
             client_id:
                 type: string
                 description: OAuth client id
-                example: Sapiente possimus.
+                example: Occaecati veritatis.
             client_secret:
                 type: string
                 description: OAuth client secret
-                example: Voluptates atque.
+                example: Aut architecto aliquam mollitia labore sapiente.
             developer_token:
                 type: string
                 description: Microsoft Advertising developer token
-                example: Praesentium tenetur quas at ut necessitatibus dolor.
+                example: Quia mollitia.
             refresh_token:
                 type: string
                 description: OAuth refresh token
-                example: Eaque voluptate reprehenderit sed voluptatem sed illo.
+                example: Tenetur non accusamus qui ex.
         description: Microsoft Advertising OAuth credential set. Write-only; never returned.
         example:
-            client_id: Cum nisi numquam.
-            client_secret: Id unde veritatis officiis aut fugiat.
-            developer_token: Quo corporis recusandae dicta quibusdam.
-            refresh_token: Ut commodi et voluptas tenetur nobis facere.
+            client_id: Ex et amet sunt.
+            client_secret: Ad quae nisi.
+            developer_token: Cum et ab ipsum.
+            refresh_token: Reiciendis enim.
         required:
             - client_id
             - client_secret
@@ -4809,24 +4835,24 @@ definitions:
             campaign_id:
                 type: string
                 description: Upstream platform campaign id (present when ok)
-                example: Sed sit repudiandae aut aut.
+                example: Ex et alias ea asperiores quas.
             error:
                 type: string
                 description: Failure reason (present when not ok)
-                example: Dolores vel dolorum minus voluptatem.
+                example: Corporis dolorem laborum maiores est ea ducimus.
             ok:
                 type: boolean
                 description: Whether the campaign was created (or reused) successfully
-                example: false
+                example: true
             platform:
                 type: string
                 description: Platform this result is for
-                example: Enim temporibus.
+                example: Aut quo.
         example:
-            campaign_id: Qui culpa deleniti.
-            error: Et atque enim quis sed.
-            ok: true
-            platform: Architecto itaque doloribus voluptatem consequatur quis fugiat.
+            campaign_id: Ullam ad iusto quos et est.
+            error: Explicabo aliquid.
+            ok: false
+            platform: Dolorem dignissimos.
         required:
             - platform
             - ok
@@ -4875,27 +4901,27 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Facilis suscipit.
+                example: Aut omnis itaque ut vero voluptatibus.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
-                example: false
+                example: true
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Maiores laudantium.
+                example: Non eos.
             label:
                 type: string
                 description: Optional friendly name
-                example: Non sint inventore iste iure ut.
+                example: Enim voluptatem inventore quasi.
             project_id:
                 type: string
                 description: Owning project
-                example: Perspiciatis deleniti.
+                example: Vel aut aliquam rerum et quidem.
             status:
                 type: string
                 description: Connection status
-                example: inactive
+                example: error
                 enum:
                     - active
                     - inactive
@@ -4904,16 +4930,16 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 4582993025544492856
+                example: 6330819027913820088
                 format: int64
         example:
-            account_id: Expedita dignissimos non sed omnis officiis et.
-            has_credentials: false
-            id: Ad inventore voluptatum eligendi quasi.
-            label: Velit dolores omnis placeat unde distinctio ducimus.
-            project_id: Ipsa et dolore.
-            status: active
-            version: 4526728339972318921
+            account_id: Quibusdam repellendus qui numquam.
+            has_credentials: true
+            id: Voluptatibus voluptatem vero dolorem qui.
+            label: Vero vel.
+            project_id: Sequi non et.
+            status: inactive
+            version: 4305260724068280609
         required:
             - id
             - project_id
@@ -4932,10 +4958,10 @@ definitions:
             label:
                 type: string
                 description: Optional friendly name
-                example: Enim repellendus magni repudiandae inventore.
+                example: A voluptatem ipsa et voluptatem.
         example:
             account_id: t2_gv9wtbfa
-            label: Corrupti repellat eius ut qui nobis.
+            label: Est voluptatibus placeat sint pariatur.
         required:
             - account_id
     RedditAdsCredentials:
@@ -4945,20 +4971,20 @@ definitions:
             client_id:
                 type: string
                 description: OAuth client id
-                example: Delectus quam et eos.
+                example: Explicabo expedita et velit accusamus.
             client_secret:
                 type: string
                 description: OAuth client secret
-                example: Rem aut fuga.
+                example: Deleniti placeat rerum.
             refresh_token:
                 type: string
                 description: OAuth refresh token
-                example: Est dolor ut corporis.
+                example: Nulla eos.
         description: Reddit Ads OAuth credential. Write-only; never returned.
         example:
-            client_id: Cupiditate ut illo dolor quaerat totam.
-            client_secret: Illo vitae occaecati omnis.
-            refresh_token: Pariatur debitis.
+            client_id: Recusandae totam soluta.
+            client_secret: Praesentium libero.
+            refresh_token: Qui et assumenda quas.
         required:
             - client_id
             - client_secret
@@ -4970,11 +4996,11 @@ definitions:
             account_id:
                 type: string
                 description: Provider account identifier
-                example: Eum et sint corrupti eos.
+                example: Qui sed voluptatibus quam quia.
             funding_instrument_id:
                 type: string
                 description: Funding instrument for the ad account
-                example: Qui unde dicta autem dolorem qui explicabo.
+                example: Sapiente laudantium molestiae omnis.
             has_credentials:
                 type: boolean
                 description: Whether an encrypted credential is stored
@@ -4982,19 +5008,19 @@ definitions:
             id:
                 type: string
                 description: Service-generated connection UUID (not used in paths)
-                example: Explicabo possimus consequatur.
+                example: Quisquam animi.
             label:
                 type: string
                 description: Optional friendly name
-                example: Neque autem ex eos.
+                example: Repudiandae facilis blanditiis libero nam.
             project_id:
                 type: string
                 description: Owning project
-                example: Quos hic doloribus.
+                example: Delectus blanditiis magnam sed iure amet.
             status:
                 type: string
                 description: Connection status
-                example: error
+                example: inactive
                 enum:
                     - active
                     - inactive
@@ -5003,17 +5029,17 @@ definitions:
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 4374149818121411294
+                example: 9048631027735279786
                 format: int64
         example:
-            account_id: Sit est dolores est et.
-            funding_instrument_id: Velit atque laudantium ullam rerum.
-            has_credentials: false
-            id: Repellat non suscipit veritatis sit tempore.
-            label: Ut quo iure.
-            project_id: Magnam ut similique ea minima magnam.
-            status: deleted
-            version: 7309957715046801903
+            account_id: Officiis aliquid explicabo eaque ab.
+            funding_instrument_id: Ea iusto eveniet velit sint odit sed.
+            has_credentials: true
+            id: Consequuntur perspiciatis modi.
+            label: Vero et atque in impedit velit omnis.
+            project_id: Quae sed.
+            status: inactive
+            version: 187687687190489160
         required:
             - id
             - project_id
@@ -5032,15 +5058,15 @@ definitions:
             funding_instrument_id:
                 type: string
                 description: Funding instrument for the ad account
-                example: Enim accusantium labore esse numquam.
+                example: Esse voluptate optio quis quae quam.
             label:
                 type: string
                 description: Optional friendly name
-                example: Rerum adipisci.
+                example: Eos nemo cupiditate.
         example:
             account_id: 8r7gb
-            funding_instrument_id: Dolorum deserunt.
-            label: Non laudantium sunt minima repudiandae illo harum.
+            funding_instrument_id: Pariatur nostrum.
+            label: Odio quia omnis commodi.
         required:
             - account_id
     TwitterAdsCredentials:
@@ -5050,25 +5076,25 @@ definitions:
             access_token:
                 type: string
                 description: OAuth 1.0a access token
-                example: Saepe voluptatem reiciendis pariatur.
+                example: Voluptas ut vero autem consequuntur optio omnis.
             access_token_secret:
                 type: string
                 description: OAuth 1.0a access token secret
-                example: Et ut quis ut.
+                example: Pariatur omnis ut velit dolorem dolor.
             consumer_key:
                 type: string
                 description: OAuth 1.0a consumer key
-                example: Sit dolor sunt eos nihil ipsam.
+                example: Illo porro velit perferendis.
             consumer_secret:
                 type: string
                 description: OAuth 1.0a consumer secret
-                example: Odio totam cum deleniti placeat fuga.
+                example: Ipsum aut voluptas molestias unde.
         description: X/Twitter Ads OAuth 1.0a credential set. Write-only; never returned.
         example:
-            access_token: Aut autem sint minus voluptatum.
-            access_token_secret: Tempore quae.
-            consumer_key: Iusto omnis.
-            consumer_secret: Quia cum non.
+            access_token: Mollitia nulla.
+            access_token_secret: Minus voluptatem ab delectus porro.
+            consumer_key: Omnis in qui.
+            consumer_secret: Nihil ut.
         required:
             - consumer_key
             - consumer_secret

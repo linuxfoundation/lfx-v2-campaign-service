@@ -442,6 +442,26 @@ type ApproveBriefNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ApproveBriefPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "PreconditionFailed" error.
+type ApproveBriefPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ApproveBriefPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "PreconditionRequired" error.
+type ApproveBriefPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // DeleteBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1178,6 +1198,28 @@ func NewApproveBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoun
 	return body
 }
 
+// NewApproveBriefPreconditionFailedResponseBody builds the HTTP response body
+// from the result of the "approve-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApproveBriefPreconditionFailedResponseBody(res *lfxv2campaignservicebriefs.PreconditionFailedError) *ApproveBriefPreconditionFailedResponseBody {
+	body := &ApproveBriefPreconditionFailedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewApproveBriefPreconditionRequiredResponseBody builds the HTTP response
+// body from the result of the "approve-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewApproveBriefPreconditionRequiredResponseBody(res *lfxv2campaignservicebriefs.PreconditionRequiredError) *ApproveBriefPreconditionRequiredResponseBody {
+	body := &ApproveBriefPreconditionRequiredResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewDeleteBriefBadRequestResponseBody builds the HTTP response body from the
 // result of the "delete-brief" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -1510,11 +1552,12 @@ func NewUpdateBriefPayload(body *UpdateBriefRequestBody, projectID string, brief
 
 // NewApproveBriefPayload builds a lfx-v2-campaign-service-briefs service
 // approve-brief endpoint payload.
-func NewApproveBriefPayload(projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.ApproveBriefPayload {
+func NewApproveBriefPayload(projectID string, briefID string, bearerToken *string, ifMatch *string) *lfxv2campaignservicebriefs.ApproveBriefPayload {
 	v := &lfxv2campaignservicebriefs.ApproveBriefPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
 
 	return v
 }

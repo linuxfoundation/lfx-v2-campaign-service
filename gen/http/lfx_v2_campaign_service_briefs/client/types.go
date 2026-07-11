@@ -442,6 +442,26 @@ type ApproveBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ApproveBriefPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "PreconditionFailed" error.
+type ApproveBriefPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ApproveBriefPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "approve-brief" endpoint HTTP
+// response body for the "PreconditionRequired" error.
+type ApproveBriefPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteBriefBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-brief" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1150,6 +1170,28 @@ func NewApproveBriefInternalServerError(body *ApproveBriefInternalServerErrorRes
 // approve-brief endpoint NotFound error.
 func NewApproveBriefNotFound(body *ApproveBriefNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewApproveBriefPreconditionFailed builds a lfx-v2-campaign-service-briefs
+// service approve-brief endpoint PreconditionFailed error.
+func NewApproveBriefPreconditionFailed(body *ApproveBriefPreconditionFailedResponseBody) *lfxv2campaignservicebriefs.PreconditionFailedError {
+	v := &lfxv2campaignservicebriefs.PreconditionFailedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewApproveBriefPreconditionRequired builds a lfx-v2-campaign-service-briefs
+// service approve-brief endpoint PreconditionRequired error.
+func NewApproveBriefPreconditionRequired(body *ApproveBriefPreconditionRequiredResponseBody) *lfxv2campaignservicebriefs.PreconditionRequiredError {
+	v := &lfxv2campaignservicebriefs.PreconditionRequiredError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -1998,6 +2040,30 @@ func ValidateApproveBriefInternalServerErrorResponseBody(body *ApproveBriefInter
 // ValidateApproveBriefNotFoundResponseBody runs the validations defined on
 // approve-brief_NotFound_response_body
 func ValidateApproveBriefNotFoundResponseBody(body *ApproveBriefNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateApproveBriefPreconditionFailedResponseBody runs the validations
+// defined on approve-brief_PreconditionFailed_response_body
+func ValidateApproveBriefPreconditionFailedResponseBody(body *ApproveBriefPreconditionFailedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateApproveBriefPreconditionRequiredResponseBody runs the validations
+// defined on approve-brief_PreconditionRequired_response_body
+func ValidateApproveBriefPreconditionRequiredResponseBody(body *ApproveBriefPreconditionRequiredResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

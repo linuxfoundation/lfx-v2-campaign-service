@@ -188,14 +188,19 @@ func DecodeGetBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goahtt
 			projectID   string
 			briefID     string
 			bearerToken *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewGetBriefPayload(projectID, briefID, bearerToken)
 		if payload.BearerToken != nil {
@@ -341,6 +346,7 @@ func DecodeUpdateBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 		)
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -348,6 +354,9 @@ func DecodeUpdateBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 		ifMatchRaw := r.Header.Get("If-Match")
 		if ifMatchRaw != "" {
 			ifMatch = &ifMatchRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateBriefPayload(&body, projectID, briefID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -493,16 +502,26 @@ func DecodeApproveBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) go
 			projectID   string
 			briefID     string
 			bearerToken *string
+			ifMatch     *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		payload = NewApproveBriefPayload(projectID, briefID, bearerToken)
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewApproveBriefPayload(projectID, briefID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
 			if strings.Contains(*payload.BearerToken, " ") {
 				// Remove authorization scheme prefix (e.g. "Bearer")
@@ -590,6 +609,32 @@ func EncodeApproveBriefError(encoder func(context.Context, http.ResponseWriter) 
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusNotFound)
 			return enc.Encode(body)
+		case "PreconditionFailed":
+			var res *lfxv2campaignservicebriefs.PreconditionFailedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewApproveBriefPreconditionFailedResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return enc.Encode(body)
+		case "PreconditionRequired":
+			var res *lfxv2campaignservicebriefs.PreconditionRequiredError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewApproveBriefPreconditionRequiredResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusPreconditionRequired)
+			return enc.Encode(body)
 		default:
 			return encodeError(ctx, w, v)
 		}
@@ -614,14 +659,19 @@ func DecodeDeleteBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 			projectID   string
 			briefID     string
 			bearerToken *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewDeleteBriefPayload(projectID, briefID, bearerToken)
 		if payload.BearerToken != nil {
@@ -763,9 +813,13 @@ func DecodeCreateCampaignsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		)
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateCampaignsPayload(&body, projectID, briefID, bearerToken)
 		if payload.BearerToken != nil {
@@ -886,15 +940,21 @@ func DecodeGetCampaignRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 			briefID     string
 			campaignID  string
 			bearerToken *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
 		campaignID = params["campaign_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewGetCampaignPayload(projectID, briefID, campaignID, bearerToken)
 		if payload.BearerToken != nil {
@@ -1041,7 +1101,9 @@ func DecodeUpdateCampaignRequest(mux goahttp.Muxer, decoder func(*http.Request) 
 		)
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
 		campaignID = params["campaign_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -1049,6 +1111,9 @@ func DecodeUpdateCampaignRequest(mux goahttp.Muxer, decoder func(*http.Request) 
 		ifMatchRaw := r.Header.Get("If-Match")
 		if ifMatchRaw != "" {
 			ifMatch = &ifMatchRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewUpdateCampaignPayload(&body, projectID, briefID, campaignID, bearerToken, ifMatch)
 		if payload.BearerToken != nil {
@@ -1191,14 +1256,19 @@ func DecodeGetJobRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.
 			projectID   string
 			jobID       string
 			bearerToken *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
 		jobID = params["job_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("job_id", jobID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewGetJobPayload(projectID, jobID, bearerToken)
 		if payload.BearerToken != nil {

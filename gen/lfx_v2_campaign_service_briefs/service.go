@@ -67,6 +67,8 @@ type ApproveBriefPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
+	// Version being approved (ETag); approval is rejected if the brief changed
+	IfMatch *string
 }
 
 // Brief is the result type of the lfx-v2-campaign-service-briefs service

@@ -43,10 +43,13 @@ func (r *fakeBriefRepo) ReplaceBrief(_ context.Context, b *model.CampaignBrief, 
 	return b, nil
 }
 
-func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *model.Actor) (*model.CampaignBrief, error) {
+func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *model.Actor, expectedVersion int64) (*model.CampaignBrief, error) {
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound
+	}
+	if b.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
 	}
 	b.Status = model.BriefApproved
 	return b, nil
@@ -204,5 +207,40 @@ func TestBriefService_ResponseIncludesBriefContent(t *testing.T) {
 	}
 	if got.Keywords == nil {
 		t.Error("get response dropped keywords")
+	}
+}
+
+// ApproveBrief requires an If-Match and is gated on version, so a brief that was
+// replaced since the approver fetched it cannot be approved on stale content.
+func TestBriefService_ApproveBrief_VersionGated(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefDraft, Version: 3,
+	}
+	s := newTestBriefService(repo)
+
+	// Missing If-Match -> 428 PreconditionRequired.
+	if _, err := s.ApproveBrief(context.Background(), &briefs.ApproveBriefPayload{ProjectID: "cncf", BriefID: "b1"}); err == nil {
+		t.Fatal("expected an error when If-Match is missing")
+	} else if _, ok := err.(*briefs.PreconditionRequiredError); !ok {
+		t.Fatalf("missing If-Match: got %T (%v), want *PreconditionRequiredError", err, err)
+	}
+
+	// Stale version -> 412 PreconditionFailed.
+	stale := "2"
+	if _, err := s.ApproveBrief(context.Background(), &briefs.ApproveBriefPayload{ProjectID: "cncf", BriefID: "b1", IfMatch: &stale}); err == nil {
+		t.Fatal("expected an error approving a stale version")
+	} else if _, ok := err.(*briefs.PreconditionFailedError); !ok {
+		t.Fatalf("stale version: got %T (%v), want *PreconditionFailedError", err, err)
+	}
+
+	// Current version -> approved.
+	cur := "3"
+	got, err := s.ApproveBrief(context.Background(), &briefs.ApproveBriefPayload{ProjectID: "cncf", BriefID: "b1", IfMatch: &cur})
+	if err != nil {
+		t.Fatalf("approve at current version: %v", err)
+	}
+	if got.Status != "approved" {
+		t.Errorf("status = %q, want approved", got.Status)
 	}
 }

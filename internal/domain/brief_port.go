@@ -22,8 +22,10 @@ type BriefWriter interface {
 	CreateBrief(ctx context.Context, b *model.CampaignBrief) (*model.CampaignBrief, error)
 	// ReplaceBrief replaces a brief's mutable fields, gating on expectedVersion.
 	ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64) (*model.CampaignBrief, error)
-	// Approve marks a brief approved, recording the actor.
-	Approve(ctx context.Context, projectID, id string, by *model.Actor) (*model.CampaignBrief, error)
+	// Approve marks a brief approved, recording the actor. It is gated on
+	// expectedVersion (optimistic concurrency): approving a stale version returns
+	// ErrPreconditionFailed so a concurrent replace can't be approved by accident.
+	Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64) (*model.CampaignBrief, error)
 	// ArchiveBrief soft-archives a brief (status = archived).
 	ArchiveBrief(ctx context.Context, projectID, id string) error
 }

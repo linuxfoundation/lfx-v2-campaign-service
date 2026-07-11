@@ -106,6 +106,8 @@ func (c *Client) UpdateBrief(ctx context.Context, p *UpdateBriefPayload) (res *B
 //   - "Conflict" (type *ConflictError): Conflict
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
 //   - error: internal error
 func (c *Client) ApproveBrief(ctx context.Context, p *ApproveBriefPayload) (res *Brief, err error) {
 	var ires any

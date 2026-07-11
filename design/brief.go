@@ -193,15 +193,21 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			bearerToken()
 			projectIDAttr()
 			briefIDAttr()
+			Attribute("if_match", String, "Version being approved (ETag); approval is rejected if the brief changed")
 			Required("project_id", "brief_id")
 		})
 		Result(Brief)
 		commonBriefErrors(false)
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/approve")
 			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
 			briefErrorResponses(false)
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
 	})
 
@@ -291,7 +297,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("job_id", String, "Job UUID")
+			Attribute("job_id", String, "Job UUID", func() { Format(FormatUUID) })
 			Required("project_id", "job_id")
 		})
 		Result(JobPollResponse)
@@ -308,11 +314,11 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 // ─── shared DSL helpers for briefs ───
 
 func briefIDAttr() {
-	Attribute("brief_id", String, "Brief UUID")
+	Attribute("brief_id", String, "Brief UUID", func() { Format(FormatUUID) })
 }
 
 func campaignIDAttr() {
-	Attribute("campaign_id", String, "Campaign UUID")
+	Attribute("campaign_id", String, "Campaign UUID", func() { Format(FormatUUID) })
 }
 
 // commonBriefErrors declares the standard error set for a brief method.

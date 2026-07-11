@@ -126,9 +126,13 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if err := s.ensureAvailable(); err != nil {
 		return nil, err
 	}
-	b, err := s.briefs.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx))
+	version, err := parseBriefIfMatch(p.IfMatch)
 	if err != nil {
-		return nil, mapBriefErr(err)
+		return nil, err
+	}
+	b, aerr := s.briefs.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version)
+	if aerr != nil {
+		return nil, mapBriefErr(aerr)
 	}
 	return briefResult(b), nil
 }

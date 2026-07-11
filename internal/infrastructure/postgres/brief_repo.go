@@ -110,20 +110,31 @@ func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, ex
 }
 
 // Approve marks a brief approved, recording the actor.
-func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model.Actor) (*model.CampaignBrief, error) {
+func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64) (*model.CampaignBrief, error) {
 	approvedBy, err := marshalActor(by)
 	if err != nil {
 		return nil, err
 	}
+	// Gate on version so a brief that was replaced (bumping its version) since the
+	// approver fetched it cannot be approved on stale content.
 	q := `UPDATE campaign_briefs SET status='approved', approved_by=$1, approved_at=now(),
 		version=version+1, updated_at=now()
-		WHERE id=$2 AND project_id=$3 AND status <> 'archived'`
-	tag, err := r.db.Exec(ctx, q, approvedBy, id, projectID)
+		WHERE id=$2 AND project_id=$3 AND version=$4 AND status <> 'archived'`
+	tag, err := r.db.Exec(ctx, q, approvedBy, id, projectID, expectedVersion)
 	if err != nil {
 		return nil, fmt.Errorf("approve brief: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return nil, domain.ErrNotFound
+		// Distinguish missing from stale version, mirroring ReplaceBrief.
+		_, gerr := r.GetBrief(ctx, projectID, id)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
+			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
+		}
 	}
 	return r.GetBrief(ctx, projectID, id)
 }

@@ -26,6 +26,15 @@ must also be mounted in `server.go`, or its routes 404 despite compiling.
 **Creation** — Added the `internal/platform/reddit` concept doc for the new
 Reddit Ads API v3 client (OAuth2 token refresh + Campaign -> Ad Group -> Ad
 creation) and listed it in the code index.
+**Update** — PR #11 review round 3: validate brief_id/campaign_id/job_id path
+params as UUIDs (400 instead of a PostgreSQL cast 500); make brief approval
+version-gated via If-Match (rejects approving stale content, 412/428); type the
+job-poll result (PlatformResult array, replacing Any); and stop applying
+debug.LogPayloads to the connection/brief/health endpoints so DEBUG can't leak
+BearerTokens or plaintext provider credentials into logs (debug.HTTP header/status
+logging is retained). Reconciled api-catalog (PlatformResult; CampaignCreateResult
+marked as the future richer shape).
+
 **Update** — Brief + campaign API and async orchestrator (LFXV2-2626):
 updated `design`, `internal/service`, and `internal/container` concepts for
 the Project → Brief → Campaigns hierarchy, async job dispatch, and idempotent

@@ -618,6 +618,10 @@ func EncodeApproveBriefRequest(encoder func(*http.Request) goahttp.Encoder) func
 				req.Header.Set("Authorization", head)
 			}
 		}
+		if p.IfMatch != nil {
+			head := *p.IfMatch
+			req.Header.Set("If-Match", head)
+		}
 		return nil
 	}
 }
@@ -631,6 +635,8 @@ func EncodeApproveBriefRequest(encoder func(*http.Request) goahttp.Encoder) func
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
+//   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
 //   - error: internal error
 func DecodeApproveBriefResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (any, error) {
@@ -739,6 +745,34 @@ func DecodeApproveBriefResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "approve-brief", err)
 			}
 			return nil, NewApproveBriefNotFound(&body)
+		case http.StatusPreconditionFailed:
+			var (
+				body ApproveBriefPreconditionFailedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "approve-brief", err)
+			}
+			err = ValidateApproveBriefPreconditionFailedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "approve-brief", err)
+			}
+			return nil, NewApproveBriefPreconditionFailed(&body)
+		case http.StatusPreconditionRequired:
+			var (
+				body ApproveBriefPreconditionRequiredResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "approve-brief", err)
+			}
+			err = ValidateApproveBriefPreconditionRequiredResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "approve-brief", err)
+			}
+			return nil, NewApproveBriefPreconditionRequired(&body)
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "approve-brief", resp.StatusCode, string(body))

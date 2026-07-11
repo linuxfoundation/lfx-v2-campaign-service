@@ -41,20 +41,19 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 
 	// NOTE: debug.LogPayloads() is intentionally NOT applied. Every authenticated
 	// payload carries a BearerToken (a valid JWT), and the connection service's
-	// create/set-credential payloads carry plaintext provider credentials, so
-	// enabling it would leak those secrets into logs. debug.HTTP() IS still
-	// applied below, but in clue v1.2.1 it does not log headers or statuses — it
-	// only propagates the runtime /debug toggle into each request's context (so
-	// debug-level logs elsewhere activate); it decodes no payload.
+	// create/set-credential payloads carry plaintext provider credentials (OAuth
+	// refresh tokens, client secrets), so enabling it would leak those secrets
+	// into logs. debug.HTTP() IS still applied below, but in clue v1.2.1 it does
+	// not log headers or statuses — it only propagates the runtime /debug toggle
+	// into each request's context (so debug-level logs elsewhere activate); it
+	// decodes no payload.
 	endpoints := svc.NewEndpoints(cont.Service)
 
 	// The container always initializes Connections and Briefs (NewContainer wires
 	// them in both the DB and no-DB paths), so construct the endpoints
 	// unconditionally. Fail loudly if either is unexpectedly nil rather than
 	// silently skipping the mount — a mis-wired container should crash at startup,
-	// not serve 404s on the connection/brief routes. debug.LogPayloads is
-	// intentionally NOT applied to any endpoint set: connection/brief payloads
-	// carry BearerTokens and plaintext provider credentials that would leak.
+	// not serve 404s on the connection/brief routes.
 	if cont.Connections == nil {
 		return fmt.Errorf("container misconfigured: Connections service is nil")
 	}
