@@ -791,6 +791,86 @@ func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignRejectsUnsafeAccountID verifies that an account_id or
+// funding_instrument_id containing path/query/fragment delimiters or whitespace
+// is rejected up front, with zero network calls — a non-empty value with '/',
+// '?', '#', or a space must not reach a mutating POST (path injection). A valid
+// alphanumeric id still flows past the guard.
+func TestCreateCampaignRejectsUnsafeAccountID(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	base := CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+	}
+	cases := []struct {
+		name string
+		acct AccountConfig
+	}{
+		{"account id with slash", AccountConfig{AccountID: "18ce/54", FundingInstrumentID: "fi1"}},
+		{"account id with question mark", AccountConfig{AccountID: "acc?x", FundingInstrumentID: "fi1"}},
+		{"account id with hash", AccountConfig{AccountID: "acc#x", FundingInstrumentID: "fi1"}},
+		{"account id with space", AccountConfig{AccountID: "a b", FundingInstrumentID: "fi1"}},
+		{"funding id with slash", AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi/1"}},
+		{"funding id with space", AccountConfig{AccountID: "acc1", FundingInstrumentID: "f i"}},
+	}
+	for _, tc := range cases {
+		calls = 0
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			tc.acct,
+			WithBaseURL(srv.URL),
+			WithWriteDelay(0),
+		)
+		c.nonceFn = func() string { return "n" }
+		c.timeFn = staticTime
+
+		if _, err := c.CreateCampaign(context.Background(), base); err == nil {
+			t.Errorf("%s: expected error, got nil", tc.name)
+		}
+		if calls != 0 {
+			t.Errorf("%s: expected no network call before account-id guard, got %d", tc.name, calls)
+		}
+	}
+
+	// A valid alphanumeric id must still flow past the guard (reaches network).
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/18ce54d4x5t"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer okSrv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "18ce54d4x5t", FundingInstrumentID: "fi1"},
+		WithBaseURL(okSrv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	if _, err := c.CreateCampaign(context.Background(), base); err != nil {
+		t.Errorf("valid alphanumeric account id should flow past the guard, got error: %v", err)
+	}
+}
+
 // TestBudgetRoundToZeroBoundary verifies the round-to-zero guard: a budget just
 // below half a micro-unit rounds to 0 and is rejected, while the smallest value
 // that rounds to 1 micro-unit is accepted by the conversion.
@@ -1332,9 +1412,12 @@ func TestPromotedTweetPostErrorWarns(t *testing.T) {
 	}
 }
 
-// TestPromotedTweetDuplicateTreatedIdempotent verifies that a recognizable
-// duplicate-association error is treated as success (the association already
-// exists): no warning, and a step records the idempotent reuse.
+// TestPromotedTweetDuplicateTreatedIdempotent verifies that a
+// DUPLICATE_PROMOTABLE_ENTITY response is surfaced as a WARNING (not an
+// unqualified success): X can return that code when the tweet is promoted by a
+// DIFFERENT line item, so it does not prove this tweet is attached to this line
+// item. The flow stays non-fatal (campaign + line item still return), but
+// PromotedTweetWarning is set and a step tells the caller to verify manually.
 func TestPromotedTweetDuplicateTreatedIdempotent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1378,18 +1461,24 @@ func TestPromotedTweetDuplicateTreatedIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign should not be fatal on duplicate promoted-tweet: %v", err)
 	}
-	if res.PromotedTweetWarning != "" {
-		t.Errorf("expected no PromotedTweetWarning for idempotent duplicate, got %q", res.PromotedTweetWarning)
+	// Non-fatal, but a duplicate is NOT an unqualified success: the warning must be
+	// set so consumers do not treat the result as a confirmed association.
+	if res.PromotedTweetWarning == "" {
+		t.Error("expected PromotedTweetWarning to be set for a DUPLICATE_PROMOTABLE_ENTITY response, got empty")
+	}
+	// The campaign and line item should still have been created/returned.
+	if res.CampaignID != "cmp1" || res.LineItemID != "li1" {
+		t.Errorf("expected campaign+line item to still return (cmp1/li1), got %q/%q", res.CampaignID, res.LineItemID)
 	}
 	var found bool
 	for _, s := range res.Steps {
-		if strings.Contains(s, "already associated") || strings.Contains(s, "idempotent") {
+		if strings.Contains(s, "duplicate") && strings.Contains(s, "verify manually") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected an idempotent-reuse step for duplicate promoted-tweet, steps: %v", res.Steps)
+		t.Errorf("expected a duplicate/verify-manually warning step for duplicate promoted-tweet, steps: %v", res.Steps)
 	}
 }
 
@@ -1736,14 +1825,50 @@ func TestTweetIDFormatValidatedUpFront(t *testing.T) {
 // leading-zero, or an over-19-digit decimal) so they fail before any mutation.
 // TestTweetIDInt64OverflowRejected verifies a 19-digit value above the max int64
 // snowflake passes the regex shape but is rejected by CreateCampaign's parse
-// check before any mutating call.
+// check BEFORE any mutating call — so the flow never creates a partial campaign.
+// The test drives CreateCampaign (not just strconv.ParseInt) against a server
+// that fails on any create POST, so removing the production overflow check would
+// make this test fail rather than silently pass.
 func TestTweetIDInt64OverflowRejected(t *testing.T) {
-	// 9999999999999999999 is 19 digits (matches the regex) but > math.MaxInt64.
-	if !tweetIDRe.MatchString("9999999999999999999") {
+	const overflow = "9999999999999999999" // 19 digits (matches regex) but > math.MaxInt64.
+	// Precondition: value has the valid digit shape yet overflows int64.
+	if !tweetIDRe.MatchString(overflow) {
 		t.Fatal("precondition: value should match the digit-shape regex")
 	}
-	if _, err := strconv.ParseInt("9999999999999999999", 10, 64); err == nil {
+	if _, err := strconv.ParseInt(overflow, 10, 64); err == nil {
 		t.Fatal("precondition: value should overflow int64")
+	}
+
+	// Any create POST means the overflow check failed to reject up front.
+	var creates int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			creates++
+			t.Errorf("unexpected create POST to %s for out-of-range tweet id", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: overflow,
+	})
+	if err == nil {
+		t.Fatal("expected CreateCampaign to reject an out-of-int64-range tweet id, got nil error")
+	}
+	if creates != 0 {
+		t.Errorf("expected zero create POSTs for out-of-range tweet id, got %d", creates)
 	}
 }
 

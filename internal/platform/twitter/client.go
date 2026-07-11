@@ -685,6 +685,16 @@ type CampaignResult struct {
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// accountIDRe restricts an X Ads account_id / funding_instrument_id to a safe
+// charset. These ids interpolate directly into the account-scoped request path
+// (accountURL) and into query params, so a value containing a path/query/
+// fragment delimiter ('/', '?', '#') or whitespace/control chars could redirect
+// a campaign/list POST to a DIFFERENT account-scoped path (path injection) or
+// corrupt the funding param. Real X Ads ids are alphanumeric handles (e.g.
+// "18ce54d4x5t"), so restrict to letters and digits — the tightest charset that
+// still accepts every real id — and validate up front, before any mutating call.
+var accountIDRe = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+
 // tweetIDRe matches an X Tweet id: a positive decimal snowflake of 1–19 digits
 // with no leading zero. A malformed value ("not-a-tweet", "0", or an
 // arbitrarily long decimal that can't be a real snowflake) would otherwise reach
@@ -786,8 +796,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if c.account.AccountID == "" {
 		return nil, fmt.Errorf("invalid account config: account_id must not be empty")
 	}
+	if !accountIDRe.MatchString(c.account.AccountID) {
+		// A non-empty check is not enough: account_id is interpolated into the
+		// account-scoped request path (accountURL), so a value with '/', '?', '#',
+		// or whitespace/control chars could redirect this POST to a different
+		// account path. Reject anything outside the safe alphanumeric charset.
+		return nil, fmt.Errorf("invalid account config: account_id %q must contain only letters and digits", c.account.AccountID)
+	}
 	if c.account.FundingInstrumentID == "" {
 		return nil, fmt.Errorf("invalid account config: funding_instrument_id must not be empty")
+	}
+	if !accountIDRe.MatchString(c.account.FundingInstrumentID) {
+		return nil, fmt.Errorf("invalid account config: funding_instrument_id %q must contain only letters and digits", c.account.FundingInstrumentID)
 	}
 
 	// Compose and validate the entity names before ANY network call: even with
@@ -911,9 +931,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		})
 		switch {
 		case err != nil && isDuplicatePromotedTweetErr(err):
-			// The association already exists (e.g. a prior POST that succeeded but
-			// whose response was lost). Idempotent: treat as success, not a gap.
-			steps = append(steps, fmt.Sprintf("Promoted tweet already associated with line item %s (tweet: %s) — treating as created (idempotent)", lineItemID, tweetID))
+			// X reports the tweet is already promoted (DUPLICATE_PROMOTABLE_ENTITY).
+			// This is NOT proof the tweet is attached to THIS line item — X returns
+			// the same code when the tweet is promoted by a DIFFERENT line item — so
+			// we do NOT treat it as idempotent success. Surface a warning (step +
+			// result field) so the association is verified manually. Non-fatal: the
+			// campaign and line item still return.
+			promotedTweetWarning = fmt.Sprintf("promoted-tweet association for tweet %s may already exist (X returned DUPLICATE_PROMOTABLE_ENTITY), possibly on a different line item — verify manually in X Ads Manager", tweetID)
+			steps = append(steps, fmt.Sprintf("Promoted tweet reported as duplicate for line item %s (tweet: %s) — the association may already exist (possibly on a different line item); verify manually in X Ads Manager", lineItemID, tweetID))
 		case err != nil:
 			// A real POST failure. Do NOT report unqualified success: record a
 			// warning both in the step log and on the result so the caller can see
@@ -1006,24 +1031,23 @@ func extractID(resp *apiResponse) string {
 }
 
 // isDuplicatePromotedTweetErr reports whether err from a promoted_tweets POST is
-// X's "this tweet is already promoted on this line item" rejection. On a repeated
-// CreateCampaign the campaign and line item are reused by name, but the
-// promoted-tweet association is always re-POSTed; if the first POST's response was
-// lost, the retry hits this duplicate. Because doRequest surfaces non-2xx bodies
-// as the error string, we pattern-match X's recognizable duplicate signals
-// (error code DUPLICATE_PROMOTABLE_ENTITY / message wording). When it matches the
-// association already exists, so we treat it as idempotent success rather than a
-// failure or a false unqualified success. NOTE: true cross-call idempotency
+// X's DUPLICATE_PROMOTABLE_ENTITY rejection. Because doRequest surfaces non-2xx
+// bodies as the error string, we match X's recognizable error code. A match does
+// NOT prove this tweet is attached to THIS line item: X returns this code when
+// the tweet is already promoted by a DIFFERENT line item, so it cannot be treated
+// as idempotent success — callers surface it as a warning to verify manually
+// rather than as an unqualified success. NOTE: true cross-call idempotency
 // (idempotency keys sent to X) is tracked in LFXV2-2665.
 func isDuplicatePromotedTweetErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Match only X's specific DUPLICATE_PROMOTABLE_ENTITY error code. Broad
+	// substring matches on "already promoted"/"already associated" widened the net
+	// to messages that don't actually prove a duplicate, so drop them: the code is
+	// the recognizable, unambiguous signal.
 	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "duplicate_promotable_entity") ||
-		strings.Contains(s, "already promoted") ||
-		strings.Contains(s, "already associated") ||
-		(strings.Contains(s, "duplicate") && strings.Contains(s, "promot"))
+	return strings.Contains(s, "duplicate_promotable_entity")
 }
 
 // extractPromotedTweetID reads the promoted tweet id, which the X Ads API
