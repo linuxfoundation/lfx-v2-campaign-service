@@ -57,6 +57,16 @@ const (
 	// guarding against a hostile/oversized reply while comfortably exceeding any
 	// normal success or error envelope.
 	maxResponseBody = 10 << 20 // 10 MiB
+	// redditErrBodyMaxRunes caps how much of an upstream error body is echoed
+	// into a returned error string.
+	redditErrBodyMaxRunes = 400
+	// redditFallbackTokenTTL is the token lifetime assumed when the token
+	// endpoint returns a non-positive expires_in: the refresh buffer plus a
+	// small margin so a valid-but-lifetimeless token still works without caching
+	// an already-expired entry.
+	redditFallbackTokenTTL = redditTokenExpiryBuffer + 60*time.Second
+	// defaultRedditObjective is used when a campaign input omits an objective.
+	defaultRedditObjective = "conversions"
 )
 
 // readResponseBody reads up to maxResponseBody bytes (plus one, so truncation is
@@ -293,7 +303,7 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 
 	body, readErr := readResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("reddit token refresh failed: %d: %s", resp.StatusCode, truncate(string(body), 400))
+		return "", fmt.Errorf("reddit token refresh failed: %d: %s", resp.StatusCode, truncate(string(body), redditErrBodyMaxRunes))
 	}
 	if readErr != nil {
 		return "", fmt.Errorf("reddit token refresh: %w", readErr)
@@ -314,7 +324,7 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	// caching an already-expired entry.
 	expiresIn := data.ExpiresIn
 	if expiresIn <= 0 {
-		expiresIn = int64(redditTokenExpiryBuffer.Seconds()) + 60
+		expiresIn = int64(redditFallbackTokenTTL.Seconds())
 	}
 
 	c.cachedToken = data.AccessToken
@@ -367,7 +377,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 
 	raw, readErr := readResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("reddit API %s %s -> %d: %s", method, path, resp.StatusCode, truncate(string(raw), 400))
+		return nil, fmt.Errorf("reddit API %s %s -> %d: %s", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes))
 	}
 	if readErr != nil {
 		return nil, fmt.Errorf("reddit API %s %s: %w", method, path, readErr)
@@ -433,7 +443,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// objective fails fast rather than after the Step 1 account-verify call.
 	objective := in.Objective
 	if objective == "" {
-		objective = "conversions"
+		objective = defaultRedditObjective
 	}
 	objParams, objOK := redditObjectiveParams[objective]
 	if !objOK {
