@@ -57,10 +57,6 @@ const (
 	// adSetStartBuffer is added to "now" when a campaign starts today, so the ad
 	// set start_time isn't already in the past by the time Meta receives it.
 	adSetStartBuffer = 5 * time.Minute
-	// defaultCurrencyOffset is the Meta currency_offset assumed when the caller
-	// leaves AccountConfig.CurrencyOffset unset. 100 matches most currencies
-	// (USD/EUR/GBP); zero-decimal currencies (JPY/KRW/CLP, offset 1) MUST override.
-	defaultCurrencyOffset = 100
 	// Per-variant copy limits (in runes), mirroring the repo contract in
 	// docs/api-catalog.md. Over-limit copy is rejected up front so it fails before
 	// any paid campaign/ad-set resource is created rather than at creative
@@ -234,11 +230,14 @@ type AccountConfig struct {
 	// currency_offset, which is NOT universally 100 — zero-decimal currencies such
 	// as JPY, KRW, and CLP use an offset of 1 (no minor unit), while most (USD,
 	// EUR, GBP) use 100. The client cannot read the account currency itself: the
-	// account-verify call fetches only name/account_status, not currency. Callers
-	// that operate a non-100-offset account MUST set this (e.g. 1 for JPY) so the
-	// budget is not over-sent (a hardcoded ×100 would bill a JPY account 100× the
-	// intended amount). Zero/unset defaults to 100 for backward-compatible USD-like
-	// behavior; see NewClient, which normalizes it.
+	// account-verify call fetches only name/account_status, not currency.
+	//
+	// This field is REQUIRED and has NO silent default: CreateCampaign rejects a
+	// zero/unset/negative offset before issuing any mutating call. There is no
+	// safe default — silently assuming 100 would over-bill a zero-decimal-currency
+	// account (JPY/KRW/CLP, offset 1) by 100× if the caller omitted the field, so
+	// the caller must make a conscious, correct choice (100 for most currencies,
+	// 1 for zero-decimal like JPY).
 	CurrencyOffset int64
 }
 
@@ -309,13 +308,10 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
 	account.AccountID = strings.TrimSpace(account.AccountID)
 	account.PageID = strings.TrimSpace(account.PageID)
-	// Normalize the currency offset once: an unset (zero) or nonsensical negative
-	// offset falls back to the default (100) so budget conversion always uses a
-	// valid, positive minor-unit factor. A caller with a zero-decimal account (JPY)
-	// sets CurrencyOffset=1 explicitly, which is preserved.
-	if account.CurrencyOffset <= 0 {
-		account.CurrencyOffset = defaultCurrencyOffset
-	}
+	// NOTE: CurrencyOffset is deliberately NOT coerced here. There is no safe
+	// default — silently assuming 100 would over-bill a zero-decimal-currency
+	// account (JPY, offset 1) 100× if the caller omitted the field. CreateCampaign
+	// validates that a valid positive offset was set before any mutating call.
 	c := &Client{
 		creds:          creds,
 		account:        account,
@@ -759,20 +755,17 @@ func objectiveLabel(objective string) string {
 }
 
 // buildCampaignName mirrors buildMetaCampaignName using the (already
-// geo-filtered) targets to resolve the region segment.
+// geo-filtered) targets to resolve the region segment. The caller (CreateCampaign)
+// validates in.Project is non-empty before this is reached, so there is no
+// silent-substitution fallback here: the naming contract's Project segment is the
+// caller-supplied canonical LFX slug (docs/api-catalog.md). Substituting a
+// placeholder (e.g. "tlf") for an omitted project could mis-attribute a
+// non-Linux-Foundation campaign to the wrong project.
 func buildCampaignName(in CampaignInput, geoTargets []string) string {
 	event := strings.ReplaceAll(in.EventName, "|", "-")
 	region := resolveRegion(geoTargets)
 	objective := objectiveLabel(defaultObjective(in.Objective))
-	project := in.Project
-	if strings.TrimSpace(project) == "" {
-		// The naming contract's Project segment is the canonical LFX slug; the
-		// Linux Foundation slug is "tlf" (docs/api-catalog.md). Use it (not a
-		// display label) so name-based attribution parses. Matches the reddit and
-		// twitter clients.
-		project = "tlf"
-	}
-	project = strings.ReplaceAll(project, "|", "-")
+	project := strings.ReplaceAll(in.Project, "|", "-")
 	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU", event, region, objective, project)
 }
 
@@ -907,8 +900,9 @@ type CampaignInput struct {
 	// exchange conversion. Meta bills the ad set in the account's own currency, so
 	// the caller must supply an amount already denominated in that currency. The
 	// value is converted to minor units by multiplying by the account's Meta
-	// currency_offset (AccountConfig.CurrencyOffset, default 100; set 1 for
-	// zero-decimal currencies like JPY) and sent as-is. (Renamed from BudgetUSD:
+	// currency_offset (AccountConfig.CurrencyOffset — REQUIRED, no default: 100 for
+	// most currencies, 1 for zero-decimal currencies like JPY) and sent as-is.
+	// (Renamed from BudgetUSD:
 	// the field never carried FX-converted USD — the old name implied a conversion
 	// this client does not do.)
 	Budget         float64
@@ -992,9 +986,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// currency_offset (NOT a hardcoded 100): most currencies use 100, but
 	// zero-decimal currencies (JPY/KRW/CLP) use 1, so a hardcoded ×100 would
 	// over-send those accounts 100×. This is NOT an FX conversion — the caller's
-	// amount is already in the account's currency. NewClient guarantees
-	// CurrencyOffset > 0.
+	// amount is already in the account's currency.
+	//
+	// The offset is REQUIRED and has no silent default: a zero/unset/negative
+	// offset is rejected here, before any mutating call. Defaulting an omitted
+	// offset to 100 would silently over-bill a zero-decimal-currency account
+	// (JPY/KRW/CLP, offset 1) by 100× — so force the caller to make the choice
+	// explicit rather than guessing.
 	offset := c.account.CurrencyOffset
+	if offset <= 0 {
+		return nil, fmt.Errorf("meta: AccountConfig.CurrencyOffset must be set to a positive value (100 for most currencies, 1 for zero-decimal like JPY)")
+	}
 	// Reject budgets that round to zero minor units before any API call: a
 	// zero/invalid budget would otherwise be sent to Meta and create a bad ad set.
 	budgetMinor := int64(math.Round(in.Budget * float64(offset)))
@@ -1039,6 +1041,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// call so a missing PageID doesn't create a paid campaign that can't get ads.
 	if strings.TrimSpace(c.account.PageID) == "" {
 		return nil, fmt.Errorf("PageID is required to create Meta creatives; configure a Facebook Page for this account")
+	}
+
+	// Project is required: the campaign name's Project segment must be the caller-
+	// supplied canonical LFX project slug (docs/api-catalog.md). Reject an empty or
+	// whitespace-only Project before any mutating call rather than silently
+	// substituting a placeholder (e.g. "tlf"), which could mis-attribute a
+	// non-Linux-Foundation campaign to the wrong project.
+	if strings.TrimSpace(in.Project) == "" {
+		return nil, fmt.Errorf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
 	}
 
 	// Resolve the objective and validate deterministic inputs (placements and the

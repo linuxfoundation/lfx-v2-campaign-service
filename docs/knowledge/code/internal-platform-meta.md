@@ -40,9 +40,17 @@ ACCOUNT's own currency — the client does NO foreign-exchange conversion, so th
 caller must pass an amount already in that currency — and it is bounded
 (rejecting rounds-to-zero and overflow-scale values) then converted to minor
 units by multiplying by the account's Meta `currency_offset`
-(`AccountConfig.CurrencyOffset`, default 100; set 1 for zero-decimal currencies
-like JPY so the amount is not over-sent 100×) rather than a hardcoded ×100;
-dates are parsed strictly (impossible calendar dates rejected) and a
+(`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. That offset is
+REQUIRED and has NO silent default: a zero/unset/negative offset is rejected
+before any mutating call (`100` for most currencies, `1` for zero-decimal
+currencies like JPY/KRW/CLP). There is no safe default — silently assuming 100
+would over-bill a zero-decimal-currency account 100× if the caller omitted the
+field, so the caller must make the choice explicit. `CampaignInput.Project` is
+also required (rejected up front if empty/whitespace): the campaign name's
+Project segment must be the caller-supplied canonical LFX project slug, so the
+client never silently substitutes a placeholder that could mis-attribute a
+campaign to the wrong project.
+Dates are parsed strictly (impossible calendar dates rejected) and a
 past start date is refused, with a same-day ad-set `start_time` nudged to
 now+buffer. `doRequest` retries HTTP 429 and Graph rate-limit envelope codes
 (4/17/32/341/613) with bounded backoff, draining the body before close, and a
