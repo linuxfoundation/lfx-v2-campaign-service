@@ -534,6 +534,33 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 	return startMs, nil
 }
 
+// validateSchedule enforces the start/end date contract ONCE, up front in
+// CreateCampaign, before any idempotency lookup or mutating POST. It mirrors what
+// toMs (plus the endMs<=startMs guard in the create helpers) enforces: both dates
+// must parse as YYYY-MM-DD, the end date must not be in the past, and the end
+// must be strictly after the start.
+//
+// This up-front check is necessary because toMs is otherwise only reached AFTER
+// the create helpers' find-existing idempotency lookups: if a same-name group AND
+// campaign already exist, malformed/past/reversed dates would bypass toMs entirely
+// and the flow would still proceed to create dark posts and creatives on a broken
+// schedule. Validating here guarantees the date contract regardless of idempotency
+// state. toMs remains the source of the actual millisecond values sent upstream.
+func (c *Client) validateSchedule(startDate, endDate string) error {
+	startMs, err := c.toMs(startDate, false)
+	if err != nil {
+		return err
+	}
+	endMs, err := c.toMs(endDate, true)
+	if err != nil {
+		return err
+	}
+	if endMs <= startMs {
+		return fmt.Errorf("end date (%s) must be after start date (%s)", endDate, startDate)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Hierarchy creation
 // ---------------------------------------------------------------------------
@@ -814,6 +841,17 @@ func truncateRunes(s string, n int) string {
 	return string(r[:n])
 }
 
+// normalizeCreativeText applies the same normalization createDarkPost/createCreative
+// perform on a variant's user-supplied text before it is sent to LinkedIn: trim
+// surrounding whitespace, then collapse em/en dashes to commas (stripDashes).
+// CreateCampaign uses it to validate up front that a mandatory field does not
+// normalize to empty, so a variant that LinkedIn would reject (e.g. a
+// whitespace-only or dash-only headline) is caught before the first mutating POST
+// rather than after the campaign group and campaign already exist.
+func normalizeCreativeText(text string) string {
+	return strings.TrimSpace(stripDashes(strings.TrimSpace(text)))
+}
+
 // stripDashes normalizes em/en dashes to commas. Mirrors the TS stripDashes.
 func stripDashes(text string) string {
 	// " — "/" – " (with surrounding spaces) -> ", "
@@ -954,6 +992,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("at least one creative variant is required")
 	}
 
+	// Validate every variant's mandatory CONTENT up front, before any POST.
+	// Checking only the NUMBER of variants (len > 0) let a variant whose Headline
+	// or IntroText is empty / whitespace-only / dash-only slip through: those
+	// fields are rejected by LinkedIn only AFTER the campaign group and campaign
+	// (permanent resources) already exist, orphaning them. Normalize each field
+	// exactly the way createDarkPost/createCreative will (trim + stripDashes) so a
+	// value that normalizes to empty — e.g. a lone em dash "—" that stripDashes
+	// collapses away — is caught here rather than upstream. Both the article
+	// headline (title) and the primary/commentary text (introText) are required
+	// for the article dark post, so both are validated.
+	for i, variant := range in.Variants {
+		if normalizeCreativeText(variant.Headline) == "" {
+			return nil, fmt.Errorf("variant-%d headline is required and must not be empty, whitespace-only, or dash-only after normalization", i+1)
+		}
+		if normalizeCreativeText(variant.IntroText) == "" {
+			return nil, fmt.Errorf("variant-%d intro text is required and must not be empty, whitespace-only, or dash-only after normalization", i+1)
+		}
+	}
+
 	// Trim Project ONCE and use the trimmed value everywhere. Checking only the
 	// exact empty string let a whitespace-only Project like "   " slip past the
 	// default and be embedded verbatim in the group/campaign names; a padded
@@ -980,6 +1037,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if len(geoURNs) == 0 {
 		return nil, fmt.Errorf("no usable geo targets: all supplied geos resolved to nothing — refusing to create a campaign with empty geo targeting")
+	}
+
+	// Validate the schedule ONCE up front, before the first idempotency lookup or
+	// POST. The create helpers only reach toMs AFTER their find-existing lookups,
+	// so if a same-name group AND campaign already exist, malformed/past/reversed
+	// dates would otherwise bypass toMs entirely and the flow would still proceed
+	// to create dark posts and creatives on a broken schedule. Enforcing it here
+	// guarantees the date contract regardless of idempotency state.
+	if err := c.validateSchedule(in.StartDate, in.EndDate); err != nil {
+		return nil, err
 	}
 
 	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)
@@ -1009,8 +1076,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		adName := fmt.Sprintf("%s | variant-%d", eventName, i+1)
 		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName)
 		if err != nil {
+			// The creative failed but this variant's dark post (shareURN) was
+			// already created. Report it explicitly: a blind retry would duplicate
+			// not just the previously-completed creatives but ALSO this orphaned
+			// dark post, which has no name-based idempotency lookup. Surfacing the
+			// shareURN keeps recovery state clear even for the first variant, where
+			// creativeCount is still 0 yet a dark post already exists upstream.
 			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
-				fmt.Errorf("variant-%d creative failed after %d of %d variant(s) created: %w — group %q and campaign %q already exist; do NOT blindly retry (would duplicate the %d created creative(s)); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, creativeCount)
+				fmt.Errorf("variant-%d creative failed after %d of %d variant(s) created: %w — group %q and campaign %q already exist AND this variant's dark post %q was already created; do NOT blindly retry (would duplicate the %d created creative(s) and the dark post %q, which has no idempotency lookup); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, shareURN, creativeCount, shareURN)
 		}
 		steps = append(steps, fmt.Sprintf("Creative (DRAFT): %s", creativeID))
 		creativeCount++

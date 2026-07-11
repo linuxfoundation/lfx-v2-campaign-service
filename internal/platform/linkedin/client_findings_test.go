@@ -755,3 +755,185 @@ func TestCreateCampaign_TrimsProjectInResourceNames(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Sixth-round Copilot findings
+// ---------------------------------------------------------------------------
+
+// TestCreateCampaign_RejectsEmptyVariantContentBeforeAnyPOST verifies that a
+// variant whose Headline (or IntroText) normalizes to empty — whitespace-only or
+// dash-only, which stripDashes collapses away — is rejected up front, before any
+// POST. LinkedIn would otherwise reject the ad only after the campaign group and
+// campaign already exist, orphaning them. The server fails on any POST.
+func TestCreateCampaign_RejectsEmptyVariantContentBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	cases := []struct {
+		name    string
+		variant CreativeVariant
+	}{
+		{"whitespace-only headline", CreativeVariant{IntroText: "ok", Headline: "   "}},
+		{"dash-only headline (em dash)", CreativeVariant{IntroText: "ok", Headline: "—"}},
+		{"dash-only headline (en dash, padded)", CreativeVariant{IntroText: "ok", Headline: " – "}},
+		{"empty headline", CreativeVariant{IntroText: "ok", Headline: ""}},
+		{"whitespace-only intro", CreativeVariant{IntroText: "  \t ", Headline: "Headline"}},
+		{"dash-only intro", CreativeVariant{IntroText: "—", Headline: "Headline"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:        "KubeCon",
+				RegistrationURL:  "https://events.example.org/reg",
+				BudgetUSD:        100,
+				StartDate:        "2099-01-01",
+				EndDate:          "2099-02-01",
+				TargetingProfile: "cloud-native",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{tc.variant},
+			})
+			if err == nil {
+				t.Fatalf("CreateCampaign with %s: expected error, got nil", tc.name)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_RejectsBadScheduleBeforeAnyLookupEvenWhenResourcesExist
+// verifies that a reversed or past schedule is rejected up front — before any
+// idempotency lookup (GET) or POST — even when the create path would otherwise
+// short-circuit on already-existing group and campaign resources. Because the
+// schedule is validated before the first lookup, no GET or POST is issued at all.
+func TestCreateCampaign_RejectsBadScheduleBeforeAnyLookupEvenWhenResourcesExist(t *testing.T) {
+	// This server would return existing group/campaign on GET (so toMs inside the
+	// create helpers would be bypassed) and succeed on any POST. If either is ever
+	// hit, the up-front schedule check failed to run first.
+	var mu sync.Mutex
+	var reqCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reqCount++
+		mu.Unlock()
+		t.Errorf("unexpected %s %s — schedule should have been rejected before any lookup/POST", r.Method, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		// Pretend the group and campaign already exist so, absent the up-front
+		// check, the flow would short-circuit past toMs entirely.
+		if strings.Contains(r.URL.Path, "adCampaignGroups") {
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | TLF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:100"}],"metadata":{"nextPageToken":""}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"elements":[]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	cases := []struct {
+		name      string
+		startDate string
+		endDate   string
+	}{
+		{"reversed dates", "2099-06-01", "2099-01-01"},
+		{"past end date", "2010-01-01", "2010-02-01"},
+		{"malformed start", "2099-1-1", "2099-02-01"},
+		{"malformed end", "2099-01-01", "not-a-date"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:        "KubeCon",
+				RegistrationURL:  "https://events.example.org/reg",
+				BudgetUSD:        100,
+				StartDate:        tc.startDate,
+				EndDate:          tc.endDate,
+				TargetingProfile: "cloud-native",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+			})
+			if err == nil {
+				t.Fatalf("CreateCampaign with %s: expected error, got nil", tc.name)
+			}
+		})
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if reqCount != 0 {
+		t.Errorf("expected zero HTTP requests for an invalid schedule, got %d", reqCount)
+	}
+}
+
+// TestCreateCampaign_PartialFailureReportsDarkPostWhenCreativeFails verifies that
+// when the FIRST variant's creative fails after its dark post already succeeded,
+// the partial-failure report surfaces the created dark post shareURN — both in the
+// error message and in the returned result's steps — so recovery state is clear
+// even though creativeCount is still 0. A blind retry would duplicate that
+// orphaned dark post, which has no idempotency lookup.
+func TestCreateCampaign_PartialFailureReportsDarkPostWhenCreativeFails(t *testing.T) {
+	const shareURN = "urn:li:share:300"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			// The first variant's dark post succeeds.
+			_, _ = io.WriteString(w, `{"id":"`+shareURN+`"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			// ...but its creative fails.
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/kubecon",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "one"}}, // single variant: creativeCount stays 0
+	})
+	if err == nil {
+		t.Fatal("expected an error when the creative fails after its dark post succeeded, got nil")
+	}
+	// The error must name the created dark post so the caller knows a retry would
+	// duplicate it, even though zero creatives completed.
+	if !strings.Contains(err.Error(), shareURN) {
+		t.Errorf("partial-failure error must mention the created dark post %q, got: %v", shareURN, err)
+	}
+	if !strings.Contains(err.Error(), "dark post") {
+		t.Errorf("partial-failure error must mention the dark post, got: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected a non-nil partial CampaignResult, got nil")
+	}
+	if res.CreativeCount != 0 {
+		t.Errorf("no creative completed; creativeCount should be 0, got %d", res.CreativeCount)
+	}
+	// The returned result's steps must also surface the dark post shareURN.
+	var stepMentionsShare bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, shareURN) {
+			stepMentionsShare = true
+			break
+		}
+	}
+	if !stepMentionsShare {
+		t.Errorf("partial result steps must include the created dark post %q, got steps=%v", shareURN, res.Steps)
+	}
+}
