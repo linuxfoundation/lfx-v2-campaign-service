@@ -2249,3 +2249,137 @@ func TestCreateCampaign_RejectsEmptyAccessTokenBeforeAnyRequest(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Round 7 Copilot findings
+// ---------------------------------------------------------------------------
+
+// TestFindMatch_MatchWithNoUsableIDIsError verifies FINDING 1: a search element
+// that SATISFIES the match (same name, live status) but carries no usable id
+// under id/$URN/urn must make findByName return an ERROR, not a false ""
+// no-match. The search already proved a same-name resource exists; reporting
+// "not found" would let a find-or-create caller create a DUPLICATE.
+func TestFindMatch_MatchWithNoUsableIDIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// A matching element (right name, ACTIVE) but with EVERY id field empty:
+		// id absent, $URN empty, urn empty. No x-restli-id header on a GET search.
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Idless | TLF","status":"ACTIVE","urn":"","$URN":""}],"metadata":{"nextPageToken":""}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | Idless | TLF")
+	if err == nil {
+		t.Fatalf("expected an error for a matched element with no usable id, got nil (id=%q)", id)
+	}
+	if id != "" {
+		t.Errorf("expected empty id alongside the error, got %q", id)
+	}
+	if !strings.Contains(err.Error(), "no usable id") {
+		t.Errorf("error should explain the id-less match, got: %v", err)
+	}
+}
+
+// TestCreateCampaign_IdlessGroupMatchIssuesNoCreate verifies FINDING 1 end to
+// end: when the campaign-group name lookup returns a MATCHING element with no
+// usable id, CreateCampaign must abort with an error and issue NO create POST —
+// otherwise it would create a duplicate campaign group despite the search having
+// already found one.
+func TestCreateCampaign_IdlessGroupMatchIssuesNoCreate(t *testing.T) {
+	var mu sync.Mutex
+	var postCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			postCount++
+			mu.Unlock()
+			t.Errorf("unexpected POST %s — an id-less group match must abort before any create", r.URL.Path)
+			http.Error(w, "should not POST", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// The group search returns a same-name match (group name is
+		// "Events | KubeCon | TLF") but with no usable id.
+		if strings.Contains(r.URL.Path, "adCampaignGroups") {
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | TLF","status":"ACTIVE","urn":""}],"metadata":{"nextPageToken":""}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"elements":[]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("expected CreateCampaign to fail on an id-less group match, got nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if postCount != 0 {
+		t.Errorf("expected zero create POSTs on an id-less match, got %d", postCount)
+	}
+}
+
+// TestFindMatch_SendsServerSideNameFilter verifies FINDING 2: the search request
+// carries a server-side name filter (search=(name:(values:List(<name>)))) so the
+// lookup is O(matches), not O(account), and requests the API-max pageSize. It
+// also checks that a name containing Rest.li-reserved characters is encoded so it
+// can't break out of the List(...) literal.
+func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
+	// A name with a comma and parens — Rest.li-reserved inside List(...).
+	const lookupName = "Events | KubeCon, Inc. (2026) | TLF"
+
+	var mu sync.Mutex
+	var sawSearch, sawPageSize string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		sawSearch = r.URL.Query().Get("search")
+		sawPageSize = r.URL.Query().Get("pageSize")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// Empty result set: a clean 2xx no-match, safe to report absent.
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{"nextPageToken":""}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaigns", lookupName)
+	if err != nil {
+		t.Fatalf("findByName: %v", err)
+	}
+	if id != "" {
+		t.Errorf("expected empty id for an empty result set, got %q", id)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// r.URL.Query() has already percent-decoded ONE layer, so the value the server
+	// observes is the Rest.li-reduced-encoded form: structural delimiters are bare
+	// while the NAME's reserved chars remain percent-encoded (%2C, %28, %29).
+	if !strings.HasPrefix(sawSearch, "(name:(values:List(") || !strings.HasSuffix(sawSearch, ")))") {
+		t.Errorf("search must be a name filter of the form (name:(values:List(...))), got %q", sawSearch)
+	}
+	// The name's own comma/parens must be Rest.li-encoded so they stay data, not
+	// structure. If they were bare, the List(...) literal would be corrupted.
+	if !strings.Contains(sawSearch, "KubeCon%2C Inc. %282026%29") {
+		t.Errorf("name's reserved chars must be Rest.li-encoded inside List(...), got %q", sawSearch)
+	}
+	// The bare event-name pipe/spaces survive one url-decode as plain text — they
+	// are not Rest.li-structural, so they must NOT be double-encoded.
+	if !strings.Contains(sawSearch, "Events | KubeCon") {
+		t.Errorf("non-reserved name text must survive as-is, got %q", sawSearch)
+	}
+	if sawPageSize != "1000" {
+		t.Errorf("expected pageSize=1000 (API max), got %q", sawPageSize)
+	}
+}

@@ -425,12 +425,12 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // name-based idempotency depends on actually walking the whole collection to
 // confirm a same-name resource is absent.
 //
-// At pageSize 50 the previous cap of 25 pages covered only ~1,250 entries. A
-// mature ad account whose matching collection exceeds that — while the API still
-// hands back a cursor — would hit the cap on EVERY new-name lookup, and the
-// inconclusive-cap error below would then make it unable to create anything. The
-// cap is therefore raised to 1000 pages (~50,000 entries at pageSize 50), which
-// comfortably exceeds any realistic campaign-group/campaign/creative collection
+// A mature ad account whose matching collection exceeds the cap — while the API
+// still hands back a cursor — would hit the cap on EVERY lookup that isn't
+// answered by the server-side name filter, and the inconclusive-cap error below
+// would then make it unable to create anything. The cap is therefore set to 1000
+// pages, which at the maximum pageSize of 1000 (see findMatch) covers ~1,000,000
+// entries — comfortably beyond any realistic campaign-group/campaign collection
 // while still bounding the loop. Reaching this cap with a next-page token still
 // present is reported as an error (see findMatch), NOT a silent no-match — a
 // false no-match would let the caller create a DUPLICATE.
@@ -459,7 +459,7 @@ const maxListPages = 1000
 // (up to maxListPages); reaching the cap with a next-page token still present
 // also returns an error rather than a false no-match.
 func (c *Client) findByName(ctx context.Context, nestedPath, name string) (string, error) {
-	return c.findMatch(ctx, nestedPath, func(el responseElement) bool {
+	return c.findMatch(ctx, nestedPath, name, func(el responseElement) bool {
 		return el.Name == name
 	})
 }
@@ -472,18 +472,32 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 // be created under the correct group. Elements missing a campaignGroup are not
 // matched, since without it the parent cannot be confirmed.
 func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID string) (string, error) {
-	return c.findMatch(ctx, campaignsPath, func(el responseElement) bool {
+	return c.findMatch(ctx, campaignsPath, name, func(el responseElement) bool {
 		return el.Name == name && el.CampaignGroup != "" && trailingID(el.CampaignGroup) == groupID
 	})
 }
 
-// findMatch runs the cursor-paginated search-by name walk shared by findByName
+// findMatch runs the cursor-paginated search-by-name walk shared by findByName
 // and findCampaignByNameInGroup, returning the trailing numeric ID of the first
 // element for which match reports true (and whose status is not in
 // skipStatuses), or "" when no such element exists. Error handling and the
 // max-pages guard match the findByName contract documented above.
-func (c *Client) findMatch(ctx context.Context, nestedPath string, match func(responseElement) bool) (string, error) {
-	const pageSize = 50
+//
+// The search request carries a SERVER-SIDE name filter
+// (search=(name:(values:List(<name>)))), so the API returns only same-name
+// elements rather than the whole account. This narrows a lookup from O(account)
+// to O(same-name matches): a miss now costs ~one page instead of walking every
+// campaign/campaign-group in the account. The match callback is still applied
+// client-side because the server filters on name alone — findCampaignByNameInGroup
+// additionally scopes to the parent campaign group, and both callers still enforce
+// the exact-name and non-skipStatuses checks. pageSize is set to the API maximum
+// (1000) so any account that legitimately has many same-name resources is covered
+// in as few round-trips as possible. The cursor/repeated-token/page-cap guards
+// below remain the correctness backstop.
+func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match func(responseElement) bool) (string, error) {
+	// The LinkedIn Marketing API caps search pageSize at 1000; request the max so
+	// the (rare) case of many same-name matches resolves in the fewest pages.
+	const pageSize = 1000
 	pageToken := ""
 	// Guard against a server that returns the same non-empty cursor repeatedly:
 	// without this, a stuck token would replay the same GET up to maxListPages
@@ -492,6 +506,13 @@ func (c *Client) findMatch(ctx context.Context, nestedPath string, match func(re
 	for page := 0; page < maxListPages; page++ {
 		params := map[string]string{
 			"q": "search",
+			// Server-side name filter: the adCampaigns/adCampaignGroups `search`
+			// finder supports search.name.values, so only elements whose name equals
+			// the lookup name are returned. This keeps the lookup O(matches), not
+			// O(account). The value is Rest.li-encoded so names containing reserved
+			// characters (parens, commas, colons) can't break out of the List(...)
+			// literal; url.Values.Encode() then applies the outer percent-encoding.
+			"search": "(name:(values:List(" + restliEncode(name) + ")))",
 			// Cursor pagination at LinkedIn-Version 202602 uses `pageSize` (paired
 			// with `pageToken`), NOT the legacy offset param `count`. Sending
 			// `count` here was ignored by the cursor contract, so the page size the
@@ -531,7 +552,14 @@ func (c *Client) findMatch(ctx context.Context, nestedPath string, match func(re
 				raw = el.URN
 			}
 			if raw == "" {
-				continue
+				// An element that SATISFIES the match (same name, right group, not a
+				// skipped status) but carries no usable id under id/$URN/urn PROVES a
+				// same-name resource already exists — the search found it. We just
+				// can't extract its id to return. Reporting a false "" no-match here
+				// would let the find-or-create caller proceed to a create POST and
+				// produce a DUPLICATE, defeating fail-closed idempotency. So this is an
+				// ERROR, not a not-found (mirrors the Twitter client's findByName fix).
+				return "", fmt.Errorf("search %q by name: matched element %q has no usable id (id/$URN/urn all empty) — aborting to avoid creating a duplicate", nestedPath, el.Name)
 			}
 			return trailingID(raw), nil
 		}
@@ -553,6 +581,28 @@ func (c *Client) findMatch(ctx context.Context, nestedPath string, match func(re
 	// Cap reached with a next-page token still present: refuse to report a false
 	// no-match, which would let the caller create a duplicate resource.
 	return "", fmt.Errorf("search %q by name: exceeded %d pages without exhausting results — aborting to avoid creating a duplicate", nestedPath, maxListPages)
+}
+
+// restliReplacer percent-encodes the characters that are structurally
+// significant inside a Rest.li query value — the delimiters of the
+// List(...)/(key:value) grammar. Leaving them raw would let a resource name
+// containing, say, a comma or paren break out of the List(...) literal and
+// corrupt the filter (or, at worst, inject additional criteria). This is the
+// Rest.li "reduced encoding" applied to values embedded in a query string; the
+// surrounding url.Values.Encode() then percent-encodes everything else (spaces,
+// pipes, etc.) for transport.
+var restliReplacer = strings.NewReplacer(
+	"%", "%25", // must be first so the escapes below aren't double-encoded
+	"(", "%28",
+	")", "%29",
+	",", "%2C",
+	":", "%3A",
+	"'", "%27",
+)
+
+// restliEncode returns name safe for embedding inside a Rest.li List(...) value.
+func restliEncode(name string) string {
+	return restliReplacer.Replace(name)
 }
 
 // trailingID returns the segment after the last colon of a URN, or the input
