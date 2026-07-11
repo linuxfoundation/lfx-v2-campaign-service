@@ -122,6 +122,16 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	return true, pending, nil
 }
 
+func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := briefID + "|" + string(platform)
+	if c, ok := r.existing[key]; ok && c.Status == "pending" {
+		delete(r.existing, key)
+	}
+	return nil
+}
+
 func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -629,4 +639,23 @@ func (d *ctxCapturingDispatcher) Dispatch(ctx context.Context, _ *model.Campaign
 	close(d.started)
 	<-d.release
 	return &model.Campaign{PlatformCampaignID: "pc-" + string(p), Status: "active", CampaignName: "n"}, nil
+}
+
+// TestOrchestrator_NoDispatcherDoesNotLeavePendingClaim verifies that when no
+// dispatcher is registered, no pending claim row is left behind (which would
+// permanently block the pair).
+func TestOrchestrator_NoDispatcherDoesNotLeavePendingClaim(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, nil) // no dispatchers
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	waitForTerminal(t, jobs, id)
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	// No claim should have been inserted (dispatcher checked first), so existing
+	// is empty and no pending row blocks the pair.
+	if _, ok := camps.existing["b1|"+string(model.ProviderGoogleAds)]; ok {
+		t.Error("a pending claim row was left behind for a platform with no dispatcher")
+	}
 }

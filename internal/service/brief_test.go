@@ -285,6 +285,9 @@ func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, model.
 func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
+func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider) error {
+	return nil
+}
 func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
 	return c, nil
 }

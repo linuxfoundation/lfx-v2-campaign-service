@@ -46,6 +46,10 @@ type Orchestrator struct {
 	draining   bool
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
+	// sem is a process-wide semaphore bounding concurrent provider dispatches
+	// across ALL jobs (a per-job errgroup limit would let N concurrent jobs each
+	// get maxParallelDispatch slots, leaving total provider calls unbounded).
+	sem chan struct{}
 }
 
 // NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
@@ -55,7 +59,14 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 		dispatchers = map[model.Provider]PlatformDispatcher{}
 	}
 	rootCtx, rootCancel := context.WithCancel(context.Background())
-	return &Orchestrator{campaigns: campaigns, jobs: jobs, dispatchers: dispatchers, rootCtx: rootCtx, rootCancel: rootCancel}
+	return &Orchestrator{
+		campaigns:   campaigns,
+		jobs:        jobs,
+		dispatchers: dispatchers,
+		rootCtx:     rootCtx,
+		rootCancel:  rootCancel,
+		sem:         make(chan struct{}, maxParallelDispatch),
+	}
 }
 
 // Shutdown waits (bounded by ctx) for in-flight dispatch runs to finish, so a
@@ -139,7 +150,6 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 
 	results := make([]platformResult, len(platforms))
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(maxParallelDispatch)
 
 	for i, p := range platforms {
 		i, p := i, p
@@ -147,6 +157,18 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			// A single platform failure must not cancel the others, so we never
 			// return a non-nil error from the group; failures are recorded.
 			res := platformResult{Platform: string(p)}
+
+			// Bound concurrent dispatches process-wide (across all jobs) via the
+			// shared semaphore. Honor cancellation so a draining shutdown doesn't
+			// block here.
+			select {
+			case o.sem <- struct{}{}:
+				defer func() { <-o.sem }()
+			case <-gctx.Done():
+				res.Error = "dispatch cancelled"
+				results[i] = res
+				return nil
+			}
 
 			// Recover from a panic in a dispatcher (or future code here): a panic
 			// in this detached goroutine would otherwise crash the whole process
@@ -199,6 +221,24 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage) platformResult {
 	res := platformResult{Platform: string(p)}
 
+	// Fast path: if this pair already has a completed campaign (upstream id set),
+	// reuse it — idempotent, and valid even if no dispatcher is registered for the
+	// platform anymore.
+	if existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ID, p); lerr == nil && existing.PlatformCampaignID != "" {
+		res.OK = true
+		res.CampaignID = existing.PlatformCampaignID
+		return res
+	}
+
+	// Resolve the dispatcher BEFORE claiming: a "no dispatcher" outcome must not
+	// leave a permanent pending claim that blocks the pair forever (which, with
+	// the currently-empty dispatcher map, would happen on every request).
+	d, ok := o.dispatchers[p]
+	if !ok {
+		res.Error = "no dispatcher registered for platform"
+		return res
+	}
+
 	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
 	// platform). Exactly one worker across all replicas wins (the unique index
 	// arbitrates) — no held connection, no blocking lock.
@@ -222,28 +262,33 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		return res
 	}
 
-	// We own the claim (a 'pending' row now exists). From here, any early return
-	// leaves that pending row behind; it is the recoverable record of an
-	// in-progress/failed dispatch (recovered by the startup scan) and blocks a
-	// concurrent duplicate.
-	d, ok := o.dispatchers[p]
-	if !ok {
-		res.Error = "no dispatcher registered for platform"
-		return res
+	// We own the claim (a 'pending' row now exists). If we fail BEFORE the
+	// upstream campaign is created, release the pending claim so the pair isn't
+	// blocked and can be retried. Once the upstream campaign exists, we do NOT
+	// release (the row is the record of the created campaign / recoverable orphan).
+	releaseClaim := func() {
+		if derr := o.campaigns.DeleteDispatchClaim(ctx, brief.ID, p); derr != nil {
+			slog.ErrorContext(ctx, "failed to release pending dispatch claim", "platform", p, "job_id", jobID, "error", derr)
+		}
 	}
+
 	campaign, derr := d.Dispatch(ctx, brief, p, config)
 	if derr != nil {
-		// Log the raw dispatcher error (it may carry provider request/response
-		// detail or credentials) server-side; store a stable, client-safe message.
+		// Dispatch failed; treat the upstream campaign as not created and release
+		// the claim so the pair can be retried rather than blocked. Log the raw
+		// dispatcher error server-side; store a stable, client-safe message.
 		slog.ErrorContext(ctx, "platform dispatch failed", "platform", p, "job_id", jobID, "error", derr)
+		releaseClaim()
 		res.Error = "platform campaign creation failed"
 		return res
 	}
 	if campaign == nil {
+		releaseClaim()
 		res.Error = "dispatcher returned no campaign"
 		return res
 	}
 	if campaign.PlatformCampaignID == "" {
+		releaseClaim()
 		res.Error = "dispatcher returned no upstream campaign id"
 		return res
 	}

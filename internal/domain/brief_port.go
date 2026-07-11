@@ -55,6 +55,11 @@ type CampaignReader interface {
 	// The placeholder row also survives an upstream-create-then-crash, making the
 	// orphan recoverable (its status stays 'pending').
 	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (claimed bool, row *model.Campaign, err error)
+	// DeleteDispatchClaim removes a still-'pending' claim row for (brief, platform)
+	// so the pair can be retried after a dispatch fails before the upstream
+	// campaign is created. It only deletes rows still in 'pending' status, so it
+	// can never remove a real (created) campaign.
+	DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider) error
 }
 
 // CampaignWriter mutates campaigns.

@@ -50,6 +50,17 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 	return claimed, row, nil
 }
 
+// DeleteDispatchClaim removes a still-'pending' claim row so a failed dispatch
+// doesn't permanently block the (brief, platform) pair. The status guard means
+// it can only ever delete a placeholder claim, never a created campaign.
+func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider) error {
+	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND status='pending'`
+	if _, err := r.db.Exec(ctx, q, briefID, string(platform)); err != nil {
+		return fmt.Errorf("delete dispatch claim: %w", err)
+	}
+	return nil
+}
+
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
 	created_at, updated_at`
