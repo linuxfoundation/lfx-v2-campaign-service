@@ -31,7 +31,14 @@ var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
 // urn:li:digitalmediaAsset:<id>. ImageURN is optional (an empty value is
 // allowed), but a non-empty malformed value is rejected up front — otherwise it
 // reaches LinkedIn only AFTER the campaign group and campaign already exist.
-var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):.+$`)
+//
+// The id portion is constrained to LinkedIn's realistic asset-id charset —
+// alphanumerics plus '-'/'_' (e.g. "C4E10AQabc_1-2") — rather than a loose ".+".
+// A ".+" tail accepted values that would build a malformed thumbnail URN, such as
+// "urn:li:image: " (a trailing space) or a value carrying URL delimiters like
+// "urn:li:image:a/b"; the tightened class rejects both while still matching every
+// legitimate asset id.
+var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):[A-Za-z0-9_-]+$`)
 
 // ResolveGeoTargets resolves location names to GeoTarget URNs using the static
 // geoResolveMap. Mirrors the cached branch of resolveGeoTargets: names are

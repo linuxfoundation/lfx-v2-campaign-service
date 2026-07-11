@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -478,11 +479,12 @@ func TestCreateSponsoredCampaign_SameNameDifferentGroupNotMatched(t *testing.T) 
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	startMs, endMs := testScheduleMs(t, c)
 	id, err := c.createSponsoredCampaign(
 		context.Background(),
 		"123456789", wantGroupID, "Same Name",
 		100, []string{"urn:li:geo:103644278"}, "cloud-native",
-		"2099-01-01", "2099-02-01", false,
+		startMs, endMs, false,
 	)
 	if err != nil {
 		t.Fatalf("createSponsoredCampaign: %v", err)
@@ -519,11 +521,12 @@ func TestCreateSponsoredCampaign_SameNameSameGroupMatched(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	startMs, endMs := testScheduleMs(t, c)
 	id, err := c.createSponsoredCampaign(
 		context.Background(),
 		"123456789", groupID, "Same Name",
 		100, []string{"urn:li:geo:103644278"}, "cloud-native",
-		"2099-01-01", "2099-02-01", false,
+		startMs, endMs, false,
 	)
 	if err != nil {
 		t.Fatalf("createSponsoredCampaign: %v", err)
@@ -1258,5 +1261,263 @@ func TestCreateCampaign_RejectsMalformedImageURNBeforeAnyPOST(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "image URN") {
 		t.Fatalf("err = %v, want malformed image URN rejection", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Eighth-round Copilot findings
+// ---------------------------------------------------------------------------
+
+// TestDoRequest_POST429NotRetried verifies that a POST receiving a 429 is NOT
+// retried: LinkedIn's create endpoints have no idempotency key, so auto-resending
+// a POST after a 429 (whose first attempt may already have succeeded upstream)
+// could create a duplicate. The server must see exactly ONE POST and the call
+// must return the 429 as an error.
+func TestDoRequest_POST429NotRetried(t *testing.T) {
+	var mu sync.Mutex
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			posts++
+			mu.Unlock()
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		http.Error(w, "unexpected", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
+		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"k": "v"}, nil)
+	if err == nil {
+		t.Fatal("expected an error when a POST is 429'd, got nil")
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error should report the 429 status, got: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 1 {
+		t.Errorf("a non-idempotent POST must NOT be retried on 429: server saw %d POSTs, want exactly 1", posts)
+	}
+}
+
+// TestDoRequest_GET429StillRetried is the positive counterpart: a GET that gets a
+// 429 then a 200 IS still retried (safe/idempotent method), preserving the
+// existing rate-limit resilience for read paths.
+func TestDoRequest_GET429StillRetried(t *testing.T) {
+	var mu sync.Mutex
+	var gets int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gets++
+		n := gets
+		mu.Unlock()
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"urn:li:x:99"}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
+		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	out, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil)
+	if err != nil {
+		t.Fatalf("doRequest GET: %v", err)
+	}
+	if out.ID != "urn:li:x:99" {
+		t.Errorf("id = %q, want urn:li:x:99", out.ID)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gets != 2 {
+		t.Errorf("a GET must still retry on 429: server saw %d GETs, want 2 (one 429 + one success)", gets)
+	}
+}
+
+// TestCreateCampaign_SingleScheduleComputation verifies that the schedule millis
+// are computed ONCE up front and threaded through both the campaign-group and the
+// campaign create bodies: their runSchedule.start/end must match a single expected
+// value derived from the fixed clock via validateSchedule, not be independently
+// recomputed (which would drift for a today/past start).
+func TestCreateCampaign_SingleScheduleComputation(t *testing.T) {
+	var mu sync.Mutex
+	var groupSched, campaignSched map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		readSched := func() map[string]any {
+			b, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(b, &body)
+			if rs, ok := body["runSchedule"].(map[string]any); ok {
+				return rs
+			}
+			return nil
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			mu.Lock()
+			groupSched = readSched()
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			mu.Lock()
+			campaignSched = readSched()
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	// The single expected values, derived from the fixed clock the same way
+	// CreateCampaign derives them.
+	wantStart, wantEnd := testScheduleMs(t, c)
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if groupSched == nil || campaignSched == nil {
+		t.Fatalf("runSchedule not captured: group=%v campaign=%v", groupSched, campaignSched)
+	}
+	// JSON numbers decode as float64; compare against the single expected millis.
+	assertSched := func(label string, sched map[string]any, wantStart, wantEnd int64) {
+		gotStart, okS := sched["start"].(float64)
+		gotEnd, okE := sched["end"].(float64)
+		if !okS || !okE {
+			t.Fatalf("%s runSchedule missing numeric start/end: %v", label, sched)
+		}
+		if int64(gotStart) != wantStart {
+			t.Errorf("%s start = %d, want single expected %d", label, int64(gotStart), wantStart)
+		}
+		if int64(gotEnd) != wantEnd {
+			t.Errorf("%s end = %d, want single expected %d", label, int64(gotEnd), wantEnd)
+		}
+	}
+	assertSched("group", groupSched, wantStart, wantEnd)
+	assertSched("campaign", campaignSched, wantStart, wantEnd)
+
+	// And, crucially, the group and campaign must agree with EACH OTHER — a single
+	// source of truth, not two independent computations.
+	if groupSched["start"] != campaignSched["start"] || groupSched["end"] != campaignSched["end"] {
+		t.Errorf("group and campaign schedules diverged: group=%v campaign=%v", groupSched, campaignSched)
+	}
+}
+
+// TestImageURNRE_TightId verifies the tightened image-URN regex rejects a
+// trailing space and URL-delimiter values while still accepting a normal
+// LinkedIn asset id (alphanumeric plus '-'/'_').
+func TestImageURNRE_TightId(t *testing.T) {
+	cases := []struct {
+		urn  string
+		want bool
+	}{
+		{"urn:li:image:C4E10AQabc_1-2", true},
+		{"urn:li:digitalmediaAsset:C4E10AQabc_1-2", true},
+		{"urn:li:image: ", false},     // trailing space
+		{"urn:li:image:a/b", false},   // URL path delimiter
+		{"urn:li:image:a b", false},   // embedded space
+		{"urn:li:image:a?b=c", false}, // query delimiters
+		{"urn:li:image:", false},      // empty id
+		{"not-a-urn", false},
+	}
+	for _, tc := range cases {
+		if got := imageURNRE.MatchString(tc.urn); got != tc.want {
+			t.Errorf("imageURNRE.MatchString(%q) = %v, want %v", tc.urn, got, tc.want)
+		}
+	}
+}
+
+// TestCreateCampaign_RejectsProfileWithNoTargetingBeforeAnyPOST verifies that a
+// targeting profile PRESENT in the runtime config but with empty skills AND
+// groups is rejected up front, before any POST — a misconfigured injected profile
+// must not build a campaign whose only include facet is the hardcoded
+// jobFunctions fallback. The server fails on any POST.
+func TestCreateCampaign_RejectsProfileWithNoTargetingBeforeAnyPOST(t *testing.T) {
+	srv := noPOSTServer(t)
+	defer srv.Close()
+
+	cfg := testConfig()
+	// A present-but-empty profile: no skills, no groups.
+	cfg.TargetingProfiles = []TargetingProfileConfig{
+		{ID: "empty-profile", Label: "Empty"},
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "empty-profile",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("CreateCampaign with an empty targeting profile: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "usable targeting") {
+		t.Errorf("error should mention no usable targeting facets, got: %v", err)
+	}
+}
+
+// TestCreateCampaign_AllowsCustomFallbackWithEmptyTargeting verifies the ONE
+// documented exception: the "custom" profile aliases "cloud-native" and is
+// explicitly allowed to fall back to empty targeting when that profile is absent,
+// so it must NOT be rejected by the no-usable-targeting check. It reaches a
+// successful create against the full-flow mock.
+func TestCreateCampaign_AllowsCustomFallbackWithEmptyTargeting(t *testing.T) {
+	srv := fullFlowServer(t)
+	defer srv.Close()
+
+	// No targeting profiles configured at all; "custom" must still be allowed.
+	cfg := testConfig()
+	cfg.TargetingProfiles = nil
+	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "custom",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("custom fallback with empty targeting must be allowed, got error: %v", err)
 	}
 }

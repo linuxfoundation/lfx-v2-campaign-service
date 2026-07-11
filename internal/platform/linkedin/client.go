@@ -267,6 +267,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 	// Retry-After when present), since CreateCampaign drives several sequential
 	// Marketing API calls (campaign group, campaign, dark post, creative) that
 	// can trip a per-account rate limit mid-flow.
+	//
+	// Only SAFE/idempotent methods (GET, HEAD) are retried on a 429. A non-
+	// idempotent method (POST — every campaign-group/campaign/post/creative
+	// create) is NOT retried: LinkedIn's create endpoints carry no idempotency
+	// key, so a 429 whose first attempt may already have succeeded upstream would
+	// be double-sent on retry, creating a DUPLICATE resource. For those methods
+	// the 429 is returned as an error immediately so the caller does not
+	// double-create.
+	idempotent := method == http.MethodGet || method == http.MethodHead
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		var reqBody *bytes.Reader
 		if encoded != nil {
@@ -291,7 +300,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			return nil, fmt.Errorf("linkedin %s %s: %w", method, path, err)
 		}
 
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax && idempotent {
 			wait := c.parseRetryAfter(resp)
 			// Drain (bounded) before closing so net/http can reuse the connection
 			// for the retry instead of opening a fresh one while already rate-limited.
@@ -538,30 +547,35 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 }
 
 // validateSchedule enforces the start/end date contract ONCE, up front in
-// CreateCampaign, before any idempotency lookup or mutating POST. It mirrors what
-// toMs (plus the endMs<=startMs guard in the create helpers) enforces: both dates
-// must parse as YYYY-MM-DD, the end date must not be in the past, and the end
-// must be strictly after the start.
+// CreateCampaign, before any idempotency lookup or mutating POST, and RETURNS the
+// computed epoch-millisecond start/end so they are the single source of truth
+// threaded through the create helpers. It mirrors what toMs (plus the
+// endMs<=startMs guard) enforces: both dates must parse as YYYY-MM-DD, the end
+// date must not be in the past, and the end must be strictly after the start.
 //
-// This up-front check is necessary because toMs is otherwise only reached AFTER
-// the create helpers' find-existing idempotency lookups: if a same-name group AND
-// campaign already exist, malformed/past/reversed dates would bypass toMs entirely
-// and the flow would still proceed to create dark posts and creatives on a broken
-// schedule. Validating here guarantees the date contract regardless of idempotency
-// state. toMs remains the source of the actual millisecond values sent upstream.
-func (c *Client) validateSchedule(startDate, endDate string) error {
-	startMs, err := c.toMs(startDate, false)
+// This up-front computation is necessary for two reasons. First, toMs is
+// otherwise only reached AFTER the create helpers' find-existing idempotency
+// lookups: if a same-name group AND campaign already exist, malformed/past/
+// reversed dates would bypass toMs entirely and the flow would still proceed to
+// create dark posts and creatives on a broken schedule. Second, toMs is
+// non-deterministic for a today/past start (it returns a moving now+5min), so
+// calling it separately in each helper could yield DIFFERENT start millis than
+// the value this preflight validated. Computing startMs/endMs here ONCE and
+// passing them down guarantees the campaign group and campaign share identical,
+// preflight-validated timestamps.
+func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int64, err error) {
+	startMs, err = c.toMs(startDate, false)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
-	endMs, err := c.toMs(endDate, true)
+	endMs, err = c.toMs(endDate, true)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	if endMs <= startMs {
-		return fmt.Errorf("end date (%s) must be after start date (%s)", endDate, startDate)
+		return 0, 0, fmt.Errorf("end date (%s) must be after start date (%s)", endDate, startDate)
 	}
-	return nil
+	return startMs, endMs, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -585,7 +599,7 @@ func (c *Client) validateSchedule(startDate, endDate string) error {
 // up by the orchestrator's per-(brief, platform) claim (LFXV2-2665), so in normal
 // operation only one dispatch per pair ever runs and this helper never races
 // itself. Callers invoking it outside that claim must serialize on their own.
-func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate, endDate string) (string, error) {
+func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name string, startMs, endMs int64) (string, error) {
 	groupsPath := fmt.Sprintf("adAccounts/%s/adCampaignGroups", accountID)
 
 	existing, err := c.findByName(ctx, groupsPath, name)
@@ -596,18 +610,10 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 		return existing, nil
 	}
 
-	startMs, err := c.toMs(startDate, false)
-	if err != nil {
-		return "", err
-	}
-	endMs, err := c.toMs(endDate, true)
-	if err != nil {
-		return "", err
-	}
-	if endMs <= startMs {
-		return "", fmt.Errorf("end date (%s) must be after start date (%s)", endDate, startDate)
-	}
-
+	// startMs/endMs are the schedule timestamps computed ONCE by validateSchedule
+	// in CreateCampaign; they are the single source of truth so the campaign group
+	// and the campaign share identical, preflight-validated values (toMs is not
+	// re-called here — that would drift for a today/past start).
 	body := map[string]any{
 		"account": accountURN(accountID),
 		"name":    name,
@@ -644,7 +650,7 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 // the authoritative single-flight is the orchestrator's per-(brief, platform)
 // claim (LFXV2-2665), which ensures only one dispatch per pair runs in normal
 // operation. Callers outside that claim must serialize on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile, startDate, endDate string, lifetimeBudget bool) (string, error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile string, startMs, endMs int64, lifetimeBudget bool) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -659,18 +665,10 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		return existing, nil
 	}
 
-	startMs, err := c.toMs(startDate, false)
-	if err != nil {
-		return "", err
-	}
-	endMs, err := c.toMs(endDate, true)
-	if err != nil {
-		return "", err
-	}
-	if endMs <= startMs {
-		return "", fmt.Errorf("end date (%s) must be after start date (%s)", endDate, startDate)
-	}
-
+	// startMs/endMs are the schedule timestamps computed ONCE by validateSchedule
+	// in CreateCampaign and threaded through, so the campaign shares the exact
+	// values used for its campaign group (toMs is not re-called here — that would
+	// drift for a today/past start).
 	targeting, err := c.buildTargetingCriteria(targetingProfile, geoURNs)
 	if err != nil {
 		return "", err
@@ -896,6 +894,17 @@ func stripDashes(text string) string {
 // validatePrerequisites probes runtime-config-dependent lookups before any
 // side-effecting call, so a config gap can't leave orphan LinkedIn artifacts.
 // Mirrors validateLinkedInPrerequisites().
+//
+// Beyond confirming the targeting profile EXISTS, it validates that the resolved
+// profile actually yields usable targeting. RuntimeConfig is injected, so a
+// present-but-misconfigured profile (empty skills AND groups) would otherwise
+// build a campaign whose only include facet is the hardcoded jobFunctions
+// fallback — i.e. no profile-specific audience at all. buildTargetingCriteria
+// puts skills and groups (with jobFunctions) into the include block, so at least
+// one of skills or groups must be non-empty for the profile to contribute real
+// targeting. The one documented exception is the "custom" profile, which aliases
+// "cloud-native" and is explicitly allowed to fall back to empty targeting when
+// that profile is absent (mirrors buildTargetingCriteria's custom branch).
 func (c *Client) validatePrerequisites(accountID, profile string) error {
 	if _, err := c.orgURN(accountID); err != nil {
 		return err
@@ -904,10 +913,17 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 	if profile == "custom" {
 		lookup = "cloud-native"
 	}
-	for _, p := range c.cfg.TargetingProfiles {
-		if p.ID == lookup {
-			return nil
+	for i := range c.cfg.TargetingProfiles {
+		p := &c.cfg.TargetingProfiles[i]
+		if p.ID != lookup {
+			continue
 		}
+		// Profile found: require it to yield at least one usable targeting facet.
+		// "custom" tolerates an empty resolved profile (documented fallback).
+		if len(p.Skills) == 0 && len(p.Groups) == 0 && profile != "custom" {
+			return fmt.Errorf("LinkedIn targeting profile %q has no usable targeting facets (empty skills and groups) — refusing to create a campaign with no profile-specific targeting", profile)
+		}
+		return nil
 	}
 	if profile == "custom" {
 		// custom tolerates a missing cloud-native fallback (empty targeting).
@@ -1120,12 +1136,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Validate the schedule ONCE up front, before the first idempotency lookup or
-	// POST. The create helpers only reach toMs AFTER their find-existing lookups,
-	// so if a same-name group AND campaign already exist, malformed/past/reversed
-	// dates would otherwise bypass toMs entirely and the flow would still proceed
-	// to create dark posts and creatives on a broken schedule. Enforcing it here
-	// guarantees the date contract regardless of idempotency state.
-	if err := c.validateSchedule(in.StartDate, in.EndDate); err != nil {
+	// POST, and capture the computed epoch-millisecond start/end. These values are
+	// the single source of truth threaded into the create helpers so the campaign
+	// group and campaign share identical timestamps: toMs is non-deterministic for
+	// a today/past start (it returns a moving now+5min), so re-computing per helper
+	// could otherwise send DIFFERENT start millis than this preflight validated.
+	// Enforcing here also guarantees the date contract regardless of idempotency
+	// state (the helpers only reached toMs AFTER their find-existing lookups).
+	startMs, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1141,13 +1160,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 
-	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, in.EndDate)
+	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, startMs, endMs)
 	if err != nil {
 		return nil, err
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
 
-	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, in.StartDate, in.EndDate, in.LifetimeBudget)
+	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, startMs, endMs, in.LifetimeBudget)
 	if err != nil {
 		return nil, err
 	}

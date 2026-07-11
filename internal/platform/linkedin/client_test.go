@@ -41,6 +41,19 @@ func fixedClock() func() time.Time {
 	return func() time.Time { return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC) }
 }
 
+// testScheduleMs computes the canonical start/end epoch millis for the standard
+// future test dates (2099-01-01 .. 2099-02-01) using the client's own clock, so
+// helper tests that now take precomputed millis (instead of date strings) derive
+// them the same way CreateCampaign does via validateSchedule.
+func testScheduleMs(t *testing.T, c *Client) (startMs, endMs int64) {
+	t.Helper()
+	startMs, endMs, err := c.validateSchedule("2099-01-01", "2099-02-01")
+	if err != nil {
+		t.Fatalf("validateSchedule: %v", err)
+	}
+	return startMs, endMs
+}
+
 // ---------------------------------------------------------------------------
 // Geo resolution
 // ---------------------------------------------------------------------------
@@ -176,7 +189,8 @@ func TestFindOrCreateCampaignGroup_Idempotent(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	id, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", "2099-02-01")
+	startMs, endMs := testScheduleMs(t, c)
+	id, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", startMs, endMs)
 	if err != nil {
 		t.Fatalf("FindOrCreateCampaignGroup: %v", err)
 	}
@@ -213,7 +227,8 @@ func TestFindOrCreateCampaignGroup_TransientSearchErrorNoCreate(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	_, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", "2099-02-01")
+	startMs, endMs := testScheduleMs(t, c)
+	_, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", startMs, endMs)
 	if err == nil {
 		t.Fatal("expected error from transient 500 during search, got nil")
 	}
@@ -568,8 +583,9 @@ func TestContextCancellation(t *testing.T) {
 // 429 rate-limit retry/backoff
 // ---------------------------------------------------------------------------
 
-// TestDoRequestRetriesOn429 verifies that a 429 followed by a 200 is retried and
-// ultimately succeeds.
+// TestDoRequestRetriesOn429 verifies that a 429 followed by a 200 on a SAFE
+// (idempotent) method — GET — is retried and ultimately succeeds. Non-idempotent
+// methods (POST) are deliberately NOT retried; see TestDoRequest_POST429NotRetried.
 func TestDoRequestRetriesOn429(t *testing.T) {
 	var mu sync.Mutex
 	var calls int
@@ -590,7 +606,7 @@ func TestDoRequestRetriesOn429(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
 		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
-	out, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"k": "v"}, nil)
+	out, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil)
 	if err != nil {
 		t.Fatalf("doRequest: %v", err)
 	}
