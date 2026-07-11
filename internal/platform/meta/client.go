@@ -1052,6 +1052,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
 	}
 
+	// EventName is required: it is the base-name segment of every generated name
+	// (campaign, ad set, creative, ad) and feeds downstream UTM/attribution. Reject
+	// an empty or whitespace-only EventName before any mutating call rather than
+	// creating paid resources with an empty base-name segment (e.g. " - Traffic"),
+	// which would also break attribution.
+	if strings.TrimSpace(in.EventName) == "" {
+		return nil, fmt.Errorf("event name is required: supply a non-empty base name for the campaign name and attribution segments")
+	}
+
 	// Resolve the objective and validate deterministic inputs (placements and the
 	// promoted object) BEFORE the first mutating call, so an input error never
 	// creates a paid campaign.

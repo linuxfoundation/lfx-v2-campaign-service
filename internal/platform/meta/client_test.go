@@ -644,6 +644,39 @@ func TestCreateCampaignRejectsEmptyProjectBeforeAnyPost(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignRejectsEmptyEventNameBeforeAnyPost verifies that an empty or
+// whitespace-only EventName is rejected during pre-flight validation, before any
+// mutating call. EventName is the base-name segment of every generated name and
+// feeds attribution; a blank value would otherwise create paid resources with an
+// empty base-name segment (e.g. " - Traffic") and break attribution.
+func TestCreateCampaignRejectsEmptyEventNameBeforeAnyPost(t *testing.T) {
+	base := func() CampaignInput {
+		return CampaignInput{
+			EventName:       "E",
+			Project:         "tlf",
+			RegistrationURL: "https://x.example.org/e",
+			GeoTargets:      []string{"US"},
+			Budget:          10,
+			StartDate:       "2026-08-01",
+			EndDate:         "2026-08-31",
+			Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		}
+	}
+	for _, eventName := range []string{"", "   ", "\t\n"} {
+		srv := noPostServer(t)
+		c := NewClient(Credentials{AccessToken: "t"},
+			AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+			WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+		in := base()
+		in.EventName = eventName
+		_, err := c.CreateCampaign(context.Background(), in)
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "event name is required") {
+			t.Fatalf("event name %q: err = %v, want it to mention event name is required", eventName, err)
+		}
+	}
+}
+
 func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1246,11 +1279,14 @@ func TestCreateCampaignRejectsOverLimitCopyBeforeAnyPost(t *testing.T) {
 // TestCreateCampaignAtLimitCopyAllowed verifies that copy exactly at the limit
 // (and multi-byte runes counted by rune, not byte) passes validation.
 func TestCreateCampaignAtLimitCopyAllowed(t *testing.T) {
-	posts := 0
+	// posts is written by the httptest handler goroutine and read by the test
+	// goroutine below, so it must be accessed atomically to stay race-free under
+	// `go test -race`.
+	var posts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
-			posts++
+			atomic.AddInt32(&posts, 1)
 			_, _ = io.WriteString(w, `{"id":"x"}`)
 			return
 		}
@@ -1277,7 +1313,7 @@ func TestCreateCampaignAtLimitCopyAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("at-limit copy should be accepted, got err = %v", err)
 	}
-	if posts == 0 {
+	if atomic.LoadInt32(&posts) == 0 {
 		t.Errorf("expected mutating calls to proceed for at-limit copy")
 	}
 }
