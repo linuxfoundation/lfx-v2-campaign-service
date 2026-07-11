@@ -1032,3 +1032,44 @@ func TestCreateCampaign_RejectsNonNumericOrgBeforeAnyPOST(t *testing.T) {
 		t.Fatal("CreateCampaign with malformed orgId: expected error, got nil")
 	}
 }
+
+// TestCreateDarkPost_TrimsWhitespaceInCreativeText verifies createDarkPost sends
+// trimmed intro/headline (matching up-front normalization), not raw values with
+// surrounding whitespace.
+func TestCreateDarkPost_TrimsWhitespaceInCreativeText(t *testing.T) {
+	var mu sync.Mutex
+	var commentary, title string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		b, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(b, &body)
+		mu.Lock()
+		if cm, ok := body["commentary"].(string); ok {
+			commentary = cm
+		}
+		if content, ok := body["content"].(map[string]any); ok {
+			if article, ok := content["article"].(map[string]any); ok {
+				if ti, ok := article["title"].(string); ok {
+					title = ti
+				}
+			}
+		}
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"id":"urn:li:share:301"}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if _, err := c.createDarkPost(context.Background(), "123456789", "  Intro with spaces  ", "  Headline  ", "https://events.example.org/reg", ""); err != nil {
+		t.Fatalf("createDarkPost: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if commentary != "Intro with spaces" {
+		t.Errorf("commentary = %q, want trimmed 'Intro with spaces'", commentary)
+	}
+	if title != "Headline" {
+		t.Errorf("article title = %q, want trimmed 'Headline'", title)
+	}
+}

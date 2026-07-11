@@ -293,6 +293,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
 			wait := c.parseRetryAfter(resp)
+			// Drain (bounded) before closing so net/http can reuse the connection
+			// for the retry instead of opening a fresh one while already rate-limited.
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 			_ = resp.Body.Close()
 			if wait <= 0 {
 				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
@@ -706,14 +709,16 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 		return "", err
 	}
 
-	intro := stripDashes(introText)
+	// Normalize (trim + strip dashes) so the text sent matches what up-front
+	// validation checked; bare stripDashes would leave surrounding whitespace.
+	intro := normalizeCreativeText(introText)
 	// LinkedIn single-image ad intro/primary (commentary) text is capped at 600
 	// characters; the TS source truncates intro_text too. Truncate rune-safely so
 	// a multi-byte rune is never split into invalid UTF-8.
 	if len([]rune(intro)) > 600 {
 		intro = truncateRunes(intro, 600)
 	}
-	head := stripDashes(headline)
+	head := normalizeCreativeText(headline)
 	if len([]rune(head)) > 200 {
 		head = truncateRunes(head, 200)
 	}
