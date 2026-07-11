@@ -5,7 +5,11 @@ package twitter
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // OAuth 1.0a mandates HMAC-SHA1; test mirrors production signing.
+	"encoding/base64"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -44,10 +48,59 @@ func TestGenerateOAuthSignature(t *testing.T) {
 
 	got := generateOAuthSignature(method, baseURL, params, consumerSecret, tokenSecret)
 
-	const want = "0WEKYr+OUMQLH1La8byKezhwJpc="
+	// Golden digest for the RFC 5849 §3.4.1.3.2 normalization: parameters sorted
+	// by their PERCENT-ENCODED name (so "c@"->"c%40" precedes "c2"), then by
+	// encoded value on ties. The normalized base-string param portion is
+	// "a2=r%20b&a3=a&b5=%3D%253D&c%40=&c2=&oauth_...". Any conformant OAuth 1.0a
+	// implementation reproduces this digest.
+	const want = "AYgdIfljDYmBX3Ce9owrBekam04="
 	if got != want {
 		t.Fatalf("signature mismatch:\n got=%q\nwant=%q", got, want)
 	}
+}
+
+// TestOAuthSignatureParamOrdering proves parameters are normalized by their
+// PERCENT-ENCODED name, not the raw key: "c@" encodes to "c%40" and must sort
+// BEFORE "c2" (because '%'=0x25 < '2'=0x32), even though raw '@'=0x40 sorts
+// after '2'. Two signatures whose only difference is the param ordering rule
+// would diverge; here we assert the value is stable and matches an independent
+// encode-then-sort computation over the same params.
+func TestOAuthSignatureParamOrdering(t *testing.T) {
+	// Sanity-check the byte-ordering claim itself.
+	if percentEncode("c@") >= percentEncode("c2") {
+		t.Fatalf("expected percentEncode(c@)=%q to sort before percentEncode(c2)=%q",
+			percentEncode("c@"), percentEncode("c2"))
+	}
+
+	params := map[string]string{
+		"c@": "1",
+		"c2": "2",
+	}
+	// Reference: encode each pair, sort the encoded pairs, join with '&'. This is
+	// exactly the normalization generateOAuthSignature must perform.
+	wantParamString := "c%40=1&c2=2"
+	if strings.Compare("c%40=1", "c2=2") >= 0 {
+		t.Fatalf("test premise wrong: %q should sort before %q", "c%40=1", "c2=2")
+	}
+
+	// If the implementation sorted by raw key, "c2" would precede "c@" and the
+	// signature would differ. Recompute the expected signature with a known-good
+	// local reference and compare.
+	got := generateOAuthSignature("POST", "https://ads-api.x.com/12/accounts/acc1", params, "cs", "ts")
+	want := referenceSignature("POST", "https://ads-api.x.com/12/accounts/acc1", wantParamString, "cs", "ts")
+	if got != want {
+		t.Fatalf("signature not built from percent-encoded-name ordering:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+// referenceSignature is an independent HMAC-SHA1/base64 over the OAuth 1.0a
+// base string, given an already-normalized param string, used to pin ordering.
+func referenceSignature(method, u, paramString, consumerSecret, tokenSecret string) string {
+	base := strings.ToUpper(method) + "&" + percentEncode(u) + "&" + percentEncode(paramString)
+	key := percentEncode(consumerSecret) + "&" + percentEncode(tokenSecret)
+	mac := hmac.New(sha1.New, []byte(key))
+	mac.Write([]byte(base))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // TestBuildOAuthHeaderDeterministic verifies the full Authorization header with
@@ -348,20 +401,46 @@ func TestRequestSetsAuthHeader(t *testing.T) {
 func TestCreateCampaignValidation(t *testing.T) {
 	c := NewClient(Credentials{}, AccountConfig{})
 	cases := []CampaignInput{
-		{BudgetUsd: 0, StartDate: "2026-01-01", EndDate: "2026-01-02"},
-		{BudgetUsd: 100, StartDate: "bad", EndDate: "2026-01-02"},
-		{BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "bad"},
-		{BudgetUsd: 100, StartDate: "2026-01-02", EndDate: "2026-01-01"},
+		{EventName: "E", BudgetUsd: 0, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "E", BudgetUsd: 100, StartDate: "bad", EndDate: "2026-01-02"},
+		{EventName: "E", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "bad"},
+		{EventName: "E", BudgetUsd: 100, StartDate: "2026-01-02", EndDate: "2026-01-01"},
 		// Well-shaped but impossible calendar dates must be rejected before any
 		// mutating call (the regex alone would let these through).
-		{BudgetUsd: 100, StartDate: "2026-99-99", EndDate: "2026-12-31"},
-		{BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-99-99"},
-		{BudgetUsd: 100, StartDate: "2026-02-30", EndDate: "2026-12-31"},
+		{EventName: "E", BudgetUsd: 100, StartDate: "2026-99-99", EndDate: "2026-12-31"},
+		{EventName: "E", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-99-99"},
+		{EventName: "E", BudgetUsd: 100, StartDate: "2026-02-30", EndDate: "2026-12-31"},
+		// Empty / whitespace-only event name.
+		{EventName: "", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "   ", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		// Over-length event name.
+		{EventName: strings.Repeat("x", maxEventNameLen+1), BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		// Budget above the int64 micro-unit overflow cap.
+		{EventName: "E", BudgetUsd: maxBudgetUsd + 1, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		// Positive-but-rounds-to-zero micro-units (< half a micro-unit).
+		{EventName: "E", BudgetUsd: 1e-9, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		// NaN / Inf budgets.
+		{EventName: "E", BudgetUsd: math.NaN(), StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "E", BudgetUsd: math.Inf(1), StartDate: "2026-01-01", EndDate: "2026-01-02"},
 	}
 	for i, in := range cases {
 		if _, err := c.CreateCampaign(context.Background(), in); err == nil {
 			t.Errorf("case %d: expected validation error", i)
 		}
+	}
+}
+
+// TestBudgetRoundToZeroBoundary verifies the round-to-zero guard: a budget just
+// below half a micro-unit rounds to 0 and is rejected, while the smallest value
+// that rounds to 1 micro-unit is accepted by the conversion.
+func TestBudgetRoundToZeroBoundary(t *testing.T) {
+	// 0.49e-6 USD -> 0.49 micro -> rounds to 0.
+	if got := toMicroCurrency(0.49e-6); got != 0 {
+		t.Fatalf("toMicroCurrency(0.49e-6) = %d, want 0", got)
+	}
+	// 0.5e-6 USD -> 0.5 micro -> rounds to 1 (still positive, accepted).
+	if got := toMicroCurrency(0.5e-6); got <= 0 {
+		t.Fatalf("toMicroCurrency(0.5e-6) = %d, want > 0", got)
 	}
 }
 
@@ -622,6 +701,100 @@ func TestCreateSendsQueryParams(t *testing.T) {
 	}
 	if strings.Contains(lineItemCT, "application/json") {
 		t.Errorf("line item create should not set JSON content-type, got %q", lineItemCT)
+	}
+}
+
+// TestRetryResetExceedsCapAborts verifies that when the server declares a
+// rate-limit reset longer than maxRetryWait, the client aborts immediately with
+// the rate-limit error rather than sleeping (burning retries or hanging).
+func TestRetryResetExceedsCapAborts(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		// Declare a reset far beyond the cap.
+		w.Header().Set("Retry-After", strconv.Itoa(int(maxRetryWait/time.Second)+3600))
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	start := time.Now()
+	_, err := c.request(context.Background(), http.MethodGet, "campaigns")
+	if err == nil {
+		t.Fatal("expected error when reset exceeds max wait")
+	}
+	// Must have aborted on the first 429 without sleeping or retrying.
+	if calls != 1 {
+		t.Errorf("expected 1 call (immediate abort), got %d", calls)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("expected immediate return, took %v", elapsed)
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestPromotedTweetMissingIDWarns verifies a 2xx promoted-tweet response with no
+// data.id is surfaced as a warning step (not silent success, not fatal): the
+// flow returns nil error, PromotedTweetID is empty, and a step records the gap.
+func TestPromotedTweetMissingIDWarns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			// 2xx but the array is empty -> no id.
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign should not be fatal on missing promoted-tweet id: %v", err)
+	}
+	if res.PromotedTweetID != "" {
+		t.Errorf("expected empty PromotedTweetID, got %q", res.PromotedTweetID)
+	}
+	var found bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "no promoted-tweet ID") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning step for missing promoted-tweet id, steps: %v", res.Steps)
 	}
 }
 

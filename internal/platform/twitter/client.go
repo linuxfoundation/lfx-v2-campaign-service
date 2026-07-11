@@ -45,8 +45,21 @@ const (
 	requestTimeout = 30 * time.Second
 	// writeDelay mirrors TWITTER_API_WRITE_DELAY_MS (1 write req/sec).
 	writeDelay = 1 * time.Second
+	// maxBudgetUsd caps the budget well below the int64 micro-unit overflow
+	// threshold (int64 max / 1e6 ≈ 9.2e12) so the ×1e6 conversion in
+	// toMicroCurrency can never wrap to a negative value. Mirrors the reddit
+	// client's redditMaxBudgetUSD.
+	maxBudgetUsd = 1_000_000_000.0
+	// maxEventNameLen bounds the event name folded into campaign / line-item
+	// names, guarding against unbounded input producing oversized API payloads.
+	maxEventNameLen = 200
 	// retryMax mirrors TWITTER_API_RETRY_MAX.
 	retryMax = 3
+	// maxRetryWait caps how long a single 429 backoff will sleep. X rate-limit
+	// windows can be far longer than a request is willing to wait; if the
+	// server-declared reset exceeds this cap we abort with the rate-limit error
+	// instead of sleeping pointlessly (and a hostile huge reset can't hang us).
+	maxRetryWait = 90 * time.Second
 )
 
 // ---------------------------------------------------------------------------
@@ -138,16 +151,16 @@ func percentEncode(s string) string {
 // generateOAuthSignature computes the HMAC-SHA1 base64 signature over the
 // OAuth 1.0a signature base string. Mirrors generateOAuthSignature in the TS.
 func generateOAuthSignature(method, u string, params map[string]string, consumerSecret, tokenSecret string) string {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
+	// OAuth 1.0a (RFC 5849 §3.4.1.3.2) normalizes parameters by their
+	// PERCENT-ENCODED name, breaking ties on the percent-encoded value — not by
+	// the raw key. Sorting raw keys is wrong: e.g. "c@" encodes to "c%40" and
+	// must sort BEFORE "c2" because '%' (0x25) < '2' (0x32), yet raw '@' (0x40)
+	// sorts AFTER '2'. Encode first, then sort the encoded name=value pairs.
+	parts := make([]string, 0, len(params))
+	for k, v := range params {
+		parts = append(parts, percentEncode(k)+"="+percentEncode(v))
 	}
-	sort.Strings(keys)
-
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, percentEncode(k)+"="+percentEncode(params[k]))
-	}
+	sort.Strings(parts)
 	paramString := strings.Join(parts, "&")
 
 	baseString := strings.ToUpper(method) + "&" + percentEncode(u) + "&" + percentEncode(paramString)
@@ -295,8 +308,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 			waitDur := c.parseRetryAfter(resp)
 			_ = resp.Body.Close()
 			if waitDur > 0 {
-				if waitDur > 60*time.Second {
-					waitDur = 60 * time.Second
+				// The server declared a reset time (Retry-After delay or
+				// X-Rate-Limit-Reset epoch). Honor it rather than clamping to a
+				// small value and burning every retry while still limited. If the
+				// wait exceeds our cap, sleeping would consume a retry without any
+				// chance of the window clearing, so abort with the rate-limit error.
+				if waitDur > maxRetryWait {
+					return nil, fmt.Errorf("x ads api %s %s -> 429: rate-limit reset in %s exceeds max wait %s; aborting", method, path, waitDur.Round(time.Second), maxRetryWait)
 				}
 			} else {
 				waitDur = writeDelay * time.Duration(1<<uint(attempt))
@@ -573,9 +591,28 @@ func validateDate(label, date string) error {
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	steps := []string{}
 
-	// Validate.
-	if math.IsNaN(in.BudgetUsd) || math.IsInf(in.BudgetUsd, 0) || in.BudgetUsd <= 0 {
+	// Validate EventName before any mutating call: an empty/whitespace value
+	// would produce identical generic campaign & line-item names for every such
+	// request, letting the find-by-name lookup silently reuse an unrelated
+	// campaign. Trim and normalize it up front so every downstream builder sees
+	// the cleaned value.
+	in.EventName = strings.TrimSpace(in.EventName)
+	if in.EventName == "" {
+		return nil, fmt.Errorf("invalid event name: must not be empty")
+	}
+	if len(in.EventName) > maxEventNameLen {
+		return nil, fmt.Errorf("invalid event name: exceeds %d characters", maxEventNameLen)
+	}
+
+	// Validate budget. Reject NaN/Inf/non-positive, reject values above the
+	// int64 micro-unit overflow cap, and reject anything that rounds to zero (or
+	// negative) micro-units — such a value passes a naive >0 check but would send
+	// a zero/negative daily_budget_amount_local_micro.
+	if math.IsNaN(in.BudgetUsd) || math.IsInf(in.BudgetUsd, 0) || in.BudgetUsd <= 0 || in.BudgetUsd > maxBudgetUsd {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
+	}
+	if toMicroCurrency(in.BudgetUsd) <= 0 {
+		return nil, fmt.Errorf("invalid budget: %g rounds to zero micro-units", in.BudgetUsd)
 	}
 	if err := validateDate("start", in.StartDate); err != nil {
 		return nil, err
@@ -677,6 +714,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			promotedTweetID = extractPromotedTweetID(resp)
 			if promotedTweetID != "" {
 				steps = append(steps, fmt.Sprintf("Promoted tweet created: %s (tweet: %s)", promotedTweetID, in.TweetID))
+			} else {
+				// A 2xx response missing data.id is a malformed success: don't
+				// silently treat it as done. Surface a warning step so the gap is
+				// visible without making the whole flow fatal.
+				steps = append(steps, fmt.Sprintf("Promoted tweet creation returned no promoted-tweet ID (malformed response, tweet: %s) — add it manually in X Ads Manager", in.TweetID))
 			}
 		}
 	} else {
