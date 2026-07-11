@@ -602,3 +602,156 @@ func TestCreateCampaign_RejectsWhitespaceEventNameBeforeAnyPOST(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Fifth-round Copilot findings
+// ---------------------------------------------------------------------------
+
+// captureResourceNamesServer returns an httptest.Server that records the `name`
+// field of the created campaign-group and campaign POST bodies into the supplied
+// pointers, guarded by mu. GETs return an empty element set (nothing found, so a
+// create is always attempted). The returned server drives a full, successful
+// CreateCampaign so the resource names built from the input can be asserted.
+func captureResourceNamesServer(t *testing.T, mu *sync.Mutex, groupName, campaignName *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		readName := func() string {
+			b, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(b, &body)
+			if n, ok := body["name"].(string); ok {
+				return n
+			}
+			return ""
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			mu.Lock()
+			*groupName = readName()
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			mu.Lock()
+			*campaignName = readName()
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+}
+
+// TestCreateCampaign_TrimsEventNameInResourceNames verifies that an EventName
+// with surrounding whitespace passes validation AND produces campaign-group and
+// campaign names with NO leading/trailing whitespace — the trimmed value must be
+// the single source of truth for all resource names and idempotency keys, not
+// the original untrimmed field.
+func TestCreateCampaign_TrimsEventNameInResourceNames(t *testing.T) {
+	var mu sync.Mutex
+	var groupName, campaignName string
+	srv := captureResourceNamesServer(t, &mu, &groupName, &campaignName)
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "  KubeCon  ", // surrounding whitespace
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign with whitespace-padded EventName: %v", err)
+	}
+
+	mu.Lock()
+	gotGroup, gotCampaign := groupName, campaignName
+	mu.Unlock()
+
+	if gotGroup == "" || gotCampaign == "" {
+		t.Fatalf("resource names were not captured: group=%q campaign=%q", gotGroup, gotCampaign)
+	}
+	if gotGroup != strings.TrimSpace(gotGroup) {
+		t.Errorf("campaign-group name has surrounding whitespace: %q", gotGroup)
+	}
+	if gotCampaign != strings.TrimSpace(gotCampaign) {
+		t.Errorf("campaign name has surrounding whitespace: %q", gotCampaign)
+	}
+	// The trimmed event name must be embedded exactly, with no padding around it.
+	if gotGroup != "Events | KubeCon | TLF" {
+		t.Errorf("group name = %q, want %q", gotGroup, "Events | KubeCon | TLF")
+	}
+	if !strings.Contains(gotCampaign, "| KubeCon |") {
+		t.Errorf("campaign name must embed the trimmed event name, got %q", gotCampaign)
+	}
+	if strings.Contains(gotCampaign, "KubeCon  ") || strings.Contains(gotCampaign, "  KubeCon") {
+		t.Errorf("campaign name embeds untrimmed event name, got %q", gotCampaign)
+	}
+}
+
+// TestCreateCampaign_TrimsProjectInResourceNames verifies that Project is trimmed
+// once and used as the single source of truth: a whitespace-only Project behaves
+// exactly like an empty one (defaults to "TLF"), and a padded Project like
+// "  cncf  " is embedded trimmed in the resource names.
+func TestCreateCampaign_TrimsProjectInResourceNames(t *testing.T) {
+	cases := []struct {
+		name        string
+		project     string
+		wantProject string
+	}{
+		{"whitespace-only defaults to TLF", "   ", "TLF"},
+		{"empty defaults to TLF", "", "TLF"},
+		{"padded project trimmed", "  cncf  ", "cncf"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var groupName, campaignName string
+			srv := captureResourceNamesServer(t, &mu, &groupName, &campaignName)
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:        "KubeCon",
+				Project:          tc.project,
+				RegistrationURL:  "https://events.example.org/reg",
+				BudgetUSD:        100,
+				StartDate:        "2099-01-01",
+				EndDate:          "2099-02-01",
+				TargetingProfile: "cloud-native",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+			})
+			if err != nil {
+				t.Fatalf("CreateCampaign with Project=%q: %v", tc.project, err)
+			}
+
+			mu.Lock()
+			gotGroup, gotCampaign := groupName, campaignName
+			mu.Unlock()
+
+			wantGroup := "Events | KubeCon | " + tc.wantProject
+			if gotGroup != wantGroup {
+				t.Errorf("group name = %q, want %q", gotGroup, wantGroup)
+			}
+			if !strings.HasSuffix(gotCampaign, "| "+tc.wantProject+" | MoFU") {
+				t.Errorf("campaign name must use trimmed/defaulted project %q, got %q", tc.wantProject, gotCampaign)
+			}
+			if gotCampaign != strings.TrimSpace(gotCampaign) {
+				t.Errorf("campaign name has surrounding whitespace: %q", gotCampaign)
+			}
+		})
+	}
+}

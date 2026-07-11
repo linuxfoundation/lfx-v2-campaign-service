@@ -911,7 +911,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// campaign name, so an empty or whitespace-only value collapses every campaign
 	// to the same idempotency key (e.g. "Events |  | TLF"). Reject it up front,
 	// before any POST that would create a permanent, mislabeled resource.
-	if strings.TrimSpace(in.EventName) == "" {
+	//
+	// Trim ONCE here and use the trimmed value everywhere downstream (group name,
+	// campaign name, ad name / idempotency keys): validating a trimmed value but
+	// then building resources from the original untrimmed field let a value like
+	// "  KubeCon  " pass validation yet produce resources with leading/trailing
+	// whitespace and an inconsistent idempotency key.
+	eventName := strings.TrimSpace(in.EventName)
+	if eventName == "" {
 		return nil, fmt.Errorf("event name is required and must not be empty or whitespace-only")
 	}
 
@@ -947,7 +954,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("at least one creative variant is required")
 	}
 
-	project := in.Project
+	// Trim Project ONCE and use the trimmed value everywhere. Checking only the
+	// exact empty string let a whitespace-only Project like "   " slip past the
+	// default and be embedded verbatim in the group/campaign names; a padded
+	// project like "  cncf  " would likewise carry its whitespace into resource
+	// names. Default to "TLF" when empty after trimming.
+	project := strings.TrimSpace(in.Project)
 	if project == "" {
 		project = "TLF"
 	}
@@ -970,14 +982,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("no usable geo targets: all supplied geos resolved to nothing — refusing to create a campaign with empty geo targeting")
 	}
 
-	groupName := fmt.Sprintf("Events | %s | %s", in.EventName, project)
+	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)
 	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, err
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
 
-	campaignName := fmt.Sprintf("Events | %s | LinkedIn | Conversions | Prospecting | Static | %s | MoFU", in.EventName, project)
+	campaignName := fmt.Sprintf("Events | %s | LinkedIn | Conversions | Prospecting | Static | %s | MoFU", eventName, project)
 	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, in.StartDate, in.EndDate, in.LifetimeBudget)
 	if err != nil {
 		return nil, err
@@ -994,7 +1006,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		steps = append(steps, fmt.Sprintf("Dark post variant-%d: %s", i+1, shareURN))
 
-		adName := fmt.Sprintf("%s | variant-%d", in.EventName, i+1)
+		adName := fmt.Sprintf("%s | variant-%d", eventName, i+1)
 		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName)
 		if err != nil {
 			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
