@@ -6,6 +6,8 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +24,12 @@ import (
 func fixedMetaClock() func() time.Time {
 	return func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) }
 }
+
+// roundTripFunc adapts a function to http.RoundTripper for tests that need to
+// inject transport-level errors (e.g. a canceled context) deterministically.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // ---------------------------------------------------------------------------
 // Objective -> parameter mapping
@@ -462,7 +470,7 @@ func TestCreateCampaignAllGeosRegulated(t *testing.T) {
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "require manual compliance") {
+	if err == nil || !strings.Contains(err.Error(), "supply at least one eligible") {
 		t.Fatalf("expected regulated-geo error, got %v", err)
 	}
 }
@@ -617,6 +625,58 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	}
 	if !anyStepContains(res.Steps, "Ad 2 created") {
 		t.Errorf("expected an 'Ad 2 created' step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignContextCancelDuringAdsIsFatal verifies that a canceled (or
+// timed-out) context observed while creating a variant ad is FATAL: CreateCampaign
+// must return an error rather than reporting a "successful" result after its
+// context died. Genuine per-creative API failures stay non-fatal (covered above).
+func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
+	// A RoundTripper that succeeds for the account GET, campaign, and ad-set calls
+	// but returns a context.Canceled error for the first /adcreatives call — the
+	// same error c.httpClient.Do surfaces when the caller's context is canceled
+	// mid-flight. Deterministic and non-blocking (no server goroutine to drain).
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/adcreatives") {
+			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
+		}
+		body := `{"id":"x"}`
+		switch {
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"id":"camp_1"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"adset_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatalf("expected error after context cancellation, got success: %+v", res)
+	}
+	if res != nil {
+		t.Errorf("result must be nil on context cancellation, got %+v", res)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want it to wrap context.Canceled", err)
 	}
 }
 
@@ -1185,8 +1245,8 @@ func TestAdSetStartTimeTodayUsesBuffer(t *testing.T) {
 }
 
 // TestValidateGeoTargetsExcludesSanctioned verifies Meta-ineligible countries
-// (comprehensively sanctioned, plus RU per Meta's ads policy) are dropped even
-// though they're valid ISO codes.
+// (comprehensively sanctioned CU/IR/KP, plus RU and SY excluded on Meta ads-
+// eligibility grounds) are dropped even though they're valid ISO codes.
 func TestValidateGeoTargetsExcludesSanctioned(t *testing.T) {
 	got := validateGeoTargets([]string{"US", "IR", "KP", "CU", "SY", "RU", "DE"})
 	for _, bad := range []string{"IR", "KP", "CU", "SY", "RU"} {

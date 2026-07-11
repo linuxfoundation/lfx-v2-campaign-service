@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -497,8 +498,8 @@ func validateGeoTargets(geoTargets []string) []string {
 	for _, g := range geoTargets {
 		up := strings.ToUpper(strings.TrimSpace(g))
 		// Check shape and ISO 3166-1 alpha-2 membership (so a well-shaped but bogus
-		// code like "XX"/"ZZ" is dropped), and exclude comprehensively-sanctioned
-		// countries Meta does not allow as ad targets — ISO membership is not the
+		// code like "XX"/"ZZ" is dropped), and exclude countries Meta does not allow
+		// as ad targets (see metaIneligibleCountries) — ISO membership is not the
 		// same as Meta targeting eligibility.
 		if geoCodeRE.MatchString(up) && iso3166Alpha2[up] && !metaIneligibleCountries[up] {
 			valid = append(valid, up)
@@ -512,15 +513,18 @@ func validateGeoTargets(geoTargets []string) []string {
 
 // metaIneligibleCountries are countries Meta does not permit as ad targets; ISO
 // 3166-1 membership alone would otherwise let them through and be rejected only
-// after the campaign is created. Most are comprehensively (OFAC) sanctioned, but
-// RU is excluded specifically because Meta's ads policy bans targeting Russia —
-// it is not part of the comprehensively-sanctioned set.
+// after the campaign is created. CU/IR/KP remain under active comprehensive OFAC
+// sanctions programs. RU and SY are excluded on Meta ads-policy / targeting-
+// eligibility grounds rather than comprehensive OFAC sanctions: Meta's ads policy
+// bans targeting Russia, and SY is kept excluded pending confirmation of Meta's
+// current targeting eligibility (OFAC terminated its comprehensive Syria program
+// effective 2025-07-01, so that is no longer the basis).
 var metaIneligibleCountries = map[string]bool{
 	"CU": true, // Cuba (comprehensively sanctioned)
 	"IR": true, // Iran (comprehensively sanctioned)
 	"KP": true, // North Korea (comprehensively sanctioned)
-	"SY": true, // Syria (comprehensively sanctioned)
 	"RU": true, // Russia (Meta ads policy prohibits targeting; not OFAC-comprehensive)
+	"SY": true, // Syria (Meta ads-eligibility caution; not OFAC-comprehensive as of 2025-07-01)
 }
 
 // iso3166Alpha2 is the set of assigned ISO 3166-1 alpha-2 country codes, used to
@@ -993,7 +997,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 	if len(geoCountries) == 0 {
-		return nil, fmt.Errorf("meta campaign skipped: selected geo targets (%s) require manual compliance declaration in Meta Ads Manager. Add at least one non-regulated country or complete the declaration first", strings.Join(skippedGeos, ", "))
+		return nil, fmt.Errorf("meta campaign skipped: all selected geo targets (%s) are regulated and excluded from API targeting; supply at least one eligible (non-regulated) geo target", strings.Join(skippedGeos, ", "))
 	}
 	if len(skippedGeos) > 0 {
 		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", strings.Join(skippedGeos, ", ")))
@@ -1072,6 +1076,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 		adID, creativeID, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i)
 		if verr != nil {
+			// A canceled or timed-out context is fatal: continuing would let us
+			// report a "successful" campaign after the caller's context died.
+			// Genuine per-creative API failures remain non-fatal (skip + continue).
+			if errors.Is(verr, context.Canceled) || errors.Is(verr, context.DeadlineExceeded) {
+				return nil, fmt.Errorf("meta campaign aborted while creating ad %d: %w", i+1, verr)
+			}
 			steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, truncateErr(verr, 300)))
 			continue
 		}
