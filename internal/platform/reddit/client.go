@@ -1078,7 +1078,15 @@ func extractRedditPostID(urlOrID string) (string, error) {
 	// If it looks like a URL, validate the HOST is genuinely Reddit before
 	// trusting anything in the path.
 	if strings.Contains(trimmed, "/") || strings.Contains(trimmed, ".") {
-		if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
+		// Normalize a scheme-less URL (e.g. "reddit.com/r/go/comments/abc123" or
+		// "redd.it/abc123"): url.Parse puts a scheme-less authority in Path with an
+		// empty Host, which the host check below would reject. The TS extractor
+		// accepts both forms, so prepend https:// when no scheme is present.
+		parseTarget := trimmed
+		if !strings.Contains(trimmed, "://") {
+			parseTarget = "https://" + trimmed
+		}
+		if u, err := url.Parse(parseTarget); err == nil && u.Host != "" {
 			if !isRedditHost(u.Hostname()) {
 				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
 			}

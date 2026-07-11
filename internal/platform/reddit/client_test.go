@@ -1593,3 +1593,31 @@ func TestRefreshToken_FailureSharedNoSerialReLead(t *testing.T) {
 		t.Errorf("token endpoint hit %d times, want exactly 1 (failure must be shared, not re-led per follower)", got)
 	}
 }
+
+// TestExtractRedditPostID_SchemeLessURL verifies scheme-less Reddit links (as the
+// TS extractor accepts) resolve: url.Parse would put a scheme-less authority in
+// Path with an empty Host, so the client prepends https:// before parsing.
+func TestExtractRedditPostID_SchemeLessURL(t *testing.T) {
+	ok := map[string]string{
+		"reddit.com/r/golang/comments/abc123":         "t3_abc123",
+		"www.reddit.com/r/golang/comments/abc123/tit": "t3_abc123",
+		"redd.it/abc123":                   "t3_abc123",
+		"reddit.com/comments/abc123?utm=x": "t3_abc123",
+	}
+	for in, want := range ok {
+		got, err := extractRedditPostID(in)
+		if err != nil {
+			t.Errorf("extractRedditPostID(%q) err = %v, want %q", in, err, want)
+			continue
+		}
+		if got != want {
+			t.Errorf("extractRedditPostID(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// A scheme-less NON-Reddit host must still be rejected (no SSRF via prepend).
+	for _, bad := range []string{"evil.com/r/x/comments/abc123", "notreddit.com/abc123"} {
+		if _, err := extractRedditPostID(bad); err == nil {
+			t.Errorf("extractRedditPostID(%q) = nil err, want rejection of non-Reddit host", bad)
+		}
+	}
+}
