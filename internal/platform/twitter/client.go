@@ -627,7 +627,10 @@ func validateDate(label, date string) error {
 
 // CreateCampaign runs the campaign -> line_item -> promoted_tweet creation
 // flow, reusing existing entities by name for idempotency. It mirrors
-// executeTwitterCampaignCreation in the TS. Everything is created PAUSED.
+// executeTwitterCampaignCreation in the TS. The campaign and line item are
+// created PAUSED (entity_status=PAUSED); the promoted-tweet association is
+// created ACTIVE by the API (the endpoint does not accept entity_status), but
+// the paused line item gates delivery so nothing serves until it is enabled.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	steps := []string{}
 
@@ -648,8 +651,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// int64 micro-unit overflow cap, and reject anything that rounds to zero (or
 	// negative) micro-units — such a value passes a naive >0 check but would send
 	// a zero/negative daily_budget_amount_local_micro.
-	if math.IsNaN(in.BudgetUsd) || math.IsInf(in.BudgetUsd, 0) || in.BudgetUsd <= 0 || in.BudgetUsd > maxBudgetUsd {
+	if math.IsNaN(in.BudgetUsd) || math.IsInf(in.BudgetUsd, 0) || in.BudgetUsd <= 0 {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
+	}
+	if in.BudgetUsd > maxBudgetUsd {
+		return nil, fmt.Errorf("invalid budget: must be at most %v", maxBudgetUsd)
 	}
 	if toMicroCurrency(in.BudgetUsd) <= 0 {
 		return nil, fmt.Errorf("invalid budget: %g rounds to zero micro-units", in.BudgetUsd)
@@ -702,12 +708,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Reusing existing campaign: %s", campaignID))
 	} else {
 		// X Ads v12 create endpoints take parameters as URL query params (not a
-		// JSON body), and use entity_status=PAUSED (not paused=true).
+		// JSON body), and use entity_status=PAUSED (not paused=true). Note: the
+		// campaign endpoint does NOT accept start_time/end_time in v12 — flight
+		// dates belong on the line item (sent below); including them here gets the
+		// campaign create rejected.
 		campaignParams := map[string]string{
 			"name":                            campaignName,
 			"funding_instrument_id":           c.account.FundingInstrumentID,
-			"start_time":                      toIso8601Utc(in.StartDate),
-			"end_time":                        toIso8601Utc(in.EndDate),
 			"daily_budget_amount_local_micro": strconv.FormatInt(toMicroCurrency(in.BudgetUsd), 10),
 			"entity_status":                   "PAUSED",
 		}
@@ -768,6 +775,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err := sleepCtx(ctx, writeDelay); err != nil {
 			return nil, err
 		}
+		// The promoted_tweets endpoint does not accept entity_status; the API
+		// creates the association ACTIVE. Delivery is still gated by the PAUSED
+		// line item above, so we intentionally send only the association params.
 		resp, err := c.createRequest(ctx, "promoted_tweets", map[string]string{
 			"line_item_id": lineItemID,
 			"tweet_ids":    in.TweetID,
@@ -777,7 +787,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		} else {
 			promotedTweetID = extractPromotedTweetID(resp)
 			if promotedTweetID != "" {
-				steps = append(steps, fmt.Sprintf("Promoted tweet created: %s (tweet: %s)", promotedTweetID, in.TweetID))
+				steps = append(steps, fmt.Sprintf("Promoted tweet created: %s (tweet: %s; created ACTIVE by the API but held from serving by the PAUSED line item)", promotedTweetID, in.TweetID))
 			} else {
 				// A 2xx response missing data.id is a malformed success: don't
 				// silently treat it as done. Surface a warning step so the gap is

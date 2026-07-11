@@ -535,6 +535,44 @@ func TestCreateCampaignValidation(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignBudgetErrorMessages verifies each budget-rejection branch
+// returns a distinct, actionable message. In particular, an over-cap budget is
+// positive, so it must NOT be reported as "must be a positive number" — the
+// caller needs to know the actual limit.
+func TestCreateCampaignBudgetErrorMessages(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{})
+	base := CampaignInput{EventName: "E", StartDate: "2026-01-01", EndDate: "2026-01-02"}
+
+	cases := []struct {
+		name   string
+		budget float64
+		want   string
+	}{
+		{"over cap", maxBudgetUsd + 1, "must be at most"},
+		{"zero", 0, "must be a positive number"},
+		{"negative", -5, "must be a positive number"},
+		{"rounds to zero", 1e-9, "rounds to zero"},
+	}
+	for _, tc := range cases {
+		in := base
+		in.BudgetUsd = tc.budget
+		_, err := c.CreateCampaign(context.Background(), in)
+		if err == nil {
+			t.Fatalf("%s: expected error", tc.name)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error = %q, want substring %q", tc.name, err.Error(), tc.want)
+		}
+	}
+	// Over-cap must not be mislabeled as non-positive.
+	in := base
+	in.BudgetUsd = maxBudgetUsd + 1
+	if _, err := c.CreateCampaign(context.Background(), in); err == nil ||
+		strings.Contains(err.Error(), "must be a positive number") {
+		t.Errorf("over-cap budget should not report 'must be a positive number', got %v", err)
+	}
+}
+
 // TestCreateCampaignRejectsOversizedComposedName verifies a composed campaign
 // name exceeding X's 255-rune entity-name limit is rejected before any network
 // call. A 200-char event (the per-field max) with the default project composes
@@ -889,10 +927,12 @@ func TestValidateDateStrict(t *testing.T) {
 
 // TestCreateSendsQueryParams verifies X Ads create calls carry their params as
 // URL query parameters (not a JSON body), use entity_status=PAUSED (not
-// paused=true), and that the line-item create includes the required start_time
-// and end_time fields.
+// paused=true) on the campaign and line item, that the campaign create does NOT
+// send the unsupported start_time/end_time flight dates, that the line-item
+// create includes the required start_time/end_time, and that the promoted-tweet
+// create does not send entity_status (the API creates it ACTIVE).
 func TestCreateSendsQueryParams(t *testing.T) {
-	var campaignQuery, lineItemQuery url.Values
+	var campaignQuery, lineItemQuery, promotedQuery url.Values
 	var campaignBodyLen, lineItemBodyLen int64
 	var campaignCT, lineItemCT string
 
@@ -916,6 +956,7 @@ func TestCreateSendsQueryParams(t *testing.T) {
 			lineItemCT = r.Header.Get("Content-Type")
 			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			promotedQuery = r.URL.Query()
 			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -933,7 +974,7 @@ func TestCreateSendsQueryParams(t *testing.T) {
 
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "111",
 	}); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
@@ -950,6 +991,14 @@ func TestCreateSendsQueryParams(t *testing.T) {
 	}
 	if campaignQuery.Has("paused") {
 		t.Errorf("campaign create should not send deprecated paused param: %v", campaignQuery)
+	}
+	// X Ads v12 rejects start_time/end_time on the campaign endpoint; flight
+	// dates belong on the line item, so the campaign create must not send them.
+	if campaignQuery.Has("start_time") {
+		t.Errorf("campaign create must not send start_time (unsupported in v12): %v", campaignQuery)
+	}
+	if campaignQuery.Has("end_time") {
+		t.Errorf("campaign create must not send end_time (unsupported in v12): %v", campaignQuery)
 	}
 	if campaignBodyLen > 0 {
 		t.Errorf("campaign create should carry no body, got ContentLength=%d", campaignBodyLen)
@@ -980,6 +1029,13 @@ func TestCreateSendsQueryParams(t *testing.T) {
 	}
 	if strings.Contains(lineItemCT, "application/json") {
 		t.Errorf("line item create should not set JSON content-type, got %q", lineItemCT)
+	}
+
+	// Promoted-tweet create: the endpoint does not accept entity_status; the API
+	// creates the association ACTIVE and delivery is gated by the PAUSED line
+	// item, so we must not send entity_status here.
+	if promotedQuery.Has("entity_status") {
+		t.Errorf("promoted tweet create should not send entity_status: %v", promotedQuery)
 	}
 }
 
