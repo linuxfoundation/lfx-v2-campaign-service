@@ -46,6 +46,10 @@ const (
 	// redditTokenExpiryBuffer mirrors REDDIT_TOKEN_EXPIRY_BUFFER_SECONDS (60s):
 	// refresh the token this long before its stated expiry.
 	redditTokenExpiryBuffer = 60 * time.Second
+	// redditPastStartBuffer is how far ahead of "now" a start time is nudged when
+	// the requested start date is already in the past (e.g. a same-day start,
+	// whose midnight-UTC timestamp has passed).
+	redditPastStartBuffer = 60 * time.Second
 )
 
 // ---------------------------------------------------------------------------
@@ -423,11 +427,33 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
 	}
 
+	// Normalize geo targets once, up front, so the ad-group label, targeting,
+	// and region all derive from a single source of truth.
+	geos := make([]string, 0, len(in.GeoTargets))
+	for _, g := range in.GeoTargets {
+		g = strings.ToUpper(strings.TrimSpace(g))
+		if g == "" {
+			continue
+		}
+		geos = append(geos, g)
+	}
+	if len(geos) == 0 {
+		geos = []string{"US"}
+	}
+
+	// Compute the effective start time ONCE, before the campaign POST. When the
+	// start date is today its midnight-UTC timestamp is already in the past, so
+	// nudge it to now+buffer; otherwise use start-of-day. This adjusted value is
+	// used for both the campaign and the ad group so nothing sends a past start.
+	campaignEndTime := toISOTimestamp(in.EndDate)
+	effectiveStart := toISOTimestamp(in.StartDate)
+	if startMs, ok := parseRedditTimestamp(effectiveStart); ok && startMs.Before(c.now()) {
+		effectiveStart = toRedditTimestamp(c.now().Add(redditPastStartBuffer))
+	}
+
 	// Step 2: Create campaign (PAUSED, lifetime budget, objective-aware params).
 	// objective / objParams were validated above, before the network call.
 	campaignName := buildRedditCampaignName(in, objective)
-	campaignStartTime := toISOTimestamp(in.StartDate)
-	campaignEndTime := toISOTimestamp(in.EndDate)
 
 	campaignData := map[string]any{
 		"name":                            campaignName,
@@ -439,7 +465,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"optimization_goal":               objParams.optimizationGoal,
 		"goal_type":                       "LIFETIME_SPEND",
 		"goal_value":                      toMicrodollars(in.BudgetUSD),
-		"start_time":                      campaignStartTime,
+		"start_time":                      effectiveStart,
 		"end_time":                        campaignEndTime,
 	}
 	if objParams.viewThroughConversionType != "" {
@@ -456,24 +482,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f lifetime)", campaignID, in.BudgetUSD))
 
-	// Step 3: Create ad group with targeting.
-	geoLabel := "Global"
-	if len(in.GeoTargets) > 0 {
-		geoLabel = strings.Join(in.GeoTargets, "+")
-	}
+	// Step 3: Create ad group with targeting. The label is built from the same
+	// normalized (trimmed, uppercased) geos used in targeting, so a
+	// whitespace-padded input can't produce a name inconsistent with targeting.
+	geoLabel := strings.Join(geos, "+")
 	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
-
-	geos := make([]string, 0, len(in.GeoTargets))
-	for _, g := range in.GeoTargets {
-		g = strings.ToUpper(strings.TrimSpace(g))
-		if g == "" {
-			continue
-		}
-		geos = append(geos, g)
-	}
-	if len(geos) == 0 {
-		geos = []string{"US"}
-	}
 
 	baseTargeting := map[string]any{
 		"geolocations":     geos,
@@ -505,12 +518,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(communityNames) > 0 {
 		targetingWithCommunities = cloneTargeting(baseTargeting)
 		targetingWithCommunities["communities"] = communityNames
-	}
-
-	// If the campaign start is in the past, nudge the ad group start 60s ahead.
-	effectiveStart := campaignStartTime
-	if startMs, ok := parseRedditTimestamp(campaignStartTime); ok && startMs.Before(c.now()) {
-		effectiveStart = toRedditTimestamp(c.now().Add(60 * time.Second))
 	}
 
 	buildAdGroupBody := func(targeting map[string]any) map[string]any {
@@ -582,6 +589,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if adID != "" {
 				adCount = 1
 				steps = append(steps, fmt.Sprintf("Ad created: %s (post: %s, click URL: %s)", adID, postID, utmURL))
+			} else {
+				// A 2xx response missing data.id is a malformed success: don't
+				// silently count it as a created ad. Surface it as a manual-action
+				// warning so the caller knows the ad was not confirmed.
+				steps = append(steps, fmt.Sprintf("Ad creation returned no ad ID (malformed response, post: %s) -- add ad manually in Reddit Ads Manager", postID))
 			}
 		}
 	} else {
@@ -710,37 +722,66 @@ func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
 	}
 	term := strings.ToLower(strings.Join(strings.Fields(in.EventName), "-"))
 
-	params := url.Values{}
-	params.Set("utm_source", "reddit")
-	params.Set("utm_medium", "paid-social")
-	params.Set("utm_campaign", campaign)
-	params.Set("utm_term", term)
-	params.Set("utm_content", fmt.Sprintf("variant-%d", variantIndex+1))
-
-	sep := "?"
-	if strings.Contains(base, "?") {
-		sep = "&"
+	utm := map[string]string{
+		"utm_source":   "reddit",
+		"utm_medium":   "paid-social",
+		"utm_campaign": campaign,
+		"utm_term":     term,
+		"utm_content":  fmt.Sprintf("variant-%d", variantIndex+1),
 	}
-	return base + sep + params.Encode()
+
+	// Parse and merge UTM params into the URL's query so a URL carrying a
+	// fragment (e.g. .../reg#tickets) keeps the fragment at the very end rather
+	// than embedding the query inside it.
+	u, err := url.Parse(base)
+	if err != nil {
+		// Fall back to naive concatenation if the URL can't be parsed.
+		params := url.Values{}
+		for k, v := range utm {
+			params.Set(k, v)
+		}
+		sep := "?"
+		if strings.Contains(base, "?") {
+			sep = "&"
+		}
+		return base + sep + params.Encode()
+	}
+	q := u.Query()
+	for k, v := range utm {
+		q.Set(k, v)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 var (
-	// Anchor the host to a scheme or domain boundary so an attacker-controlled
-	// host (e.g. evil.com/reddit.com/comments/x) can't match mid-string.
-	postFullRe  = regexp.MustCompile(`(?i)(?:^|https?://|//|\.)reddit\.com/(?:r/\w+/)?comments/([a-z0-9]+)`)
-	postShortRe = regexp.MustCompile(`(?i)(?:^|https?://|//|\.)redd\.it/([a-z0-9]+)`)
-	postIDRe    = regexp.MustCompile(`(?i)^[a-z0-9]+$`)
+	// Extract the post ID from the URL PATH only. The host is validated
+	// separately (see isRedditHost) so a path segment can never masquerade as
+	// the authority (e.g. https://evil.example/.reddit.com/comments/abc123).
+	postPathRe = regexp.MustCompile(`(?i)(?:^|/)(?:r/\w+/)?comments/([a-z0-9]+)`)
+	postIDRe   = regexp.MustCompile(`(?i)^[a-z0-9]+$`)
 )
+
+// isRedditHost reports whether host is exactly reddit.com / redd.it or a
+// subdomain of either. Matching on the parsed authority (not a substring of the
+// whole URL) prevents SSRF/spoofing via an attacker-controlled host or path.
+func isRedditHost(host string) bool {
+	host = strings.ToLower(host)
+	switch {
+	case host == "reddit.com" || strings.HasSuffix(host, ".reddit.com"):
+		return true
+	case host == "redd.it" || strings.HasSuffix(host, ".redd.it"):
+		return true
+	default:
+		return false
+	}
+}
 
 // extractRedditPostID mirrors extractRedditPostId.
 func extractRedditPostID(urlOrID string) (string, error) {
 	trimmed := strings.TrimSpace(urlOrID)
-	if m := postFullRe.FindStringSubmatch(trimmed); m != nil {
-		return "t3_" + m[1], nil
-	}
-	if m := postShortRe.FindStringSubmatch(trimmed); m != nil {
-		return "t3_" + m[1], nil
-	}
+
+	// A t3_-prefixed raw ID takes precedence over URL parsing.
 	if rest, ok := strings.CutPrefix(trimmed, "t3_"); ok {
 		// Validate the base36 remainder; reject inputs like "t3_!!!" or "t3_".
 		if postIDRe.MatchString(rest) {
@@ -748,6 +789,35 @@ func extractRedditPostID(urlOrID string) (string, error) {
 		}
 		return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
 	}
+
+	// If it looks like a URL, validate the HOST is genuinely Reddit before
+	// trusting anything in the path.
+	if strings.Contains(trimmed, "/") || strings.Contains(trimmed, ".") {
+		if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
+			if !isRedditHost(u.Hostname()) {
+				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+			}
+			// redd.it short links: the post ID is the first path segment.
+			if strings.EqualFold(u.Hostname(), "redd.it") || strings.HasSuffix(strings.ToLower(u.Hostname()), ".redd.it") {
+				id := strings.Trim(u.Path, "/")
+				if i := strings.IndexByte(id, '/'); i >= 0 {
+					id = id[:i]
+				}
+				if postIDRe.MatchString(id) {
+					return "t3_" + id, nil
+				}
+				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+			}
+			// reddit.com: extract the comments/<id> segment from the path.
+			if m := postPathRe.FindStringSubmatch(u.Path); m != nil {
+				return "t3_" + m[1], nil
+			}
+			return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+		}
+		return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+	}
+
+	// Otherwise treat the whole input as a bare base36 post ID.
 	if postIDRe.MatchString(trimmed) {
 		return "t3_" + trimmed, nil
 	}
