@@ -1,3 +1,6 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
 -- Reconcile the campaign_briefs / campaigns schema with the rest of the service.
 -- This is a SEPARATE migration rather than an edit to 000002: golang-migrate
 -- records applied versions and never re-runs them, so any change to an
