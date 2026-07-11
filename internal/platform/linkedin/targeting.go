@@ -216,11 +216,10 @@ func (c *Client) buildTargetingCriteria(profile string, geoURNs []string) (map[s
 		if profile == "custom" {
 			// This branch handles "custom" when the aliased cloud-native profile is
 			// ABSENT. It is NOT reached via the public flow: CreateCampaign calls
-			// validatePrerequisites, which REQUIRES cloud-native to EXIST for
-			// "custom" (returning an error when absent). What the public flow
-			// tolerates is a cloud-native profile that exists but has EMPTY facets;
-			// this absent-profile branch only keeps the low-level builder total for
-			// direct/test callers that bypass validatePrerequisites.
+			// validatePrerequisites, which REQUIRES cloud-native to EXIST (and to
+			// have usable facets) for "custom", returning an error when it is absent
+			// or empty. This absent-profile branch only keeps the low-level builder
+			// total for direct/test callers that bypass validatePrerequisites.
 			skills = []string{}
 			groups = []string{}
 		} else {

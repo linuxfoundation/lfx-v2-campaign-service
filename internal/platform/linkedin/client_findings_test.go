@@ -1495,9 +1495,10 @@ func TestCreateCampaign_RejectsProfileWithNoTargetingBeforeAnyPOST(t *testing.T)
 
 // TestCreateCampaign_CustomProfileRequiresCloudNativePresent verifies the TS
 // validateLinkedInPrerequisites contract: "custom" aliases "cloud-native", which
-// must EXIST in the runtime config. When present, custom is exempt from the
-// no-usable-targeting rejection (it may resolve to empty facets); when the
-// aliased profile is absent entirely, custom is rejected before any POST.
+// must EXIST in the runtime config. When present AND non-empty, custom is allowed;
+// when the aliased profile is absent entirely, custom is rejected before any POST.
+// (Emptiness parity between custom and cloud-native is covered by
+// TestCreateCampaign_EmptyConfigRejectedIdenticallyForCustomAndCloudNative.)
 func TestCreateCampaign_CustomProfileRequiresCloudNativePresent(t *testing.T) {
 	base := CampaignInput{
 		EventName:        "KubeCon",
@@ -1510,11 +1511,11 @@ func TestCreateCampaign_CustomProfileRequiresCloudNativePresent(t *testing.T) {
 		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
 	}
 
-	// (a) cloud-native present (even with empty facets): custom is allowed.
+	// (a) cloud-native present with usable facets: custom is allowed.
 	srv := fullFlowServer(t)
 	defer srv.Close()
 	cfgPresent := testConfig()
-	cfgPresent.TargetingProfiles = []TargetingProfileConfig{{ID: "cloud-native"}}
+	cfgPresent.TargetingProfiles = []TargetingProfileConfig{{ID: "cloud-native", Skills: []string{"urn:li:skill:1"}}}
 	cPresent := NewClient(Credentials{AccessToken: "t"}, cfgPresent, WithBaseURL(srv.URL), WithClock(fixedClock()))
 	if _, err := cPresent.CreateCampaign(context.Background(), base); err != nil {
 		t.Fatalf("custom with cloud-native present must be allowed, got error: %v", err)
@@ -1991,5 +1992,49 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 	}
 	if !strings.Contains(campaignStep, "ensured") {
 		t.Errorf("campaign step should use neutral 'ensured' wording, got: %q", campaignStep)
+	}
+}
+
+// TestCreateCampaign_EmptyConfigRejectedIdenticallyForCustomAndCloudNative proves
+// the empty-config rejection is applied to the NORMALIZED profile name, so the
+// "custom" alias can no longer bypass it. "custom" normalizes to "cloud-native"
+// and thus describes identical targeting; an EMPTY cloud-native profile must be
+// rejected before any POST whether the caller asks for it directly
+// ("cloud-native") or via its alias ("custom"). Previously the check keyed on the
+// original name, so custom slipped past a rejection that direct cloud-native hit.
+func TestCreateCampaign_EmptyConfigRejectedIdenticallyForCustomAndCloudNative(t *testing.T) {
+	base := CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://events.example.org/reg",
+		BudgetUSD:       100,
+		StartDate:       "2099-01-01",
+		EndDate:         "2099-02-01",
+		GeoTargets:      []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:        []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	}
+
+	for _, profile := range []string{"cloud-native", "custom"} {
+		t.Run(profile, func(t *testing.T) {
+			srv := noPOSTServer(t)
+			defer srv.Close()
+
+			cfg := testConfig()
+			// Aliased profile EXISTS but has EMPTY facets (both nil and blank-only
+			// entries count as empty and must be rejected identically for both names).
+			cfg.TargetingProfiles = []TargetingProfileConfig{
+				{ID: "cloud-native", Label: "Cloud Native", Skills: []string{""}, Groups: nil},
+			}
+			c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+			in := base
+			in.TargetingProfile = profile
+			_, err := c.CreateCampaign(context.Background(), in)
+			if err == nil {
+				t.Fatalf("profile %q with empty cloud-native config: expected rejection before any POST, got nil", profile)
+			}
+			if !strings.Contains(err.Error(), "no usable targeting facets") {
+				t.Errorf("profile %q: error should mention no usable targeting facets, got: %v", profile, err)
+			}
+		})
 	}
 }

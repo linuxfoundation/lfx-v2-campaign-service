@@ -928,14 +928,18 @@ func stripDashes(text string) string {
 // one NON-BLANK skill or group entry must be present for the profile to
 // contribute real targeting: a slice of only blank/whitespace-only strings (e.g.
 // []string{""}) is dropped by buildTargetingCriteria before the wire, so it is
-// treated here as no targeting. The one documented exception is the "custom"
-// profile, which aliases "cloud-native": validatePrerequisites REQUIRES that
-// aliased cloud-native profile to EXIST (it errors when absent, exactly like any
-// other profile). What is tolerated for "custom" is an EXISTING cloud-native
-// profile whose facets are EMPTY — that passes the usable-facet check here rather
-// than being rejected. (The lower-level buildTargetingCriteria additionally
-// tolerates the aliased profile being absent, but that branch is unreachable via
-// this public flow, which fails closed here first.)
+// treated here as no targeting.
+//
+// The "custom" profile aliases "cloud-native": both are normalized to the same
+// lookup and evaluated identically. validatePrerequisites REQUIRES the resolved
+// profile to EXIST (it errors when absent, exactly like any other profile) AND to
+// yield at least one usable facet — so an EMPTY cloud-native profile is rejected
+// whether it is requested directly ("cloud-native") or via its alias ("custom").
+// There is no per-alias emptiness exemption: because the emptiness check keys on
+// the normalized name, custom and cloud-native are provably equivalent here. (The
+// lower-level buildTargetingCriteria additionally tolerates the aliased profile
+// being absent, but that branch is unreachable via this public flow, which fails
+// closed here first.)
 func (c *Client) validatePrerequisites(accountID, profile string) error {
 	if _, err := c.orgURN(accountID); err != nil {
 		return err
@@ -954,12 +958,21 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		// strings (e.g. []string{""} or {"  "}) that are not usable facets and are
 		// dropped by buildTargetingCriteria before the wire, so a profile whose
 		// skills/groups are all blank contributes no real targeting and must be
-		// rejected here just like a genuinely empty profile. The sole exception:
-		// "custom" tolerates its (present) aliased cloud-native profile having empty
-		// facets — the profile must still EXIST (that is enforced in the not-found
-		// branch below), only its emptiness is allowed here.
-		if len(nonBlankFacets(p.Skills)) == 0 && len(nonBlankFacets(p.Groups)) == 0 && profile != "custom" {
-			return fmt.Errorf("LinkedIn targeting profile %q has no usable targeting facets (skills and groups are empty or blank) — refusing to create a campaign with no profile-specific targeting", profile)
+		// rejected here just like a genuinely empty profile.
+		//
+		// This emptiness check operates on the NORMALIZED profile (the resolved
+		// lookup after custom->cloud-native aliasing), so it does NOT special-case
+		// the ORIGINAL name. Previously the check was skipped when profile ==
+		// "custom", which let an EMPTY cloud-native config be rejected when requested
+		// directly (profile == "cloud-native") yet ACCEPTED via its "custom" alias —
+		// even though "custom" normalizes to "cloud-native" and thus describes the
+		// IDENTICAL targeting. Because both requests resolve to the same lookup and
+		// the same TargetingProfileConfig (p), they are now evaluated identically: an
+		// empty cloud-native profile is rejected whether requested as "cloud-native"
+		// or as "custom". (Absence of the aliased profile is still enforced in the
+		// not-found branch below for both names.)
+		if len(nonBlankFacets(p.Skills)) == 0 && len(nonBlankFacets(p.Groups)) == 0 {
+			return fmt.Errorf("LinkedIn targeting profile %q has no usable targeting facets (skills and groups are empty or blank) — refusing to create a campaign with no profile-specific targeting", lookup)
 		}
 		// Validate facet URN shapes up front (skills, groups, employer exclusions),
 		// so a malformed value fails here rather than after the campaign group is
