@@ -23,7 +23,10 @@ const maxParallelDispatch = 5
 
 // cancelGracePeriod is how long Shutdown waits, after cancelling in-flight runs
 // on a drain timeout, for them to unwind before it returns (and the pool closes).
-const cancelGracePeriod = 2 * time.Second
+// It must be >= jobFinalizeTimeout so a run cancelled at the drain deadline still
+// has time to write its terminal status (on the detached finalize context) before
+// the pool is closed.
+const cancelGracePeriod = jobFinalizeTimeout + time.Second
 
 // claimReleaseTimeout bounds the best-effort pending-claim cleanup, which runs on
 // a context detached from the (possibly-cancelled) dispatch context.

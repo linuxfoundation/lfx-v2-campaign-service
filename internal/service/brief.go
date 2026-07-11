@@ -328,7 +328,16 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 	if strings.HasPrefix(raw, "W/") || strings.HasPrefix(raw, "w/") {
 		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be a strong validator; weak tags (W/\"…\") are not accepted"}
 	}
-	raw = strings.Trim(raw, `"`)
+	// Strip exactly one balanced pair of surrounding quotes; reject an unbalanced
+	// quote (e.g. `"3` or `3"`) rather than silently accepting it as version 3.
+	hasOpen := strings.HasPrefix(raw, `"`)
+	hasClose := strings.HasSuffix(raw, `"`)
+	switch {
+	case hasOpen && hasClose && len(raw) >= 2:
+		raw = raw[1 : len(raw)-1]
+	case hasOpen || hasClose:
+		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match has an unbalanced quote"}
+	}
 	v, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be an integer version"}
