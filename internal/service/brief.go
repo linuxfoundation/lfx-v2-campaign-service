@@ -291,9 +291,14 @@ func briefResult(b *model.CampaignBrief) *briefs.Brief {
 		Targeting:    unmarshalAny(b.Targeting),
 		Status:       string(b.Status),
 		Version:      b.Version,
-		Etag:         optStr(etag(b.Version)),
+		Etag:         optStr(briefETag(b.Version)),
 	}
 }
+
+// briefETag renders the version as a quoted HTTP entity-tag (RFC 7232), e.g.
+// `"3"`. parseBriefIfMatch accepts both this quoted form and a bare integer, so
+// a client can round-trip the returned validator.
+func briefETag(version int64) string { return `"` + strconv.FormatInt(version, 10) + `"` }
 
 func campaignResult(c *model.Campaign) *briefs.Campaign {
 	return &briefs.Campaign{
@@ -305,7 +310,7 @@ func campaignResult(c *model.Campaign) *briefs.Campaign {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		Version:            c.Version,
-		Etag:               optStr(etag(c.Version)),
+		Etag:               optStr(briefETag(c.Version)),
 	}
 }
 

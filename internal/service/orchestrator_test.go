@@ -659,3 +659,49 @@ func TestOrchestrator_NoDispatcherDoesNotLeavePendingClaim(t *testing.T) {
 		t.Error("a pending claim row was left behind for a platform with no dispatcher")
 	}
 }
+
+// preCreateErrDispatcher fails with an error that signals no upstream create.
+type preCreateErr struct{}
+
+func (preCreateErr) Error() string          { return "invalid input" }
+func (preCreateErr) NoUpstreamCreate() bool { return true }
+
+type preCreateErrDispatcher struct{}
+
+func (preCreateErrDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, preCreateErr{}
+}
+
+// TestOrchestrator_PreCreateErrorReleasesClaim verifies that a dispatcher error
+// signalling no-upstream-create releases the claim (so the pair can be retried),
+// unlike an ambiguous error which retains it.
+func TestOrchestrator_PreCreateErrorReleasesClaim(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: preCreateErrDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	waitForTerminal(t, jobs, id)
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	// The pre-create error should have released the pending claim.
+	if _, ok := camps.existing["b1|"+string(model.ProviderGoogleAds)]; ok {
+		t.Error("pre-create dispatcher error should have released the pending claim")
+	}
+}
+
+// TestBriefETagIsQuoted verifies the emitted ETag is a quoted entity-tag.
+func TestBriefETagIsQuoted(t *testing.T) {
+	if got := briefETag(3); got != `"3"` {
+		t.Errorf("briefETag(3) = %q, want \"3\"", got)
+	}
+	// And the parser round-trips it.
+	v, err := parseBriefIfMatch(strPtr(briefETag(7)))
+	if err != nil || v != 7 {
+		t.Errorf("round-trip of briefETag(7) = %d, %v; want 7, nil", v, err)
+	}
+}
+
+func strPtr(s string) *string { return &s }

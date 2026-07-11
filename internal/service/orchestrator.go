@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -31,6 +32,20 @@ type PlatformDispatcher interface {
 	// Dispatch creates a campaign on the platform and returns the resulting
 	// campaign row (platform_campaign_id, status, result populated).
 	Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error)
+}
+
+// noUpstreamCreator lets a dispatcher signal that a returned error occurred
+// BEFORE any upstream (paid) create call — e.g. input validation or config
+// errors — so the orchestrator can safely release the claim and allow a retry.
+// A plain error (which might follow a timeout that did create a campaign) is
+// treated conservatively: the claim is retained to prevent a duplicate.
+type noUpstreamCreator interface{ NoUpstreamCreate() bool }
+
+// dispatchErrIsPreCreate reports whether a dispatcher error is known to have
+// occurred before any upstream create (safe to release the claim).
+func dispatchErrIsPreCreate(err error) bool {
+	var n noUpstreamCreator
+	return errors.As(err, &n) && n.NoUpstreamCreate()
 }
 
 // Orchestrator runs async multi-platform campaign creation for a brief.
@@ -291,13 +306,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 
 	campaign, derr := d.Dispatch(ctx, brief, p, config)
 	if derr != nil {
-		// A dispatch error does NOT prove the provider rejected the create — a
-		// timeout or dropped connection can leave a campaign created upstream. So
-		// we deliberately do NOT release the claim here: the 'pending' row stays,
-		// blocking a blind retry from double-creating (and marking the pair for
-		// reconciliation). Log the raw dispatcher error server-side; store a
-		// stable, client-safe message.
-		slog.ErrorContext(ctx, "platform dispatch failed (claim retained; outcome unknown)", "platform", p, "job_id", jobID, "error", derr)
+		// A dispatch error usually does NOT prove the provider rejected the create —
+		// a timeout or dropped connection can leave a campaign created upstream — so
+		// by default we RETAIN the pending claim to block a blind retry from
+		// double-creating. The exception: a dispatcher can signal (via
+		// NoUpstreamCreate) that the error occurred before any create call (e.g.
+		// input/config validation), in which case releasing the claim to allow a
+		// retry is safe.
+		if dispatchErrIsPreCreate(derr) {
+			slog.ErrorContext(ctx, "platform dispatch failed before upstream create (claim released)", "platform", p, "job_id", jobID, "error", derr)
+			releaseClaim()
+		} else {
+			slog.ErrorContext(ctx, "platform dispatch failed (claim retained; outcome unknown)", "platform", p, "job_id", jobID, "error", derr)
+		}
 		res.Error = "platform campaign creation failed"
 		return res
 	}
