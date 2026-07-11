@@ -43,9 +43,17 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 
 	row, gerr := r.GetCampaignByPlatform(ctx, briefID, platform)
 	if gerr != nil {
-		// The row must exist now (we or someone else just wrote it); a not-found
-		// here is a genuine error.
-		return claimed, nil, fmt.Errorf("read campaign after claim: %w", gerr)
+		// The row must exist now (we or someone else just wrote it); a read failure
+		// here is a genuine error. If WE just inserted the pending row, roll it back
+		// (best effort) so a failed claim doesn't leave a pending row that blocks the
+		// pair forever; report claimed=false so the caller treats it as a clean
+		// failure with nothing to release.
+		if claimed {
+			if derr := r.DeleteDispatchClaim(ctx, briefID, platform); derr != nil {
+				return false, nil, fmt.Errorf("read campaign after claim: %w (and failed to roll back pending claim: %v)", gerr, derr)
+			}
+		}
+		return false, nil, fmt.Errorf("read campaign after claim: %w", gerr)
 	}
 	return claimed, row, nil
 }

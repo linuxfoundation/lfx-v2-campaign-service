@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"sync"
 
 	briefsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
@@ -172,25 +171,18 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 		slog.InfoContext(ctx, "shutdown initiated")
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.DefaultShutdownTimeout)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			slog.ErrorContext(ctx, "HTTP server shutdown error", log.ErrKey, err)
-		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		if err := cont.Close(); err != nil {
-			slog.ErrorContext(ctx, "container close error", log.ErrKey, err)
-		}
-	}()
-
-	wg.Wait()
+	// Shut down in order, not concurrently: first stop the HTTP server (stops
+	// accepting new requests and drains in-flight handlers, so no new dispatch
+	// can be Started), THEN close the container (which drains in-flight dispatch
+	// and only then closes the DB pool). Running these concurrently risks a
+	// just-accepted request Starting a dispatch while the pool is being closed.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), constants.DefaultShutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.ErrorContext(ctx, "HTTP server shutdown error", log.ErrKey, err)
+	}
+	if err := cont.Close(); err != nil {
+		slog.ErrorContext(ctx, "container close error", log.ErrKey, err)
+	}
 	return nil
 }
