@@ -359,7 +359,12 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		return out, nil
 	}
 
-	return nil, fmt.Errorf("LinkedIn API %s %s -> exhausted %d retries after 429s", method, path, retryMax)
+	// Unreachable: the bounded loop always returns from within its body — success,
+	// a non-2xx *apiError (including a final-attempt 429, which doesn't satisfy the
+	// attempt<retryMax retry guard and so falls through to the non-2xx return), or
+	// an error. A panic documents the invariant instead of a misleading
+	// "exhausted retries" string that can't occur.
+	panic("linkedin doRequest: unreachable post-loop return")
 }
 
 // parseRetryAfter returns how long to wait before retrying a 429, or 0 if no
@@ -1103,6 +1108,12 @@ func validateRegistrationURL(raw string) error {
 // CreateCampaign unchanged. A full idempotent-resume implementation is out of
 // scope for this fix.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
+	// Fail fast on a missing token rather than sending "Authorization: Bearer "
+	// and getting a less actionable API error after network round-trips.
+	if strings.TrimSpace(c.creds.AccessToken) == "" {
+		return nil, fmt.Errorf("linkedin: access token is required")
+	}
+
 	accountID, err := c.resolveAccountID(in.AdAccountID)
 	if err != nil {
 		return nil, err

@@ -2177,3 +2177,30 @@ func TestCreateCampaign_EmptyConfigHandledIdenticallyForCustomAndCloudNative(t *
 		})
 	}
 }
+
+// TestCreateCampaign_RejectsEmptyAccessTokenBeforeAnyRequest verifies an
+// empty/whitespace access token fails fast before any HTTP call, rather than
+// sending "Authorization: Bearer " and getting a less actionable API error.
+func TestCreateCampaign_RejectsEmptyAccessTokenBeforeAnyRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s — should fail before any HTTP call", r.Method, r.URL.Path)
+		http.Error(w, "should not be reached", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	for _, tok := range []string{"", "   ", "\t\n"} {
+		c := NewClient(Credentials{AccessToken: tok}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:        "E",
+			RegistrationURL:  "https://example.com/reg",
+			BudgetUSD:        100,
+			StartDate:        "2099-01-01",
+			EndDate:          "2099-02-01",
+			TargetingProfile: "cloud-native",
+			Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+		})
+		if err == nil {
+			t.Errorf("token %q: expected an error, got nil", tok)
+		}
+	}
+}
