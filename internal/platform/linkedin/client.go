@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -220,8 +219,10 @@ type responseElement struct {
 var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:?=&.-]*$`)
 
 // apiError is a non-2xx HTTP response from the LinkedIn API. It carries the
-// status code so callers (e.g. findByName) can distinguish a 404 "not found"
-// from a transient/unexpected failure that must not be swallowed.
+// status code, method, and path so an error message names exactly which call
+// failed and how. Note: findByName does NOT special-case any status (not even
+// 404) — every non-2xx search response is propagated, because a 404 does not
+// prove a searched resource is absent (see findByName / findMatch).
 type apiError struct {
 	StatusCode int
 	Method     string
@@ -402,18 +403,29 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// maxListPages bounds how many pages findByName will walk before giving up. It
-// mirrors the Twitter client's cap. Since name-based idempotency depends on
-// actually seeing a live same-name resource, hitting the cap with more pages
-// still available is reported as an error rather than a silent no-match — a
-// silent no-match would let the caller create a DUPLICATE.
-const maxListPages = 25
+// maxListPages bounds how many pages findByName will walk before giving up — a
+// safety valve against an infinite loop if the API ever returned a non-empty
+// nextPageToken forever. The cap exists ONLY for that runaway case; it must be
+// large enough that no realistic account ever legitimately reaches it, because
+// name-based idempotency depends on actually walking the whole collection to
+// confirm a same-name resource is absent.
+//
+// At pageSize 50 the previous cap of 25 pages covered only ~1,250 entries. A
+// mature ad account whose matching collection exceeds that — while the API still
+// hands back a cursor — would hit the cap on EVERY new-name lookup, and the
+// inconclusive-cap error below would then make it unable to create anything. The
+// cap is therefore raised to 1000 pages (~50,000 entries at pageSize 50), which
+// comfortably exceeds any realistic campaign-group/campaign/creative collection
+// while still bounding the loop. Reaching this cap with a next-page token still
+// present is reported as an error (see findMatch), NOT a silent no-match — a
+// false no-match would let the caller create a DUPLICATE.
+const maxListPages = 1000
 
 // findByName searches a nested resource path for a live element matching name.
-// It returns the trailing numeric ID, or "" when the resource genuinely does not
-// exist (a 404 or an exhausted result set with no match). Statuses in
-// skipStatuses are ignored. Mirrors findByName() (paginated search across all
-// statuses).
+// It returns the trailing numeric ID, or "" ONLY when a SUCCESSFUL (2xx) search
+// exhausts the result set with no match — i.e. the resource is provably absent.
+// Statuses in skipStatuses are ignored. Mirrors findByName() (paginated search
+// across all statuses).
 //
 // At LinkedIn-Version 202602 the search APIs use CURSOR pagination, not offset
 // pagination: each response carries metadata.nextPageToken, and the client
@@ -422,12 +434,15 @@ const maxListPages = 25
 // walk (start/count) or a "full page" heuristic is the wrong model for this API
 // version and can miss results or loop, so it is not used.
 //
-// Unlike the TypeScript original, transient/unexpected search failures are NOT
-// swallowed: a non-404 HTTP error, network error, or decode error is returned so
-// the find-or-create caller aborts instead of proceeding to a create POST that
-// would produce a duplicate. Pagination is followed to exhaustion (up to
-// maxListPages); reaching the cap with a next-page token still present also
-// returns an error rather than a false no-match.
+// Unlike the TypeScript original, NO search failure is swallowed — not even a
+// 404. A 404 does not prove the searched resource is absent: it can equally mean
+// the finder/collection/account PATH is wrong, so treating it as a clean
+// no-match would let the find-or-create caller proceed to a create POST despite a
+// real error. Only an empty 2xx result set means "absent, safe to create". Every
+// error (404, other HTTP status, network, decode) is returned so the caller
+// aborts instead of creating a duplicate. Pagination is followed to exhaustion
+// (up to maxListPages); reaching the cap with a next-page token still present
+// also returns an error rather than a false no-match.
 func (c *Client) findByName(ctx context.Context, nestedPath, name string) (string, error) {
 	return c.findMatch(ctx, nestedPath, func(el responseElement) bool {
 		return el.Name == name
@@ -470,14 +485,16 @@ func (c *Client) findMatch(ctx context.Context, nestedPath string, match func(re
 		}
 		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params)
 		if err != nil {
-			// A 404 means the collection/resource genuinely isn't there: treat as
-			// a clean no-match. Any other error (401/429/5xx, network, decode) is
-			// transient or unexpected and must propagate so we never create a
-			// duplicate off a swallowed failure.
-			var ae *apiError
-			if errors.As(err, &ae) && ae.StatusCode == http.StatusNotFound {
-				return "", nil
-			}
+			// ANY search error propagates — including a 404. A 404 on the search
+			// call does NOT prove the named resource is absent: it can equally mean
+			// the finder/collection/account PATH is wrong (e.g. a mistyped or
+			// unauthorized adAccounts/<id>/... path), and treating that as a clean
+			// "not found" would let the subsequent create POST run despite a real
+			// error, silently creating a resource under the wrong assumptions.
+			// Only a SUCCESSFUL (2xx) search whose result set is empty proves the
+			// resource is absent; that case is handled below via an exhausted cursor.
+			// So every error here (404, 401/429/5xx, network, decode) is surfaced so
+			// the find-or-create caller aborts rather than proceeding to create.
 			return "", fmt.Errorf("search %q by name: %w", nestedPath, err)
 		}
 		for _, el := range resp.Elements {
@@ -911,9 +928,14 @@ func stripDashes(text string) string {
 // one NON-BLANK skill or group entry must be present for the profile to
 // contribute real targeting: a slice of only blank/whitespace-only strings (e.g.
 // []string{""}) is dropped by buildTargetingCriteria before the wire, so it is
-// treated here as no targeting. The one documented exception is the "custom" profile, which aliases
-// "cloud-native" and is explicitly allowed to fall back to empty targeting when
-// that profile is absent (mirrors buildTargetingCriteria's custom branch).
+// treated here as no targeting. The one documented exception is the "custom"
+// profile, which aliases "cloud-native": validatePrerequisites REQUIRES that
+// aliased cloud-native profile to EXIST (it errors when absent, exactly like any
+// other profile). What is tolerated for "custom" is an EXISTING cloud-native
+// profile whose facets are EMPTY — that passes the usable-facet check here rather
+// than being rejected. (The lower-level buildTargetingCriteria additionally
+// tolerates the aliased profile being absent, but that branch is unreachable via
+// this public flow, which fails closed here first.)
 func (c *Client) validatePrerequisites(accountID, profile string) error {
 	if _, err := c.orgURN(accountID); err != nil {
 		return err
@@ -932,8 +954,10 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		// strings (e.g. []string{""} or {"  "}) that are not usable facets and are
 		// dropped by buildTargetingCriteria before the wire, so a profile whose
 		// skills/groups are all blank contributes no real targeting and must be
-		// rejected here just like a genuinely empty profile. "custom" tolerates an
-		// empty resolved profile (documented fallback).
+		// rejected here just like a genuinely empty profile. The sole exception:
+		// "custom" tolerates its (present) aliased cloud-native profile having empty
+		// facets — the profile must still EXIST (that is enforced in the not-found
+		// branch below), only its emptiness is allowed here.
 		if len(nonBlankFacets(p.Skills)) == 0 && len(nonBlankFacets(p.Groups)) == 0 && profile != "custom" {
 			return fmt.Errorf("LinkedIn targeting profile %q has no usable targeting facets (skills and groups are empty or blank) — refusing to create a campaign with no profile-specific targeting", profile)
 		}
@@ -1220,7 +1244,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return c.buildResult(accountID, groupName, groupID, campaignName, "", 0, steps),
 			fmt.Errorf("campaign creation failed for campaign group %q (%q) (the group was created or already existed): %w — on retry the group is found idempotently by name; inspect the returned partial result", groupID, groupName, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created (PAUSED): %s (ID: %s)", campaignName, campaignID))
+	// Neutral wording: createSponsoredCampaign is find-or-create, so campaignID may
+	// be a NEWLY-created campaign (which is PAUSED) OR an existing same-name campaign
+	// found idempotently in this group, which can be in any non-terminal status
+	// (including ACTIVE). Reporting "created ... (PAUSED)" would be false on the
+	// found path, so the step states only that the campaign is ensured to exist.
+	steps = append(steps, fmt.Sprintf("Campaign ensured: %s (ID: %s)", campaignName, campaignID))
 
 	// NOT idempotent: dark posts and creatives have no name-based lookup and
 	// LinkedIn has no upsert, so re-running this loop duplicates every dark post

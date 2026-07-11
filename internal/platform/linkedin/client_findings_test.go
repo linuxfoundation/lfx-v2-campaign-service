@@ -1788,3 +1788,208 @@ func TestDoRequest_SendsAuthAndVersionHeaders(t *testing.T) {
 		t.Errorf("X-RestLi-Protocol-Version = %q, want 2.0.0", gotProto)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Eighth-round Copilot findings
+// ---------------------------------------------------------------------------
+
+// TestFindByName_404IsError verifies that a 404 on the search call is treated as
+// an ERROR, not a clean "not found". A 404 does not prove the searched resource
+// is absent — it can mean a wrong finder/account/collection path — so it must
+// propagate rather than let a find-or-create caller proceed to a create POST.
+func TestFindByName_404IsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | Missing | CNCF")
+	if err == nil {
+		t.Fatal("findByName on a 404 search response: expected an error, got nil (a 404 must not be a clean no-match)")
+	}
+	if id != "" {
+		t.Errorf("findByName on error must return empty id, got %q", id)
+	}
+}
+
+// TestCreateCampaign_404OnSearchDoesNotCreate verifies the end-to-end contract:
+// a 404 on the up-front campaign-group search aborts CreateCampaign with an error
+// BEFORE any create POST, rather than treating the 404 as "absent" and creating a
+// (possibly wrong-path) resource.
+func TestCreateCampaign_404OnSearchDoesNotCreate(t *testing.T) {
+	var mu sync.Mutex
+	var postCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			postCount++
+			mu.Unlock()
+			t.Errorf("unexpected POST %s — a 404 search must abort before any create", r.URL.Path)
+			return
+		}
+		// Every GET (idempotency search) returns 404.
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err == nil {
+		t.Fatal("CreateCampaign when the search returns 404: expected an error, got nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if postCount != 0 {
+		t.Errorf("expected zero POSTs when the search 404s, got %d", postCount)
+	}
+}
+
+// TestFindMatch_InconclusiveCapIsError verifies that if the API keeps returning a
+// non-empty nextPageToken past the maxListPages cap, findByName returns an
+// explicit error rather than a false no-match — so the find-or-create caller does
+// NOT proceed to create a duplicate. This is the behavior that keeps a mature
+// account (whose matching collection exceeds one cap's worth of pages) safe.
+func TestFindMatch_InconclusiveCapIsError(t *testing.T) {
+	var mu sync.Mutex
+	var getCount int
+	// Never returns the sought match and always advertises a further page, so the
+	// walk can only terminate by hitting the cap.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		getCount++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":1}],"metadata":{"nextPageToken":"more"}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaigns", "Never Matches")
+	if err == nil {
+		t.Fatal("findByName that never exhausts the cursor: expected an inconclusive-cap error, got nil")
+	}
+	if id != "" {
+		t.Errorf("inconclusive cap must not report a match, got id %q", id)
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("inconclusive-cap error should warn it aborts to avoid a duplicate, got: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// The walk must stop exactly at the cap, not loop forever.
+	if getCount != maxListPages {
+		t.Errorf("expected the walk to stop at the %d-page cap, got %d GETs", maxListPages, getCount)
+	}
+}
+
+// TestFindMatch_LargeAccountUnderCapSucceeds verifies the cap is high enough that
+// an account with many pages of results still resolves a real match: the match
+// sits well past the OLD cap of 25 pages (page 30), proving a mature account is
+// no longer starved. The API exhausts its cursor on the matching page.
+func TestFindMatch_LargeAccountUnderCapSucceeds(t *testing.T) {
+	const matchPage = 30 // beyond the previous 25-page cap
+	var mu sync.Mutex
+	var page int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		page++
+		n := page
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if n < matchPage {
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":1}],"metadata":{"nextPageToken":"more"}}`)
+			return
+		}
+		// The match, with an empty nextPageToken (end of results).
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Deep Match","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:4242"}],"metadata":{"nextPageToken":""}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Deep Match")
+	if err != nil {
+		t.Fatalf("findByName across %d pages (well past the old 25-page cap): %v", matchPage, err)
+	}
+	if id != "4242" {
+		t.Errorf("expected deep-page match id 4242, got %q", id)
+	}
+}
+
+// TestCreateCampaign_StepWordingNeutralForFoundCampaign verifies the campaign
+// step log uses neutral "ensured" wording, not "created ... (PAUSED)":
+// createSponsoredCampaign is find-or-create and may return an EXISTING campaign in
+// any non-terminal status (including ACTIVE), so a "created (PAUSED)" step could
+// be doubly false. Here an existing ACTIVE campaign is found in the group.
+func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
+	const groupID = "100"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			switch {
+			case strings.Contains(r.URL.Path, "adCampaignGroups"):
+				// Group is found (ACTIVE), so no group create POST.
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | TLF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
+			case strings.Contains(r.URL.Path, "adCampaigns"):
+				// An EXISTING ACTIVE campaign under the same group — found idempotently.
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | TLF | MoFU","status":"ACTIVE","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
+			default:
+				_, _ = io.WriteString(w, `{"elements":[]}`)
+			}
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected POST "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	var campaignStep string
+	for _, s := range res.Steps {
+		if strings.Contains(s, "Campaign") && strings.Contains(s, "200") {
+			campaignStep = s
+			break
+		}
+	}
+	if campaignStep == "" {
+		t.Fatalf("no campaign step recorded; steps=%v", res.Steps)
+	}
+	// The found campaign is ACTIVE, so a "PAUSED"/"created" step would be false.
+	if strings.Contains(campaignStep, "PAUSED") {
+		t.Errorf("campaign step must not claim PAUSED for a found campaign: %q", campaignStep)
+	}
+	if strings.Contains(campaignStep, "created") {
+		t.Errorf("campaign step must not claim 'created' for a found campaign: %q", campaignStep)
+	}
+	if !strings.Contains(campaignStep, "ensured") {
+		t.Errorf("campaign step should use neutral 'ensured' wording, got: %q", campaignStep)
+	}
+}
