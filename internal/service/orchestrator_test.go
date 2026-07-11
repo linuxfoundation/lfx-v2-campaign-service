@@ -71,7 +71,7 @@ func (r *fakeJobRepo) FailStuckJobs(_ context.Context, jobErr string) (int64, er
 	return n, nil
 }
 
-// fakeCampaignRepo records upserted campaigns.
+// fakeCampaignRepo records upserted campaigns and simulates the claim table.
 type fakeCampaignRepo struct {
 	mu       sync.Mutex
 	upserted []*model.Campaign
@@ -81,6 +81,8 @@ type fakeCampaignRepo struct {
 	// byPlatformErr, when set, is returned by GetCampaignByPlatform to simulate a
 	// transient lookup failure.
 	byPlatformErr error
+	// claimErr, when set, is returned by ClaimCampaignDispatch.
+	claimErr error
 }
 
 func (r *fakeCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -98,9 +100,26 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, briefID stri
 	}
 	return nil, domain.ErrNotFound
 }
-func (r *fakeCampaignRepo) WithDispatchLock(ctx context.Context, _ string, _ model.Provider, fn func(context.Context) error) error {
-	// No real lock in tests; just run fn. Serialization is exercised separately.
-	return fn(ctx)
+
+// ClaimCampaignDispatch simulates INSERT ... ON CONFLICT DO NOTHING: if an entry
+// for (brief, platform) already exists it's a conflict (not claimed) returning
+// the existing row; otherwise it inserts a pending placeholder and claims.
+func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.claimErr != nil {
+		return false, nil, r.claimErr
+	}
+	key := briefID + "|" + string(platform)
+	if c, ok := r.existing[key]; ok {
+		return false, c, nil
+	}
+	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, JobID: &jobID, Status: "pending"}
+	if r.existing == nil {
+		r.existing = map[string]*model.Campaign{}
+	}
+	r.existing[key] = pending
+	return true, pending, nil
 }
 
 func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
@@ -268,12 +287,12 @@ func TestOrchestrator_SkipsAlreadyDispatchedPlatform(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_TransientLookupErrorIsFailure verifies that a transient error
-// from the existing-campaign lookup is recorded as a platform failure rather
-// than proceeding to a create that could duplicate.
-func TestOrchestrator_TransientLookupErrorIsFailure(t *testing.T) {
+// TestOrchestrator_ClaimErrorIsFailure verifies that a failure to claim the
+// dispatch slot is recorded as a platform failure and the dispatcher is never
+// called (so no create can duplicate).
+func TestOrchestrator_ClaimErrorIsFailure(t *testing.T) {
 	jobs := newFakeJobRepo()
-	camps := &fakeCampaignRepo{byPlatformErr: errors.New("db down")}
+	camps := &fakeCampaignRepo{claimErr: errors.New("db down")}
 	disp := &countingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
 		model.ProviderGoogleAds: disp,
@@ -288,7 +307,36 @@ func TestOrchestrator_TransientLookupErrorIsFailure(t *testing.T) {
 	calls := disp.calls
 	disp.mu.Unlock()
 	if calls != 0 {
-		t.Errorf("Dispatch called %d times, want 0 (must not create when lookup is uncertain)", calls)
+		t.Errorf("Dispatch called %d times, want 0 (must not create when the claim failed)", calls)
+	}
+}
+
+// TestOrchestrator_AlreadyClaimedPendingSkips verifies that when another worker
+// holds the pending claim (no upstream id yet), this worker does not dispatch.
+func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
+	jobs := newFakeJobRepo()
+	// Seed a pending claim (no upstream id) for the pair, so ClaimCampaignDispatch
+	// returns not-claimed with a still-pending row.
+	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
+		"b1|" + string(model.ProviderGoogleAds): {ID: "c1", Status: "pending", PlatformCampaignID: ""},
+	}}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	// A single in-progress platform aggregates to failed (not ok), and the
+	// dispatcher must not have been called.
+	disp.mu.Lock()
+	calls := disp.calls
+	disp.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("Dispatch called %d times, want 0 (another worker holds the claim)", calls)
+	}
+	if !strings.Contains(string(j.Result), "already in progress") {
+		t.Errorf("result = %s, want an in-progress message", j.Result)
 	}
 }
 
@@ -421,25 +469,25 @@ func TestOrchestrator_PersistErrorIsSanitized(t *testing.T) {
 	}
 }
 
-// lockCountingCampaignRepo records that WithDispatchLock wrapped the dispatch.
-type lockCountingCampaignRepo struct {
+// claimCountingCampaignRepo records that each dispatch went through the claim.
+type claimCountingCampaignRepo struct {
 	fakeCampaignRepo
-	mu    sync.Mutex
-	locks int
+	cmu    sync.Mutex
+	claims int
 }
 
-func (r *lockCountingCampaignRepo) WithDispatchLock(ctx context.Context, briefID string, p model.Provider, fn func(context.Context) error) error {
-	r.mu.Lock()
-	r.locks++
-	r.mu.Unlock()
-	return fn(ctx)
+func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, jobID string) (bool, *model.Campaign, error) {
+	r.cmu.Lock()
+	r.claims++
+	r.cmu.Unlock()
+	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, jobID)
 }
 
-// TestOrchestrator_DispatchRunsUnderLock verifies dispatch is wrapped in the
-// (brief, platform) advisory lock.
-func TestOrchestrator_DispatchRunsUnderLock(t *testing.T) {
+// TestOrchestrator_DispatchGoesThroughClaim verifies each per-platform dispatch
+// claims the (brief, platform) single-flight slot.
+func TestOrchestrator_DispatchGoesThroughClaim(t *testing.T) {
 	jobs := newFakeJobRepo()
-	camps := &lockCountingCampaignRepo{}
+	camps := &claimCountingCampaignRepo{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
 		model.ProviderGoogleAds:   okDispatcher{},
 		model.ProviderLinkedInAds: okDispatcher{},
@@ -447,10 +495,10 @@ func TestOrchestrator_DispatchRunsUnderLock(t *testing.T) {
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
 	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
 	waitForTerminal(t, jobs, id)
-	camps.mu.Lock()
-	defer camps.mu.Unlock()
-	if camps.locks != 2 {
-		t.Errorf("WithDispatchLock called %d times, want 2 (one per platform)", camps.locks)
+	camps.cmu.Lock()
+	defer camps.cmu.Unlock()
+	if camps.claims != 2 {
+		t.Errorf("ClaimCampaignDispatch called %d times, want 2 (one per platform)", camps.claims)
 	}
 }
 

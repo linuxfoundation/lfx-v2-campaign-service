@@ -220,7 +220,7 @@ func BuildCreateCampaignsPayload(lfxV2CampaignServiceBriefsCreateCampaignsBody s
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsCreateCampaignsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"input\": {\n         \"config\": \"Et exercitationem soluta possimus a aliquid.\",\n         \"platforms\": [\n            \"microsoft-ads\",\n            \"twitter-ads\",\n            \"google-ads\",\n            \"google-ads\"\n         ]\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"input\": {\n         \"config\": \"Facere et exercitationem.\",\n         \"platforms\": [\n            \"microsoft-ads\",\n            \"twitter-ads\",\n            \"google-ads\"\n         ]\n      }\n   }'")
 		}
 		if body.Input == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("input", "body"))
@@ -310,7 +310,7 @@ func BuildUpdateCampaignPayload(lfxV2CampaignServiceBriefsUpdateCampaignBody str
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateCampaignBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Itaque quos voluptatibus quos accusantium fugit.\",\n         \"config\": \"Qui molestias.\",\n         \"status\": \"Excepturi saepe sit vel perspiciatis neque.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Ad voluptatem.\",\n         \"config\": \"Et expedita itaque quos.\",\n         \"status\": \"Tempore impedit.\"\n      }\n   }'")
 		}
 		if body.Campaign == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("campaign", "body"))

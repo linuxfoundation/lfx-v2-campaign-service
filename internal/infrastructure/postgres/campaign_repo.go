@@ -7,19 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
-
-// advisoryUnlockTimeout bounds the explicit advisory-lock release so a slow
-// unlock can't wedge connection return; the lock also frees when the session
-// ends, so this is a backstop.
-const advisoryUnlockTimeout = 5 * time.Second
 
 // CampaignRepo is a pgx-backed implementation of domain.CampaignRepository.
 type CampaignRepo struct {
@@ -31,48 +24,30 @@ func NewCampaignRepo(pool *Pool) *CampaignRepo { return &CampaignRepo{db: pool} 
 
 var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 
-// WithDispatchLock runs fn while holding a SESSION-level Postgres advisory lock
-// keyed on (briefID, platform), acquired on a dedicated pooled connection and
-// released explicitly when fn returns. A session lock (not a transaction lock)
-// is used deliberately: fn's own repository calls go through the shared pool
-// (r.db) and commit independently, so the lock must live on a separate
-// connection that stays held for fn's whole duration rather than being tied to a
-// transaction fn isn't part of. Serialization is what matters — while one worker
-// holds the lock, a second worker for the same pair blocks here, and once it
-// proceeds its committed-read idempotency check sees the first worker's persisted
-// row and reuses it. The lock is cross-replica (it lives in the database) and
-// released even if fn panics (deferred Unlock + connection release). The two-key
-// hashtext form makes distinct pairs rarely collide; a collision only serializes
-// two unrelated pairs, which is harmless.
-func (r *CampaignRepo) WithDispatchLock(ctx context.Context, briefID string, platform model.Provider, fn func(context.Context) error) error {
-	conn, err := r.db.Acquire(ctx)
+// ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
+// by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
+// unique index makes the claim single-winner across all replicas without holding
+// a connection or a blocking lock: INSERT ... ON CONFLICT DO NOTHING inserts a
+// row (claimed) or does nothing (already claimed/completed). No RETURNING is used
+// because ON CONFLICT DO NOTHING returns no row on conflict, so we detect the
+// winner via RowsAffected and then read the current row to return it.
+func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
+	q := `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
+		VALUES ($1, $2, $3, $4, '', 'pending')
+		ON CONFLICT (brief_id, platform) DO NOTHING`
+	tag, err := r.db.Exec(ctx, q, projectID, briefID, jobID, string(platform))
 	if err != nil {
-		return fmt.Errorf("acquire dispatch-lock connection: %w", err)
+		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
-	defer conn.Release()
+	claimed := tag.RowsAffected() == 1
 
-	if _, err := conn.Exec(ctx,
-		`SELECT pg_advisory_lock(hashtext($1), hashtext($2))`,
-		briefID, string(platform),
-	); err != nil {
-		return fmt.Errorf("acquire dispatch lock: %w", err)
+	row, gerr := r.GetCampaignByPlatform(ctx, briefID, platform)
+	if gerr != nil {
+		// The row must exist now (we or someone else just wrote it); a not-found
+		// here is a genuine error.
+		return claimed, nil, fmt.Errorf("read campaign after claim: %w", gerr)
 	}
-	// Release the session lock on the same connection before returning it to the
-	// pool; use a background context so a cancelled ctx still frees the lock.
-	defer func() {
-		unlockCtx, cancel := context.WithTimeout(context.Background(), advisoryUnlockTimeout)
-		defer cancel()
-		if _, uerr := conn.Exec(unlockCtx,
-			`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`,
-			briefID, string(platform),
-		); uerr != nil {
-			// The lock also frees when the session (connection) ends, so a failed
-			// explicit unlock is not fatal; surface it for diagnostics.
-			slog.WarnContext(ctx, "failed to release dispatch advisory lock", "brief_id", briefID, "platform", platform, "error", uerr)
-		}
-	}()
-
-	return fn(ctx)
+	return claimed, row, nil
 }
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, platform_campaign_id, campaign_name,

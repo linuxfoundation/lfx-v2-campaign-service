@@ -26,6 +26,13 @@ must also be mounted in `server.go`, or its routes 404 despite compiling.
 **Creation** — Added the `internal/platform/reddit` concept doc for the new
 Reddit Ads API v3 client (OAuth2 token refresh + Campaign -> Ad Group -> Ad
 creation) and listed it in the code index.
+**Update** — Reworked LFXV2-2665 single-flight from a held-connection advisory
+lock to an atomic claim row (INSERT ON CONFLICT DO NOTHING of a `pending`
+campaign), removing the pool-exhaustion/blocking hazards of holding a connection
+across the HTTP dispatch. The pending row is also the recovery signal for an
+upstream-create-then-crash. Recovery scan uses a staleness cutoff so a rolling
+deploy can't fail a job the old replica is still dispatching.
+
 **Update** — Durable campaign dispatch (LFXV2-2665): per-platform dispatch now
 runs under a cross-replica Postgres advisory lock keyed on (brief, platform) so
 concurrent create-campaigns can't double-create upstream; the orchestrator

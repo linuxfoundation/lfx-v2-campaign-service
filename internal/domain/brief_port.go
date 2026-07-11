@@ -44,13 +44,17 @@ type CampaignReader interface {
 	// ErrNotFound. Used to make dispatch idempotent: a brief already dispatched to
 	// a platform must not create a second upstream (paid) campaign on retry.
 	GetCampaignByPlatform(ctx context.Context, briefID string, platform model.Provider) (*model.Campaign, error)
-	// WithDispatchLock runs fn while holding a cross-connection (cross-replica)
-	// advisory lock keyed on (briefID, platform), serializing dispatch for that
-	// pair so two concurrent create-campaigns requests can't both create an
-	// upstream campaign. The lock is released when fn returns. fn's error is
-	// propagated; a failure to acquire the lock returns an error without running
-	// fn.
-	WithDispatchLock(ctx context.Context, briefID string, platform model.Provider, fn func(context.Context) error) error
+	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
+	// platform) by inserting a placeholder campaign row (status 'pending') via
+	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker
+	// wins across all replicas — the (brief_id, platform) unique index arbitrates,
+	// with no held connection and no blocking lock. It returns:
+	//   - claimed=true, row=the pending row  → this worker owns the dispatch;
+	//   - claimed=false, row=the existing row → another worker already claimed or
+	//     completed it; the caller reuses that row instead of dispatching again.
+	// The placeholder row also survives an upstream-create-then-crash, making the
+	// orphan recoverable (its status stays 'pending').
+	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (claimed bool, row *model.Campaign, err error)
 }
 
 // CampaignWriter mutates campaigns.

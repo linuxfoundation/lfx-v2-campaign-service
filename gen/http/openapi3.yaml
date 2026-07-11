@@ -222,7 +222,7 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 2df7b380-3594-4323-92b0-9a8e5a8fedcc
+                    example: 52099480-3594-4323-92b0-9a8e5a8fedcc
                     format: uuid
                   example: 6d67841a-f263-4343-acd9-5ea22a27e47d
             responses:
@@ -621,11 +621,10 @@ paths:
                             $ref: '#/components/schemas/CreateCampaignsRequestBody'
                         example:
                             input:
-                                config: Et exercitationem soluta possimus a aliquid.
+                                config: Facere et exercitationem.
                                 platforms:
                                     - microsoft-ads
                                     - twitter-ads
-                                    - google-ads
                                     - google-ads
             responses:
                 "202":
@@ -635,11 +634,11 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/JobCreateResponse'
                             example:
-                                job_id: Magnam veniam atque labore qui.
+                                job_id: Et magni adipisci magnam veniam.
                                 platforms:
-                                    - Architecto dolorem sapiente repellendus aut.
-                                    - Veritatis sint autem necessitatibus deleniti itaque.
-                                    - Magnam dolorum voluptatem modi velit.
+                                    - Odio et corporis.
+                                    - Dolorem sapiente.
+                                    - Aut natus.
                                 status: queued
                 "400":
                     description: 'BadRequest: Bad request'
@@ -741,14 +740,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Campaign2'
                             example:
-                                brief_id: Recusandae aut perferendis.
-                                campaign_name: Corporis ut non.
-                                id: Ullam pariatur ex voluptas aspernatur.
-                                platform: Est eaque ipsam harum nisi nobis.
-                                platform_campaign_id: Et eveniet.
-                                project_id: Voluptates aliquam vero ducimus.
-                                status: Eius sed qui deserunt perspiciatis nihil.
-                                version: 5441532063507194963
+                                brief_id: Ex voluptas aspernatur aperiam voluptates aliquam.
+                                campaign_name: Eaque ipsam harum nisi nobis et et.
+                                id: Explicabo est totam qui praesentium ipsam.
+                                platform: Ducimus neque.
+                                platform_campaign_id: Aut perferendis natus.
+                                project_id: Cum ipsum recusandae est adipisci ullam.
+                                status: Excepturi corporis ut.
+                                version: 9153915624091824945
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -849,9 +848,9 @@ paths:
                             $ref: '#/components/schemas/UpdateCampaignRequestBody'
                         example:
                             campaign:
-                                campaign_name: Itaque quos voluptatibus quos accusantium fugit.
-                                config: Qui molestias.
-                                status: Excepturi saepe sit vel perspiciatis neque.
+                                campaign_name: Ad voluptatem.
+                                config: Et expedita itaque quos.
+                                status: Tempore impedit.
             responses:
                 "200":
                     description: OK response.
@@ -868,14 +867,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Campaign3'
                             example:
-                                brief_id: Provident officia officiis.
-                                campaign_name: Rerum ut necessitatibus illum ratione.
-                                id: Enim reiciendis sint neque.
-                                platform: Ut mollitia accusantium dignissimos.
-                                platform_campaign_id: Consequatur qui molestiae velit ratione nesciunt et.
-                                project_id: Rerum facilis quia molestiae ratione officia.
-                                status: Mollitia atque atque dolores accusantium non dolor.
-                                version: 9077221317587809922
+                                brief_id: Et aut consequatur inventore enim reiciendis.
+                                campaign_name: Ut mollitia accusantium dignissimos.
+                                id: Ullam omnis autem.
+                                platform: Neque ut rerum facilis quia molestiae ratione.
+                                platform_campaign_id: Fugit provident officia officiis.
+                                project_id: Id laboriosam nihil ea.
+                                status: Consequatur qui molestiae velit ratione nesciunt et.
+                                version: 476544424691753105
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1022,14 +1021,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/GoogleAdsConnection3'
                             example:
-                                account_id: Quis quis reprehenderit non quae omnis qui.
+                                account_id: Minima eaque earum.
                                 has_credentials: true
-                                id: Dolor officia eligendi.
-                                label: At odio incidunt distinctio sint qui.
-                                login_customer_id: Quidem odio ab accusantium aut est deleniti.
-                                project_id: Provident dicta temporibus debitis.
-                                status: error
-                                version: 5571372049954177452
+                                id: Excepturi deleniti voluptas aperiam vel.
+                                label: Id temporibus et provident maiores neque quis.
+                                login_customer_id: Assumenda ipsa dolor.
+                                project_id: Laudantium amet veritatis rerum itaque consequatur laboriosam.
+                                status: active
+                                version: 8240960881778207137
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -1087,10 +1086,10 @@ paths:
                                 label: TLF Main
                                 login_customer_id: "9746983954"
                             credentials:
-                                client_id: Quae porro qui rem autem quae.
-                                client_secret: Nulla officia vitae perspiciatis eveniet.
-                                developer_token: Nobis ut asperiores quo aut.
-                                refresh_token: Fuga enim nihil.
+                                client_id: Natus provident est.
+                                client_secret: Id dolore.
+                                developer_token: Non error.
+                                refresh_token: Accusamus aperiam eos et architecto voluptas rerum.
             responses:
                 "201":
                     description: Created response.
@@ -1107,14 +1106,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/GoogleAdsConnection2'
                             example:
-                                account_id: Id temporibus et provident maiores neque quis.
-                                has_credentials: false
-                                id: Provident nobis soluta culpa vitae.
-                                label: Laudantium amet veritatis rerum itaque consequatur laboriosam.
-                                login_customer_id: Eligendi ut.
-                                project_id: Excepturi deleniti voluptas aperiam vel.
+                                account_id: Nobis ut asperiores quo aut.
+                                has_credentials: true
+                                id: Nihil quae porro.
+                                label: Nulla officia vitae perspiciatis eveniet.
+                                login_customer_id: Dicta voluptate aut in.
+                                project_id: Rem autem quae.
                                 status: error
-                                version: 4162198444433663334
+                                version: 7743336992980724195
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1205,14 +1204,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/GoogleAdsConnection4'
                             example:
-                                account_id: Eum est molestiae necessitatibus magni.
+                                account_id: Quidem odio ab accusantium aut est deleniti.
                                 has_credentials: true
-                                id: Deserunt aliquam necessitatibus.
-                                label: In est.
-                                login_customer_id: Deserunt ipsum dolorum quas error.
-                                project_id: Ut et eligendi et numquam dolorum.
-                                status: error
-                                version: 3367774197321419764
+                                id: Odio incidunt distinctio sint.
+                                label: Qui enim cumque saepe.
+                                login_customer_id: Praesentium voluptatibus deserunt aliquam necessitatibus eos.
+                                project_id: Aperiam quis quis reprehenderit non quae.
+                                status: active
+                                version: 5525678772225743935
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1294,10 +1293,10 @@ paths:
                             $ref: '#/components/schemas/SetCredentialGoogleAdsRequestBody'
                         example:
                             credentials:
-                                client_id: Quae porro qui rem autem quae.
-                                client_secret: Nulla officia vitae perspiciatis eveniet.
-                                developer_token: Nobis ut asperiores quo aut.
-                                refresh_token: Fuga enim nihil.
+                                client_id: Natus provident est.
+                                client_secret: Id dolore.
+                                developer_token: Non error.
+                                refresh_token: Accusamus aperiam eos et architecto voluptas rerum.
             responses:
                 "204":
                     description: No Content response.
@@ -1364,8 +1363,8 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ConnectionTestResult'
                             example:
-                                message: Fugit repellendus et accusamus sed non sequi.
-                                ok: true
+                                message: Eligendi et.
+                                ok: false
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -1476,17 +1475,17 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/HubspotConnection3'
                             example:
-                                account_id: Dolorem fugiat et aspernatur voluptatem nobis.
-                                brand_kit: Delectus ex aut quia.
-                                has_credentials: false
-                                id: Tempore sunt itaque omnis.
-                                label: Modi voluptatum veniam molestiae quibusdam.
-                                portal_id: Perferendis eveniet.
-                                project_id: Ex sunt sit beatae.
-                                sender_email: Voluptatibus quam dicta voluptate consequuntur voluptatem est.
-                                sender_name: Temporibus quis iste eaque ratione debitis nam.
-                                status: inactive
-                                version: 3577051025426830879
+                                account_id: In ipsa tempore incidunt velit provident perspiciatis.
+                                brand_kit: Aspernatur voluptatem nobis.
+                                has_credentials: true
+                                id: Nihil sunt doloremque.
+                                label: Ea architecto autem iste.
+                                portal_id: Omnis ut ex sunt.
+                                project_id: Ut ut odio odio sed minus quia.
+                                sender_email: Beatae ut modi voluptatum veniam.
+                                sender_name: Quibusdam consequuntur dolorem fugiat.
+                                status: deleted
+                                version: 5861862348723710898
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -1540,14 +1539,14 @@ paths:
                             $ref: '#/components/schemas/CreateHubspotRequestBody'
                         example:
                             config:
-                                account_id: Itaque fugit rerum cumque.
-                                brand_kit: Ullam distinctio dolore velit.
-                                label: Laudantium nostrum ratione id eius laborum aspernatur.
-                                portal_id: Molestiae suscipit non iusto.
-                                sender_email: Consequatur in vero soluta.
-                                sender_name: Eius dicta.
+                                account_id: Voluptas aperiam.
+                                brand_kit: Itaque fugit rerum cumque.
+                                label: Dolores enim.
+                                portal_id: Assumenda harum eos eveniet ut et laboriosam.
+                                sender_email: Quos expedita voluptas qui eaque.
+                                sender_name: Laudantium nostrum ratione id eius laborum aspernatur.
                             credentials:
-                                private_app_token: Non assumenda perspiciatis.
+                                private_app_token: Molestiae suscipit non iusto.
             responses:
                 "201":
                     description: Created response.
@@ -1564,17 +1563,17 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/HubspotConnection2'
                             example:
-                                account_id: Molestiae aut fugit alias.
-                                brand_kit: Architecto autem iste.
+                                account_id: Porro ut et cupiditate.
+                                brand_kit: Animi molestiae aut fugit alias nisi qui.
                                 has_credentials: true
-                                id: Ea ullam minima voluptatem vel deleniti.
-                                label: Vero at ut quis.
-                                portal_id: Non unde.
-                                project_id: Repudiandae necessitatibus dolorem enim beatae quia.
-                                sender_email: Dolorum nihil sunt doloremque explicabo.
-                                sender_name: Ut odio odio sed minus quia quia.
+                                id: Eius dicta.
+                                label: Non assumenda perspiciatis.
+                                portal_id: Voluptatem vel.
+                                project_id: Ullam distinctio dolore velit.
+                                sender_email: Dolore repudiandae necessitatibus dolorem.
+                                sender_name: Beatae quia minus vero at ut.
                                 status: active
-                                version: 8635749132548484011
+                                version: 2806381801577175312
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1646,12 +1645,12 @@ paths:
                             $ref: '#/components/schemas/UpdateHubspotRequestBody'
                         example:
                             config:
-                                account_id: Itaque fugit rerum cumque.
-                                brand_kit: Ullam distinctio dolore velit.
-                                label: Laudantium nostrum ratione id eius laborum aspernatur.
-                                portal_id: Molestiae suscipit non iusto.
-                                sender_email: Consequatur in vero soluta.
-                                sender_name: Eius dicta.
+                                account_id: Voluptas aperiam.
+                                brand_kit: Itaque fugit rerum cumque.
+                                label: Dolores enim.
+                                portal_id: Assumenda harum eos eveniet ut et laboriosam.
+                                sender_email: Quos expedita voluptas qui eaque.
+                                sender_name: Laudantium nostrum ratione id eius laborum aspernatur.
             responses:
                 "200":
                     description: OK response.
@@ -1668,17 +1667,17 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/HubspotConnection4'
                             example:
-                                account_id: Velit fuga quos.
-                                brand_kit: Culpa est possimus dolores dignissimos.
-                                has_credentials: true
-                                id: Reprehenderit provident repudiandae sit.
-                                label: Ut sunt aliquam.
-                                portal_id: Sed aut quia nihil est quia.
-                                project_id: Aut aut eos magnam quisquam et.
-                                sender_email: Fugiat est itaque.
-                                sender_name: Fugiat aut dicta libero.
-                                status: active
-                                version: 2879571083312014203
+                                account_id: Debitis nam.
+                                brand_kit: Aut aut eos magnam quisquam et.
+                                has_credentials: false
+                                id: Eveniet sint voluptatibus quam dicta.
+                                label: Quis iste eaque.
+                                portal_id: Quia distinctio consequatur dolore.
+                                project_id: Consequuntur voluptatem est qui.
+                                sender_email: Corporis consequatur voluptatem voluptates.
+                                sender_name: Reprehenderit provident repudiandae sit.
+                                status: error
+                                version: 7483108258641908951
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1760,7 +1759,7 @@ paths:
                             $ref: '#/components/schemas/SetCredentialHubspotRequestBody'
                         example:
                             credentials:
-                                private_app_token: Non assumenda perspiciatis.
+                                private_app_token: Molestiae suscipit non iusto.
             responses:
                 "204":
                     description: No Content response.
@@ -1827,8 +1826,8 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ConnectionTestResult'
                             example:
-                                message: Laudantium error eum et aut.
-                                ok: true
+                                message: Sunt aliquam et velit fuga quos est.
+                                ok: false
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -1939,14 +1938,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/LinkedinAdsConnection3'
                             example:
-                                account_id: Ipsa quo vel architecto quas eligendi impedit.
+                                account_id: Sed sed similique enim ea maiores.
                                 has_credentials: false
-                                id: Expedita voluptatum commodi fuga ipsa.
-                                label: Qui quidem exercitationem.
-                                org_id: Laudantium est ut soluta neque facilis est.
-                                project_id: Nostrum corporis quasi magnam.
-                                status: inactive
-                                version: 8731305521183611402
+                                id: In aperiam quam quis quam dolor.
+                                label: Sit cupiditate nobis iste qui rerum.
+                                org_id: Ratione expedita voluptatum commodi fuga ipsa quam.
+                                project_id: Earum iusto.
+                                status: active
+                                version: 4984404630797976872
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2001,10 +2000,10 @@ paths:
                         example:
                             config:
                                 account_id: "538170226"
-                                label: Assumenda quam deleniti et et nam quia.
+                                label: Dolorum consequatur in est.
                                 org_id: "208777"
                             credentials:
-                                access_token: Sunt est labore libero.
+                                access_token: Eum est molestiae necessitatibus magni.
             responses:
                 "201":
                     description: Created response.
@@ -2021,14 +2020,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/LinkedinAdsConnection2'
                             example:
-                                account_id: Quam quis quam dolor occaecati earum iusto.
-                                has_credentials: true
-                                id: Occaecati et.
-                                label: Delectus voluptatem iste nisi in.
-                                org_id: Iste qui rerum est sed sed similique.
-                                project_id: Natus expedita aspernatur consequuntur quod ducimus molestias.
-                                status: active
-                                version: 6933590282461306362
+                                account_id: Libero ut est rerum est occaecati et.
+                                has_credentials: false
+                                id: Error nulla fuga fugit repellendus et accusamus.
+                                label: Nam quia aperiam sunt est.
+                                org_id: Consequuntur quod.
+                                project_id: Non sequi error assumenda quam deleniti et.
+                                status: inactive
+                                version: 5045833847874249009
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2101,7 +2100,7 @@ paths:
                         example:
                             config:
                                 account_id: "538170226"
-                                label: Assumenda quam deleniti et et nam quia.
+                                label: Dolorum consequatur in est.
                                 org_id: "208777"
             responses:
                 "200":
@@ -2119,14 +2118,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/LinkedinAdsConnection4'
                             example:
-                                account_id: Quia quisquam corrupti distinctio voluptas eius.
-                                has_credentials: true
-                                id: Corrupti et nobis voluptas dignissimos.
-                                label: Ducimus modi ut culpa excepturi blanditiis.
-                                org_id: Distinctio sunt aliquid harum quis nam rerum.
-                                project_id: Illum et quisquam ex est facilis.
+                                account_id: Neque facilis est qui possimus eligendi.
+                                has_credentials: false
+                                id: Consequuntur qui quidem exercitationem.
+                                label: Sed numquam necessitatibus laudantium est ut.
+                                org_id: Et nobis voluptas dignissimos exercitationem illum.
+                                project_id: Ipsa quo vel architecto quas eligendi impedit.
                                 status: inactive
-                                version: 3234333099728911322
+                                version: 8080806383587730069
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2208,7 +2207,7 @@ paths:
                             $ref: '#/components/schemas/SetCredentialLinkedinAdsRequestBody'
                         example:
                             credentials:
-                                access_token: Sunt est labore libero.
+                                access_token: Eum est molestiae necessitatibus magni.
             responses:
                 "204":
                     description: No Content response.
@@ -2275,7 +2274,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ConnectionTestResult'
                             example:
-                                message: Est rerum.
+                                message: Ex est facilis qui ducimus modi ut.
                                 ok: true
                 "404":
                     description: 'NotFound: Resource not found'
@@ -2387,15 +2386,15 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/MetaAdsConnection3'
                             example:
-                                account_id: Pariatur debitis.
-                                app_id: Omnis neque autem ex eos.
+                                account_id: Qui nobis et delectus quam.
+                                app_id: Est dolor ut corporis.
                                 has_credentials: true
-                                id: Est dolor ut corporis.
-                                label: Illo vitae occaecati omnis.
-                                page_id: Cupiditate quos hic.
-                                project_id: Cupiditate ut illo dolor quaerat totam.
-                                status: active
-                                version: 1381780689877724774
+                                id: Laboriosam qui id enim.
+                                label: Nihil corrupti repellat eius.
+                                page_id: Aut fuga.
+                                project_id: Magni repudiandae.
+                                status: deleted
+                                version: 2782071096062379507
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2450,12 +2449,12 @@ paths:
                         example:
                             config:
                                 account_id: act_193556282970417
-                                app_id: Deleniti voluptates non sint inventore.
-                                label: Mollitia odio et dolor et consectetur.
-                                page_id: Error ipsam maiores et maiores laudantium aut.
+                                app_id: Distinctio sunt aliquid harum quis nam rerum.
+                                label: Excepturi blanditiis officiis quia quisquam.
+                                page_id: Distinctio voluptas eius error autem est.
                             credentials:
-                                access_token: Iure ut nostrum facilis suscipit.
-                                app_secret: Porro voluptate.
+                                access_token: Eius est rerum illo mollitia.
+                                app_secret: Et dolor et consectetur sint error.
             responses:
                 "201":
                     description: Created response.
@@ -2472,15 +2471,15 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/MetaAdsConnection2'
                             example:
-                                account_id: Laboriosam qui id enim.
-                                app_id: Qui nobis et delectus quam.
+                                account_id: Ad inventore voluptatum eligendi quasi.
+                                app_id: Placeat unde distinctio ducimus qui.
                                 has_credentials: true
-                                id: Ipsa et dolore.
-                                label: Expedita dignissimos non sed omnis officiis et.
-                                page_id: Nihil corrupti repellat eius.
-                                project_id: Velit dolores omnis placeat unde distinctio ducimus.
-                                status: error
-                                version: 2384980829463304567
+                                id: Deleniti voluptates non sint inventore.
+                                label: Porro voluptate.
+                                page_id: Aperiam velit dolores.
+                                project_id: Iure ut nostrum facilis suscipit.
+                                status: inactive
+                                version: 358292288538552244
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2553,9 +2552,9 @@ paths:
                         example:
                             config:
                                 account_id: act_193556282970417
-                                app_id: Deleniti voluptates non sint inventore.
-                                label: Mollitia odio et dolor et consectetur.
-                                page_id: Error ipsam maiores et maiores laudantium aut.
+                                app_id: Distinctio sunt aliquid harum quis nam rerum.
+                                label: Excepturi blanditiis officiis quia quisquam.
+                                page_id: Distinctio voluptas eius error autem est.
             responses:
                 "200":
                     description: OK response.
@@ -2572,15 +2571,15 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/MetaAdsConnection4'
                             example:
-                                account_id: Magnam ut similique ea minima magnam.
-                                app_id: Dolores est et recusandae nihil.
-                                has_credentials: true
-                                id: A necessitatibus molestiae.
-                                label: Repellat non suscipit veritatis sit tempore.
-                                page_id: Nam sit.
-                                project_id: Unde dicta autem dolorem qui explicabo.
+                                account_id: Quos hic doloribus.
+                                app_id: Qui a necessitatibus molestiae qui unde.
+                                has_credentials: false
+                                id: Illo vitae occaecati omnis.
+                                label: Explicabo possimus consequatur.
+                                page_id: Eos velit eum et sint corrupti.
+                                project_id: Pariatur debitis.
                                 status: deleted
-                                version: 2040878603756169140
+                                version: 3363918130362824521
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2662,8 +2661,8 @@ paths:
                             $ref: '#/components/schemas/SetCredentialMetaAdsRequestBody'
                         example:
                             credentials:
-                                access_token: Iure ut nostrum facilis suscipit.
-                                app_secret: Porro voluptate.
+                                access_token: Eius est rerum illo mollitia.
+                                app_secret: Et dolor et consectetur sint error.
             responses:
                 "204":
                     description: No Content response.
@@ -2730,7 +2729,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ConnectionTestResult'
                             example:
-                                message: Velit atque laudantium ullam rerum.
+                                message: Dolorem qui explicabo consequuntur repellat non suscipit.
                                 ok: false
                 "404":
                     description: 'NotFound: Resource not found'
@@ -2842,14 +2841,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/MicrosoftAdsConnection3'
                             example:
-                                account_id: Vel ipsam dolores et.
-                                customer_id: Numquam omnis ullam facilis ab sapiente.
-                                has_credentials: true
-                                id: Omnis autem accusamus.
-                                label: Eligendi rerum numquam amet deserunt rem.
-                                project_id: Est assumenda aut.
+                                account_id: Dolor ut velit quam omnis et dolor.
+                                customer_id: Vitae vel omnis autem accusamus mollitia.
+                                has_credentials: false
+                                id: Maxime dicta qui aut.
+                                label: Velit et impedit facilis quaerat.
+                                project_id: Suscipit eos nam ipsa.
                                 status: deleted
-                                version: 6442954210695633704
+                                version: 443094643112211074
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2903,14 +2902,14 @@ paths:
                             $ref: '#/components/schemas/CreateMicrosoftAdsRequestBody'
                         example:
                             config:
-                                account_id: Voluptate necessitatibus enim et et itaque.
-                                customer_id: Omnis mollitia aut.
-                                label: Nobis omnis.
+                                account_id: Enim non rem error voluptas deserunt.
+                                customer_id: Officiis aperiam quos.
+                                label: Nihil dolores perspiciatis porro veniam distinctio.
                             credentials:
-                                client_id: Quis et modi.
-                                client_secret: Labore omnis provident nihil aut rerum est.
-                                developer_token: Sint non.
-                                refresh_token: Amet rem ab.
+                                client_id: Nisi blanditiis eveniet quasi ea.
+                                client_secret: Ut corporis dolorum consequatur eius perferendis nobis.
+                                developer_token: Et et itaque sunt.
+                                refresh_token: Vel voluptate necessitatibus.
             responses:
                 "201":
                     description: Created response.
@@ -2927,14 +2926,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/MicrosoftAdsConnection2'
                             example:
-                                account_id: Ipsa rerum velit et impedit.
-                                customer_id: Ut velit quam omnis.
+                                account_id: Repellendus porro et distinctio.
+                                customer_id: Quia eaque.
                                 has_credentials: true
-                                id: Aut assumenda fugiat quia eaque dolor porro.
-                                label: Qui aut quas suscipit eos.
-                                project_id: Alias error aut maxime.
-                                status: inactive
-                                version: 5504009031361040663
+                                id: Labore omnis provident nihil aut rerum est.
+                                label: Sint non.
+                                project_id: Amet rem ab.
+                                status: error
+                                version: 5425752825388180685
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -3006,9 +3005,9 @@ paths:
                             $ref: '#/components/schemas/UpdateMicrosoftAdsRequestBody'
                         example:
                             config:
-                                account_id: Voluptate necessitatibus enim et et itaque.
-                                customer_id: Omnis mollitia aut.
-                                label: Nobis omnis.
+                                account_id: Enim non rem error voluptas deserunt.
+                                customer_id: Officiis aperiam quos.
+                                label: Nihil dolores perspiciatis porro veniam distinctio.
             responses:
                 "200":
                     description: OK response.
@@ -3025,14 +3024,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/MicrosoftAdsConnection4'
                             example:
-                                account_id: Enim id voluptas aperiam distinctio.
-                                customer_id: Ut et laboriosam.
+                                account_id: Esse voluptate eum laboriosam distinctio non.
+                                customer_id: Id aut et adipisci quo ut.
                                 has_credentials: false
-                                id: Deleniti deserunt labore.
-                                label: Deserunt voluptates ut culpa saepe necessitatibus veritatis.
-                                project_id: Id aut et adipisci quo ut.
+                                id: Rem quia vel ipsam dolores.
+                                label: Ullam facilis ab sapiente voluptatem.
+                                project_id: Et qui ut libero numquam.
                                 status: inactive
-                                version: 171807855442490922
+                                version: 8626906144120400240
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -3114,10 +3113,10 @@ paths:
                             $ref: '#/components/schemas/SetCredentialGoogleAdsRequestBody'
                         example:
                             credentials:
-                                client_id: Quis et modi.
-                                client_secret: Labore omnis provident nihil aut rerum est.
-                                developer_token: Sint non.
-                                refresh_token: Amet rem ab.
+                                client_id: Nisi blanditiis eveniet quasi ea.
+                                client_secret: Ut corporis dolorum consequatur eius perferendis nobis.
+                                developer_token: Et et itaque sunt.
+                                refresh_token: Vel voluptate necessitatibus.
             responses:
                 "204":
                     description: No Content response.
@@ -3184,7 +3183,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ConnectionTestResult'
                             example:
-                                message: Expedita voluptas qui eaque.
+                                message: Voluptates ut culpa saepe necessitatibus.
                                 ok: true
                 "404":
                     description: 'NotFound: Resource not found'
@@ -3296,13 +3295,13 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/RedditAdsConnection3'
                             example:
-                                account_id: Et rerum in expedita.
-                                has_credentials: true
-                                id: Voluptatum ducimus tempore quae eum consequatur dolore.
-                                label: Quo veritatis quis delectus est.
-                                project_id: Illum illum dolores tenetur ut illum.
-                                status: active
-                                version: 4673192311933251173
+                                account_id: Iusto omnis.
+                                has_credentials: false
+                                id: Odio totam cum deleniti placeat fuga.
+                                label: Et ut quis ut.
+                                project_id: Saepe voluptatem reiciendis pariatur.
+                                status: error
+                                version: 757606501996618102
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3357,11 +3356,11 @@ paths:
                         example:
                             config:
                                 account_id: t2_gv9wtbfa
-                                label: Rerum adipisci.
+                                label: Sit tempore.
                             credentials:
-                                client_id: Enim accusantium labore esse numquam.
-                                client_secret: Non laudantium sunt minima repudiandae illo harum.
-                                refresh_token: Dolorum deserunt.
+                                client_id: Magnam ut similique ea minima magnam.
+                                client_secret: Ut quo iure.
+                                refresh_token: Sit est dolores est et.
             responses:
                 "201":
                     description: Created response.
@@ -3378,13 +3377,13 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/RedditAdsConnection2'
                             example:
-                                account_id: Iusto omnis.
-                                has_credentials: false
-                                id: Odio totam cum deleniti placeat fuga.
-                                label: Et ut quis ut.
-                                project_id: Saepe voluptatem reiciendis pariatur.
-                                status: error
-                                version: 757606501996618102
+                                account_id: Non laudantium sunt minima repudiandae illo harum.
+                                has_credentials: true
+                                id: Atque laudantium.
+                                label: Enim accusantium labore esse numquam.
+                                project_id: Rerum earum rerum adipisci.
+                                status: inactive
+                                version: 6816002535409129912
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -3457,7 +3456,7 @@ paths:
                         example:
                             config:
                                 account_id: t2_gv9wtbfa
-                                label: Rerum adipisci.
+                                label: Sit tempore.
             responses:
                 "200":
                     description: OK response.
@@ -3474,13 +3473,13 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/RedditAdsConnection4'
                             example:
-                                account_id: Aperiam cum possimus.
-                                has_credentials: false
-                                id: Veniam consectetur deserunt in hic dolorum facere.
-                                label: Magni consequatur dignissimos itaque quia.
-                                project_id: Et reprehenderit dignissimos.
-                                status: error
-                                version: 3475949958922975875
+                                account_id: Et rerum in expedita.
+                                has_credentials: true
+                                id: Voluptatum ducimus tempore quae eum consequatur dolore.
+                                label: Quo veritatis quis delectus est.
+                                project_id: Illum illum dolores tenetur ut illum.
+                                status: active
+                                version: 4673192311933251173
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -3562,9 +3561,9 @@ paths:
                             $ref: '#/components/schemas/SetCredentialRedditAdsRequestBody'
                         example:
                             credentials:
-                                client_id: Enim accusantium labore esse numquam.
-                                client_secret: Non laudantium sunt minima repudiandae illo harum.
-                                refresh_token: Dolorum deserunt.
+                                client_id: Magnam ut similique ea minima magnam.
+                                client_secret: Ut quo iure.
+                                refresh_token: Sit est dolores est et.
             responses:
                 "204":
                     description: No Content response.
@@ -3631,8 +3630,8 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ConnectionTestResult'
                             example:
-                                message: Sed dolore dolorem voluptatibus.
-                                ok: false
+                                message: Assumenda nesciunt distinctio eaque.
+                                ok: true
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3743,14 +3742,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/TwitterAdsConnection3'
                             example:
-                                account_id: Deserunt repellendus corrupti itaque quo sit.
-                                funding_instrument_id: Eum et ipsum expedita reprehenderit eos.
-                                has_credentials: false
-                                id: Blanditiis mollitia dolores illo nostrum magnam.
-                                label: Omnis nobis.
-                                project_id: Nostrum tempore.
-                                status: inactive
-                                version: 6605548766358472787
+                                account_id: Id unde veritatis officiis aut fugiat.
+                                funding_instrument_id: Voluptas tenetur nobis facere.
+                                has_credentials: true
+                                id: Eaque voluptate reprehenderit sed voluptatem sed illo.
+                                label: Cum nisi numquam.
+                                project_id: Praesentium tenetur quas at ut necessitatibus dolor.
+                                status: active
+                                version: 4642810346647163563
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3805,13 +3804,13 @@ paths:
                         example:
                             config:
                                 account_id: 8r7gb
-                                funding_instrument_id: Qui cupiditate ullam ab suscipit et.
-                                label: Necessitatibus non iste ad rem quidem.
+                                funding_instrument_id: Deserunt in hic dolorum facere ipsa et.
+                                label: Repellat veniam.
                             credentials:
-                                access_token: Quam officiis aut sit architecto ut unde.
-                                access_token_secret: Sapiente possimus.
-                                consumer_key: Harum corporis deleniti doloribus.
-                                consumer_secret: Assumenda dignissimos beatae vitae aut ea dolor.
+                                access_token: Possimus et.
+                                access_token_secret: Deserunt consequuntur omnis.
+                                consumer_key: Dignissimos voluptas magni consequatur dignissimos itaque.
+                                consumer_secret: Ut aperiam.
             responses:
                 "201":
                     description: Created response.
@@ -3828,14 +3827,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/TwitterAdsConnection2'
                             example:
-                                account_id: Id unde veritatis officiis aut fugiat.
-                                funding_instrument_id: Voluptas tenetur nobis facere.
+                                account_id: Vitae aut ea.
+                                funding_instrument_id: Aut sit architecto ut unde saepe.
                                 has_credentials: true
-                                id: Eaque voluptate reprehenderit sed voluptatem sed illo.
-                                label: Cum nisi numquam.
-                                project_id: Praesentium tenetur quas at ut necessitatibus dolor.
-                                status: active
-                                version: 4642810346647163563
+                                id: Non iste ad rem quidem sunt qui.
+                                label: Deleniti doloribus debitis assumenda dignissimos.
+                                project_id: Ullam ab suscipit et labore harum.
+                                status: error
+                                version: 753723066786334950
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -3908,8 +3907,8 @@ paths:
                         example:
                             config:
                                 account_id: 8r7gb
-                                funding_instrument_id: Qui cupiditate ullam ab suscipit et.
-                                label: Necessitatibus non iste ad rem quidem.
+                                funding_instrument_id: Deserunt in hic dolorum facere ipsa et.
+                                label: Repellat veniam.
             responses:
                 "200":
                     description: OK response.
@@ -3926,14 +3925,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/TwitterAdsConnection4'
                             example:
-                                account_id: Rem error.
-                                funding_instrument_id: Aperiam quos perferendis nisi blanditiis eveniet.
+                                account_id: Deserunt repellendus corrupti itaque quo sit.
+                                funding_instrument_id: Eum et ipsum expedita reprehenderit eos.
                                 has_credentials: false
-                                id: Aperiam et nihil.
-                                label: Distinctio amet enim.
-                                project_id: Perspiciatis porro.
+                                id: Blanditiis mollitia dolores illo nostrum magnam.
+                                label: Omnis nobis.
+                                project_id: Nostrum tempore.
                                 status: inactive
-                                version: 3440110816039158635
+                                version: 6605548766358472787
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -4015,10 +4014,10 @@ paths:
                             $ref: '#/components/schemas/SetCredentialTwitterAdsRequestBody'
                         example:
                             credentials:
-                                access_token: Quam officiis aut sit architecto ut unde.
-                                access_token_secret: Sapiente possimus.
-                                consumer_key: Harum corporis deleniti doloribus.
-                                consumer_secret: Assumenda dignissimos beatae vitae aut ea dolor.
+                                access_token: Possimus et.
+                                access_token_secret: Deserunt consequuntur omnis.
+                                consumer_key: Dignissimos voluptas magni consequatur dignissimos itaque.
+                                consumer_secret: Ut aperiam.
             responses:
                 "204":
                     description: No Content response.
@@ -4085,7 +4084,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ConnectionTestResult'
                             example:
-                                message: Enim ut corporis dolorum consequatur eius.
+                                message: Ut architecto deleniti nostrum sed aperiam.
                                 ok: true
                 "404":
                     description: 'NotFound: Resource not found'
@@ -4151,18 +4150,22 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/JobPollResponse'
                             example:
-                                error: Dolore ut non error aut.
-                                job_id: Vel natus provident.
+                                error: Beatae est officia et sint.
+                                job_id: Et dignissimos ex.
                                 result:
-                                    - campaign_id: Officia et sint numquam accusamus.
-                                      error: Eos et architecto voluptas.
-                                      ok: false
-                                      platform: Consequatur et dignissimos ex quo praesentium voluptas.
-                                    - campaign_id: Officia et sint numquam accusamus.
-                                      error: Eos et architecto voluptas.
-                                      ok: false
-                                      platform: Consequatur et dignissimos ex quo praesentium voluptas.
-                                status: queued
+                                    - campaign_id: Et voluptatem voluptatem voluptatem.
+                                      error: Omnis doloribus qui.
+                                      ok: true
+                                      platform: Nobis velit in.
+                                    - campaign_id: Et voluptatem voluptatem voluptatem.
+                                      error: Omnis doloribus qui.
+                                      ok: true
+                                      platform: Nobis velit in.
+                                    - campaign_id: Et voluptatem voluptatem voluptatem.
+                                      error: Omnis doloribus qui.
+                                      ok: true
+                                      platform: Nobis velit in.
+                                status: running
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -4863,7 +4866,7 @@ components:
             properties:
                 config:
                     description: Per-platform campaign configuration
-                    example: Ullam eaque suscipit harum.
+                    example: Impedit ullam eaque suscipit harum sint neque.
                 platforms:
                     type: array
                     items:
@@ -4882,12 +4885,13 @@ components:
                         - meta-ads
                         - google-ads
                         - reddit-ads
-                        - reddit-ads
+                    minItems: 1
             example:
-                config: Et veniam itaque optio consequatur nulla sint.
+                config: Optio consequatur nulla sint qui alias voluptatem.
                 platforms:
-                    - reddit-ads
                     - linkedin-ads
+                    - reddit-ads
+                    - google-ads
             required:
                 - platforms
         CampaignUpdateInput:
@@ -4989,11 +4993,10 @@ components:
                     $ref: '#/components/schemas/CampaignCreateInput'
             example:
                 input:
-                    config: Et exercitationem soluta possimus a aliquid.
+                    config: Facere et exercitationem.
                     platforms:
                         - microsoft-ads
                         - twitter-ads
-                        - google-ads
                         - google-ads
             required:
                 - input
@@ -5010,10 +5013,10 @@ components:
                     label: TLF Main
                     login_customer_id: "9746983954"
                 credentials:
-                    client_id: Quae porro qui rem autem quae.
-                    client_secret: Nulla officia vitae perspiciatis eveniet.
-                    developer_token: Nobis ut asperiores quo aut.
-                    refresh_token: Fuga enim nihil.
+                    client_id: Natus provident est.
+                    client_secret: Id dolore.
+                    developer_token: Non error.
+                    refresh_token: Accusamus aperiam eos et architecto voluptas rerum.
             required:
                 - config
                 - credentials
@@ -5026,14 +5029,14 @@ components:
                     $ref: '#/components/schemas/HubspotCredentials'
             example:
                 config:
-                    account_id: Itaque fugit rerum cumque.
-                    brand_kit: Ullam distinctio dolore velit.
-                    label: Laudantium nostrum ratione id eius laborum aspernatur.
-                    portal_id: Molestiae suscipit non iusto.
-                    sender_email: Consequatur in vero soluta.
-                    sender_name: Eius dicta.
+                    account_id: Voluptas aperiam.
+                    brand_kit: Itaque fugit rerum cumque.
+                    label: Dolores enim.
+                    portal_id: Assumenda harum eos eveniet ut et laboriosam.
+                    sender_email: Quos expedita voluptas qui eaque.
+                    sender_name: Laudantium nostrum ratione id eius laborum aspernatur.
                 credentials:
-                    private_app_token: Non assumenda perspiciatis.
+                    private_app_token: Molestiae suscipit non iusto.
             required:
                 - config
                 - credentials
@@ -5047,10 +5050,10 @@ components:
             example:
                 config:
                     account_id: "538170226"
-                    label: Assumenda quam deleniti et et nam quia.
+                    label: Dolorum consequatur in est.
                     org_id: "208777"
                 credentials:
-                    access_token: Sunt est labore libero.
+                    access_token: Eum est molestiae necessitatibus magni.
             required:
                 - config
                 - credentials
@@ -5064,12 +5067,12 @@ components:
             example:
                 config:
                     account_id: act_193556282970417
-                    app_id: Deleniti voluptates non sint inventore.
-                    label: Mollitia odio et dolor et consectetur.
-                    page_id: Error ipsam maiores et maiores laudantium aut.
+                    app_id: Distinctio sunt aliquid harum quis nam rerum.
+                    label: Excepturi blanditiis officiis quia quisquam.
+                    page_id: Distinctio voluptas eius error autem est.
                 credentials:
-                    access_token: Iure ut nostrum facilis suscipit.
-                    app_secret: Porro voluptate.
+                    access_token: Eius est rerum illo mollitia.
+                    app_secret: Et dolor et consectetur sint error.
             required:
                 - config
                 - credentials
@@ -5082,14 +5085,14 @@ components:
                     $ref: '#/components/schemas/MicrosoftAdsCredentials'
             example:
                 config:
-                    account_id: Voluptate necessitatibus enim et et itaque.
-                    customer_id: Omnis mollitia aut.
-                    label: Nobis omnis.
+                    account_id: Enim non rem error voluptas deserunt.
+                    customer_id: Officiis aperiam quos.
+                    label: Nihil dolores perspiciatis porro veniam distinctio.
                 credentials:
-                    client_id: Quis et modi.
-                    client_secret: Labore omnis provident nihil aut rerum est.
-                    developer_token: Sint non.
-                    refresh_token: Amet rem ab.
+                    client_id: Nisi blanditiis eveniet quasi ea.
+                    client_secret: Ut corporis dolorum consequatur eius perferendis nobis.
+                    developer_token: Et et itaque sunt.
+                    refresh_token: Vel voluptate necessitatibus.
             required:
                 - config
                 - credentials
@@ -5103,11 +5106,11 @@ components:
             example:
                 config:
                     account_id: t2_gv9wtbfa
-                    label: Rerum adipisci.
+                    label: Sit tempore.
                 credentials:
-                    client_id: Enim accusantium labore esse numquam.
-                    client_secret: Non laudantium sunt minima repudiandae illo harum.
-                    refresh_token: Dolorum deserunt.
+                    client_id: Magnam ut similique ea minima magnam.
+                    client_secret: Ut quo iure.
+                    refresh_token: Sit est dolores est et.
             required:
                 - config
                 - credentials
@@ -5121,13 +5124,13 @@ components:
             example:
                 config:
                     account_id: 8r7gb
-                    funding_instrument_id: Qui cupiditate ullam ab suscipit et.
-                    label: Necessitatibus non iste ad rem quidem.
+                    funding_instrument_id: Deserunt in hic dolorum facere ipsa et.
+                    label: Repellat veniam.
                 credentials:
-                    access_token: Quam officiis aut sit architecto ut unde.
-                    access_token_secret: Sapiente possimus.
-                    consumer_key: Harum corporis deleniti doloribus.
-                    consumer_secret: Assumenda dignissimos beatae vitae aut ea dolor.
+                    access_token: Possimus et.
+                    access_token_secret: Deserunt consequuntur omnis.
+                    consumer_key: Dignissimos voluptas magni consequatur dignissimos itaque.
+                    consumer_secret: Ut aperiam.
             required:
                 - config
                 - credentials
@@ -5781,12 +5784,12 @@ components:
                 job_id:
                     type: string
                     description: Poll GET /projects/{projectId}/jobs/{jobId}
-                    example: Alias voluptatem ut consequatur ut recusandae.
+                    example: Consequatur ut.
                 platforms:
                     type: array
                     items:
                         type: string
-                        example: Qui mollitia et eum veniam.
+                        example: Commodi qui mollitia et eum veniam.
                     description: Platforms this job will create on
                     example:
                         - Eaque voluptatem omnis architecto cupiditate.
@@ -7070,10 +7073,10 @@ components:
                     $ref: '#/components/schemas/GoogleAdsCredentials'
             example:
                 credentials:
-                    client_id: Quae porro qui rem autem quae.
-                    client_secret: Nulla officia vitae perspiciatis eveniet.
-                    developer_token: Nobis ut asperiores quo aut.
-                    refresh_token: Fuga enim nihil.
+                    client_id: Natus provident est.
+                    client_secret: Id dolore.
+                    developer_token: Non error.
+                    refresh_token: Accusamus aperiam eos et architecto voluptas rerum.
             required:
                 - credentials
         SetCredentialHubspotRequestBody:
@@ -7083,7 +7086,7 @@ components:
                     $ref: '#/components/schemas/HubspotCredentials'
             example:
                 credentials:
-                    private_app_token: Non assumenda perspiciatis.
+                    private_app_token: Molestiae suscipit non iusto.
             required:
                 - credentials
         SetCredentialLinkedinAdsRequestBody:
@@ -7093,7 +7096,7 @@ components:
                     $ref: '#/components/schemas/LinkedinAdsCredentials'
             example:
                 credentials:
-                    access_token: Sunt est labore libero.
+                    access_token: Eum est molestiae necessitatibus magni.
             required:
                 - credentials
         SetCredentialMetaAdsRequestBody:
@@ -7103,8 +7106,8 @@ components:
                     $ref: '#/components/schemas/MetaAdsCredentials'
             example:
                 credentials:
-                    access_token: Iure ut nostrum facilis suscipit.
-                    app_secret: Porro voluptate.
+                    access_token: Eius est rerum illo mollitia.
+                    app_secret: Et dolor et consectetur sint error.
             required:
                 - credentials
         SetCredentialRedditAdsRequestBody:
@@ -7114,9 +7117,9 @@ components:
                     $ref: '#/components/schemas/RedditAdsCredentials'
             example:
                 credentials:
-                    client_id: Enim accusantium labore esse numquam.
-                    client_secret: Non laudantium sunt minima repudiandae illo harum.
-                    refresh_token: Dolorum deserunt.
+                    client_id: Magnam ut similique ea minima magnam.
+                    client_secret: Ut quo iure.
+                    refresh_token: Sit est dolores est et.
             required:
                 - credentials
         SetCredentialTwitterAdsRequestBody:
@@ -7126,10 +7129,10 @@ components:
                     $ref: '#/components/schemas/TwitterAdsCredentials'
             example:
                 credentials:
-                    access_token: Quam officiis aut sit architecto ut unde.
-                    access_token_secret: Sapiente possimus.
-                    consumer_key: Harum corporis deleniti doloribus.
-                    consumer_secret: Assumenda dignissimos beatae vitae aut ea dolor.
+                    access_token: Possimus et.
+                    access_token_secret: Deserunt consequuntur omnis.
+                    consumer_key: Dignissimos voluptas magni consequatur dignissimos itaque.
+                    consumer_secret: Ut aperiam.
             required:
                 - credentials
         TwitterAdsConnection:
@@ -7424,9 +7427,9 @@ components:
                     $ref: '#/components/schemas/CampaignUpdateInput'
             example:
                 campaign:
-                    campaign_name: Itaque quos voluptatibus quos accusantium fugit.
-                    config: Qui molestias.
-                    status: Excepturi saepe sit vel perspiciatis neque.
+                    campaign_name: Ad voluptatem.
+                    config: Et expedita itaque quos.
+                    status: Tempore impedit.
             required:
                 - campaign
         UpdateGoogleAdsRequestBody:
@@ -7448,12 +7451,12 @@ components:
                     $ref: '#/components/schemas/HubspotConnectionConfig'
             example:
                 config:
-                    account_id: Itaque fugit rerum cumque.
-                    brand_kit: Ullam distinctio dolore velit.
-                    label: Laudantium nostrum ratione id eius laborum aspernatur.
-                    portal_id: Molestiae suscipit non iusto.
-                    sender_email: Consequatur in vero soluta.
-                    sender_name: Eius dicta.
+                    account_id: Voluptas aperiam.
+                    brand_kit: Itaque fugit rerum cumque.
+                    label: Dolores enim.
+                    portal_id: Assumenda harum eos eveniet ut et laboriosam.
+                    sender_email: Quos expedita voluptas qui eaque.
+                    sender_name: Laudantium nostrum ratione id eius laborum aspernatur.
             required:
                 - config
         UpdateLinkedinAdsRequestBody:
@@ -7464,7 +7467,7 @@ components:
             example:
                 config:
                     account_id: "538170226"
-                    label: Assumenda quam deleniti et et nam quia.
+                    label: Dolorum consequatur in est.
                     org_id: "208777"
             required:
                 - config
@@ -7476,9 +7479,9 @@ components:
             example:
                 config:
                     account_id: act_193556282970417
-                    app_id: Deleniti voluptates non sint inventore.
-                    label: Mollitia odio et dolor et consectetur.
-                    page_id: Error ipsam maiores et maiores laudantium aut.
+                    app_id: Distinctio sunt aliquid harum quis nam rerum.
+                    label: Excepturi blanditiis officiis quia quisquam.
+                    page_id: Distinctio voluptas eius error autem est.
             required:
                 - config
         UpdateMicrosoftAdsRequestBody:
@@ -7488,9 +7491,9 @@ components:
                     $ref: '#/components/schemas/MicrosoftAdsConnectionConfig'
             example:
                 config:
-                    account_id: Voluptate necessitatibus enim et et itaque.
-                    customer_id: Omnis mollitia aut.
-                    label: Nobis omnis.
+                    account_id: Enim non rem error voluptas deserunt.
+                    customer_id: Officiis aperiam quos.
+                    label: Nihil dolores perspiciatis porro veniam distinctio.
             required:
                 - config
         UpdateRedditAdsRequestBody:
@@ -7501,7 +7504,7 @@ components:
             example:
                 config:
                     account_id: t2_gv9wtbfa
-                    label: Rerum adipisci.
+                    label: Sit tempore.
             required:
                 - config
         UpdateTwitterAdsRequestBody:
@@ -7512,8 +7515,8 @@ components:
             example:
                 config:
                     account_id: 8r7gb
-                    funding_instrument_id: Qui cupiditate ullam ab suscipit et.
-                    label: Necessitatibus non iste ad rem quidem.
+                    funding_instrument_id: Deserunt in hic dolorum facere ipsa et.
+                    label: Repellat veniam.
             required:
                 - config
     securitySchemes:

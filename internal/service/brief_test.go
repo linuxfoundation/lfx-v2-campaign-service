@@ -282,8 +282,8 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, model.Provider) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
-func (r *campaignEditRepo) WithDispatchLock(ctx context.Context, _ string, _ model.Provider, fn func(context.Context) error) error {
-	return fn(ctx)
+func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string) (bool, *model.Campaign, error) {
+	return true, nil, nil
 }
 func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
 	return c, nil

@@ -6,7 +6,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"sync"
 
@@ -187,81 +186,73 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage) platformResult {
 	res := platformResult{Platform: string(p)}
 
-	lockErr := o.campaigns.WithDispatchLock(ctx, brief.ID, p, func(ctx context.Context) error {
-		// Idempotency guard FIRST, before resolving the dispatcher, so an
-		// already-persisted platform is reported ok even if its dispatcher is no
-		// longer registered. Under the lock, a concurrent request's persisted row
-		// is visible here, closing the duplicate-create window.
-		if existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ID, p); lerr == nil {
-			if existing.PlatformCampaignID != "" {
-				res.OK = true
-				res.CampaignID = existing.PlatformCampaignID
-				return nil
-			}
-		} else if !errors.Is(lerr, domain.ErrNotFound) {
-			// Log the underlying repository error server-side; return a generic
-			// message so raw DB error text isn't surfaced to clients via GetJob.
-			slog.ErrorContext(ctx, "existing-campaign lookup failed", "platform", p, "job_id", jobID, "error", lerr)
-			res.Error = "could not verify existing campaign"
-			return nil
-		}
-
-		d, ok := o.dispatchers[p]
-		if !ok {
-			res.Error = "no dispatcher registered for platform"
-			return nil
-		}
-		campaign, err := d.Dispatch(ctx, brief, p, config)
-		if err != nil {
-			// Log the raw dispatcher error (it may carry provider request/response
-			// detail or credentials) server-side, and store a stable, client-safe
-			// message in the job result, consistent with the persistence/panic paths.
-			slog.ErrorContext(ctx, "platform dispatch failed", "platform", p, "job_id", jobID, "error", err)
-			res.Error = "platform campaign creation failed"
-			return nil
-		}
-		if campaign == nil {
-			// Defensive: a dispatcher must return a non-nil campaign on success.
-			res.Error = "dispatcher returned no campaign"
-			return nil
-		}
-		if campaign.PlatformCampaignID == "" {
-			// A successful dispatch must yield an upstream campaign id; without one
-			// the result can't honestly be reported ok, and a later retry couldn't
-			// recognize it via the idempotency guard. Treat as a failure.
-			res.Error = "dispatcher returned no upstream campaign id"
-			return nil
-		}
-		// Stamp ownership before persisting so a dispatcher can't cause a campaign
-		// to be written with missing/wrong ownership.
-		campaign.JobID = &jobID
-		campaign.BriefID = brief.ID
-		campaign.ProjectID = brief.ProjectID
-		campaign.Platform = p
-		if _, err := o.campaigns.UpsertCampaign(ctx, campaign); err != nil {
-			// The upstream (paid) campaign was already created but we failed to
-			// persist its row. Log the raw error AND the orphaned upstream id at
-			// ERROR so the campaign is recoverable/reconcilable out of band — a
-			// bare retry would otherwise re-create it (the read-before-dispatch
-			// guard has no row to find). Store a client-safe message but keep the
-			// upstream id in the result so it isn't lost. Return the error so
-			// WithDispatchLock releases the lock and the caller records a failure.
-			slog.ErrorContext(ctx, "persist campaign failed after upstream create — orphaned upstream campaign",
-				"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", err)
-			res.Error = "created upstream campaign but failed to record it; see logs"
-			res.CampaignID = campaign.PlatformCampaignID
-			return err
-		}
-		res.OK = true
-		res.CampaignID = campaign.PlatformCampaignID
-		return nil
-	})
-	if lockErr != nil && res.Error == "" {
-		// The lock itself failed (couldn't begin/acquire); record a generic failure.
-		slog.ErrorContext(ctx, "dispatch lock failed", "platform", p, "job_id", jobID, "error", lockErr)
-		res.Error = "could not acquire dispatch lock"
-		res.OK = false
+	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
+	// platform). Exactly one worker across all replicas wins (the unique index
+	// arbitrates) — no held connection, no blocking lock.
+	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, jobID)
+	if err != nil {
+		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)
+		res.Error = "could not claim campaign dispatch"
+		return res
 	}
+	if !claimed {
+		// Another worker owns (or already completed) this pair.
+		if existing != nil && existing.PlatformCampaignID != "" {
+			// Already created upstream — reuse it (idempotent).
+			res.OK = true
+			res.CampaignID = existing.PlatformCampaignID
+			return res
+		}
+		// Still pending elsewhere: don't dispatch again (that's the whole point of
+		// the claim). Report it as in-progress rather than a failure or a duplicate.
+		res.Error = "another dispatch for this platform is already in progress"
+		return res
+	}
+
+	// We own the claim (a 'pending' row now exists). From here, any early return
+	// leaves that pending row behind; it is the recoverable record of an
+	// in-progress/failed dispatch (recovered by the startup scan) and blocks a
+	// concurrent duplicate.
+	d, ok := o.dispatchers[p]
+	if !ok {
+		res.Error = "no dispatcher registered for platform"
+		return res
+	}
+	campaign, derr := d.Dispatch(ctx, brief, p, config)
+	if derr != nil {
+		// Log the raw dispatcher error (it may carry provider request/response
+		// detail or credentials) server-side; store a stable, client-safe message.
+		slog.ErrorContext(ctx, "platform dispatch failed", "platform", p, "job_id", jobID, "error", derr)
+		res.Error = "platform campaign creation failed"
+		return res
+	}
+	if campaign == nil {
+		res.Error = "dispatcher returned no campaign"
+		return res
+	}
+	if campaign.PlatformCampaignID == "" {
+		res.Error = "dispatcher returned no upstream campaign id"
+		return res
+	}
+	// Stamp ownership, then update the claimed row in place (Upsert on the same
+	// (brief, platform) fills in the real upstream id and status).
+	campaign.JobID = &jobID
+	campaign.BriefID = brief.ID
+	campaign.ProjectID = brief.ProjectID
+	campaign.Platform = p
+	if _, err := o.campaigns.UpsertCampaign(ctx, campaign); err != nil {
+		// The upstream (paid) campaign was created but recording it failed. The
+		// 'pending' claim row remains, so this is recoverable/reconcilable out of
+		// band and a duplicate can't be created behind the claim. Log the raw error
+		// and the orphaned upstream id; keep the id in the result.
+		slog.ErrorContext(ctx, "persist campaign failed after upstream create — pending claim retained",
+			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", err)
+		res.Error = "created upstream campaign but failed to record it; see logs"
+		res.CampaignID = campaign.PlatformCampaignID
+		return res
+	}
+	res.OK = true
+	res.CampaignID = campaign.PlatformCampaignID
 	return res
 }
 

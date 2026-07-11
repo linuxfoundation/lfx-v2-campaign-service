@@ -2413,6 +2413,9 @@ func ValidateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 	if body.Platforms == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("platforms", "body"))
 	}
+	if len(body.Platforms) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.platforms", body.Platforms, len(body.Platforms), 1, true))
+	}
 	for _, e := range body.Platforms {
 		if !(e == "google-ads" || e == "linkedin-ads" || e == "meta-ads" || e == "reddit-ads" || e == "twitter-ads" || e == "microsoft-ads" || e == "hubspot") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))

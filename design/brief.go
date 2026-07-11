@@ -60,7 +60,12 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		// Constrain to the known providers so OpenAPI clients can discover the
 		// valid values and Goa advertises them; the service also revalidates.
 		Enum("google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot")
-	}), "Platforms to create campaigns on (binding selection)")
+	}), "Platforms to create campaigns on (binding selection)", func() {
+		// Reject an empty array in the schema (the handler also rejects it). Note:
+		// Goa/OpenAPI can't express uniqueItems, so duplicate rejection stays in
+		// the handler.
+		MinLength(1)
+	})
 	Attribute("config", Any, "Per-platform campaign configuration")
 	Required("platforms")
 })
