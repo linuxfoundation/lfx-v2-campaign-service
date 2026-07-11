@@ -170,13 +170,19 @@ func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, pl
 		return "", err
 	}
 
+	// Defensively copy the caller-owned slices before handing them to the async
+	// goroutine, so a caller that reuses/mutates its platforms slice or config
+	// bytes after Start returns can't race the dispatch run.
+	platformsCopy := append([]model.Provider(nil), platforms...)
+	configCopy := append(json.RawMessage(nil), config...)
+
 	// Parent the run on the orchestrator's root context (not the request context),
 	// so it survives the request ending but can still be cancelled by Shutdown if
 	// the drain deadline expires.
 	dispatchCtx := o.rootCtx
 	go func() {
 		defer o.wg.Done()
-		o.run(dispatchCtx, job.ID, brief, platforms, config)
+		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy)
 	}()
 
 	return job.ID, nil
