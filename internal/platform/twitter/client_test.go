@@ -1730,3 +1730,19 @@ func TestTweetIDFormatValidatedUpFront(t *testing.T) {
 		}
 	}
 }
+
+// TestTweetIDRejectsNonSnowflake verifies the up-front TweetID format check
+// rejects values that are numeric but cannot be real Tweet snowflakes ("0",
+// leading-zero, or an over-19-digit decimal) so they fail before any mutation.
+func TestTweetIDRejectsNonSnowflake(t *testing.T) {
+	for _, bad := range []string{"0", "0123", "01", "12345678901234567890" /* 20 digits */} {
+		if tweetIDRe.MatchString(bad) {
+			t.Errorf("tweetIDRe accepted %q, want reject (not a valid snowflake)", bad)
+		}
+	}
+	for _, ok := range []string{"1", "111", "1234567890", "1234567890123456789" /* 19 digits */} {
+		if !tweetIDRe.MatchString(ok) {
+			t.Errorf("tweetIDRe rejected %q, want accept", ok)
+		}
+	}
+}

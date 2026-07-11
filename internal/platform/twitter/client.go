@@ -685,12 +685,14 @@ type CampaignResult struct {
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-// tweetIDRe matches an X Tweet id, which is a decimal (numeric) snowflake id.
-// A non-numeric value like "not-a-tweet" would otherwise reach the
-// promoted_tweets POST and be rejected AFTER the campaign and line item are
+// tweetIDRe matches an X Tweet id: a positive decimal snowflake of 1–19 digits
+// with no leading zero. A malformed value ("not-a-tweet", "0", or an
+// arbitrarily long decimal that can't be a real snowflake) would otherwise reach
+// the promoted_tweets POST and be rejected AFTER the campaign and line item are
 // already created, leaving a partial/orphaned campaign — so the format is
-// validated up front, before any mutating call.
-var tweetIDRe = regexp.MustCompile(`^[0-9]+$`)
+// validated up front, before any mutating call. (Snowflakes are positive int64s,
+// so at most 19 digits; "0" and leading-zero forms are not valid ids.)
+var tweetIDRe = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 
 // validateDate enforces both the YYYY-MM-DD shape and that the value is a real
 // calendar date. The regex alone accepts impossible dates like "2026-99-99",
