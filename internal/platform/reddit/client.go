@@ -50,6 +50,9 @@ const (
 	// the requested start date is already in the past (e.g. a same-day start,
 	// whose midnight-UTC timestamp has passed).
 	redditPastStartBuffer = 60 * time.Second
+	// redditMaxBudgetUSD caps the budget below the int64 micro-dollar overflow
+	// threshold so the ×1e6 conversion in toMicrodollars can't wrap.
+	redditMaxBudgetUSD = 1_000_000_000.0
 )
 
 // ---------------------------------------------------------------------------
@@ -378,7 +381,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var steps []string
 
 	// Validation.
-	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0 {
+	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0 || in.BudgetUSD > redditMaxBudgetUSD {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
 	}
 	// Parse for calendar validity (rejects e.g. 2026-02-31), not just format.
@@ -450,10 +453,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if startMs, ok := parseRedditTimestamp(effectiveStart); ok && startMs.Before(c.now()) {
 		effectiveStart = toRedditTimestamp(c.now().Add(redditPastStartBuffer))
 	}
+	// After nudging a past start forward, the (unchanged) end could be at/before it
+	// for a same-day flight; reject rather than sending an invalid window.
+	if sMs, ok1 := parseRedditTimestamp(effectiveStart); ok1 {
+		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
+			return nil, fmt.Errorf("campaign end %s is not after the effective start %s (a same-day past start was nudged forward)", campaignEndTime, effectiveStart)
+		}
+	}
 
 	// Step 2: Create campaign (PAUSED, lifetime budget, objective-aware params).
 	// objective / objParams were validated above, before the network call.
-	campaignName := buildRedditCampaignName(in, objective)
+	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
 
 	campaignData := map[string]any{
 		"name":                            campaignName,
@@ -694,9 +704,8 @@ func resolveRegion(geoTargets []string) string {
 }
 
 // buildRedditCampaignName mirrors buildRedditCampaignName.
-func buildRedditCampaignName(in CampaignInput, objective string) string {
+func buildRedditCampaignName(in CampaignInput, objective, region string) string {
 	event := replacePipes(in.EventName)
-	region := resolveRegion(in.GeoTargets)
 	objectiveLabel := redditObjectiveLabels[objective]
 	if objectiveLabel == "" {
 		objectiveLabel = "Conversions"

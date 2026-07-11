@@ -555,7 +555,7 @@ func TestBuildRedditUTMURL(t *testing.T) {
 	}
 }
 
-// startCapture spins up token + API servers that capture the campaign and
+// newBodyCaptureServers spins up token + API servers that capture the campaign and
 // ad-group request bodies, returning them plus the client. Used by the
 // start-time and ad-group-name tests.
 func newBodyCaptureServers(t *testing.T) (*Client, func() (map[string]any, map[string]any), func()) {
