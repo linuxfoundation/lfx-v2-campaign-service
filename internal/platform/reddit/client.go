@@ -25,8 +25,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/sync/singleflight"
 )
 
 // ---------------------------------------------------------------------------
@@ -160,10 +158,15 @@ type Client struct {
 	cachedToken   string
 	tokenExpireAt time.Time
 
-	// tokenGroup coalesces concurrent token refreshes: a cold start or
-	// expiry burst fires a single upstream refresh whose result is shared by
-	// all waiters, rather than one refresh per in-flight campaign call.
-	tokenGroup singleflight.Group
+	// refreshing coalesces concurrent token refreshes with the standard library
+	// only (no third-party single-flight): the first caller to find the cache
+	// empty/expired becomes the leader and sets refreshing=true; concurrent
+	// callers instead wait on refreshWait, which the leader closes when the
+	// refresh finishes (success or failure). This keeps a cold start or expiry
+	// burst to a single upstream refresh while holding no lock across the network
+	// call. Both guarded by mu.
+	refreshing  bool
+	refreshWait chan struct{}
 }
 
 // NewClient builds a Client from injected credentials and account config.
@@ -290,56 +293,54 @@ type tokenResponse struct {
 // still return promptly with its own context error instead of blocking on the
 // shared request indefinitely.
 func (c *Client) refreshToken(ctx context.Context) (string, error) {
-	// Fast path: reuse the cached token while it remains valid past the buffer.
-	// Hold the lock only long enough to read the cache -- NOT across the network
-	// call below.
-	c.mu.Lock()
-	if c.cachedToken != "" && c.now().Before(c.tokenExpireAt.Add(-redditTokenExpiryBuffer)) {
-		token := c.cachedToken
-		c.mu.Unlock()
-		return token, nil
-	}
-	c.mu.Unlock()
-
 	// Bail out early if the caller's context is already done, so a cancelled
 	// caller never triggers or joins a refresh.
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 
-	// Coalesce concurrent refreshes. DoChan (rather than Do) lets a waiter
-	// select on ctx.Done() so it can abandon the shared call on cancellation.
-	// The single-flight function itself is context-free (it uses a bounded
-	// background context) so one caller's cancellation can't tear down the
-	// shared refresh other waiters still depend on.
-	ch := c.tokenGroup.DoChan("refresh", func() (any, error) {
-		// Double-check the cache under the lock before any network call. If a
-		// prior refresh COMPLETED after this caller failed the fast path but
-		// before this work function ran, single-flight won't coalesce us with
-		// it (that call already returned), so without this re-check we'd issue
-		// a duplicate token request. Returning the freshly-cached token here
-		// keeps an expiry burst to a single upstream refresh.
+	for {
 		c.mu.Lock()
+		// Fast path: reuse the cached token while it remains valid past the buffer.
 		if c.cachedToken != "" && c.now().Before(c.tokenExpireAt.Add(-redditTokenExpiryBuffer)) {
 			token := c.cachedToken
 			c.mu.Unlock()
 			return token, nil
 		}
+		if c.refreshing {
+			// Another caller is already refreshing: wait on its broadcast channel
+			// rather than starting a duplicate refresh, then loop to re-read the
+			// cache (or become the leader if that refresh failed).
+			wait := c.refreshWait
+			c.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-wait:
+				continue
+			}
+		}
+		// Become the leader: publish a wait channel for followers and refresh.
+		c.refreshing = true
+		c.refreshWait = make(chan struct{})
+		wait := c.refreshWait
 		c.mu.Unlock()
 
+		// Refresh on a bounded context detached from this caller's ctx, so one
+		// caller's cancellation can't tear down a refresh other waiters depend on.
+		// No lock is held across this network call.
 		fetchCtx, cancel := context.WithTimeout(context.Background(), redditRequestTimeout)
-		defer cancel()
-		return c.fetchToken(fetchCtx)
-	})
+		token, err := c.fetchToken(fetchCtx)
+		cancel()
 
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case res := <-ch:
-		if res.Err != nil {
-			return "", res.Err
+		c.mu.Lock()
+		c.refreshing = false
+		close(wait) // wake all followers (they re-read the cache / retry)
+		c.mu.Unlock()
+
+		if err != nil {
+			return "", err
 		}
-		token, _ := res.Val.(string)
 		return token, nil
 	}
 }

@@ -1457,49 +1457,64 @@ func TestRefreshToken_SingleFlightCoalesces(t *testing.T) {
 // must MISS so the caller proceeds into DoChan) and a VALID time on every
 // later observation (the work-function re-check, which must HIT and return the
 // seeded token). The token endpoint fails the test if it is ever contacted.
-func TestRefreshToken_InFlightRechecksCache(t *testing.T) {
+// TestRefreshToken_FollowerUsesLeaderResult verifies that a caller arriving
+// while another caller's refresh is in flight waits for it and reuses its result
+// (via the freshly-populated cache) instead of issuing a second network refresh.
+// This is the stdlib coalescer's follower path: the leader holds refreshing=true
+// and closes refreshWait on completion; the follower then re-reads the cache.
+func TestRefreshToken_FollowerUsesLeaderResult(t *testing.T) {
 	var hits int32
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	var enterOnce sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "network-tok", "expires_in": 3600})
+		enterOnce.Do(func() { close(entered) })
+		<-release // hold the leader inside the network call until the follower is waiting
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "leader-tok", "expires_in": 3600})
 	}))
 	defer srv.Close()
 
-	base := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL))
 
-	// Call-counting clock. First call (the fast-path check) reports base+4000s,
-	// at which the seeded token below is already past its buffer -> fast path
-	// MISSES and the caller enters the single-flight work function. Every
-	// subsequent call reports base, at which the seeded token is comfortably
-	// valid -> the work-function re-check HITS and returns the cached token
-	// without any network request.
-	var calls int32
-	now := func() time.Time {
-		if atomic.AddInt32(&calls, 1) == 1 {
-			return base.Add(4000 * time.Second)
+	// Leader starts the refresh and blocks inside the handler.
+	leaderTok := make(chan string, 1)
+	go func() {
+		tok, err := c.refreshToken(context.Background())
+		if err != nil {
+			t.Errorf("leader refresh: %v", err)
 		}
-		return base
-	}
+		leaderTok <- tok
+	}()
 
-	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(now))
+	<-entered // leader is now inside the network call, refreshing=true
 
-	// Seed a valid cached token (valid at base, expired at base+4000s). This
-	// stands in for a prior refresh that COMPLETED just before this caller's
-	// work function runs.
-	c.mu.Lock()
-	c.cachedToken = "seeded-tok"
-	c.tokenExpireAt = base.Add(3600 * time.Second)
-	c.mu.Unlock()
+	// Follower arrives while the leader is in flight; it must wait, not refresh.
+	followerTok := make(chan string, 1)
+	go func() {
+		tok, err := c.refreshToken(context.Background())
+		if err != nil {
+			t.Errorf("follower refresh: %v", err)
+		}
+		followerTok <- tok
+	}()
 
-	tok, err := c.refreshToken(context.Background())
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
+	// Give the follower a moment to reach the wait, then release the leader.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	for _, ch := range []chan string{leaderTok, followerTok} {
+		select {
+		case tok := <-ch:
+			if tok != "leader-tok" {
+				t.Errorf("token = %q, want leader-tok", tok)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("refresh did not return in time")
+		}
 	}
-	if tok != "seeded-tok" {
-		t.Fatalf("token = %q, want seeded-tok (work-function re-check should return the fresh cache, not a network token)", tok)
-	}
-	if got := atomic.LoadInt32(&hits); got != 0 {
-		t.Errorf("token endpoint hit %d times, want 0 (in-flight re-check must prevent the duplicate refresh)", got)
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("token endpoint hit %d times, want 1 (follower must reuse the leader's refresh)", got)
 	}
 }
 
