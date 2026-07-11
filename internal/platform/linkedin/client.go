@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -370,17 +371,26 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 	if v == "" {
 		return 0
 	}
-	if n, err := strconv.Atoi(v); err == nil {
-		if n > 0 {
-			// Cap before converting to Duration: a huge Retry-After (e.g.
-			// 10000000000) would overflow time.Duration(n)*time.Second into a
-			// negative value, defeating the maxRetryWait cap. maxRetryWait is the
-			// ceiling anyway, so clamp seconds first.
-			if int64(n) > int64(maxRetryWait/time.Second) {
-				return maxRetryWait
-			}
-			return time.Duration(n) * time.Second
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		// A purely numeric Retry-After that overflows int64 (ErrRange) is still a
+		// "wait a very long time" delay, not an HTTP-date: clamp to the ceiling
+		// rather than falling through and losing the cap. Only a non-numeric value
+		// should be tried as an HTTP-date.
+		if errors.Is(err, strconv.ErrRange) {
+			return maxRetryWait
 		}
+	} else if n > 0 {
+		// Cap before converting to Duration: a huge Retry-After (e.g.
+		// 10000000000) would overflow time.Duration(n)*time.Second into a
+		// negative value, defeating the maxRetryWait cap. maxRetryWait is the
+		// ceiling anyway, so clamp seconds first.
+		if n > int64(maxRetryWait/time.Second) {
+			return maxRetryWait
+		}
+		return time.Duration(n) * time.Second
+	} else {
+		// A well-formed non-positive numeric value (0 or negative): no wait.
 		return 0
 	}
 	if t, err := http.ParseTime(v); err == nil {

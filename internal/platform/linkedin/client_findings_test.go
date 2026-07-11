@@ -1854,14 +1854,28 @@ func TestValidFacets_RequiresNumericID(t *testing.T) {
 }
 
 // TestParseRetryAfter_NoOverflow verifies a huge Retry-After value is clamped to
-// maxRetryWait rather than overflowing to a negative duration.
+// maxRetryWait rather than overflowing to a negative duration — including a
+// value that exceeds int64 itself (which strconv.Atoi/ParseInt reports as
+// ErrRange). Such a value must clamp to the cap, not fall through to the
+// HTTP-date branch and return 0 (which would defeat the intended 60s ceiling).
 func TestParseRetryAfter_NoOverflow(t *testing.T) {
-	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithClock(fixedClock()))
-	resp := &http.Response{Header: http.Header{}}
-	resp.Header.Set("Retry-After", "10000000000")
-	got := c.parseRetryAfter(resp)
-	if got <= 0 || got > maxRetryWait {
-		t.Errorf("parseRetryAfter(huge) = %v, want a positive value <= maxRetryWait (%v)", got, maxRetryWait)
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"large but fits int64", "10000000000"},
+		{"overflows int64 (ErrRange)", "99999999999999999999999999"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithClock(fixedClock()))
+			resp := &http.Response{Header: http.Header{}}
+			resp.Header.Set("Retry-After", tc.value)
+			got := c.parseRetryAfter(resp)
+			if got <= 0 || got > maxRetryWait {
+				t.Errorf("parseRetryAfter(%q) = %v, want a positive value <= maxRetryWait (%v)", tc.value, got, maxRetryWait)
+			}
+		})
 	}
 }
 
