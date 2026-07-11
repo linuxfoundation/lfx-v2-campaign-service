@@ -17,6 +17,12 @@ import (
 	"time"
 )
 
+// fixedMetaClock pins the clock so date-based tests (StartDate/EndDate) stay
+// valid regardless of the wall clock. Chosen before the test fixtures' dates.
+func fixedMetaClock() func() time.Time {
+	return func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) }
+}
+
 // ---------------------------------------------------------------------------
 // Objective -> parameter mapping
 // ---------------------------------------------------------------------------
@@ -292,6 +298,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 		Credentials{AccessToken: "tok-abc"},
 		AccountConfig{AccountID: "act_TEST", PageID: "PAGE99", Label: "LF Core"},
 		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
 	)
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
@@ -374,6 +381,7 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 		Credentials{AccessToken: "tok"},
 		AccountConfig{AccountID: "act_TEST", PageID: "PAGE99"},
 		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
 	)
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "KubeCon",
@@ -417,7 +425,7 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -444,7 +452,7 @@ func TestCreateCampaignAllGeosRegulated(t *testing.T) {
 		_, _ = io.WriteString(w, `{"name":"x"}`)
 	}))
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -476,7 +484,7 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -518,7 +526,7 @@ func TestNonGraphErrorBodySurfaces(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -582,7 +590,7 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -723,7 +731,7 @@ func noPostServer(t *testing.T) *httptest.Server {
 func TestCreateCampaignRejectsSubCentBudgetBeforeAnyPost(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -742,7 +750,7 @@ func TestCreateCampaignAllDisabledPlacementsMakesZeroPosts(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
 	f := false
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -799,7 +807,7 @@ func TestCreateCampaignRequiresAccountIDBeforeAnyPost(t *testing.T) {
 func TestCreateCampaignImpossibleDateMakesZeroPosts(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
@@ -976,7 +984,7 @@ func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
 func TestCreateCampaignRejectsLeadsObjective(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Objective:       "leads",
@@ -1067,7 +1075,7 @@ func TestCreateCampaignRejectsPastStartDate(t *testing.T) {
 func TestCreateCampaignRejectsHugeBudget(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		RegistrationURL: "https://x.example.org/e",
