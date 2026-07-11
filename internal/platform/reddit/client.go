@@ -767,6 +767,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 		adResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ads", adBody)
 		if err != nil {
+			// Distinguish a CALLER context cancellation/deadline from an ordinary
+			// per-request failure. If the caller's ctx is done, the whole
+			// operation was cancelled: honor the context-aware contract and
+			// return a fatal error wrapping ctx.Err() so callers can tell
+			// cancellation from success. Key this off the caller ctx, NOT
+			// errors.Is on err -- the client's own http.Client.Timeout also
+			// surfaces as DeadlineExceeded but with a live caller ctx, and that
+			// stays a non-fatal warning like any other per-request failure.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, fmt.Errorf("ad creation aborted: %w", ctxErr)
+			}
 			steps = append(steps, fmt.Sprintf("Ad creation failed: %s -- add ad manually in Reddit Ads Manager", err.Error()))
 		} else {
 			adID = decodeID(adResp)

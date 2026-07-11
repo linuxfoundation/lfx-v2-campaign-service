@@ -6,6 +6,7 @@ package reddit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -994,6 +995,131 @@ func TestCreateCampaign_AdWithoutIDIsWarning(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_AdCreateContextCancelledIsFatal verifies that a CALLER
+// context cancellation during the final /ads request is FATAL: CreateCampaign
+// returns an error wrapping context.Canceled rather than downgrading it to a
+// non-fatal warning + nil-error "success". This lets callers distinguish
+// cancellation from a completed campaign, honoring the context-aware contract.
+func TestCreateCampaign_AdCreateContextCancelledIsFatal(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		case strings.HasSuffix(path, "/ads"):
+			// Cancel the CALLER's context mid-request so the /ads call fails while
+			// ctx.Err() != nil. The client's request is built with this ctx, so
+			// Do() aborts with context.Canceled. Give it a bounded window to be
+			// observed (never respond OK), but never block the handler forever:
+			// the timeout keeps the test from hanging if Do() has already returned.
+			cancel()
+			select {
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+			}
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(ctx, CampaignInput{
+		EventName:       "Cancelled Ad",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+		PostURL:         "https://www.reddit.com/r/opensource/comments/abc123/great_post/",
+	})
+	if err == nil {
+		t.Fatalf("CreateCampaign returned nil error on caller cancellation during /ads; got result %+v", res)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error %v does not wrap context.Canceled", err)
+	}
+}
+
+// TestCreateCampaign_AdCreateFailureWithLiveCtxIsWarning verifies that an
+// ordinary per-request /ads failure while the caller's context is still live
+// stays NON-fatal: CreateCampaign returns the campaign result (nil error) with a
+// warning step, so a genuine API error does not abort a successfully created
+// campaign/ad group. This is the counterpart to the cancellation case above.
+func TestCreateCampaign_AdCreateFailureWithLiveCtxIsWarning(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		case strings.HasSuffix(path, "/ads"):
+			// Genuine per-request API failure with a live caller ctx.
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "Ad Fails Live Ctx",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+		PostURL:         "https://www.reddit.com/r/opensource/comments/abc123/great_post/",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: a per-request /ads failure with a live ctx must stay non-fatal, got err %v", err)
+	}
+	if res == nil {
+		t.Fatal("CreateCampaign returned nil result; the campaign must still be returned")
+	}
+	if res.AdCount != 0 || res.AdID != "" {
+		t.Errorf("AdCount = %d, AdID = %q, want 0 / empty (ad was not created)", res.AdCount, res.AdID)
+	}
+	foundWarning := false
+	for _, s := range res.Steps {
+		if strings.Contains(s, "Ad creation failed") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected an 'Ad creation failed' warning step, got %v", res.Steps)
+	}
+}
+
 // TestBuildRedditUTMURL_PreservesFragment verifies finding #4: a URL carrying a
 // fragment keeps it at the very end, with UTM params in the query.
 func TestBuildRedditUTMURL_PreservesFragment(t *testing.T) {
@@ -1537,6 +1663,21 @@ func TestRefreshToken_CancelledContextReturnsPromptly(t *testing.T) {
 	}
 }
 
+// countingDoneCtx wraps a context and invokes onDone the first time Done() is
+// called. The coalescer selects on ctx.Done() exactly at its park point (after a
+// caller has joined the shared in-flight refresh), so this makes "caller has
+// joined" observable to a test without any time.Sleep or peeking at internals.
+type countingDoneCtx struct {
+	context.Context
+	once   sync.Once
+	onDone func()
+}
+
+func (c *countingDoneCtx) Done() <-chan struct{} {
+	c.once.Do(c.onDone)
+	return c.Context.Done()
+}
+
 // TestRefreshToken_FailureSharedNoSerialReLead verifies that a FAILED refresh is
 // shared across all current waiters: the leader's error is returned to every
 // follower of the same in-flight window, so a token-endpoint outage produces
@@ -1545,13 +1686,21 @@ func TestRefreshToken_CancelledContextReturnsPromptly(t *testing.T) {
 // returns 500 on the first (and only) hit; if the coalescer re-led per follower
 // it would climb to a valid response and record N hits.
 func TestRefreshToken_FailureSharedNoSerialReLead(t *testing.T) {
+	const n = 20
+
 	var hits int32
-	// release gates the single in-flight handler until all N callers are parked on
-	// the shared result, so a per-follower re-lead (the bug) would surface as extra
-	// hits. The handler fails on its first (only) invocation.
+	// entered is signaled once by the handler when the leader's refresh is inside
+	// it; release then gates that single in-flight handler until the test has
+	// PROVEN all N callers are joined to the same in-flight refresh. A per-follower
+	// re-lead (the bug) would surface as an extra hit. The handler fails on its
+	// first (only) invocation.
+	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&hits, 1)
+		if n == 1 {
+			entered <- struct{}{}
+		}
 		<-release
 		if n == 1 {
 			http.Error(w, "boom", http.StatusInternalServerError)
@@ -1565,23 +1714,60 @@ func TestRefreshToken_FailureSharedNoSerialReLead(t *testing.T) {
 
 	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
 
-	const n = 20
+	// joined counts callers that have reached the coalescer's PARK point. Every
+	// caller (leader and followers) selects on ctx.Done() when it joins the shared
+	// in-flight refresh -- that select is reached only AFTER the caller has read the
+	// (non-nil, because the handler is blocked) in-flight refresh and committed to
+	// waiting on it, so it can no longer re-lead. countingCtx.Done() is invoked
+	// exactly once per caller, at that select, so once it fires N times all N
+	// callers are provably joined to the SAME refresh -- no time.Sleep guesswork.
+	// allJoined is signaled when the N-th caller commits.
+	var joined int32
+	allJoined := make(chan struct{})
+	onPark := func() {
+		if atomic.AddInt32(&joined, 1) == n {
+			close(allJoined)
+		}
+	}
+
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := c.refreshToken(context.Background())
+			_, err := c.refreshToken(&countingDoneCtx{Context: context.Background(), onDone: onPark})
 			errs <- err
 		}()
 	}
 
-	// Give all callers time to park on the shared in-flight refresh, then release
-	// the single handler that's blocked inside it.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the leader to be inside the handler, then wait until all N callers
+	// have joined the shared in-flight refresh, and only THEN release the handler
+	// to fail. Bounded selects with t.Fatal guard against a hang.
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for the leader refresh to enter the token handler")
+	}
+	select {
+	case <-allJoined:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for all callers to join the shared in-flight refresh")
+	}
 	close(release)
-	wg.Wait()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for refresh callers to return")
+	}
 	close(errs)
 
 	for err := range errs {
