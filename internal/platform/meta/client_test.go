@@ -580,34 +580,73 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 	})
 }
 
-// TestCreateCampaignRejectsUnsetCurrencyOffsetBeforeAnyPost verifies that an
-// unset/zero/negative CurrencyOffset is rejected during pre-flight validation,
-// before any mutating call. There is no silent default of 100: defaulting an
-// omitted offset would over-bill a zero-decimal-currency account (JPY, offset 1)
-// by 100×, so the caller must set it explicitly.
-func TestCreateCampaignRejectsUnsetCurrencyOffsetBeforeAnyPost(t *testing.T) {
-	base := func() CampaignInput {
-		return CampaignInput{
-			EventName:       "E",
-			Project:         "tlf",
-			RegistrationURL: "https://x.example.org/e",
-			GeoTargets:      []string{"US"},
-			Budget:          10,
-			StartDate:       "2026-08-01",
-			EndDate:         "2026-08-31",
-			Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+// TestCreateCampaignRejectsNegativeCurrencyOffset verifies a NEGATIVE offset is
+// rejected before any mutating call (it's malformed). A zero/unset offset is NOT
+// rejected — it defaults to 100 (see TestCreateCampaignDefaultsUnsetCurrencyOffset)
+// because the persisted Meta connection can't supply currency_offset.
+func TestCreateCampaignRejectsNegativeCurrencyOffset(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"},
+		AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: -1},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not be negative") {
+		t.Fatalf("err = %v, want it to reject a negative CurrencyOffset", err)
+	}
+}
+
+// TestCreateCampaignDefaultsUnsetCurrencyOffset verifies an unset (zero) offset
+// defaults to 100 (so a stored-connection dispatch, which can't supply the
+// offset, still works) and that the assumption is surfaced as a result step so a
+// zero-decimal-currency operator can catch a 100× over-send.
+func TestCreateCampaignDefaultsUnsetCurrencyOffset(t *testing.T) {
+	var adSetBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"acct"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_ = json.NewDecoder(r.Body).Decode(&adSetBody)
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"x"}`)
+		}
+	}))
+	defer srv.Close()
+
+	// CurrencyOffset omitted (0).
+	c := NewClient(Credentials{AccessToken: "t"},
+		AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 5, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	// Budget 5 * default offset 100 = 500 minor units (daily_budget, since
+	// LifetimeBudget was not set). JSON numbers decode to float64.
+	if got := adSetBody["daily_budget"]; got != float64(500) && got != "500" {
+		t.Errorf("daily_budget = %v, want 500 (5 * default offset 100)", got)
+	}
+	var noted bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "Currency offset not set; assuming 100") {
+			noted = true
 		}
 	}
-	for _, offset := range []int64{0, -1} {
-		srv := noPostServer(t)
-		c := NewClient(Credentials{AccessToken: "t"},
-			AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: offset},
-			WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
-		_, err := c.CreateCampaign(context.Background(), base())
-		srv.Close()
-		if err == nil || !strings.Contains(err.Error(), "CurrencyOffset must be set") {
-			t.Fatalf("offset %d: err = %v, want it to mention CurrencyOffset must be set", offset, err)
-		}
+	if !noted {
+		t.Errorf("expected a result step noting the assumed default offset, got steps: %v", res.Steps)
 	}
 }
 

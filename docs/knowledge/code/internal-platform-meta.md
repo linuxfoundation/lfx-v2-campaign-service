@@ -40,12 +40,13 @@ ACCOUNT's own currency — the client does NO foreign-exchange conversion, so th
 caller must pass an amount already in that currency — and it is bounded
 (rejecting rounds-to-zero and overflow-scale values) then converted to minor
 units by multiplying by the account's Meta `currency_offset`
-(`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. That offset is
-REQUIRED and has NO silent default: a zero/unset/negative offset is rejected
-before any mutating call (`100` for most currencies, `1` for zero-decimal
-currencies like JPY/KRW/CLP). There is no safe default — silently assuming 100
-would over-bill a zero-decimal-currency account 100× if the caller omitted the
-field, so the caller must make the choice explicit. `CampaignInput.Project` is
+(`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. When unset (zero)
+the offset DEFAULTS to `100` — correct for USD/EUR/GBP and most currencies — and
+the assumption is surfaced as a result step; it is not hard-required because the
+persisted Meta connection carries only account/page/app IDs (no `currency_offset`),
+so requiring it would break every stored-connection dispatch. A zero-decimal
+currency account (JPY/KRW/CLP) MUST set it to `1` or its budget is over-sent 100×;
+a negative offset is rejected as malformed. `CampaignInput.Project` is
 also required (rejected up front if empty/whitespace): the campaign name's
 Project segment must be the caller-supplied canonical LFX project slug, so the
 client never silently substitutes a placeholder that could mis-attribute a

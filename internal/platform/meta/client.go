@@ -232,12 +232,14 @@ type AccountConfig struct {
 	// EUR, GBP) use 100. The client cannot read the account currency itself: the
 	// account-verify call fetches only name/account_status, not currency.
 	//
-	// This field is REQUIRED and has NO silent default: CreateCampaign rejects a
-	// zero/unset/negative offset before issuing any mutating call. There is no
-	// safe default — silently assuming 100 would over-bill a zero-decimal-currency
-	// account (JPY/KRW/CLP, offset 1) by 100× if the caller omitted the field, so
-	// the caller must make a conscious, correct choice (100 for most currencies,
-	// 1 for zero-decimal like JPY).
+	// When left unset (zero), CreateCampaign DEFAULTS this to 100 — the correct
+	// value for USD/EUR/GBP and the large majority of currencies — and records a
+	// result step noting the assumption. It does NOT hard-fail on an unset offset:
+	// the persisted Meta connection carries only account/page/app IDs (no
+	// currency_offset; see design/connection.go), so requiring it would break
+	// every dispatch driven from a stored connection. A zero-decimal-currency
+	// account (JPY/KRW/CLP) MUST set this to 1, or its budget is over-sent 100×.
+	// A negative value is rejected as malformed.
 	CurrencyOffset int64
 }
 
@@ -308,10 +310,10 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
 	account.AccountID = strings.TrimSpace(account.AccountID)
 	account.PageID = strings.TrimSpace(account.PageID)
-	// NOTE: CurrencyOffset is deliberately NOT coerced here. There is no safe
-	// default — silently assuming 100 would over-bill a zero-decimal-currency
-	// account (JPY, offset 1) 100× if the caller omitted the field. CreateCampaign
-	// validates that a valid positive offset was set before any mutating call.
+	// NOTE: CurrencyOffset is NOT coerced here; CreateCampaign defaults an unset
+	// (zero) offset to 100 at budget-conversion time and records a result step, and
+	// rejects a negative offset. It is not defaulted in NewClient so the zero value
+	// remains distinguishable as "unset" (for the assumption step).
 	c := &Client{
 		creds:          creds,
 		account:        account,
@@ -900,8 +902,8 @@ type CampaignInput struct {
 	// exchange conversion. Meta bills the ad set in the account's own currency, so
 	// the caller must supply an amount already denominated in that currency. The
 	// value is converted to minor units by multiplying by the account's Meta
-	// currency_offset (AccountConfig.CurrencyOffset — REQUIRED, no default: 100 for
-	// most currencies, 1 for zero-decimal currencies like JPY) and sent as-is.
+	// currency_offset (AccountConfig.CurrencyOffset — defaults to 100 when unset;
+	// set 1 for zero-decimal currencies like JPY) and sent as-is.
 	// (Renamed from BudgetUSD:
 	// the field never carried FX-converted USD — the old name implied a conversion
 	// this client does not do.)
@@ -983,19 +985,32 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("budget too large: must be at most %.0f", maxBudget)
 	}
 	// Convert whole account-currency units to Meta minor units using the ACCOUNT's
-	// currency_offset (NOT a hardcoded 100): most currencies use 100, but
-	// zero-decimal currencies (JPY/KRW/CLP) use 1, so a hardcoded ×100 would
-	// over-send those accounts 100×. This is NOT an FX conversion — the caller's
-	// amount is already in the account's currency.
+	// currency_offset (NOT an FX conversion — the caller's amount is already in
+	// the account's currency). Most currencies use 100; zero-decimal currencies
+	// (JPY/KRW/CLP) use 1.
 	//
-	// The offset is REQUIRED and has no silent default: a zero/unset/negative
-	// offset is rejected here, before any mutating call. Defaulting an omitted
-	// offset to 100 would silently over-bill a zero-decimal-currency account
-	// (JPY/KRW/CLP, offset 1) by 100× — so force the caller to make the choice
-	// explicit rather than guessing.
+	// When unset, default to 100 (the correct value for USD/EUR/GBP and the large
+	// majority of currencies). This deliberately does NOT hard-fail on an unset
+	// offset: the persisted Meta connection carries only account/page/app IDs (no
+	// currency_offset — see design/connection.go), so requiring it would break
+	// every dispatch driven from a stored connection. A zero-decimal-currency
+	// account MUST set CurrencyOffset=1 to avoid a 100× over-send; that
+	// requirement is documented on the AccountConfig.CurrencyOffset field and
+	// surfaced as a result step below. A negative offset is still rejected as
+	// malformed.
 	offset := c.account.CurrencyOffset
-	if offset <= 0 {
-		return nil, fmt.Errorf("meta: AccountConfig.CurrencyOffset must be set to a positive value (100 for most currencies, 1 for zero-decimal like JPY)")
+	if offset < 0 {
+		return nil, fmt.Errorf("meta: AccountConfig.CurrencyOffset must not be negative (100 for most currencies, 1 for zero-decimal like JPY)")
+	}
+	assumedDefaultOffset := false
+	if offset == 0 {
+		offset = 100
+		assumedDefaultOffset = true
+	}
+	if assumedDefaultOffset {
+		// Make the assumption visible in the result so a zero-decimal-currency
+		// operator can catch a 100× over-send (they must set CurrencyOffset=1).
+		steps = append(steps, "Currency offset not set; assuming 100 (set AccountConfig.CurrencyOffset=1 for zero-decimal currencies like JPY/KRW/CLP)")
 	}
 	// Reject budgets that round to zero minor units before any API call: a
 	// zero/invalid budget would otherwise be sent to Meta and create a bad ad set.
