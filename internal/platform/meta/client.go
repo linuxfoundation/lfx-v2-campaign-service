@@ -510,14 +510,17 @@ func validateGeoTargets(geoTargets []string) []string {
 	return valid
 }
 
-// metaIneligibleCountries are comprehensively-sanctioned countries that Meta
-// does not permit as ad targets; ISO 3166-1 membership alone would otherwise
-// let them through and be rejected only after the campaign is created.
+// metaIneligibleCountries are countries Meta does not permit as ad targets; ISO
+// 3166-1 membership alone would otherwise let them through and be rejected only
+// after the campaign is created. Most are comprehensively (OFAC) sanctioned, but
+// RU is excluded specifically because Meta's ads policy bans targeting Russia —
+// it is not part of the comprehensively-sanctioned set.
 var metaIneligibleCountries = map[string]bool{
-	"CU": true, // Cuba
-	"IR": true, // Iran
-	"KP": true, // North Korea
-	"SY": true, // Syria
+	"CU": true, // Cuba (comprehensively sanctioned)
+	"IR": true, // Iran (comprehensively sanctioned)
+	"KP": true, // North Korea (comprehensively sanctioned)
+	"SY": true, // Syria (comprehensively sanctioned)
+	"RU": true, // Russia (Meta ads policy prohibits targeting; not OFAC-comprehensive)
 }
 
 // iso3166Alpha2 is the set of assigned ISO 3166-1 alpha-2 country codes, used to

@@ -1184,13 +1184,14 @@ func TestAdSetStartTimeTodayUsesBuffer(t *testing.T) {
 	}
 }
 
-// TestValidateGeoTargetsExcludesSanctioned verifies comprehensively-sanctioned
-// countries are dropped even though they're valid ISO codes.
+// TestValidateGeoTargetsExcludesSanctioned verifies Meta-ineligible countries
+// (comprehensively sanctioned, plus RU per Meta's ads policy) are dropped even
+// though they're valid ISO codes.
 func TestValidateGeoTargetsExcludesSanctioned(t *testing.T) {
-	got := validateGeoTargets([]string{"US", "IR", "KP", "CU", "SY", "DE"})
-	for _, bad := range []string{"IR", "KP", "CU", "SY"} {
+	got := validateGeoTargets([]string{"US", "IR", "KP", "CU", "SY", "RU", "DE"})
+	for _, bad := range []string{"IR", "KP", "CU", "SY", "RU"} {
 		if contains(got, bad) {
-			t.Errorf("sanctioned country %s leaked into %v", bad, got)
+			t.Errorf("ineligible country %s leaked into %v", bad, got)
 		}
 	}
 	if !contains(got, "US") || !contains(got, "DE") {
@@ -1217,5 +1218,29 @@ func TestCreateCampaignRejectsAllSanctionedGeos(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "no usable geo targets") {
 		t.Fatalf("err = %v, want all-sanctioned-geos rejection (no silent US fallback)", err)
+	}
+}
+
+// TestCreateCampaignRejectsRussiaOnlyGeo verifies that a Russia-only target is
+// rejected at preflight (no mutating HTTP call) rather than passing preflight and
+// failing at the ad-set step after the campaign already exists. RU is Meta-
+// ineligible per Meta's ads policy, so it must be handled identically to the
+// comprehensively-sanctioned geos (no silent fallback to US).
+func TestCreateCampaignRejectsRussiaOnlyGeo(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"RU"},
+		BudgetUSD:       10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no usable geo targets") {
+		t.Fatalf("err = %v, want Russia-only rejection at preflight (no silent US fallback)", err)
 	}
 }
