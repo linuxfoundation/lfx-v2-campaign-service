@@ -18,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // startupDBTimeout bounds the database connection/ping during container init so
@@ -28,7 +29,17 @@ const startupDBTimeout = 15 * time.Second
 // dispatchDrainTimeout bounds how long shutdown waits for in-flight campaign
 // dispatch to finish before the pool is closed. Kept under the server's overall
 // shutdown budget so draining can't outlast the graceful-shutdown window.
-const dispatchDrainTimeout = 20 * time.Second
+// dispatchDrainTimeout must leave room for the orchestrator's post-cancel grace
+// (service.CancelGracePeriod) within the overall graceful-shutdown budget
+// (constants.DefaultShutdownTimeout), so drain + grace can't overrun it and get
+// SIGKILLed. It is validated against that budget in an init() below.
+const dispatchDrainTimeout = 12 * time.Second
+
+func init() {
+	if dispatchDrainTimeout+service.CancelGracePeriod > constants.DefaultShutdownTimeout {
+		panic("dispatchDrainTimeout + service.CancelGracePeriod exceeds DefaultShutdownTimeout")
+	}
+}
 
 // Container holds all application dependencies.
 type Container struct {

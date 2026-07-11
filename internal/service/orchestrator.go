@@ -26,7 +26,7 @@ const maxParallelDispatch = 5
 // It must be >= jobFinalizeTimeout so a run cancelled at the drain deadline still
 // has time to write its terminal status (on the detached finalize context) before
 // the pool is closed.
-const cancelGracePeriod = jobFinalizeTimeout + time.Second
+const CancelGracePeriod = jobFinalizeTimeout + time.Second
 
 // claimReleaseTimeout bounds the best-effort pending-claim cleanup, which runs on
 // a context detached from the (possibly-cancelled) dispatch context.
@@ -128,7 +128,7 @@ func (o *Orchestrator) Shutdown(ctx context.Context) error {
 		// closes the DB pool). Without this wait, Container.Close could close the
 		// pool while a just-cancelled run is still mid-statement.
 		o.rootCancel()
-		grace := time.NewTimer(cancelGracePeriod)
+		grace := time.NewTimer(CancelGracePeriod)
 		defer grace.Stop()
 		select {
 		case <-done:
@@ -351,15 +351,20 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		return res
 	}
 	if campaign == nil {
-		// A nil campaign with no error is a dispatcher bug — no upstream campaign
-		// was created, so releasing the claim to allow a retry is safe.
-		releaseClaim()
+		// A (nil, nil) result is ambiguous: it does NOT prove no upstream campaign
+		// was created (a dispatcher could create the campaign, then fail to build
+		// its return value). Treat it like the ambiguous error path — RETAIN the
+		// claim so a blind retry can't double-create; the pending row flags the
+		// pair for reconciliation.
+		slog.ErrorContext(ctx, "dispatcher returned no campaign (claim retained; outcome unknown)", "platform", p, "job_id", jobID)
 		res.Error = "dispatcher returned no campaign"
 		return res
 	}
 	if campaign.PlatformCampaignID == "" {
-		// Likewise: no upstream id means no created campaign — safe to release.
-		releaseClaim()
+		// An empty upstream id is likewise ambiguous (the create may have happened
+		// but the id wasn't captured), so RETAIN the claim rather than releasing it
+		// and risking a duplicate on retry.
+		slog.ErrorContext(ctx, "dispatcher returned no upstream campaign id (claim retained; outcome unknown)", "platform", p, "job_id", jobID)
 		res.Error = "dispatcher returned no upstream campaign id"
 		return res
 	}
