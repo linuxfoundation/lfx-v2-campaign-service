@@ -4,6 +4,7 @@
 
 **Update** — Added OKF-recommended `tags` and `timestamp` frontmatter to the
 internal/platform/reddit concept doc (queryable fields per OKF v0.1 §4.1).
+internal/platform/meta concept doc (queryable fields per OKF v0.1 §4.1).
 
 ## 2026-07-10
 
