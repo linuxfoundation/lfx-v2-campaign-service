@@ -810,9 +810,11 @@ func TestCreateCampaign_InvalidGeoRejectedBeforeNetwork(t *testing.T) {
 
 	for _, bad := range []string{"USA", "US/CA", "XX"} {
 		// Any network call means validation ran too late; fail loudly if hit.
-		hit := false
+		// atomic.Bool: written by the httptest handler goroutine, read by the test
+		// goroutine — keeps the negative-path assertion race-free under -race.
+		var hit atomic.Bool
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			hit = true
+			hit.Store(true)
 			http.Error(w, "should not be called", http.StatusInternalServerError)
 		}))
 		c := NewClient(testCreds, testAccount,
@@ -825,7 +827,7 @@ func TestCreateCampaign_InvalidGeoRejectedBeforeNetwork(t *testing.T) {
 		if err == nil {
 			t.Errorf("geo %q: expected rejection, got nil error", bad)
 		}
-		if hit {
+		if hit.Load() {
 			t.Errorf("geo %q: network call was made before geo validation", bad)
 		}
 	}
@@ -1311,9 +1313,9 @@ func TestToMicrodollars(t *testing.T) {
 // path, with no network call at all.
 func TestCreateCampaign_EmptyAccountIDFailsFast(t *testing.T) {
 	for _, id := range []string{"", "   ", "\t\n"} {
-		var called bool
+		var called atomic.Bool
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			called = true
+			called.Store(true)
 			http.Error(w, "should not be called", http.StatusInternalServerError)
 		}))
 		c := NewClient(testCreds, AccountConfig{AccountID: id},
@@ -1332,7 +1334,7 @@ func TestCreateCampaign_EmptyAccountIDFailsFast(t *testing.T) {
 			srv.Close()
 			t.Fatalf("expected error for account ID %q", id)
 		}
-		if called {
+		if called.Load() {
 			srv.Close()
 			t.Errorf("account ID %q: a network call was made; expected fail-fast with none", id)
 		}
@@ -1363,9 +1365,9 @@ func TestCreateCampaign_MalformedAccountIDRejected(t *testing.T) {
 	// Note: leading/trailing whitespace is trimmed before validation, so these
 	// must carry the unsafe character INSIDE the token, not merely around it.
 	for _, id := range []string{"a/b", "..", ".", "t2_x/y", "t2 x", "t2\tx", "t2\nx", "t2.x", "%2e%2e"} {
-		var called bool
+		var called atomic.Bool
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			called = true
+			called.Store(true)
 			http.Error(w, "should not be called", http.StatusInternalServerError)
 		}))
 		c := NewClient(testCreds, AccountConfig{AccountID: id},
@@ -1375,7 +1377,7 @@ func TestCreateCampaign_MalformedAccountIDRejected(t *testing.T) {
 			srv.Close()
 			t.Fatalf("expected error for malformed account ID %q", id)
 		}
-		if called {
+		if called.Load() {
 			srv.Close()
 			t.Errorf("account ID %q: a network call was made; expected fail-fast with none", id)
 		}
@@ -2158,6 +2160,29 @@ func TestRequest_429BodyRefreshedPerRetry(t *testing.T) {
 	for i, b := range bodies {
 		if b != `{"k":"v"}` {
 			t.Errorf("attempt %d body = %q, want %q (reader not refreshed per retry)", i+1, b, `{"k":"v"}`)
+		}
+	}
+}
+
+// TestTruncate verifies the rune-aware truncate keeps the first n runes without
+// converting the whole (potentially large) string to []rune.
+func TestTruncate(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"hello", 3, "hel"},
+		{"hello", 5, "hello"},
+		{"hello", 10, "hello"},
+		{"héllo", 2, "hé"},   // multi-byte rune counts as one
+		{"日本語テスト", 3, "日本語"}, // CJK: 3 runes, 9 bytes
+		{"", 3, ""},
+		{"abc", 0, ""},
+	}
+	for _, c := range cases {
+		if got := truncate(c.in, c.n); got != c.want {
+			t.Errorf("truncate(%q,%d) = %q, want %q", c.in, c.n, got, c.want)
 		}
 	}
 }

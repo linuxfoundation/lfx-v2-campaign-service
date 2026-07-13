@@ -1303,9 +1303,17 @@ func cloneTargeting(m map[string]any) map[string]any {
 
 // truncate returns at most n runes of s (never splitting a multi-byte rune).
 func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
+	// Walk runes only up to the cutoff instead of converting the whole string to
+	// []rune — the input can be a large upstream error body (up to maxResponseBody),
+	// and the full conversion would allocate/scan all of it just to keep the first
+	// n runes.
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
 	}
-	return string(r[:n])
+	// Fewer than (or exactly) n runes: return the whole string unchanged.
+	return s
 }
