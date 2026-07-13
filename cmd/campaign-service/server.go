@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -43,10 +44,15 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 	// (headers/status, no decoded payload) is still applied below via debug.HTTP().
 	endpoints := svc.NewEndpoints(cont.Service)
 
-	var connEndpoints *connsvc.Endpoints
-	if cont.Connections != nil {
-		connEndpoints = connsvc.NewEndpoints(cont.Connections)
+	// The container always initializes Connections (NewContainer wires it in both
+	// the DB and no-DB paths), so construct the endpoints unconditionally. Fail
+	// loudly if it's unexpectedly nil rather than silently skipping the mount —
+	// a mis-wired container should crash at startup, not serve 404s on the
+	// connection routes.
+	if cont.Connections == nil {
+		return fmt.Errorf("container misconfigured: Connections service is nil")
 	}
+	connEndpoints := connsvc.NewEndpoints(cont.Connections)
 
 	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, cont)
 }
