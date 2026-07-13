@@ -541,9 +541,12 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 			if ok {
 				// The server declared a reset time. If it exceeds our cap, sleeping
 				// would burn a retry without any chance of the window clearing, so
-				// abort with the rate-limit error (mirrors Meta/Twitter).
+				// abort with the rate-limit error (mirrors Meta/Twitter). Report the
+				// RAW Retry-After header, not the parsed duration: parseRetryAfter
+				// clamps an over-cap value to a maxRetryWait+1s sentinel, so printing
+				// the duration would misreport (e.g. a 3600s reset as "1m1s").
 				if retryAfter > maxRetryWait {
-					return nil, fmt.Errorf("reddit API %s %s -> 429: rate-limit reset in %s exceeds max wait %s; aborting", method, path, retryAfter.Round(time.Second), maxRetryWait)
+					return nil, fmt.Errorf("reddit API %s %s -> 429: rate-limit reset (Retry-After: %s) exceeds max wait %s; aborting", method, path, resp.Header.Get("Retry-After"), maxRetryWait)
 				}
 				if err := sleepCtx(ctx, retryAfter); err != nil {
 					return nil, err
