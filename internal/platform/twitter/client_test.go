@@ -326,8 +326,8 @@ func TestToIso8601Utc(t *testing.T) {
 }
 
 func TestBuildTwitterCampaignName(t *testing.T) {
-	got := buildTwitterCampaignName(CampaignInput{EventName: "KubeCon | EU", Project: ""})
-	want := "Events | KubeCon - EU | Global | Awareness | Prospecting | Promoted Post | tlf | MoFU"
+	got := buildTwitterCampaignName(CampaignInput{EventName: "KubeCon | EU", Project: "CNCF"})
+	want := "Events | KubeCon - EU | Global | Awareness | Prospecting | Promoted Post | CNCF | MoFU"
 	if got != want {
 		t.Errorf("campaign name = %q, want %q", got, want)
 	}
@@ -409,9 +409,11 @@ func TestRetryOn429(t *testing.T) {
 	}
 }
 
-// TestParseRetryAfter covers both headers: Retry-After is a delay in seconds;
-// X-Rate-Limit-Reset is a Unix epoch that must be converted to time-until-reset
-// (not treated as a raw delay, which would always saturate the cap).
+// TestParseRetryAfter covers all three headers: Retry-After is a delay in
+// seconds (or an HTTP-date); the *-Rate-Limit-Reset headers are Unix epochs that
+// must be converted to time-until-reset (not treated as a raw delay, which would
+// always saturate the cap). Header precedence mirrors the X Ads SDK:
+// X-Account-Rate-Limit-Reset first, then X-Rate-Limit-Reset, then Retry-After.
 func TestParseRetryAfter(t *testing.T) {
 	c := NewClient(Credentials{}, AccountConfig{})
 	c.timeFn = staticTime // now = epoch 1600000000
@@ -437,6 +439,34 @@ func TestParseRetryAfter(t *testing.T) {
 	past := strconv.FormatInt(staticTime().Unix()-10, 10)
 	if got := c.parseRetryAfter(mk(map[string]string{"X-Rate-Limit-Reset": past})); got != 0 {
 		t.Errorf("X-Rate-Limit-Reset(past): got %v, want 0", got)
+	}
+	// X-Account-Rate-Limit-Reset (account-scoped) 45s in the future -> ~45s.
+	acct := strconv.FormatInt(staticTime().Unix()+45, 10)
+	if got := c.parseRetryAfter(mk(map[string]string{"X-Account-Rate-Limit-Reset": acct})); got != 45*time.Second {
+		t.Errorf("X-Account-Rate-Limit-Reset(+45s): got %v, want 45s", got)
+	}
+	// Precedence: X-Account-Rate-Limit-Reset must win over X-Rate-Limit-Reset and
+	// Retry-After, mirroring the X Ads SDK. Account reset (+45s) is checked first
+	// even though the endpoint reset (+30s) and Retry-After (5s) are shorter.
+	if got := c.parseRetryAfter(mk(map[string]string{
+		"X-Account-Rate-Limit-Reset": acct,
+		"X-Rate-Limit-Reset":         reset,
+		"Retry-After":                "5",
+	})); got != 45*time.Second {
+		t.Errorf("account header precedence: got %v, want 45s", got)
+	}
+	// A past account reset falls through to the next header (X-Rate-Limit-Reset).
+	acctPast := strconv.FormatInt(staticTime().Unix()-10, 10)
+	if got := c.parseRetryAfter(mk(map[string]string{
+		"X-Account-Rate-Limit-Reset": acctPast,
+		"X-Rate-Limit-Reset":         reset,
+	})); got != 30*time.Second {
+		t.Errorf("past account reset should fall through to endpoint reset: got %v, want 30s", got)
+	}
+	// Retry-After as an HTTP-date 20s in the future -> ~20s.
+	httpDate := staticTime().Add(20 * time.Second).UTC().Format(http.TimeFormat)
+	if got := c.parseRetryAfter(mk(map[string]string{"Retry-After": httpDate})); got != 20*time.Second {
+		t.Errorf("Retry-After(HTTP-date +20s): got %v, want 20s", got)
 	}
 	// No headers -> 0.
 	if got := c.parseRetryAfter(mk(nil)); got != 0 {
@@ -583,7 +613,7 @@ func TestCreateCampaignValidation(t *testing.T) {
 // caller needs to know the actual limit.
 func TestCreateCampaignBudgetErrorMessages(t *testing.T) {
 	c := NewClient(Credentials{}, AccountConfig{})
-	base := CampaignInput{EventName: "E", StartDate: "2026-01-01", EndDate: "2026-01-02"}
+	base := CampaignInput{EventName: "E", Project: "tlf", StartDate: "2026-01-01", EndDate: "2026-01-02"}
 
 	cases := []struct {
 		name   string
@@ -617,8 +647,8 @@ func TestCreateCampaignBudgetErrorMessages(t *testing.T) {
 
 // TestCreateCampaignRejectsOversizedComposedName verifies a composed campaign
 // name exceeding X's 255-rune entity-name limit is rejected before any network
-// call. A 200-char event (the per-field max) with the default project composes
-// to ~286 chars — within the per-field bounds but over the entity-name limit.
+// call. A 200-char event (the per-field max) with a short project composes to
+// ~286 chars — within the per-field bounds but over the entity-name limit.
 func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -637,14 +667,15 @@ func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	// Sanity-check the premise: 200-char event + default project overflows 255.
-	name := buildTwitterCampaignName(CampaignInput{EventName: strings.Repeat("x", maxEventNameLen)})
+	// Sanity-check the premise: 200-char event + short project overflows 255.
+	name := buildTwitterCampaignName(CampaignInput{EventName: strings.Repeat("x", maxEventNameLen), Project: "CNCF"})
 	if got := len([]rune(name)); got <= maxEntityNameLen {
 		t.Fatalf("test premise wrong: composed name is %d runes, expected > %d", got, maxEntityNameLen)
 	}
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
-		EventName:       strings.Repeat("x", maxEventNameLen), // valid per-field, no default project
+		EventName:       strings.Repeat("x", maxEventNameLen), // valid per-field
+		Project:         "CNCF",
 		BudgetUsd:       500,
 		StartDate:       "2026-03-01",
 		EndDate:         "2026-03-10",
@@ -661,14 +692,59 @@ func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignRejectsEmptyProject verifies that an empty/whitespace
+// Project is rejected in the up-front validation, before any mutating call. The
+// Project segment is the attribution key the pipeline joins on, so defaulting an
+// omitted value would misattribute a non-TLF campaign; the caller must supply the
+// canonical slug.
+func TestCreateCampaignRejectsEmptyProject(t *testing.T) {
+	for _, project := range []string{"", "   "} {
+		var posts int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				posts++
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}))
+
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+			WithBaseURL(srv.URL),
+			WithWriteDelay(0),
+		)
+		c.nonceFn = func() string { return "n" }
+		c.timeFn = staticTime
+
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:       "KubeCon EU",
+			Project:         project,
+			BudgetUsd:       500,
+			StartDate:       "2026-03-01",
+			EndDate:         "2026-03-10",
+			RegistrationURL: "https://events.lf.org/reg",
+		})
+		if err == nil {
+			t.Errorf("project %q: expected error for empty project", project)
+		} else if !strings.Contains(err.Error(), "project") {
+			t.Errorf("project %q: expected project error, got: %v", project, err)
+		}
+		if posts != 0 {
+			t.Errorf("project %q: expected no POST before project validation, got %d", project, posts)
+		}
+		srv.Close()
+	}
+}
+
 // TestCreateCampaignEventNameRuneLimit verifies the EventName length guard
 // counts runes, not UTF-8 bytes. A multi-byte name that is under the 200-rune
 // limit but well over 200 bytes must pass the length guard (byte-counting would
 // wrongly reject it), while a name over 200 runes must be rejected.
 func TestCreateCampaignEventNameRuneLimit(t *testing.T) {
 	// 150 CJK runes = 450 bytes: under 200 runes but far over 200 bytes. The
-	// composed campaign name (with the default project) stays under 255 runes,
-	// so the whole create flow succeeds.
+	// composed campaign name (with a short project) stays under 255 runes, so the
+	// whole create flow succeeds.
 	multiByteName := strings.Repeat("世", 150)
 	if utf8.RuneCountInString(multiByteName) > maxEventNameLen {
 		t.Fatalf("test premise wrong: %d runes exceeds %d", utf8.RuneCountInString(multiByteName), maxEventNameLen)
@@ -708,6 +784,7 @@ func TestCreateCampaignEventNameRuneLimit(t *testing.T) {
 
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       multiByteName,
+		Project:         "CNCF",
 		BudgetUsd:       500,
 		StartDate:       "2026-03-01",
 		EndDate:         "2026-03-10",
@@ -1420,13 +1497,13 @@ func TestPromotedTweetPostErrorWarns(t *testing.T) {
 	}
 }
 
-// TestPromotedTweetDuplicateTreatedIdempotent verifies that a
+// TestPromotedTweetDuplicateSurfacesWarning verifies that a
 // DUPLICATE_PROMOTABLE_ENTITY response is surfaced as a WARNING (not an
 // unqualified success): X can return that code when the tweet is promoted by a
 // DIFFERENT line item, so it does not prove this tweet is attached to this line
 // item. The flow stays non-fatal (campaign + line item still return), but
 // PromotedTweetWarning is set and a step tells the caller to verify manually.
-func TestPromotedTweetDuplicateTreatedIdempotent(t *testing.T) {
+func TestPromotedTweetDuplicateSurfacesWarning(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):

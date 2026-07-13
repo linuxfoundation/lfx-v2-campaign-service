@@ -417,22 +417,51 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 }
 
 // parseRetryAfter returns how long to wait before retrying a 429, or 0 if no
-// usable header is present. Retry-After is a delay in seconds; X-Rate-Limit-Reset
-// is a Unix epoch timestamp (the X Ads API commonly returns only the latter on a
-// 429), so it must be converted to a duration-until-reset rather than treated as
-// a delay. Never returns a negative duration.
+// usable header is present. Header precedence mirrors the official X Ads SDK:
+// X-Account-Rate-Limit-Reset (account-scoped limits) is checked first, then
+// X-Rate-Limit-Reset (endpoint-scoped), then Retry-After. Both *-Rate-Limit-Reset
+// headers carry a Unix epoch timestamp (the X Ads API commonly returns only these
+// on a 429), so they must be converted to a duration-until-reset rather than
+// treated as a delay. Retry-After is either a delay in seconds or an HTTP-date.
+// Never returns a negative duration.
 func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
+	// Account-scoped rate limits take precedence: an account-scoped 429 stays
+	// limited across every endpoint until this reset, so honoring the shorter
+	// endpoint header (or falling back to exponential backoff) would burn retries
+	// while still limited.
+	if d := c.resetHeaderDelay(resp.Header.Get("X-Account-Rate-Limit-Reset")); d > 0 {
+		return d
+	}
+	if d := c.resetHeaderDelay(resp.Header.Get("X-Rate-Limit-Reset")); d > 0 {
+		return d
+	}
 	if v := strings.TrimSpace(resp.Header.Get("Retry-After")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return time.Duration(n) * time.Second
 		}
-	}
-	if v := strings.TrimSpace(resp.Header.Get("X-Rate-Limit-Reset")); v != "" {
-		if epoch, err := strconv.ParseInt(v, 10, 64); err == nil {
-			if d := time.Unix(epoch, 0).Sub(c.timeFn()); d > 0 {
+		if t, err := http.ParseTime(v); err == nil {
+			if d := t.Sub(c.timeFn()); d > 0 {
 				return d
 			}
 		}
+	}
+	return 0
+}
+
+// resetHeaderDelay interprets a *-Rate-Limit-Reset header value (a Unix epoch
+// timestamp) as a duration-until-reset relative to the injectable clock. Returns
+// 0 for an empty/unparseable value or a reset that has already passed.
+func (c *Client) resetHeaderDelay(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	epoch, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0
+	}
+	if d := time.Unix(epoch, 0).Sub(c.timeFn()); d > 0 {
+		return d
 	}
 	return 0
 }
@@ -599,17 +628,15 @@ func buildTwitterCampaignName(in CampaignInput) string {
 	return fmt.Sprintf("Events | %s | Global | Awareness | Prospecting | Promoted Post | %s | MoFU", event, project)
 }
 
-// boundProject trims the caller-supplied project name and caps its rune length,
-// defaulting to the canonical Linux Foundation project slug "tlf" when empty.
+// boundProject trims the caller-supplied project name and caps its rune length.
 // The data pipeline parses the campaign name for attribution and joins on the
-// canonical slug ("tlf", lowercase — not a display name); see docs/api-catalog.md.
+// caller-supplied canonical project slug; see docs/api-catalog.md. CreateCampaign
+// rejects an empty Project up front, so this always receives a non-empty value —
+// it does not substitute a default (which would misattribute the campaign).
 // Project is otherwise unbounded, so bounding it here keeps the composed campaign
 // name from ballooning.
 func boundProject(project string) string {
 	project = strings.TrimSpace(project)
-	if project == "" {
-		return "tlf"
-	}
 	if r := []rune(project); len(r) > maxProjectLen {
 		project = string(r[:maxProjectLen])
 	}
@@ -782,6 +809,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if utf8.RuneCountInString(in.EventName) > maxEventNameLen {
 		return nil, fmt.Errorf("invalid event name: exceeds %d characters", maxEventNameLen)
+	}
+
+	// Validate Project before any mutating call. The Project segment of the
+	// composed campaign name is the attribution key the data pipeline joins on, so
+	// it must be the authenticated caller-supplied canonical slug. Defaulting an
+	// omitted Project to a hardcoded slug (e.g. "tlf") would misattribute a
+	// non-TLF campaign, so reject an empty/whitespace value outright. Trim and
+	// store the cleaned value so every downstream builder sees the same input.
+	in.Project = strings.TrimSpace(in.Project)
+	if in.Project == "" {
+		return nil, fmt.Errorf("invalid project: must not be empty")
 	}
 
 	// Validate budget. Reject NaN/Inf/non-positive, reject values above the
