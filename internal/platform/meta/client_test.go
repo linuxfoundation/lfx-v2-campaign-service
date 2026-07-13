@@ -2069,3 +2069,25 @@ func TestCreateCampaignAdFailureSurfacesOrphanCreative(t *testing.T) {
 		t.Errorf("expected a step surfacing the orphaned creative id, got steps: %v", res.Steps)
 	}
 }
+
+// TestTruncate verifies the rune-aware truncate clips at max runes with an
+// ellipsis (multi-byte safe) without converting the whole string to []rune.
+func TestTruncate(t *testing.T) {
+	cases := []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"hello", 3, "hel…"},
+		{"hello", 5, "hello"},
+		{"hello", 10, "hello"},
+		{"héllo", 2, "hé…"},
+		{"日本語テスト", 3, "日本語…"},
+		{"", 3, ""},
+	}
+	for _, c := range cases {
+		if got := truncate(c.in, c.max); got != c.want {
+			t.Errorf("truncate(%q,%d) = %q, want %q", c.in, c.max, got, c.want)
+		}
+	}
+}

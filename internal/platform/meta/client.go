@@ -675,7 +675,13 @@ func resolveRegion(geoTargets []string) string {
 // ---------------------------------------------------------------------------
 
 func buildPromotedObject(objective, pageID, pixelID string) (map[string]any, error) {
-	params := objectiveParams[objective]
+	params, ok := objectiveParams[objective]
+	if !ok {
+		// Defensive: an unknown objective should never reach here (CreateCampaign
+		// validates it up front), but silently treating it as "no promoted object"
+		// would be a subtle mis-config if a future caller/refactor bypasses that.
+		return nil, fmt.Errorf("unknown objective %q", objective)
+	}
 	switch params.PromotedObjectType {
 	case PromotedObjectPageID:
 		return map[string]any{"page_id": pageID}, nil
@@ -843,13 +849,19 @@ func truncateErr(err error, max int) string {
 }
 
 // truncate clamps s to at most max runes, appending an ellipsis when it clips,
-// without splitting a multi-byte rune.
+// without splitting a multi-byte rune. It walks runes only up to the cutoff
+// rather than converting the whole string to []rune, so surfacing a large
+// upstream error body (up to maxResponseBody) doesn't allocate/scan all of it.
 func truncate(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
+	count := 0
+	for i := range s {
+		if count == max {
+			return s[:i] + "…"
+		}
+		count++
 	}
-	return string(runes[:max]) + "…"
+	// Fewer than (or exactly) max runes: no clipping, return as-is.
+	return s
 }
 
 // adSetStartTime returns the ad set start_time (RFC3339-ish, Meta format) for a
