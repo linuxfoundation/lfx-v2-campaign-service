@@ -325,7 +325,12 @@ func (c *Client) createRequest(ctx context.Context, path string, params map[stri
 // request URL (create calls pass their params here); the request carries no
 // body in either mode.
 func (c *Client) doRequest(ctx context.Context, method, path string, queryParams map[string]string) (*apiResponse, error) {
-	reqURL := c.accountURL() + "/" + strings.TrimPrefix(path, "/")
+	// An empty path targets the account root itself (accountURL) — used by
+	// verifyAccount's GET — so don't append a bare "/" that would change the URL.
+	reqURL := c.accountURL()
+	if p := strings.TrimPrefix(path, "/"); p != "" {
+		reqURL += "/" + p
+	}
 
 	if len(queryParams) > 0 {
 		vals := url.Values{}
@@ -377,7 +382,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 					return nil, fmt.Errorf("x ads api %s %s -> 429: rate-limit reset in %s exceeds max wait %s; aborting", method, path, waitDur.Round(time.Second), maxRetryWait)
 				}
 			} else {
+				// No server-declared reset: fall back to computed exponential
+				// backoff, clamped to maxRetryWait to match the header path above.
+				// (Bounded in practice today since attempt <= retryMax, but clamp
+				// defensively so the two 429 paths stay consistent.)
 				waitDur = writeDelay * time.Duration(1<<uint(attempt))
+				if waitDur > maxRetryWait {
+					waitDur = maxRetryWait
+				}
 			}
 			if err := sleepCtx(ctx, waitDur); err != nil {
 				return nil, err
@@ -617,6 +629,37 @@ func validateEntityName(kind, name string) error {
 
 var spaceRe = regexp.MustCompile(`\s+`)
 
+// validateRegistrationURL ensures a user-supplied registration URL is an
+// absolute http/https URL with a real host, before any mutating call. In the
+// manual-tweet workflow (TweetID omitted) this URL is the only ad destination
+// (it feeds the UTM/destination via buildTwitterUtmURL), and url.Parse alone is
+// far too permissive: url.Parse("") succeeds (yielding a query-only
+// "?utm_source=..." string), relative URLs are accepted, and "https://:443/x"
+// parses with an empty Hostname(). Mirrors validateRegistrationURL in the
+// reddit/linkedin clients: TrimSpace, require IsAbs()+Hostname()!="", scheme
+// http/https.
+func validateRegistrationURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("registration URL is required")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("registration URL %q is not a valid URL: %w", raw, err)
+	}
+	// Require a real host: url.Parse accepts "https://:443/path" (Host=":443")
+	// where Hostname() is empty, so check Hostname() not just Host.
+	if !u.IsAbs() || u.Hostname() == "" {
+		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", raw, u.Scheme)
+	}
+}
+
 func buildTwitterUtmURL(in CampaignInput) string {
 	slug := in.EventSlug
 	if slug == "" {
@@ -762,6 +805,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if in.EndDate <= in.StartDate {
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+	}
+
+	// Validate the registration URL up front, before any mutating call. In the
+	// manual-tweet workflow (TweetID omitted) it is the only ad destination and is
+	// fed into buildTwitterUtmURL, which would otherwise accept an empty/relative/
+	// non-http value and emit a corrupt destination. Require a valid absolute
+	// http/https URL with a real host always, mirroring the reddit/linkedin clients.
+	if err := validateRegistrationURL(in.RegistrationURL); err != nil {
+		return nil, err
 	}
 
 	// Validate the tweet id FORMAT up front, before any mutating call. A blank
@@ -976,42 +1028,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}, nil
 }
 
-// verifyAccount performs a best-effort account lookup, appending a step. All
-// failures are non-fatal (mirrors the TS Step 1 try/catch).
+// verifyAccount performs a best-effort account lookup, appending a step. It goes
+// through doRequest (an empty path targets the account root) so it gets the SAME
+// OAuth1 signing and 429 rate-limit retry/backoff as every other call — unlike
+// the earlier version, which fired httpClient.Do directly and thus skipped the
+// shared retry path. All failures remain non-fatal (mirrors the TS Step 1
+// try/catch): doRequest surfaces a non-2xx status as an error, which is recorded
+// here as a warning step and NOT propagated, so verification never aborts
+// CreateCampaign.
 func (c *Client) verifyAccount(ctx context.Context, steps *[]string) {
-	verifyURL := c.accountURL()
-	authHeader, err := c.buildOAuthHeader(http.MethodGet, verifyURL, nil)
+	resp, err := c.request(ctx, http.MethodGet, "")
 	if err != nil {
 		*steps = append(*steps, fmt.Sprintf("Account verification warning: %s", err.Error()))
 		return
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, verifyURL, http.NoBody)
-	if err != nil {
-		*steps = append(*steps, fmt.Sprintf("Account verification warning: %s", err.Error()))
-		return
-	}
-	req.Header.Set("Authorization", authHeader)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		*steps = append(*steps, fmt.Sprintf("Account verification warning: %s", err.Error()))
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		*steps = append(*steps, fmt.Sprintf("Account verification returned %d", resp.StatusCode))
-		return
-	}
-	body, _ := readAll(resp)
-	var parsed struct {
-		Data struct {
-			Name string `json:"name"`
-		} `json:"data"`
 	}
 	name := c.account.AccountID
-	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Data.Name != "" {
-		name = parsed.Data.Name
+	if resp != nil && len(resp.Data) > 0 {
+		var obj struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(resp.Data, &obj); err == nil && obj.Name != "" {
+			name = obj.Name
+		}
 	}
 	*steps = append(*steps, fmt.Sprintf("Account verified: %s", name))
 }

@@ -17,10 +17,13 @@ variables or touches the database.
 line items by name (paged cursor lookups via `findByName`) before creating new
 ones, and a lookup that fails transiently propagates an error so the caller
 aborts rather than creating a duplicate. The promoted-tweet association, however,
-is always re-POSTed on a repeat call (a recognizable duplicate error is treated
-as success, but a lost/malformed first response can still produce a warning);
-true cross-call idempotency (idempotency keys) is explicitly deferred and tracked
-in LFXV2-2665. Only the campaign and line item are created with
+is always re-POSTed on a repeat call. A recognizable duplicate response
+(`DUPLICATE_PROMOTABLE_ENTITY`) is NOT treated as idempotent success: X returns
+that code even when the tweet is already promoted by a DIFFERENT line item, so it
+is surfaced as a warning (on `PromotedTweetWarning` and in the step log) to be
+verified manually rather than assumed to attach to this line item. A
+lost/malformed first response likewise produces a warning. True cross-call
+idempotency (idempotency keys) is explicitly deferred and tracked in LFXV2-2665. Only the campaign and line item are created with
 `entity_status=PAUSED`; the promoted-tweet endpoint does not accept
 `entity_status`, so the API creates that association `ACTIVE`. It cannot serve,
 though, because the parent line item is paused — delivery is gated by the paused

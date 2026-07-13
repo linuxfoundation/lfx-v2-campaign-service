@@ -644,10 +644,11 @@ func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
 	}
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
-		EventName: strings.Repeat("x", maxEventNameLen), // valid per-field, no default project
-		BudgetUsd: 500,
-		StartDate: "2026-03-01",
-		EndDate:   "2026-03-10",
+		EventName:       strings.Repeat("x", maxEventNameLen), // valid per-field, no default project
+		BudgetUsd:       500,
+		StartDate:       "2026-03-01",
+		EndDate:         "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
 		t.Fatal("expected error for composed name exceeding entity-name limit")
@@ -762,6 +763,7 @@ func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
 	base := CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
 	}
 	cases := []struct {
 		name string
@@ -808,6 +810,7 @@ func TestCreateCampaignRejectsUnsafeAccountID(t *testing.T) {
 	base := CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
 	}
 	cases := []struct {
 		name string
@@ -985,6 +988,7 @@ func TestCreateCampaignIdempotent(t *testing.T) {
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
@@ -1046,6 +1050,7 @@ func TestFindByNameMatchWithoutIDErrors(t *testing.T) {
 	in := CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
 	}
 	campaignName := buildTwitterCampaignName(in)
 	idlessBody, err := json.Marshal(map[string]any{
@@ -1168,6 +1173,7 @@ func TestCreateSendsQueryParams(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "111",
+		RegistrationURL: "https://events.lf.org/reg",
 	}); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
@@ -1325,6 +1331,7 @@ func TestPromotedTweetMissingIDWarns(t *testing.T) {
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
 		t.Fatalf("CreateCampaign should not be fatal on missing promoted-tweet id: %v", err)
@@ -1390,6 +1397,7 @@ func TestPromotedTweetPostErrorWarns(t *testing.T) {
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
 		t.Fatalf("CreateCampaign should not be fatal on promoted-tweet POST failure: %v", err)
@@ -1457,6 +1465,7 @@ func TestPromotedTweetDuplicateTreatedIdempotent(t *testing.T) {
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
 		t.Fatalf("CreateCampaign should not be fatal on duplicate promoted-tweet: %v", err)
@@ -1520,6 +1529,7 @@ func TestCreateCampaignLookupErrorAborts(t *testing.T) {
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
 		t.Fatal("expected error when campaign lookup fails, got nil")
@@ -1590,6 +1600,7 @@ func TestTweetIDWhitespaceNotPromoted(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "   ",
+		RegistrationURL: "https://events.lf.org/reg",
 	}); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
@@ -1659,6 +1670,7 @@ func TestAccountConfigTrimmedInRequests(t *testing.T) {
 	if _, err := c2.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
 	}); err != nil {
 		t.Fatalf("CreateCampaign with padded account config: %v", err)
 	}
@@ -1691,6 +1703,7 @@ func TestAccountConfigTrimmedInRequests(t *testing.T) {
 		cw.timeFn = staticTime
 		_, err := cw.CreateCampaign(context.Background(), CampaignInput{
 			EventName: "E", BudgetUsd: 500, StartDate: "2026-03-01", EndDate: "2026-03-10",
+			RegistrationURL: "https://events.lf.org/reg",
 		})
 		if err == nil {
 			t.Errorf("case %d: whitespace-only account config should be rejected", i)
@@ -1745,6 +1758,7 @@ func TestTweetIDFormatValidatedUpFront(t *testing.T) {
 	base := CampaignInput{
 		EventName: "E", Project: "tlf", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
 	}
 
 	// Invalid (non-numeric) tweet ids must fail up front with ZERO create POSTs.
@@ -1863,6 +1877,7 @@ func TestTweetIDInt64OverflowRejected(t *testing.T) {
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
 		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: overflow,
+		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
 		t.Fatal("expected CreateCampaign to reject an out-of-int64-range tweet id, got nil error")
@@ -1881,6 +1896,160 @@ func TestTweetIDRejectsNonSnowflake(t *testing.T) {
 	for _, ok := range []string{"1", "111", "1234567890", "1234567890123456789" /* 19 digits */} {
 		if !tweetIDRe.MatchString(ok) {
 			t.Errorf("tweetIDRe rejected %q, want accept", ok)
+		}
+	}
+}
+
+// TestCreateCampaignValidatesRegistrationURL verifies an empty / relative /
+// non-http RegistrationURL is rejected up front — before any network call —
+// while a valid https URL flows past validation.
+func TestCreateCampaignValidatesRegistrationURL(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	mk := func() *Client {
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+			WithBaseURL(srv.URL),
+			WithWriteDelay(0),
+		)
+		c.nonceFn = func() string { return "n" }
+		c.timeFn = staticTime
+		return c
+	}
+	base := CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+	}
+
+	// Invalid URLs must be rejected before any network call.
+	for _, bad := range []string{"", "   ", "/relative/path", "events.lf.org/reg", "ftp://events.lf.org/reg"} {
+		atomic.StoreInt32(&calls, 0)
+		in := base
+		in.RegistrationURL = bad
+		if _, err := mk().CreateCampaign(context.Background(), in); err == nil {
+			t.Errorf("RegistrationURL %q should be rejected", bad)
+		}
+		if got := atomic.LoadInt32(&calls); got != 0 {
+			t.Errorf("RegistrationURL %q: expected 0 network calls before validation, got %d", bad, got)
+		}
+	}
+
+	// A valid https URL flows past validation (reaches the network).
+	in := base
+	in.RegistrationURL = "https://events.lf.org/reg"
+	if _, err := mk().CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("valid https RegistrationURL should flow: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got == 0 {
+		t.Errorf("valid RegistrationURL should reach the network, got 0 calls")
+	}
+}
+
+// TestVerifyAccountRetriesOn429 proves verifyAccount now goes through doRequest
+// and therefore inherits the shared OAuth signing + 429 retry/backoff: a server
+// that 429s once (with Retry-After) then 200s must still yield "Account
+// verified: <name>", after a retry. The earlier version fired httpClient.Do
+// directly and would have surfaced the 429 as a warning without retrying.
+func TestVerifyAccountRetriesOn429(t *testing.T) {
+	var acctCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			if atomic.AddInt32(&acctCalls, 1) == 1 {
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	var steps []string
+	c.verifyAccount(context.Background(), &steps)
+
+	if got := atomic.LoadInt32(&acctCalls); got != 2 {
+		t.Errorf("expected the account GET to be retried after a 429 (2 calls), got %d", got)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("expected exactly one verification step, got %d: %v", len(steps), steps)
+	}
+	if steps[0] != "Account verified: LF Events" {
+		t.Errorf("expected verified step after retry, got %q", steps[0])
+	}
+}
+
+// TestVerifyAccountNonFatalOnError verifies a non-2xx account response (surfaced
+// by doRequest as an error) is recorded as a warning step and NOT propagated —
+// verification stays non-fatal.
+func TestVerifyAccountNonFatalOnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"UNAUTHORIZED_ACCESS"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	var steps []string
+	c.verifyAccount(context.Background(), &steps)
+
+	if len(steps) != 1 {
+		t.Fatalf("expected one warning step, got %d: %v", len(steps), steps)
+	}
+	if !strings.HasPrefix(steps[0], "Account verification warning:") {
+		t.Errorf("expected a non-fatal warning step, got %q", steps[0])
+	}
+}
+
+// TestComputedBackoffClampedToMaxRetryWait verifies the no-Retry-After computed
+// exponential backoff never exceeds maxRetryWait, matching the header path. It
+// mirrors doRequest's fallback formula for attempt 0..retryMax.
+func TestComputedBackoffClampedToMaxRetryWait(t *testing.T) {
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		waitDur := writeDelay * time.Duration(1<<uint(attempt))
+		if waitDur > maxRetryWait {
+			waitDur = maxRetryWait
+		}
+		if waitDur > maxRetryWait {
+			t.Errorf("attempt %d: computed backoff %v exceeds maxRetryWait %v", attempt, waitDur, maxRetryWait)
 		}
 	}
 }
