@@ -618,20 +618,40 @@ func validateGeoTargets(geoTargets []string) []string {
 	return valid
 }
 
-// metaIneligibleCountries are countries Meta does not permit as ad targets; ISO
-// 3166-1 membership alone would otherwise let them through and be rejected only
-// after the campaign is created. CU/IR/KP remain under active comprehensive OFAC
-// sanctions programs. RU and SY are excluded on Meta ads-policy / targeting-
-// eligibility grounds rather than comprehensive OFAC sanctions: Meta's ads policy
-// bans targeting Russia, and SY is kept excluded pending confirmation of Meta's
-// current targeting eligibility (OFAC terminated its comprehensive Syria program
-// effective 2025-07-01, so that is no longer the basis).
+// metaIneligibleCountries are ISO 3166-1 codes that are NOT valid Meta ad-targeting
+// countries; ISO membership alone would otherwise let them through and be rejected
+// only after the campaign is created. This is deliberately a curated exclusion list
+// rather than a positive allowlist: ISO 3166-1 assigns codes for uninhabited and
+// special territories that carry no Meta ad market, and for a handful of countries
+// Meta/OFAC exclude on policy grounds. It covers the two known leak classes:
+//
+//  1. Policy/sanctions exclusions. CU/IR/KP remain under active comprehensive OFAC
+//     sanctions programs. RU is excluded because Meta's ads policy bans targeting
+//     Russia; SY is kept excluded pending confirmation of Meta's current targeting
+//     eligibility (OFAC terminated its comprehensive Syria program effective
+//     2025-07-01, so that is no longer the basis).
+//  2. Uninhabited / non-targetable territories that are assigned ISO codes but are
+//     not Meta ad-geolocation countries (no resident audience to target), so a
+//     campaign targeting them would be created and then fail at the ad-set step.
+//
+// NOTE: this is best-effort, not Meta's authoritative ad-geolocation set. If a
+// still-ISO-valid but non-targetable code slips through, Meta rejects the ad-set
+// POST (after the PAUSED campaign is created) and the returned error surfaces the
+// created campaign id for cleanup. A maintained targetable-country allowlist would
+// be stricter; that is intentionally deferred to keep this list auditable.
 var metaIneligibleCountries = map[string]bool{
 	"CU": true, // Cuba (comprehensively sanctioned)
 	"IR": true, // Iran (comprehensively sanctioned)
 	"KP": true, // North Korea (comprehensively sanctioned)
 	"RU": true, // Russia (Meta ads policy prohibits targeting; not OFAC-comprehensive)
 	"SY": true, // Syria (Meta ads-eligibility caution; not OFAC-comprehensive as of 2025-07-01)
+	// Uninhabited / non-targetable ISO territories (no Meta ad market).
+	"AQ": true, // Antarctica (no resident population)
+	"BV": true, // Bouvet Island (uninhabited)
+	"HM": true, // Heard Island and McDonald Islands (uninhabited)
+	"TF": true, // French Southern Territories (no permanent population)
+	"GS": true, // South Georgia and the South Sandwich Islands (no permanent population)
+	"UM": true, // United States Minor Outlying Islands (no permanent population)
 }
 
 // iso3166Alpha2 is the set of assigned ISO 3166-1 alpha-2 country codes, used to

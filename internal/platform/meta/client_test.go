@@ -1873,6 +1873,23 @@ func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
 	}
 }
 
+// TestValidateGeoTargetsExcludesNonTargetableTerritories verifies that ISO codes
+// for uninhabited / non-targetable territories (AQ/BV/HM/TF/GS/UM) are dropped even
+// though they are assigned ISO 3166-1 codes — they are not Meta ad-geolocation
+// countries, so admitting them would create a campaign that then fails at the
+// ad-set step.
+func TestValidateGeoTargetsExcludesNonTargetableTerritories(t *testing.T) {
+	got := validateGeoTargets([]string{"US", "AQ", "BV", "HM", "TF", "GS", "UM", "DE"})
+	for _, bad := range []string{"AQ", "BV", "HM", "TF", "GS", "UM"} {
+		if contains(got, bad) {
+			t.Errorf("non-targetable territory %s leaked into %v", bad, got)
+		}
+	}
+	if !contains(got, "US") || !contains(got, "DE") {
+		t.Errorf("valid countries dropped: %v", got)
+	}
+}
+
 // TestValidateGeoTargetsRejectsBogusISO verifies that a well-shaped but
 // non-existent code (XX) is dropped and does not reach Meta.
 func TestValidateGeoTargetsRejectsBogusISO(t *testing.T) {
