@@ -3,6 +3,13 @@ type: "Go Package"
 title: "internal/platform/twitter"
 description: "X (Twitter) Ads v12 client: OAuth 1.0a signing and the campaign -> line_item -> promoted_tweet creation flow."
 resource: "internal/platform/twitter"
+tags:
+  - platform-client
+  - twitter
+  - x-ads
+  - oauth1
+  - go-package
+timestamp: "2026-07-13T19:18:36Z"
 ---
 
 # internal/platform/twitter
