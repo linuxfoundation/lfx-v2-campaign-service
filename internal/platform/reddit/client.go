@@ -715,23 +715,30 @@ func sanitizePath(path string) string {
 // ---------------------------------------------------------------------------
 
 // resolveSubreddit looks up a single subreddit by NAME and returns its Reddit
-// Ads subreddit ID. It queries the Ads API v3 subreddit lookup
-// (GET /subreddits?query=<name>), which returns a list of matching subreddits;
-// the entry whose name matches (case-insensitively) the requested name yields
-// the ID that the ad-group targeting `communities` field expects (per the
-// api-catalog contract: "Subreddit targeting uses subreddit IDs, not names").
+// Ads subreddit ID. It queries the Ads API v3 subreddit targeting lookup
+// (GET /targeting/subreddits?query=<name>), which returns a list of matching
+// subreddits; the entry whose name matches (case-insensitively) the requested
+// name yields the ID that the ad-group targeting `communities` field expects
+// (per the api-catalog contract: "Subreddit targeting uses subreddit IDs, not
+// names").
 //
 // The lookup goes through request() so it inherits auth (Bearer token refresh)
-// and the 429 retry/backoff. A resolvable-but-not-found name (no matching entry)
-// returns ("", nil): the caller skips it and warns rather than failing the whole
-// campaign. A transport/HTTP error returns ("", err).
+// and the 429 retry/backoff. Return semantics distinguish three cases so the
+// caller can react correctly:
+//   - a genuine not-found (2xx response, no matching entry) returns ("", nil):
+//     the caller skips that name and warns rather than failing the campaign;
+//   - a transport/HTTP error returns ("", err);
+//   - a MALFORMED 2xx response (data present but not a decodable subreddit list)
+//     returns ("", err) as well. A decode failure is NOT the same as not-found:
+//     silently treating it as not-found would drop requested targeting on an
+//     upstream schema drift, materially changing the campaign, so it aborts.
 func (c *Client) resolveSubreddit(ctx context.Context, name string) (string, error) {
 	// url.Values.Encode() percent-encodes the value; request() sanitizes only the
 	// PATH, so the query string is built here and appended to the path. A leading
-	// "/subreddits" keeps the same base-relative shape as the other GETs.
+	// "/targeting/subreddits" keeps the same base-relative shape as the other GETs.
 	q := url.Values{}
 	q.Set("query", name)
-	resp, err := c.request(ctx, http.MethodGet, "/subreddits?"+q.Encode(), nil)
+	resp, err := c.request(ctx, http.MethodGet, "/targeting/subreddits?"+q.Encode(), nil)
 	if err != nil {
 		return "", err
 	}
@@ -741,13 +748,13 @@ func (c *Client) resolveSubreddit(ctx context.Context, name string) (string, err
 	// The Ads API returns data as a list of subreddit objects. Each carries an
 	// id (string) and a name; pick the entry whose name matches the request
 	// case-insensitively so a fuzzy/prefix match doesn't target the wrong
-	// community. Fall back to the first entry only when no name field is present.
+	// community.
 	var subs []struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(resp.Data, &subs); err != nil {
-		return "", nil
+		return "", fmt.Errorf("reddit subreddit lookup for %q: decode response: %w", name, err)
 	}
 	for _, s := range subs {
 		if strings.EqualFold(strings.TrimSpace(s.Name), name) {
@@ -960,6 +967,37 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
 	}
 
+	// Extract the supplied subreddit names (strip an optional "r/" prefix, drop
+	// blanks) and resolve them to Reddit Ads subreddit IDs BEFORE the campaign
+	// POST. Reddit targets communities by ID, not name (api-catalog: "Subreddit
+	// targeting uses subreddit IDs, not names"). Resolving up front -- before any
+	// paid resource is created and before effectiveStart is computed -- means a
+	// hard lookup error (bad endpoint/HTTP/transport/malformed response) fails
+	// fast with NO orphaned PAUSED campaign, and the (unbounded, individually
+	// 429-retried) lookups cannot eat into redditPastStartBuffer and push the
+	// campaign/ad-group start into the past. Unresolvable names are skipped with a
+	// per-name warning rather than failing the whole campaign.
+	communityNames := make([]string, 0, len(in.Subreddits))
+	for _, s := range in.Subreddits {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		name := strings.TrimSpace(strings.TrimPrefix(s, "r/"))
+		if name == "" {
+			continue
+		}
+		communityNames = append(communityNames, name)
+	}
+	var communityIDs []string
+	if len(communityNames) > 0 {
+		var resolveErr error
+		communityIDs, resolveErr = c.resolveSubredditIDs(ctx, communityNames, &steps)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("reddit subreddit resolution failed: %w", resolveErr)
+		}
+	}
+
 	// Compute the effective start time ONCE, before the campaign POST. When the
 	// start date is today its midnight-UTC timestamp is already in the past, so
 	// nudge it to now+buffer; otherwise use start-of-day. This adjusted value is
@@ -1052,34 +1090,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if len(in.Interests) > 0 {
 		baseTargeting["interests"] = in.Interests
-	}
-
-	communityNames := make([]string, 0, len(in.Subreddits))
-	for _, s := range in.Subreddits {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		name := strings.TrimSpace(strings.TrimPrefix(s, "r/"))
-		if name == "" {
-			continue
-		}
-		communityNames = append(communityNames, name)
-	}
-
-	// Reddit Ads targets communities by subreddit ID, not name (api-catalog:
-	// "Subreddit targeting uses subreddit IDs, not names"). Resolve the supplied
-	// names to IDs via the Ads API before the ad-group POST so the POST carries
-	// real IDs. Unresolvable names are skipped with a warning rather than failing
-	// the whole campaign. A transport/HTTP error aborts here (nothing created past
-	// the campaign yet, so surface it with the partial result for cleanup).
-	var communityIDs []string
-	if len(communityNames) > 0 {
-		var resolveErr error
-		communityIDs, resolveErr = c.resolveSubredditIDs(ctx, communityNames, &steps)
-		if resolveErr != nil {
-			return partialResult(), fmt.Errorf("reddit subreddit resolution failed (campaign %s created, PAUSED): %w", campaignID, resolveErr)
-		}
 	}
 
 	targetingWithCommunities := baseTargeting

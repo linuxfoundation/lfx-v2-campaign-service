@@ -434,10 +434,11 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	// Verify full call sequence.
 	want := []string{
 		"GET /api/v3/ad_accounts/t2_test",
+		// Subreddit name -> ID resolution happens BEFORE the campaign POST, so a
+		// lookup failure never orphans a PAUSED campaign.
+		"GET /api/v3/targeting/subreddits",
+		"GET /api/v3/targeting/subreddits",
 		"POST /api/v3/ad_accounts/t2_test/campaigns",
-		// Subreddit name -> ID resolution happens before the ad-group POST.
-		"GET /api/v3/subreddits",
-		"GET /api/v3/subreddits",
 		"POST /api/v3/ad_accounts/t2_test/ad_groups",
 		"POST /api/v3/ad_accounts/t2_test/ads",
 	}
@@ -2931,5 +2932,177 @@ func TestExtractRedditPostID_RejectsUserinfo(t *testing.T) {
 	}
 	if got != "t3_abc123" {
 		t.Errorf("got %q, want t3_abc123", got)
+	}
+}
+
+// TestCreateCampaign_SubredditLookupUsesTargetingEndpoint verifies the subreddit
+// lookup hits the v3 targeting endpoint (/targeting/subreddits) and that
+// resolution runs BEFORE the campaign POST, so a lookup failure cannot orphan a
+// PAUSED campaign.
+func TestCreateCampaign_SubredditLookupUsesTargetingEndpoint(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var lookupPath string
+	var campaignPosts int32
+	var mu sync.Mutex
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/targeting/subreddits") && r.Method == http.MethodGet:
+			mu.Lock()
+			lookupPath = path
+			mu.Unlock()
+			name := r.URL.Query().Get("query")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+				{"id": "t5_" + name, "name": name},
+			}})
+		case strings.HasSuffix(path, "/campaigns"):
+			atomic.AddInt32(&campaignPosts, 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Subreddits:      []string{"r/golang"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.HasSuffix(lookupPath, "/targeting/subreddits") {
+		t.Errorf("lookup path = %q, want .../targeting/subreddits", lookupPath)
+	}
+	if n := atomic.LoadInt32(&campaignPosts); n != 1 {
+		t.Errorf("campaign POSTs = %d, want 1", n)
+	}
+}
+
+// TestCreateCampaign_SubredditLookupErrorNoOrphan verifies a hard lookup failure
+// (non-2xx) aborts BEFORE the campaign POST, so no PAUSED campaign is orphaned
+// and no partial result is returned.
+func TestCreateCampaign_SubredditLookupErrorNoOrphan(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var campaignPosts int32
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/targeting/subreddits") && r.Method == http.MethodGet:
+			// Hard server error (not a 429, not a not-found) -> resolution aborts.
+			http.Error(w, "boom", http.StatusInternalServerError)
+		case strings.HasSuffix(path, "/campaigns"):
+			atomic.AddInt32(&campaignPosts, 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Subreddits:      []string{"r/golang"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err == nil {
+		t.Fatalf("expected an error on hard lookup failure, got nil")
+	}
+	// Nothing paid was created, so there is no partial result to return.
+	if res != nil {
+		t.Errorf("expected nil result (no campaign created), got %+v", res)
+	}
+	if n := atomic.LoadInt32(&campaignPosts); n != 0 {
+		t.Errorf("campaign POSTs = %d, want 0 (lookup must abort before campaign POST)", n)
+	}
+}
+
+// TestCreateCampaign_SubredditMalformedResponseAborts verifies a malformed 2xx
+// lookup response aborts resolution (rather than being treated as not-found and
+// silently dropping targeting), so it too fails before any paid resource.
+func TestCreateCampaign_SubredditMalformedResponseAborts(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var campaignPosts int32
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/targeting/subreddits") && r.Method == http.MethodGet:
+			// data is an OBJECT, not the expected list of subreddits -> decode fails.
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"unexpected": "shape"}})
+		case strings.HasSuffix(path, "/campaigns"):
+			atomic.AddInt32(&campaignPosts, 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Subreddits:      []string{"r/golang"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err == nil {
+		t.Fatalf("expected an error on malformed lookup response, got nil")
+	}
+	if !strings.Contains(err.Error(), "decode") {
+		t.Errorf("error should mention a decode failure; got: %v", err)
+	}
+	if n := atomic.LoadInt32(&campaignPosts); n != 0 {
+		t.Errorf("campaign POSTs = %d, want 0 (malformed lookup must abort before campaign POST)", n)
 	}
 }
