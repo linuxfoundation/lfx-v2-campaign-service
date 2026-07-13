@@ -805,6 +805,16 @@ func (c *Client) resolveSubredditIDs(ctx context.Context, names []string, steps 
 // CreateCampaign creates a PAUSED Reddit campaign with a lifetime budget, an ad
 // group with targeting, and (optionally) a promoted-post ad. It mirrors
 // executeRedditCampaignCreation. Every step is recorded in the result's Steps.
+//
+// PARTIAL-RESULT CONTRACT: once the campaign POST succeeds, a subsequent
+// ad-group/ad failure returns BOTH a non-nil *CampaignResult (carrying the
+// created, PAUSED campaign id and the steps completed so far) AND a non-nil
+// error. This is deliberate so the orphaned paid resource is identifiable for
+// cleanup/reconciliation. Callers MUST NOT follow the usual
+// `if err != nil { return err }` pattern that discards the result: inspect the
+// returned *CampaignResult (e.g. CampaignID) even when err != nil, or a retry
+// may create a duplicate campaign. Before the campaign POST succeeds, a failure
+// returns (nil, err) as usual.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	var steps []string
 

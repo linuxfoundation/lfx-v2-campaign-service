@@ -2329,8 +2329,16 @@ func TestRequest_CtxCancelledDuringBackoff(t *testing.T) {
 	defer tokenSrv.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// hit429 is closed by the handler the first time it serves a 429, so the
+	// canceller fires only AFTER the client has entered its backoff sleep --
+	// deterministic under load, unlike a wall-clock delay that could cancel during
+	// token exchange (before any API hit) and leave apiHits at 0. buffered+sync.Once
+	// so a (guarded-against) second hit never panics on a closed channel.
+	hit429 := make(chan struct{})
+	var once sync.Once
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&apiHits, 1)
+		once.Do(func() { close(hit429) })
 		// Long Retry-After (within the cap) so the client enters a real backoff
 		// sleep; the cancel below must break it early.
 		w.Header().Set("Retry-After", "30")
@@ -2345,9 +2353,10 @@ func TestRequest_CtxCancelledDuringBackoff(t *testing.T) {
 		withRetryBaseDelay(tinyBackoff),
 	)
 
-	// Cancel shortly after the request starts, while it is in the 30s backoff.
+	// Cancel once the client has actually received a 429 and is in its backoff
+	// sleep, so the cancel provably interrupts the backoff (not token exchange).
 	go func() {
-		time.Sleep(20 * time.Millisecond)
+		<-hit429
 		cancel()
 	}()
 
