@@ -122,8 +122,14 @@ type Client struct {
 // Option customizes a Client at construction time.
 type Option func(*Client)
 
-// WithBaseURL overrides the API base URL (default DefaultBaseURL).
-func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = u } }
+// WithBaseURL overrides the API base URL (default DefaultBaseURL). Trailing
+// slashes are trimmed so accountURL never produces a double-slash path (e.g.
+// "https://ads-api.x.com/" + "/12/..." -> "//12/..."), which would be signed
+// and sent verbatim and could break signature verification if the server
+// normalizes the path differently than the client.
+func WithBaseURL(u string) Option {
+	return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") }
+}
 
 // WithAPIVersion overrides the API version segment (default DefaultAPIVersion).
 func WithAPIVersion(v string) Option { return func(c *Client) { c.apiVersion = v } }
@@ -192,7 +198,14 @@ func percentEncode(s string) string {
 
 // generateOAuthSignature computes the HMAC-SHA1 base64 signature over the
 // OAuth 1.0a signature base string. Mirrors generateOAuthSignature in the TS.
-func generateOAuthSignature(method, u string, params map[string]string, consumerSecret, tokenSecret string) string {
+// oauthParam is a single (name, value) pair fed into the OAuth 1.0a signature
+// base string. It exists so multi-valued query parameters (e.g. a=1&a=2) can be
+// represented — a map[string]string would silently collapse them to one value
+// and produce an invalid signature (RFC 5849 §3.4.1.3.2 requires EVERY value be
+// included).
+type oauthParam struct{ name, value string }
+
+func generateOAuthSignature(method, u string, params map[string]string, extraPairs []oauthParam, consumerSecret, tokenSecret string) string {
 	// OAuth 1.0a (RFC 5849 §3.4.1.3.2) normalizes parameters by their
 	// PERCENT-ENCODED name, breaking ties on the percent-encoded value — not by
 	// the raw key. Sorting raw keys is wrong: e.g. "c@" encodes to "c%40" and
@@ -204,9 +217,14 @@ func generateOAuthSignature(method, u string, params map[string]string, consumer
 	// but "a1=<v>" sorts BEFORE "a=<v>" on the joined form because '1' (0x31) <
 	// '=' (0x3D). Compare names first, then values as a tiebreak.
 	type encodedPair struct{ name, value string }
-	pairs := make([]encodedPair, 0, len(params))
+	pairs := make([]encodedPair, 0, len(params)+len(extraPairs))
 	for k, v := range params {
 		pairs = append(pairs, encodedPair{percentEncode(k), percentEncode(v)})
+	}
+	// extraPairs carries multi-valued query params (and any param whose key also
+	// appears in params, e.g. a repeated query key); all values must be signed.
+	for _, p := range extraPairs {
+		pairs = append(pairs, encodedPair{percentEncode(p.name), percentEncode(p.value)})
 	}
 	sort.Slice(pairs, func(i, j int) bool {
 		if pairs[i].name != pairs[j].name {
@@ -256,9 +274,14 @@ func (c *Client) buildOAuthHeader(method, rawURL string, bodyParams map[string]s
 	if err != nil {
 		return "", fmt.Errorf("parse url %q: %w", rawURL, err)
 	}
+	// Every query (name, value) pair must be folded into the signature base
+	// string — including repeated keys (a=1&a=2). Collapsing to a single value
+	// per key would silently sign the wrong request. Collected as a slice so
+	// duplicate values survive to generateOAuthSignature's (name, value) sort.
+	var queryPairs []oauthParam
 	for k, vs := range parsed.Query() {
-		if len(vs) > 0 {
-			allParams[k] = vs[0]
+		for _, v := range vs {
+			queryPairs = append(queryPairs, oauthParam{name: k, value: v})
 		}
 	}
 
@@ -269,7 +292,7 @@ func (c *Client) buildOAuthHeader(method, rawURL string, bodyParams map[string]s
 	// would otherwise be signed verbatim and X would reject the signature. Only the
 	// base STRING is normalized here; the actual request still targets parsed as-is.
 	signingURL := normalizeSigningURL(parsed)
-	oauthParams["oauth_signature"] = generateOAuthSignature(method, signingURL, allParams, c.creds.ConsumerSecret, c.creds.AccessTokenSecret)
+	oauthParams["oauth_signature"] = generateOAuthSignature(method, signingURL, allParams, queryPairs, c.creds.ConsumerSecret, c.creds.AccessTokenSecret)
 
 	keys := make([]string, 0, len(oauthParams))
 	for k := range oauthParams {

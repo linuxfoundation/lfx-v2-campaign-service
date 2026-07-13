@@ -50,7 +50,7 @@ func TestGenerateOAuthSignature(t *testing.T) {
 	consumerSecret := "j49sk3j29djd"
 	tokenSecret := "dh893hdasih9"
 
-	got := generateOAuthSignature(method, baseURL, params, consumerSecret, tokenSecret)
+	got := generateOAuthSignature(method, baseURL, params, nil, consumerSecret, tokenSecret)
 
 	// Golden digest for the RFC 5849 §3.4.1.3.2 normalization: parameters sorted
 	// by their PERCENT-ENCODED name (so "c@"->"c%40" precedes "c2"), then by
@@ -90,7 +90,7 @@ func TestOAuthSignatureParamOrdering(t *testing.T) {
 	// If the implementation sorted by raw key, "c2" would precede "c@" and the
 	// signature would differ. Recompute the expected signature with a known-good
 	// local reference and compare.
-	got := generateOAuthSignature("POST", "https://ads-api.x.com/12/accounts/acc1", params, "cs", "ts")
+	got := generateOAuthSignature("POST", "https://ads-api.x.com/12/accounts/acc1", params, nil, "cs", "ts")
 	want := referenceSignature("POST", "https://ads-api.x.com/12/accounts/acc1", wantParamString, "cs", "ts")
 	if got != want {
 		t.Fatalf("signature not built from percent-encoded-name ordering:\n got=%q\nwant=%q", got, want)
@@ -120,7 +120,7 @@ func TestOAuthSignaturePrefixNameOrdering(t *testing.T) {
 	// RFC-correct normalization: by name first (a < a1), giving "a=va&a1=v1".
 	wantParamString := "a=va&a1=v1"
 
-	got := generateOAuthSignature("POST", "https://ads-api.x.com/12/accounts/acc1", params, "cs", "ts")
+	got := generateOAuthSignature("POST", "https://ads-api.x.com/12/accounts/acc1", params, nil, "cs", "ts")
 	want := referenceSignature("POST", "https://ads-api.x.com/12/accounts/acc1", wantParamString, "cs", "ts")
 	if got != want {
 		t.Fatalf("prefix-name params not tuple-sorted (name then value):\n got=%q\nwant=%q", got, want)
@@ -254,6 +254,89 @@ func TestBuildOAuthHeaderSignsQueryParams(t *testing.T) {
 	}
 	if gotSig == oauthOnlySig {
 		t.Fatalf("signature was computed over oauth params alone; query params not signed: %q", gotSig)
+	}
+}
+
+// TestBuildOAuthHeaderMultiValuedQuery verifies that a repeated query parameter
+// (a=1&a=2) has BOTH values folded into the signature base string per RFC 5849
+// §3.4.1.3.2. Collapsing to a single value per key would silently sign the wrong
+// request.
+func TestBuildOAuthHeaderMultiValuedQuery(t *testing.T) {
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+	)
+	c.nonceFn = func() string { return "fixednonce" }
+	c.timeFn = staticTime
+
+	baseURL := "https://ads-api.x.com/12/accounts/acc1/campaigns"
+	rawURL := baseURL + "?a=1&a=2&b=x"
+
+	hdr, err := c.buildOAuthHeader("POST", rawURL, nil)
+	if err != nil {
+		t.Fatalf("buildOAuthHeader: %v", err)
+	}
+	gotSig := extractOAuthSignature(t, hdr)
+
+	// Reference: both values of "a" must appear. Build the sorted param string by
+	// (encoded name, encoded value) — matching the signing loop's tuple sort.
+	type pair struct{ n, v string }
+	pairs := []pair{
+		{"oauth_consumer_key", "ck"},
+		{"oauth_nonce", "fixednonce"},
+		{"oauth_signature_method", "HMAC-SHA1"},
+		{"oauth_timestamp", strconv.FormatInt(staticTime().Unix(), 10)},
+		{"oauth_token", "at"},
+		{"oauth_version", "1.0"},
+		{"a", "1"},
+		{"a", "2"},
+		{"b", "x"},
+	}
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, percentEncode(p.n)+"="+percentEncode(p.v))
+	}
+	sort.Strings(parts)
+	wantSig := referenceSignature("POST", baseURL, strings.Join(parts, "&"), "cs", "ats")
+	if gotSig != wantSig {
+		t.Fatalf("multi-valued query param not fully signed:\n got=%q\nwant=%q", gotSig, wantSig)
+	}
+
+	// Guard: dropping the second value of "a" must yield a DIFFERENT signature,
+	// so this test actually detects a single-value collapse.
+	dropped := make([]string, 0, len(pairs)-1)
+	for _, p := range pairs {
+		if p.n == "a" && p.v == "2" {
+			continue
+		}
+		dropped = append(dropped, percentEncode(p.n)+"="+percentEncode(p.v))
+	}
+	sort.Strings(dropped)
+	collapsedSig := referenceSignature("POST", baseURL, strings.Join(dropped, "&"), "cs", "ats")
+	if wantSig == collapsedSig {
+		t.Fatal("test cannot detect a collapsed multi-value: full and single-value signatures match")
+	}
+	if gotSig == collapsedSig {
+		t.Fatalf("only the first value of a repeated query key was signed: %q", gotSig)
+	}
+}
+
+// TestWithBaseURLTrimsTrailingSlash verifies a trailing slash on the base URL
+// does not produce a double-slash account path (which would be signed and sent
+// verbatim and could break signature verification).
+func TestWithBaseURLTrimsTrailingSlash(t *testing.T) {
+	for _, in := range []string{"https://ads-api.x.com/", "https://ads-api.x.com///"} {
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			AccountConfig{AccountID: "acc1"},
+			WithBaseURL(in),
+			WithAPIVersion("12"),
+		)
+		got := c.accountURL()
+		want := "https://ads-api.x.com/12/accounts/acc1"
+		if got != want {
+			t.Errorf("WithBaseURL(%q): accountURL = %q, want %q", in, got, want)
+		}
 	}
 }
 
