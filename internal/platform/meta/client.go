@@ -249,10 +249,12 @@ type AccountConfig struct {
 	// 100× too high, and a warning after resource creation cannot prevent that
 	// budget from being activated.
 	//
-	// A caller MAY set this field to a positive value to bypass the preflight
-	// fetch (e.g. when the offset is already known from a persisted connection);
-	// the explicit value then takes precedence. A negative value is rejected as
-	// malformed.
+	// A caller MAY set this field to a positive value when the offset is already
+	// known (e.g. from a persisted connection); the explicit value then takes
+	// precedence over the fetched one. Note the account preflight GET still runs in
+	// that case (it also verifies account access and requests the same fields) — an
+	// explicit offset only skips CONSUMING the fetched currency_offset, not the
+	// network call. A negative value is rejected as malformed.
 	CurrencyOffset int64
 }
 
@@ -943,8 +945,9 @@ type CampaignInput struct {
 	// exchange conversion. Meta bills the ad set in the account's own currency, so
 	// the caller must supply an amount already denominated in that currency. The
 	// value is converted to minor units by multiplying by the account's Meta
-	// currency_offset (AccountConfig.CurrencyOffset — required; 100 for most
-	// currencies, 1 for zero-decimal currencies like JPY) and sent as-is.
+	// currency_offset (resolved from AccountConfig.CurrencyOffset when set,
+	// otherwise fetched from the account preflight; 100 for most currencies, 1 for
+	// zero-decimal currencies like JPY) and sent as-is.
 	// (Renamed from BudgetUSD:
 	// the field never carried FX-converted USD — the old name implied a conversion
 	// this client does not do.)
@@ -1161,7 +1164,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Convert whole account-currency units to Meta minor units and reject budgets
 	// that round to zero minor units — all before any mutating call, so a
 	// zero/invalid budget never creates a bad ad set.
-	budgetMinor := int64(math.Round(in.Budget * float64(offset)))
+	//
+	// Guard against int64 overflow of the SCALED value before converting: Budget is
+	// bounded by maxBudget, but the offset is unbounded (a bogus large explicit or
+	// preflight offset could push the product past int64). Converting an
+	// out-of-range float to int64 is implementation-defined, so range-check the
+	// float product first rather than relying on the budgetMinor<1 check to catch a
+	// wrapped value. math.MaxInt64 is not exactly representable as a float64, so
+	// compare against float64(math.MaxInt64) (which rounds up); a scaled value at or
+	// above it is rejected as out of range for a currency amount.
+	scaled := math.Round(in.Budget * float64(offset))
+	if scaled >= float64(math.MaxInt64) {
+		return nil, fmt.Errorf("budget too large after applying currency offset %d: exceeds the representable minor-unit range", offset)
+	}
+	budgetMinor := int64(scaled)
 	if budgetMinor < 1 {
 		return nil, fmt.Errorf("budget too small: must be at least one minor currency unit (offset %d)", offset)
 	}

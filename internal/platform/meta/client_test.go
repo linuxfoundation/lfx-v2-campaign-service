@@ -1971,6 +1971,48 @@ func TestCreateCampaignRejectsHugeBudget(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignRejectsOffsetOverflowBeforeAnyPost verifies that a bogus
+// large currency offset (here supplied via the preflight) that would push the
+// scaled minor-unit value past int64 is rejected BEFORE any mutating call, rather
+// than converting an out-of-range float to a wrapped int64.
+func TestCreateCampaignRejectsOffsetOverflowBeforeAnyPost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("unexpected POST to %s: overflow guard should fail first", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Preflight returns an absurd offset that overflows int64 when scaled.
+		_, _ = io.WriteString(w, `{"name":"x","currency_offset":1000000000000000000,"currency":"XXX"}`)
+	}))
+	defer srv.Close()
+
+	// CurrencyOffset unset (0): the overflow-scale offset comes from the preflight.
+	c := NewClient(Credentials{AccessToken: "t"},
+		AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 1000, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "exceeds the representable minor-unit range") {
+		t.Fatalf("err = %v, want it to reject an offset-scaled overflow before mutation", err)
+	}
+}
+
+// TestValidateRegistrationURLUppercaseScheme verifies an uppercase HTTPS scheme is
+// accepted: Go's url.Parse normalizes the scheme to lowercase per RFC 3986, so the
+// exact "https" comparison already matches "HTTPS://...".
+func TestValidateRegistrationURLUppercaseScheme(t *testing.T) {
+	for _, raw := range []string{"HTTPS://events.example.org/register", "HttpS://events.example.org/x"} {
+		if err := validateRegistrationURL(raw); err != nil {
+			t.Errorf("validateRegistrationURL(%q) = %v, want nil (scheme is case-insensitive)", raw, err)
+		}
+	}
+}
+
 // TestDoRequestReadsLargeSuccessBody verifies a success body larger than the
 // old 64KiB drain cap is fully read (not truncated) and decoded.
 func TestDoRequestReadsLargeSuccessBody(t *testing.T) {

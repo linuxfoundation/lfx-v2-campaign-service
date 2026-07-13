@@ -56,8 +56,10 @@ any mutating call, and fails closed if the preflight cannot determine a usable
 offset. Silently defaulting to 100 would encode a zero-decimal-currency
 (JPY/KRW/CLP) budget 100× too high, and a warning after resource creation cannot
 prevent that budget from being activated. A caller MAY set a positive
-`CurrencyOffset` explicitly to bypass the preflight fetch; a negative offset is
-rejected as malformed. `CampaignInput.Project` is
+`CurrencyOffset` explicitly when the value is already known; the account preflight
+GET still runs (it also verifies access), but the explicit offset takes precedence
+over the fetched `currency_offset` rather than skipping the request. A negative
+offset is rejected as malformed. `CampaignInput.Project` is
 also required (rejected up front if empty/whitespace): the campaign name's
 Project segment must be the caller-supplied canonical LFX project slug, so the
 client never silently substitutes a placeholder that could mis-attribute a
