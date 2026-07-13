@@ -59,7 +59,12 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, cont)
 }
 
-func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, cont *container.Container) error {
+// buildMux constructs the Goa muxer and mounts BOTH the campaign service and the
+// connection service onto it. It is a seam so tests can assert that the
+// connection routes are actually reachable (the bug this fixes — routes that
+// compile but are never mounted return 404) without standing up a full server.
+// It returns an error only for a programmer-level mis-wiring (nil connEndpoints).
+func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints) (goahttp.Muxer, error) {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
@@ -94,10 +99,19 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	// 404. A nil here would be a programmer error, so fail loudly rather than
 	// silently skipping the mount and serving 404s.
 	if connEndpoints == nil {
-		return fmt.Errorf("handleHTTPServer: connEndpoints is nil (connection routes would be unmounted)")
+		return nil, fmt.Errorf("buildMux: connEndpoints is nil (connection routes would be unmounted)")
 	}
 	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
 	connsvcsvr.Mount(mux, connServer)
+
+	return mux, nil
+}
+
+func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, cont *container.Container) error {
+	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints)
+	if err != nil {
+		return err
+	}
 
 	var handler http.Handler = mux
 	handler = middleware.RequestIDMiddleware()(handler)
