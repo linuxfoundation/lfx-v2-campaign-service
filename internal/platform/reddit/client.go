@@ -714,6 +714,16 @@ func sanitizePath(path string) string {
 // Subreddit name -> ID resolution
 // ---------------------------------------------------------------------------
 
+// stripSubredditPrefix removes a leading "r/" prefix case-insensitively (so
+// "R/golang", "r/golang", and "golang" all yield "golang"). The remainder is
+// returned unchanged; the caller trims surrounding whitespace.
+func stripSubredditPrefix(s string) string {
+	if len(s) >= 2 && (s[0] == 'r' || s[0] == 'R') && s[1] == '/' {
+		return s[2:]
+	}
+	return s
+}
+
 // resolveSubreddit looks up a single subreddit by NAME and returns its Reddit
 // Ads subreddit ID. It queries the Ads API v3 subreddit targeting lookup
 // (GET /targeting/subreddits?query=<name>), which returns a list of matching
@@ -778,19 +788,22 @@ func (c *Client) resolveSubreddit(ctx context.Context, name string) (string, err
 // de-duplicated.
 func (c *Client) resolveSubredditIDs(ctx context.Context, names []string, steps *[]string) ([]string, error) {
 	ids := make([]string, 0, len(names))
-	// cache maps a subreddit name to its resolved ID ("" == looked up, not found)
-	// so a repeated name is resolved once per call.
+	// cache maps a CASE-FOLDED subreddit name to its resolved ID ("" == looked up,
+	// not found) so the same subreddit supplied with different casing (e.g.
+	// "golang" and "Golang") is looked up once, avoiding a duplicate network call
+	// and a duplicate warning. Reddit subreddit names are case-insensitive.
 	cache := make(map[string]string, len(names))
 	seenID := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		id, cached := cache[name]
+		key := strings.ToLower(name)
+		id, cached := cache[key]
 		if !cached {
 			var err error
 			id, err = c.resolveSubreddit(ctx, name)
 			if err != nil {
 				return nil, err
 			}
-			cache[name] = id
+			cache[key] = id
 		}
 		if id == "" {
 			*steps = append(*steps, fmt.Sprintf("subreddit r/%s could not be resolved to an ID; excluded from targeting", name))
@@ -983,7 +996,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if s == "" {
 			continue
 		}
-		name := strings.TrimSpace(strings.TrimPrefix(s, "r/"))
+		name := strings.TrimSpace(stripSubredditPrefix(s))
 		if name == "" {
 			continue
 		}
@@ -1170,7 +1183,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if in.PostURL != "" && validatedPostID != "" {
 		postID := validatedPostID
-		steps = append(steps, fmt.Sprintf("Extracted post ID: %s from %s", postID, in.PostURL))
+		steps = append(steps, fmt.Sprintf("Extracted post ID: %s from %s", postID, redactURL(in.PostURL)))
 
 		utmURL := buildRedditUTMURL(in, 0)
 		adBody := map[string]any{
@@ -1594,6 +1607,25 @@ func cloneTargeting(m map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// redactURL returns a URL safe to persist in a result step: scheme://host/path
+// only, dropping the query and fragment (which can carry sensitive tokens) and
+// any userinfo. If the input does not parse as an absolute URL, the raw string
+// is truncated defensively so a malformed value can't bloat the step, and only
+// the portion before any '?' or '#' is kept so an unparsed query/fragment still
+// isn't echoed.
+func redactURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if u, err := url.Parse(trimmed); err == nil && u.IsAbs() && u.Host != "" {
+		redacted := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+		return redacted.String()
+	}
+	// Not an absolute URL: keep only what precedes a query/fragment delimiter.
+	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
+		trimmed = trimmed[:i]
+	}
+	return truncate(trimmed, redditErrBodyMaxRunes)
 }
 
 // truncate returns at most n runes of s (never splitting a multi-byte rune).

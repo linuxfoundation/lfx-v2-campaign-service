@@ -1859,13 +1859,17 @@ func TestExtractRedditPostID_EncodedDelimiterRejected(t *testing.T) {
 // callers coalesce into exactly ONE upstream token request whose result they all
 // share, rather than firing one refresh per caller (rate-limit amplification).
 func TestRefreshToken_SingleFlightCoalesces(t *testing.T) {
+	const n = 20
 	var hits int32
 	// gate blocks the single in-flight handler until all callers are parked on
 	// the shared result, maximizing the window in which a per-caller refresh
 	// (the bug) would show up as extra hits.
 	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	var enterOnce sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
+		enterOnce.Do(func() { entered <- struct{}{} })
 		<-release
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
 	}))
@@ -1873,7 +1877,17 @@ func TestRefreshToken_SingleFlightCoalesces(t *testing.T) {
 
 	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
 
-	const n = 20
+	// joined counts callers that have provably reached the coalescer's park point
+	// (its select on ctx.Done()), observed via countingDoneCtx -- deterministic,
+	// unlike a wall-clock sleep that can't guarantee all callers have parked.
+	var joined int32
+	allJoined := make(chan struct{})
+	onPark := func() {
+		if atomic.AddInt32(&joined, 1) == n {
+			close(allJoined)
+		}
+	}
+
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
 	toks := make(chan string, n)
@@ -1881,15 +1895,26 @@ func TestRefreshToken_SingleFlightCoalesces(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tok, err := c.refreshToken(context.Background())
+			tok, err := c.refreshToken(&countingDoneCtx{Context: context.Background(), onDone: onPark})
 			errs <- err
 			toks <- tok
 		}()
 	}
 
-	// Give all callers time to reach and park on the shared single-flight call,
-	// then release the one handler that's blocked inside it.
-	time.Sleep(100 * time.Millisecond)
+	// Wait until the leader is inside the handler and all callers have parked on
+	// the shared single-flight call, then release the one handler blocked in it.
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for the leader refresh to enter the token handler")
+	}
+	select {
+	case <-allJoined:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for all callers to join the shared in-flight refresh")
+	}
 	close(release)
 	wg.Wait()
 	close(errs)
@@ -1943,17 +1968,29 @@ func TestRefreshToken_FollowerUsesLeaderResult(t *testing.T) {
 	<-entered // leader is now inside the network call, refreshing=true
 
 	// Follower arrives while the leader is in flight; it must wait, not refresh.
+	// followerParked is closed when the follower provably reaches the coalescer's
+	// park point (its select on ctx.Done()), observed via countingDoneCtx --
+	// deterministic, unlike a wall-clock sleep that can't guarantee the follower
+	// has begun waiting.
+	followerParked := make(chan struct{})
+	var parkOnce sync.Once
 	followerTok := make(chan string, 1)
 	go func() {
-		tok, err := c.refreshToken(context.Background())
+		ctx := &countingDoneCtx{Context: context.Background(), onDone: func() { parkOnce.Do(func() { close(followerParked) }) }}
+		tok, err := c.refreshToken(ctx)
 		if err != nil {
 			t.Errorf("follower refresh: %v", err)
 		}
 		followerTok <- tok
 	}()
 
-	// Give the follower a moment to reach the wait, then release the leader.
-	time.Sleep(50 * time.Millisecond)
+	// Wait until the follower has reached its wait, then release the leader.
+	select {
+	case <-followerParked:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for the follower to park on the leader's refresh")
+	}
 	close(release)
 
 	for _, ch := range []chan string{leaderTok, followerTok} {
@@ -3104,5 +3141,113 @@ func TestCreateCampaign_SubredditMalformedResponseAborts(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&campaignPosts); n != 0 {
 		t.Errorf("campaign POSTs = %d, want 0 (malformed lookup must abort before campaign POST)", n)
+	}
+}
+
+// TestStripSubredditPrefix verifies the "r/" prefix is stripped
+// case-insensitively.
+func TestStripSubredditPrefix(t *testing.T) {
+	cases := map[string]string{
+		"r/golang": "golang",
+		"R/golang": "golang",
+		"golang":   "golang",
+		"r/":       "",
+		"R/":       "",
+		"rust":     "rust", // no slash -> not a prefix
+		"r":        "r",
+	}
+	for in, want := range cases {
+		if got := stripSubredditPrefix(in); got != want {
+			t.Errorf("stripSubredditPrefix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestRedactURL verifies the query and fragment (potential token carriers) and
+// any userinfo are dropped, leaving scheme://host/path.
+func TestRedactURL(t *testing.T) {
+	cases := map[string]string{
+		"https://www.reddit.com/r/go/comments/abc123/x?token=secret#frag": "https://www.reddit.com/r/go/comments/abc123/x",
+		"https://user:pw@reddit.com/p?a=b":                                "https://reddit.com/p",
+		"https://reddit.com/clean":                                        "https://reddit.com/clean",
+		"not a url?token=secret":                                          "not a url",
+	}
+	for in, want := range cases {
+		if got := redactURL(in); got != want {
+			t.Errorf("redactURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestCreateCampaign_SubredditCasingDedup verifies the same subreddit supplied
+// with different casing/prefix is looked up ONCE (case-folded cache key) and
+// contributes a single community ID.
+func TestCreateCampaign_SubredditCasingDedup(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var mu sync.Mutex
+	var lookups int
+	var adGroupBody map[string]any
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/targeting/subreddits") && r.Method == http.MethodGet:
+			mu.Lock()
+			lookups++
+			mu.Unlock()
+			// Return the canonical (lowercase) name so the case-insensitive match
+			// resolves regardless of how the caller cased the input.
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+				{"id": "t5_golang", "name": "golang"},
+			}})
+		case strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			var env struct {
+				Data map[string]any `json:"data"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&env)
+			mu.Lock()
+			adGroupBody = env.Data
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Subreddits:      []string{"r/golang", "R/golang", "Golang"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if lookups != 1 {
+		t.Errorf("subreddit lookups = %d, want 1 (case-folded cache should coalesce)", lookups)
+	}
+	targeting, _ := adGroupBody["targeting"].(map[string]any)
+	comms, _ := targeting["communities"].([]any)
+	if len(comms) != 1 || comms[0] != "t5_golang" {
+		t.Errorf("communities = %v, want single [t5_golang]", comms)
 	}
 }
