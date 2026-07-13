@@ -577,28 +577,36 @@ func TestRequestSetsAuthHeader(t *testing.T) {
 // TestCreateCampaignValidation covers the input validation guards.
 func TestCreateCampaignValidation(t *testing.T) {
 	c := NewClient(Credentials{}, AccountConfig{})
+	// Budget/date/calendar cases carry a valid Project so they reach the
+	// budget/date guards under test — Project is validated BEFORE budget/dates, so
+	// omitting it would short-circuit on "invalid project" and never exercise
+	// these branches. The event-name cases deliberately omit Project because
+	// EventName is validated FIRST (they must fail on event name, not project).
 	cases := []CampaignInput{
-		{EventName: "E", BudgetUsd: 0, StartDate: "2026-01-01", EndDate: "2026-01-02"},
-		{EventName: "E", BudgetUsd: 100, StartDate: "bad", EndDate: "2026-01-02"},
-		{EventName: "E", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "bad"},
-		{EventName: "E", BudgetUsd: 100, StartDate: "2026-01-02", EndDate: "2026-01-01"},
+		{EventName: "E", Project: "tlf", BudgetUsd: 0, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "bad", EndDate: "2026-01-02"},
+		{EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "bad"},
+		{EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2026-01-02", EndDate: "2026-01-01"},
 		// Well-shaped but impossible calendar dates must be rejected before any
 		// mutating call (the regex alone would let these through).
-		{EventName: "E", BudgetUsd: 100, StartDate: "2026-99-99", EndDate: "2026-12-31"},
-		{EventName: "E", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-99-99"},
-		{EventName: "E", BudgetUsd: 100, StartDate: "2026-02-30", EndDate: "2026-12-31"},
-		// Empty / whitespace-only event name.
+		{EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2026-99-99", EndDate: "2026-12-31"},
+		{EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-99-99"},
+		{EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2026-02-30", EndDate: "2026-12-31"},
+		// Empty / whitespace-only event name (validated before project).
 		{EventName: "", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-01-02"},
 		{EventName: "   ", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-01-02"},
 		// Over-length event name.
 		{EventName: strings.Repeat("x", maxEventNameLen+1), BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		// Empty project (validated after event name, before budget/dates).
+		{EventName: "E", Project: "", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "E", Project: "   ", BudgetUsd: 100, StartDate: "2026-01-01", EndDate: "2026-01-02"},
 		// Budget above the int64 micro-unit overflow cap.
-		{EventName: "E", BudgetUsd: maxBudgetUsd + 1, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "E", Project: "tlf", BudgetUsd: maxBudgetUsd + 1, StartDate: "2026-01-01", EndDate: "2026-01-02"},
 		// Positive-but-rounds-to-zero micro-units (< half a micro-unit).
-		{EventName: "E", BudgetUsd: 1e-9, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "E", Project: "tlf", BudgetUsd: 1e-9, StartDate: "2026-01-01", EndDate: "2026-01-02"},
 		// NaN / Inf budgets.
-		{EventName: "E", BudgetUsd: math.NaN(), StartDate: "2026-01-01", EndDate: "2026-01-02"},
-		{EventName: "E", BudgetUsd: math.Inf(1), StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "E", Project: "tlf", BudgetUsd: math.NaN(), StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		{EventName: "E", Project: "tlf", BudgetUsd: math.Inf(1), StartDate: "2026-01-01", EndDate: "2026-01-02"},
 	}
 	for i, in := range cases {
 		if _, err := c.CreateCampaign(context.Background(), in); err == nil {
@@ -1778,8 +1786,11 @@ func TestAccountConfigTrimmedInRequests(t *testing.T) {
 		)
 		cw.nonceFn = func() string { return "n" }
 		cw.timeFn = staticTime
+		// Project is supplied so CreateCampaign reaches the account-config guard
+		// (Project is validated first; without it this would fail on "invalid
+		// project" and never exercise the whitespace-account-id rejection).
 		_, err := cw.CreateCampaign(context.Background(), CampaignInput{
-			EventName: "E", BudgetUsd: 500, StartDate: "2026-03-01", EndDate: "2026-03-10",
+			EventName: "E", Project: "tlf", BudgetUsd: 500, StartDate: "2026-03-01", EndDate: "2026-03-10",
 			RegistrationURL: "https://events.lf.org/reg",
 		})
 		if err == nil {
@@ -1911,9 +1922,6 @@ func TestTweetIDFormatValidatedUpFront(t *testing.T) {
 	}
 }
 
-// TestTweetIDRejectsNonSnowflake verifies the up-front TweetID format check
-// rejects values that are numeric but cannot be real Tweet snowflakes ("0",
-// leading-zero, or an over-19-digit decimal) so they fail before any mutation.
 // TestTweetIDInt64OverflowRejected verifies a 19-digit value above the max int64
 // snowflake passes the regex shape but is rejected by CreateCampaign's parse
 // check BEFORE any mutating call — so the flow never creates a partial campaign.
@@ -1964,6 +1972,9 @@ func TestTweetIDInt64OverflowRejected(t *testing.T) {
 	}
 }
 
+// TestTweetIDRejectsNonSnowflake verifies the up-front TweetID format check
+// rejects values that are numeric but cannot be real Tweet snowflakes ("0",
+// leading-zero, or an over-19-digit decimal) so they fail before any mutation.
 func TestTweetIDRejectsNonSnowflake(t *testing.T) {
 	for _, bad := range []string{"0", "0123", "01", "12345678901234567890" /* 20 digits */} {
 		if tweetIDRe.MatchString(bad) {
