@@ -503,9 +503,9 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 // account's Meta currency_offset instead of a hardcoded ×100: a zero-decimal
 // currency (JPY, offset 1) must NOT be multiplied by 100, and an explicit offset
 // of 100 scales an account-currency amount to minor units. An UNSET (zero) offset
-// defaults to 100 with a surfaced result step (see
-// TestCreateCampaignDefaultsUnsetCurrencyOffset); a NEGATIVE offset is rejected
-// (see TestCreateCampaignRejectsNegativeCurrencyOffset).
+// is rejected — fail closed (see TestCreateCampaignRejectsUnsetCurrencyOffset);
+// a NEGATIVE offset is rejected (see
+// TestCreateCampaignRejectsNegativeCurrencyOffset).
 func TestCreateCampaignCurrencyOffset(t *testing.T) {
 	newSrv := func(cap *bodyCapture) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,9 +583,8 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 }
 
 // TestCreateCampaignRejectsNegativeCurrencyOffset verifies a NEGATIVE offset is
-// rejected before any mutating call (it's malformed). A zero/unset offset is NOT
-// rejected — it defaults to 100 (see TestCreateCampaignDefaultsUnsetCurrencyOffset)
-// because the persisted Meta connection can't supply currency_offset.
+// rejected before any mutating call (it's malformed). An unset (zero) offset is
+// likewise rejected — see TestCreateCampaignRejectsUnsetCurrencyOffset.
 func TestCreateCampaignRejectsNegativeCurrencyOffset(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
@@ -602,53 +601,26 @@ func TestCreateCampaignRejectsNegativeCurrencyOffset(t *testing.T) {
 	}
 }
 
-// TestCreateCampaignDefaultsUnsetCurrencyOffset verifies an unset (zero) offset
-// defaults to 100 (so a stored-connection dispatch, which can't supply the
-// offset, still works) and that the assumption is surfaced as a result step so a
-// zero-decimal-currency operator can catch a 100× over-send.
-func TestCreateCampaignDefaultsUnsetCurrencyOffset(t *testing.T) {
-	var adSetBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet:
-			_, _ = io.WriteString(w, `{"name":"acct"}`)
-		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
-		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_ = json.NewDecoder(r.Body).Decode(&adSetBody)
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
-		default:
-			_, _ = io.WriteString(w, `{"id":"x"}`)
-		}
-	}))
+// TestCreateCampaignRejectsUnsetCurrencyOffset verifies an unset (zero) offset
+// FAILS CLOSED before any mutating call. Defaulting to 100 would silently encode
+// a zero-decimal-currency (JPY/KRW/CLP) budget 100× too high, and a warning step
+// returned after resource creation cannot prevent that budget from being
+// activated — so the client refuses to guess.
+func TestCreateCampaignRejectsUnsetCurrencyOffset(t *testing.T) {
+	srv := noPostServer(t)
 	defer srv.Close()
 
 	// CurrencyOffset omitted (0).
 	c := NewClient(Credentials{AccessToken: "t"},
 		AccountConfig{AccountID: "act_1", PageID: "p"},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
-	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
 		GeoTargets: []string{"US"}, Budget: 5, StartDate: "2026-08-01", EndDate: "2026-08-31",
 		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err != nil {
-		t.Fatalf("CreateCampaign: %v", err)
-	}
-	// Budget 5 * default offset 100 = 500 minor units (daily_budget, since
-	// LifetimeBudget was not set). JSON numbers decode to float64.
-	if got := adSetBody["daily_budget"]; got != float64(500) && got != "500" {
-		t.Errorf("daily_budget = %v, want 500 (5 * default offset 100)", got)
-	}
-	var noted bool
-	for _, s := range res.Steps {
-		if strings.Contains(s, "Currency offset not set; assuming 100") {
-			noted = true
-		}
-	}
-	if !noted {
-		t.Errorf("expected a result step noting the assumed default offset, got steps: %v", res.Steps)
+	if err == nil || !strings.Contains(err.Error(), "CurrencyOffset is required") {
+		t.Fatalf("err = %v, want it to reject an unset CurrencyOffset (fail closed)", err)
 	}
 }
 
