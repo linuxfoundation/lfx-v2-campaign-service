@@ -453,7 +453,23 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 		return d
 	}
 	if v := strings.TrimSpace(resp.Header.Get("Retry-After")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		// Delay-seconds form. ParseInt (not Atoi) into an int64 so a large numeric
+		// value is captured rather than overflowing the platform int that Atoi
+		// returns (which on a 32-bit int would surface as an error and silently
+		// drop a real, if outsized, reset). Mirrors reddit's parseRetryAfter.
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			// Even a validly-parsed int64 seconds value can overflow when scaled to
+			// nanoseconds: time.Duration(n)*time.Second wraps NEGATIVE for n beyond
+			// ~9.2e9, which would slip past the caller's `> maxRetryWait` abort and
+			// trigger an immediate retry before the declared reset. Guard the
+			// conversion: any n STRICTLY ABOVE the max-wait ceiling (in seconds)
+			// already exceeds the cap, so report a duration just over maxRetryWait
+			// and let the caller's over-cap abort fire — never perform the wrapping
+			// multiply. A value EXACTLY at the cap is allowed through and returned
+			// as-is (via the multiply below), so it isn't spuriously aborted.
+			if n > int64(maxRetryWait/time.Second) {
+				return maxRetryWait + time.Second
+			}
 			return time.Duration(n) * time.Second
 		}
 		if t, err := http.ParseTime(v); err == nil {
@@ -983,10 +999,34 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f/day)", campaignID, in.BudgetUsd))
 	}
 
+	// partialResult builds a *CampaignResult carrying the already-created (PAUSED)
+	// campaign — and, once known, the line item — plus the steps completed so far.
+	// It is returned ALONGSIDE the error at every downstream failure point after the
+	// campaign POST already succeeded, so an orphaned paid resource is identifiable
+	// for cleanup/reconcile and a caller retry can reconcile it instead of blindly
+	// creating a duplicate. This only makes the orphan IDENTIFIABLE — it does not
+	// resume creation. True retry-safe idempotency (not re-creating the campaign /
+	// line item on retry) needs provider idempotency keys / the orchestrator claim,
+	// tracked in LFXV2-2665. Mirrors the meta/reddit clients' partial-result helper.
+	// lineItemID is captured by reference so the returned result includes it once
+	// Step 3 has created it.
+	var lineItemID string
+	partialResult := func() *CampaignResult {
+		return &CampaignResult{
+			Platform:     "twitter-ads",
+			CampaignName: campaignName,
+			CampaignID:   campaignID,
+			LineItemName: lineItemName,
+			LineItemID:   lineItemID,
+			TwitterURL:   AdsManagerURL,
+			Steps:        steps,
+		}
+	}
+
 	// Step 3: create line item (ad group), reusing by name.
-	lineItemID, err := c.findLineItemByName(ctx, campaignID, lineItemName)
+	lineItemID, err = c.findLineItemByName(ctx, campaignID, lineItemName)
 	if err != nil {
-		return nil, err
+		return partialResult(), fmt.Errorf("x line item lookup failed (campaign %s created, PAUSED): %w", campaignID, err)
 	}
 	if lineItemID != "" {
 		steps = append(steps, fmt.Sprintf("Reusing existing line item: %s", lineItemID))
@@ -1007,15 +1047,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			"entity_status": "PAUSED",
 		}
 		if err := c.pace(ctx); err != nil {
-			return nil, err
+			return partialResult(), fmt.Errorf("x line item creation aborted (campaign %s created, PAUSED): %w", campaignID, err)
 		}
 		resp, err := c.createRequest(ctx, "line_items", lineItemParams)
 		if err != nil {
-			return nil, err
+			return partialResult(), fmt.Errorf("x line item creation failed (campaign %s created, PAUSED): %w", campaignID, err)
 		}
 		lineItemID = extractID(resp)
 		if lineItemID == "" {
-			return nil, fmt.Errorf("x line item creation succeeded but returned no line item ID")
+			return partialResult(), fmt.Errorf("x line item creation succeeded but returned no line item ID (campaign %s created, PAUSED)", campaignID)
 		}
 		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
 	}
@@ -1030,7 +1070,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var promotedTweetWarning string
 	if tweetID != "" {
 		if err := c.pace(ctx); err != nil {
-			return nil, err
+			// The campaign AND line item are already created (both PAUSED). Returning
+			// a nil result would discard both IDs, preventing cleanup/reconciliation
+			// and letting a caller retry create a duplicate. Return a partial result
+			// carrying both IDs (and the steps so far) alongside the wrapped error.
+			return partialResult(), fmt.Errorf("x promoted tweet creation aborted (campaign %s / line item %s created, PAUSED): %w", campaignID, lineItemID, err)
 		}
 		// The promoted_tweets endpoint does not accept entity_status; the API
 		// creates the association ACTIVE. Delivery is still gated by the PAUSED

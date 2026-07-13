@@ -2234,3 +2234,174 @@ func TestComputedBackoffClampedToMaxRetryWait(t *testing.T) {
 		}
 	}
 }
+
+// TestParseRetryAfterOverflowGuard covers the Retry-After seconds->Duration
+// overflow guard (mirrors the reddit client): a validly-parsed but astronomically
+// large Retry-After seconds value must NOT wrap negative (which would slip past
+// the caller's `> maxRetryWait` abort and trigger an immediate retry before the
+// declared reset). Instead it must return a POSITIVE duration strictly greater
+// than maxRetryWait so the abort fires. A normal value passes through unchanged,
+// and a value exactly at the cap is returned as-is (not spuriously over-capped).
+func TestParseRetryAfterOverflowGuard(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{})
+	c.timeFn = staticTime
+
+	mk := func(v string) *http.Response {
+		r := &http.Response{Header: http.Header{}}
+		r.Header.Set("Retry-After", v)
+		return r
+	}
+
+	// Huge values that would overflow time.Duration(n)*time.Second (int64 ns) and
+	// wrap to a small/negative value. Both must return a positive duration ABOVE
+	// maxRetryWait so the caller's over-cap abort fires — never a wrapped delay.
+	for _, huge := range []string{"9223372037", "99999999999"} {
+		got := c.parseRetryAfter(mk(huge))
+		if got <= 0 {
+			t.Fatalf("huge Retry-After %q: got %v (non-positive); overflow not guarded", huge, got)
+		}
+		if got <= maxRetryWait {
+			t.Fatalf("huge Retry-After %q: got %v, want > maxRetryWait %v so the abort fires", huge, got, maxRetryWait)
+		}
+	}
+
+	// A normal value still passes through unchanged.
+	if got := c.parseRetryAfter(mk("5")); got != 5*time.Second {
+		t.Errorf("Retry-After=5: got %v, want 5s", got)
+	}
+
+	// A value EXACTLY at the cap must NOT be treated as over-cap (STRICTLY-greater
+	// comparison), so it is returned as-is rather than the over-cap sentinel.
+	capSecs := strconv.FormatInt(int64(maxRetryWait/time.Second), 10)
+	if got := c.parseRetryAfter(mk(capSecs)); got != maxRetryWait {
+		t.Errorf("Retry-After at cap (%s): got %v, want %v (returned as-is, not over-cap)", capSecs, got, maxRetryWait)
+	}
+}
+
+// TestPartialResultAfterLineItemCreated verifies FINDING 2: once the campaign and
+// line item are created, a fatal downstream failure (here the caller-supplied ctx
+// is cancelled right after the line_items POST completes, so the pace() before the
+// promoted step returns ctx.Err()) must NOT discard the created IDs. CreateCampaign
+// returns an error AND a non-nil *CampaignResult carrying both CampaignID and
+// LineItemID so the orphaned paid resources are identifiable for reconcile. Mirrors
+// the meta/reddit partial-result contract. The cancel is driven by the server
+// handler (fired once the line item is created) rather than a timed sleep, so the
+// test is deterministic.
+func TestPartialResultAfterLineItemCreated(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	// Server: account + find return empty; campaign and line item create OK; the
+	// line_items handler cancels the ctx as a side effect so the next pace() (before
+	// the promoted step) observes cancellation — a deterministic fatal downstream
+	// failure after both paid resources exist.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+			// Line item now created. Cancel from a goroutine after a short delay so
+			// the line_items response is fully read by the client FIRST (an immediate
+			// cancel could race the response read and fail the line-item create call
+			// itself). The client then waits in pace() (10ms) before the promoted
+			// step; that pace observes the cancellation and returns a fatal ctx error,
+			// deterministically exercising the post-line-item partial path.
+			go func() {
+				time.Sleep(5 * time.Millisecond)
+				cancel()
+			}()
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		// A real write delay so pace() selects on ctx.Done() with a comfortable
+		// margin over the 5ms cancel delay above (cancellation lands mid-sleep).
+		WithWriteDelay(100*time.Millisecond),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(ctx, CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected a fatal error once the ctx was cancelled during the flow")
+	}
+	if res == nil {
+		t.Fatal("expected a non-nil partial result carrying the created IDs, got nil")
+	}
+	if res.CampaignID != "cmp1" {
+		t.Errorf("partial result must carry CampaignID cmp1, got %q", res.CampaignID)
+	}
+	if res.LineItemID != "li1" {
+		t.Errorf("partial result must carry LineItemID li1 (created before the failure), got %q", res.LineItemID)
+	}
+}
+
+// TestPartialResultAfterCampaignCreated verifies that a failure AFTER campaign
+// creation but BEFORE the line item is created returns an error AND a non-nil
+// result carrying the campaignID (with LineItemID still empty). Here the line_items
+// create POST hard-fails, so the campaign is orphaned; its id must be surfaced.
+func TestPartialResultAfterCampaignCreated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"BOOM","message":"line item rejected"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected a fatal error when line item creation fails")
+	}
+	if res == nil {
+		t.Fatal("expected a non-nil partial result carrying the campaign ID, got nil")
+	}
+	if res.CampaignID != "cmp1" {
+		t.Errorf("partial result must carry CampaignID cmp1, got %q", res.CampaignID)
+	}
+	if res.LineItemID != "" {
+		t.Errorf("LineItemID must be empty (line item was never created), got %q", res.LineItemID)
+	}
+	if !strings.Contains(err.Error(), "cmp1") {
+		t.Errorf("error should name the orphaned campaign id cmp1, got %v", err)
+	}
+}
