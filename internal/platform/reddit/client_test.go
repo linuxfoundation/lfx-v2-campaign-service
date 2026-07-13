@@ -2271,6 +2271,14 @@ func TestParseRetryAfter_HugeSecondsDoesNotWrap(t *testing.T) {
 	if d, ok := c.parseRetryAfter(mk("5")); !ok || d != 5*time.Second {
 		t.Errorf("normal Retry-After: got (%v, %v), want (5s, true)", d, ok)
 	}
+
+	// A value EXACTLY at the cap must NOT be treated as over-cap (off-by-one
+	// guard): Retry-After equal to maxRetryWait seconds returns exactly that
+	// duration so the caller waits the allowed maximum rather than aborting.
+	capSecs := strconv.FormatInt(int64(maxRetryWait/time.Second), 10)
+	if d, ok := c.parseRetryAfter(mk(capSecs)); !ok || d != maxRetryWait {
+		t.Errorf("at-cap Retry-After (%ss): got (%v, %v), want (%v, true)", capSecs, d, ok, maxRetryWait)
+	}
 }
 
 // TestCreateCampaign_CtxCancelAfterAdGroupReturnsPartial verifies FINDING 4: a

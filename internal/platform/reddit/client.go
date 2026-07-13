@@ -606,11 +606,12 @@ func (c *Client) parseRetryAfter(resp *http.Response) (time.Duration, bool) {
 			// to nanoseconds: time.Duration(n)*time.Second wraps NEGATIVE for n
 			// beyond ~9.2e9, which would slip past the caller's `> maxRetryWait`
 			// abort and trigger an immediate retry. Guard the conversion: any n
-			// at/above the max-wait ceiling (in seconds) already exceeds the cap,
-			// so report a duration just over maxRetryWait (usable=true) and let
-			// the caller's over-cap abort fire -- never perform the wrapping
-			// multiply.
-			if n >= int64(maxRetryWait/time.Second) {
+			// STRICTLY ABOVE the max-wait ceiling (in seconds) already exceeds the
+			// cap, so report a duration just over maxRetryWait (usable=true) and
+			// let the caller's over-cap abort fire -- never perform the wrapping
+			// multiply. A value EXACTLY at the cap (e.g. Retry-After: 60 with a 60s
+			// cap) is allowed and returned as-is, so it isn't spuriously aborted.
+			if n > int64(maxRetryWait/time.Second) {
 				return maxRetryWait + time.Second, true
 			}
 			return time.Duration(n) * time.Second, true
@@ -774,11 +775,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if startMs, ok := parseRedditTimestamp(effectiveStart); ok && startMs.Before(c.now()) {
 		effectiveStart = toRedditTimestamp(c.now().Add(redditPastStartBuffer))
 	}
-	// After nudging a past start forward, the (unchanged) end could be at/before it
-	// for a same-day flight; reject rather than sending an invalid window.
+	// After nudging a past start forward, the (unchanged) end could be at/before
+	// it; reject rather than sending an invalid window.
 	if sMs, ok1 := parseRedditTimestamp(effectiveStart); ok1 {
 		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
-			return nil, fmt.Errorf("campaign end %s is not after the effective start %s (a same-day past start was nudged forward)", campaignEndTime, effectiveStart)
+			return nil, fmt.Errorf("campaign end %s is not after the effective start %s (a past start date was nudged forward)", campaignEndTime, effectiveStart)
 		}
 	}
 
