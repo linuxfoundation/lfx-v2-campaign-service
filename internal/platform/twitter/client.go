@@ -562,11 +562,13 @@ type campaignElement struct {
 // failure (failed GET or undecodable response) — the caller must abort rather
 // than treat it as "not found" and create a duplicate.
 func (c *Client) findCampaignByName(ctx context.Context, name string) (string, error) {
-	// count=1000 requests the max page size (X Ads v12 list count: default 200,
-	// max 1000) so a name lookup covers a realistic large account in far fewer
-	// pages. count is an independent page-size param from cursor, so it takes
-	// effect on every page (not the LinkedIn cursor-contract trap).
-	return c.findByName(ctx, "campaigns?with_deleted=false&count=1000", name)
+	// q=<name> is X Ads' server-side name filter: it narrows the list to entities
+	// whose name matches, so a lookup is O(matches) instead of scanning the whole
+	// account (which could exceed the page cap on a large account and fail
+	// name-based idempotency). q does substring/prefix matching, so findByName
+	// still enforces the EXACT-name comparison locally. count=1000 (max page size,
+	// independent of cursor) keeps any residual paging cheap.
+	return c.findByName(ctx, "campaigns?with_deleted=false&count=1000&q="+url.QueryEscape(name), name)
 }
 
 // findLineItemByName returns the id of a line item matching name within a
@@ -577,9 +579,10 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 	// campaign_id (singular) is the CREATE parameter. Using the singular key here
 	// would leave the lookup unscoped and could reuse a same-named line item from
 	// another campaign.
-	// count=1000 requests the max page size (X Ads v12 list count: default 200,
-	// max 1000); see findCampaignByName.
-	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count=1000", name)
+	// q=<name> is the server-side name filter (see findCampaignByName); it makes
+	// the lookup O(matches), not O(account), while findByName still enforces the
+	// exact-name match locally. count=1000 is the max page size.
+	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count=1000&q="+url.QueryEscape(name), name)
 }
 
 // findByName pages through a cursor-paginated X Ads list endpoint (campaigns /

@@ -1094,9 +1094,13 @@ func TestFindByNamePagination(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		// Every list request must request the max page size.
+		// Every list request must request the max page size AND the server-side
+		// name filter so the lookup is O(matches), not O(account).
 		if got := r.URL.Query().Get("count"); got != "1000" {
 			t.Errorf("list request must carry count=1000, got count=%q (query %v)", got, r.URL.Query())
+		}
+		if got := r.URL.Query().Get("q"); got != "target" {
+			t.Errorf("list request must carry the q name filter (q=target), got q=%q", got)
 		}
 		switch r.URL.Query().Get("cursor") {
 		case "":
@@ -1136,7 +1140,7 @@ func TestFindByNamePagination(t *testing.T) {
 // TestFindByNameLineItemListSendsCount verifies the line-item lookup path also
 // requests the max page size (count=1000), alongside its campaign_ids scope.
 func TestFindByNameLineItemListSendsCount(t *testing.T) {
-	var sawCount, sawCampaignIDs bool
+	var sawCount, sawCampaignIDs, sawQ bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Get("count") == "1000" {
@@ -1144,6 +1148,9 @@ func TestFindByNameLineItemListSendsCount(t *testing.T) {
 		}
 		if q.Get("campaign_ids") != "" {
 			sawCampaignIDs = true
+		}
+		if q.Get("q") == "target" {
+			sawQ = true
 		}
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
@@ -1166,6 +1173,9 @@ func TestFindByNameLineItemListSendsCount(t *testing.T) {
 	}
 	if !sawCampaignIDs {
 		t.Error("line-item lookup must send campaign_ids scope")
+	}
+	if !sawQ {
+		t.Error("line-item lookup must send the q name filter")
 	}
 }
 
