@@ -2091,3 +2091,18 @@ func TestTruncate(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildPlacementTargetingRejectsMessengerInbox verifies that enabling the
+// Messenger Inbox placement (removed from Meta Ads in Nov 2025) is rejected,
+// rather than producing a v25.0 ad-set request that fails after the campaign
+// already exists.
+func TestBuildPlacementTargetingRejectsMessengerInbox(t *testing.T) {
+	on := true
+	_, err := buildPlacementTargeting(Placement{MessengerInbox: &on})
+	if err == nil {
+		t.Fatal("expected an error enabling MessengerInbox, got nil")
+	}
+	if !strings.Contains(err.Error(), "messengerInbox") {
+		t.Errorf("error = %v, want it to name messengerInbox", err)
+	}
+}

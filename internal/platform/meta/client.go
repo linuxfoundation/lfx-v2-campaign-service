@@ -699,7 +699,7 @@ func buildPromotedObject(objective, pageID, pixelID string) (map[string]any, err
 func buildPlacementTargeting(over Placement) (map[string]any, error) {
 	pl := mergePlacements(over)
 
-	var publisherPlatforms, facebookPositions, instagramPositions, messengerPositions []string
+	var publisherPlatforms, facebookPositions, instagramPositions []string
 	// Track membership in a set so addPlatform is O(1) rather than a linear scan
 	// of publisherPlatforms on every call (the slice preserves insertion order).
 	seenPlatforms := make(map[string]struct{})
@@ -734,12 +734,15 @@ func buildPlacementTargeting(over Placement) (map[string]any, error) {
 		publisherPlatforms = append(publisherPlatforms, "audience_network")
 	}
 	if deref(pl.MessengerInbox) {
-		publisherPlatforms = append(publisherPlatforms, "messenger")
-		messengerPositions = append(messengerPositions, "messenger_home")
+		// Messenger Inbox was removed as a Meta Ads placement in November 2025, so
+		// "messenger" / "messenger_home" is not valid on Graph API v25.0: it would
+		// pass here and then fail at the ad-set call, after the campaign (a paid
+		// resource) already exists. Reject up front instead.
+		return nil, fmt.Errorf("messengerInbox placement is no longer supported by Meta Ads (removed November 2025); do not enable it")
 	}
 
 	if len(publisherPlatforms) == 0 {
-		return nil, fmt.Errorf("at least one placement must be enabled (facebookFeed, instagramFeed, stories, reels, audienceNetwork, or messengerInbox)")
+		return nil, fmt.Errorf("at least one placement must be enabled (facebookFeed, instagramFeed, stories, reels, or audienceNetwork)")
 	}
 
 	targeting := map[string]any{"publisher_platforms": publisherPlatforms}
@@ -748,9 +751,6 @@ func buildPlacementTargeting(over Placement) (map[string]any, error) {
 	}
 	if len(instagramPositions) > 0 {
 		targeting["instagram_positions"] = instagramPositions
-	}
-	if len(messengerPositions) > 0 {
-		targeting["messenger_positions"] = messengerPositions
 	}
 	return targeting, nil
 }
