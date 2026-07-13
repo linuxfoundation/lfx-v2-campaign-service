@@ -50,7 +50,31 @@ const (
 	// redditPastStartBuffer is how far ahead of "now" a start time is nudged when
 	// the requested start date is already in the past (e.g. a same-day start,
 	// whose midnight-UTC timestamp has passed).
-	redditPastStartBuffer = 60 * time.Second
+	//
+	// The buffer must keep the timestamp in the future across the WHOLE retryable
+	// campaign->ad-group workflow, not just at the instant it is computed: request
+	// can honor a Retry-After (up to maxRetryWait) and resend the same encoded body
+	// on a 429, and this one timestamp is reused for both the campaign POST and the
+	// (possibly retried) ad-group POST. Each mutating call can spend up to
+	// retryMax*maxRetryWait waiting on 429 backoffs plus retryMax+1 request
+	// timeouts; the ad-group step may run twice (the community fallback). Size the
+	// buffer to cover that worst case with margin so a nudged start can't have
+	// slipped into the past by the time either request is finally accepted.
+	// redditWorstCaseCreateWait is the worst-case wall-clock a single mutating
+	// create can consume before it is accepted: every 429 backoff (retryMax waits
+	// clamped to maxRetryWait) plus every attempt's HTTP round-trip
+	// (retryMax+1 request timeouts).
+	redditWorstCaseCreateWait = retryMax*maxRetryWait + (retryMax+1)*redditRequestTimeout
+	// redditStartWorkflowBuffer covers the full campaign + up-to-two ad-group
+	// creates (the community fallback re-POSTs the ad group) plus a 60s margin, so
+	// a nudged start time stays in the future for every request that reuses it.
+	redditStartWorkflowBuffer = 3*redditWorstCaseCreateWait + 60*time.Second
+	// redditPastStartBuffer is how far ahead of "now" a start time is nudged when
+	// the requested start date is already in the past (e.g. a same-day start,
+	// whose midnight-UTC timestamp has passed). It reserves enough headroom to
+	// cover the full retryable campaign->ad-group workflow (see above) so the
+	// nudged start can't be past by the time a retried request is accepted.
+	redditPastStartBuffer = redditStartWorkflowBuffer
 	// redditMaxBudgetUSD caps the budget below the int64 micro-dollar overflow
 	// threshold so the ×1e6 conversion in toMicrodollars can't wrap.
 	redditMaxBudgetUSD = 1_000_000_000.0
@@ -259,6 +283,15 @@ type CampaignInput struct {
 	Project         string
 	Objective       string // one of: awareness, traffic, conversions, video_views
 	PostURL         string
+	// ConversionPixelID is the Reddit conversion pixel this campaign optimizes
+	// toward. It is REQUIRED when the resolved objective is "conversions" (Reddit
+	// rejects a conversion ad group without a pixel), and ignored otherwise.
+	ConversionPixelID string
+	// VideoGoal is the concrete video optimization goal, REQUIRED when the resolved
+	// objective is "video_views". Accepted values: VIDEO_VIEW_6S, VIDEO_VIEW_15S.
+	// Reddit has no bare "VIDEO_VIEWS" optimization goal, so a concrete goal must
+	// be supplied. Ignored for non-video objectives.
+	VideoGoal string
 }
 
 // CampaignResult mirrors RedditCampaignCreateResult.
@@ -298,7 +331,19 @@ var redditObjectiveParams = map[string]objectiveParams{
 		optimizationGoal:          "PURCHASE",
 		viewThroughConversionType: "SEVEN_DAY_CLICKS_ONE_DAY_VIEW",
 	},
-	"video_views": {redditObjective: "VIDEO_VIEWABLE_IMPRESSIONS", bidType: "CPM", optimizationGoal: "VIDEO_VIEWS"},
+	// video_views carries no optimizationGoal here: "VIDEO_VIEWS" is not a valid
+	// Reddit video optimization goal, so the concrete goal is resolved from the
+	// input's VideoGoal (one of validVideoGoals) and written into the request
+	// below rather than baked into this table.
+	"video_views": {redditObjective: "VIDEO_VIEWABLE_IMPRESSIONS", bidType: "CPM"},
+}
+
+// validVideoGoals is the set of concrete Reddit video optimization goals accepted
+// for the "video_views" objective. Reddit has no bare "VIDEO_VIEWS" goal, so a
+// video-view campaign must name a concrete goal.
+var validVideoGoals = map[string]bool{
+	"VIDEO_VIEW_6S":  true,
+	"VIDEO_VIEW_15S": true,
 }
 
 var redditObjectiveLabels = map[string]string{
@@ -721,6 +766,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("unsupported Reddit objective: %s", objective)
 	}
 
+	// Resolve the effective optimization goal. Most objectives carry a static goal
+	// in objParams; "video_views" resolves it from VideoGoal because Reddit has no
+	// bare "VIDEO_VIEWS" goal. Validate before any mutating call so a bad/empty
+	// goal fails fast rather than after the campaign POST orphans a PAUSED campaign.
+	optimizationGoal := objParams.optimizationGoal
+	if objective == "video_views" {
+		videoGoal := strings.ToUpper(strings.TrimSpace(in.VideoGoal))
+		if !validVideoGoals[videoGoal] {
+			return nil, fmt.Errorf("invalid video goal %q for objective video_views: must be one of VIDEO_VIEW_6S, VIDEO_VIEW_15S", in.VideoGoal)
+		}
+		optimizationGoal = videoGoal
+	}
+
+	// Validate the conversion pixel before any mutating call. Reddit requires a
+	// conversion pixel for a conversion ad group, so a missing pixel would create
+	// the campaign in Step 2 and then fail at ad-group creation, orphaning a PAUSED
+	// campaign. Reject up front for the "conversions" objective so nothing is
+	// created; the pixel is not required for other objectives.
+	conversionPixelID := strings.TrimSpace(in.ConversionPixelID)
+	if objective == "conversions" && conversionPixelID == "" {
+		return nil, fmt.Errorf("conversion pixel ID is required for objective conversions")
+	}
+
 	var validatedPostID string
 	if in.PostURL != "" {
 		id, err := extractRedditPostID(in.PostURL)
@@ -780,6 +848,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// start date is today its midnight-UTC timestamp is already in the past, so
 	// nudge it to now+buffer; otherwise use start-of-day. This adjusted value is
 	// used for both the campaign and the ad group so nothing sends a past start.
+	// redditPastStartBuffer is sized (see its definition) to cover the worst-case
+	// retry backoff of the WHOLE campaign->ad-group workflow -- request can honor a
+	// Retry-After and resend this same encoded body on a 429, and the timestamp is
+	// reused for the (possibly retried) ad-group POST -- so a single computed-once
+	// value stays in the future for every request that reuses it.
 	campaignEndTime := toISOTimestamp(in.EndDate)
 	effectiveStart := toISOTimestamp(in.StartDate)
 	if startMs, ok := parseRedditTimestamp(effectiveStart); ok && startMs.Before(c.now()) {
@@ -804,7 +877,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"is_campaign_budget_optimization": true,
 		"bid_strategy":                    "BIDLESS",
 		"bid_type":                        objParams.bidType,
-		"optimization_goal":               objParams.optimizationGoal,
+		"optimization_goal":               optimizationGoal,
 		"goal_type":                       "LIFETIME_SPEND",
 		"goal_value":                      budgetMicros,
 		"start_time":                      effectiveStart,
@@ -812,6 +885,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if objParams.viewThroughConversionType != "" {
 		campaignData["view_through_conversion_type"] = objParams.viewThroughConversionType
+	}
+	// A conversion campaign carries the conversion pixel it optimizes toward.
+	if conversionPixelID != "" {
+		campaignData["conversion_pixel_id"] = conversionPixelID
 	}
 
 	campaignResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
@@ -881,19 +958,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	buildAdGroupBody := func(targeting map[string]any) map[string]any {
-		return map[string]any{
-			"data": map[string]any{
-				"name":              adGroupName,
-				"campaign_id":       campaignID,
-				"configured_status": "PAUSED",
-				"bid_strategy":      "BIDLESS",
-				"bid_type":          objParams.bidType,
-				"optimization_goal": objParams.optimizationGoal,
-				"targeting":         targeting,
-				"start_time":        effectiveStart,
-				"end_time":          campaignEndTime,
-			},
+		data := map[string]any{
+			"name":              adGroupName,
+			"campaign_id":       campaignID,
+			"configured_status": "PAUSED",
+			"bid_strategy":      "BIDLESS",
+			"bid_type":          objParams.bidType,
+			"optimization_goal": optimizationGoal,
+			"targeting":         targeting,
+			"start_time":        effectiveStart,
+			"end_time":          campaignEndTime,
 		}
+		// Reddit requires the conversion pixel on a conversion ad group; without it
+		// the ad-group create fails and orphans the PAUSED campaign.
+		if conversionPixelID != "" {
+			data["conversion_pixel_id"] = conversionPixelID
+		}
+		return map[string]any{"data": data}
 	}
 
 	// suppliedCommunities records whether the caller actually supplied usable

@@ -338,18 +338,19 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	)
 
 	in := CampaignInput{
-		EventName:       "Open Source Summit",
-		EventSlug:       "oss-2026",
-		RegistrationURL: "https://events.linuxfoundation.org/oss/",
-		BudgetUSD:       500,
-		StartDate:       "2026-08-01",
-		EndDate:         "2026-08-31",
-		GeoTargets:      []string{"us", "ca"},
-		Subreddits:      []string{"r/opensource", "linux"},
-		Keywords:        []string{"kubernetes", "linux"},
-		Interests:       []string{"technology"},
-		Objective:       "conversions",
-		PostURL:         "https://www.reddit.com/r/opensource/comments/abc123/great_post/",
+		EventName:         "Open Source Summit",
+		EventSlug:         "oss-2026",
+		RegistrationURL:   "https://events.linuxfoundation.org/oss/",
+		BudgetUSD:         500,
+		StartDate:         "2026-08-01",
+		EndDate:           "2026-08-31",
+		GeoTargets:        []string{"us", "ca"},
+		Subreddits:        []string{"r/opensource", "linux"},
+		Keywords:          []string{"kubernetes", "linux"},
+		Interests:         []string{"technology"},
+		Objective:         "conversions",
+		ConversionPixelID: "pixel_abc",
+		PostURL:           "https://www.reddit.com/r/opensource/comments/abc123/great_post/",
 	}
 
 	res, err := c.CreateCampaign(context.Background(), in)
@@ -398,6 +399,10 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	if campaignBody["view_through_conversion_type"] != "SEVEN_DAY_CLICKS_ONE_DAY_VIEW" {
 		t.Errorf("campaign vt conv type = %v", campaignBody["view_through_conversion_type"])
 	}
+	// A conversion campaign must carry the conversion pixel it optimizes toward.
+	if campaignBody["conversion_pixel_id"] != "pixel_abc" {
+		t.Errorf("campaign conversion_pixel_id = %v, want pixel_abc", campaignBody["conversion_pixel_id"])
+	}
 
 	// Ad group targeting: communities stripped of r/ prefix, geos uppercased.
 	targeting, _ := adGroupBody["targeting"].(map[string]any)
@@ -408,6 +413,10 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	geos, _ := targeting["geolocations"].([]any)
 	if len(geos) != 2 || geos[0] != "US" || geos[1] != "CA" {
 		t.Errorf("geolocations = %v, want [US CA]", geos)
+	}
+	// The conversion ad group must also carry the conversion pixel.
+	if adGroupBody["conversion_pixel_id"] != "pixel_abc" {
+		t.Errorf("ad group conversion_pixel_id = %v, want pixel_abc", adGroupBody["conversion_pixel_id"])
 	}
 
 	// Verify full call sequence.
@@ -643,24 +652,208 @@ func TestCreateCampaign_NoSubredditsNoSkipWarning(t *testing.T) {
 
 func TestCreateCampaign_Validation(t *testing.T) {
 	c := NewClient(testCreds, testAccount)
+	// Every fixture supplies a valid EventName so each case reaches (and actually
+	// exercises) the specific validation it targets -- EventName is the FIRST check
+	// in CreateCampaign, so omitting it would make every case fail there and mask
+	// the budget/date/objective/pixel/video validations under test. Each case
+	// asserts a DISTINCTIVE substring of the expected error so an unrelated earlier
+	// validation can't silently satisfy the "expected an error" check.
 	cases := []struct {
-		name string
-		in   CampaignInput
+		name    string
+		in      CampaignInput
+		wantErr string
 	}{
-		{"zero budget", CampaignInput{BudgetUSD: 0, StartDate: "2026-01-01", EndDate: "2026-01-02"}},
-		{"bad start", CampaignInput{BudgetUSD: 10, StartDate: "01-01-2026", EndDate: "2026-01-02"}},
-		{"bad end", CampaignInput{BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "nope"}},
-		{"end before start", CampaignInput{BudgetUSD: 10, StartDate: "2026-01-02", EndDate: "2026-01-01"}},
-		// A valid RegistrationURL is required so validation reaches the objective
-		// check (URL validation runs before objective validation in CreateCampaign).
-		{"bad objective", CampaignInput{BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", RegistrationURL: "https://example.com/reg", Objective: "nope"}},
+		{
+			"zero budget",
+			CampaignInput{EventName: "Ev", BudgetUSD: 0, StartDate: "2026-01-01", EndDate: "2026-01-02"},
+			"invalid budget",
+		},
+		{
+			"bad start",
+			CampaignInput{EventName: "Ev", BudgetUSD: 10, StartDate: "01-01-2026", EndDate: "2026-01-02"},
+			"invalid start date",
+		},
+		{
+			"bad end",
+			CampaignInput{EventName: "Ev", BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "nope"},
+			"invalid end date",
+		},
+		{
+			"end before start",
+			CampaignInput{EventName: "Ev", BudgetUSD: 10, StartDate: "2026-01-02", EndDate: "2026-01-01"},
+			"must be after start date",
+		},
+		{
+			// A valid RegistrationURL is required so validation reaches the objective
+			// check (URL validation runs before objective validation).
+			"bad objective",
+			CampaignInput{EventName: "Ev", BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", RegistrationURL: "https://example.com/reg", Objective: "nope"},
+			"unsupported Reddit objective",
+		},
+		{
+			// conversions with no pixel must fail at the pixel check, not earlier.
+			"conversions missing pixel",
+			CampaignInput{EventName: "Ev", BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", RegistrationURL: "https://example.com/reg", Objective: "conversions"},
+			"conversion pixel ID is required",
+		},
+		{
+			// video_views with no goal must fail at the video-goal check.
+			"video_views missing goal",
+			CampaignInput{EventName: "Ev", BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", RegistrationURL: "https://example.com/reg", Objective: "video_views"},
+			"invalid video goal",
+		},
+		{
+			// video_views with an unrecognized goal must also fail the video-goal check.
+			"video_views bad goal",
+			CampaignInput{EventName: "Ev", BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", RegistrationURL: "https://example.com/reg", Objective: "video_views", VideoGoal: "VIDEO_VIEW_99S"},
+			"invalid video goal",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.CreateCampaign(context.Background(), tc.in); err == nil {
+			_, err := c.CreateCampaign(context.Background(), tc.in)
+			if err == nil {
 				t.Fatalf("expected error for %s", tc.name)
 			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("%s: error %q does not contain %q", tc.name, err.Error(), tc.wantErr)
+			}
 		})
+	}
+}
+
+// TestCreateCampaign_ConversionPixelRejectedBeforeNetwork verifies the
+// conversion-objective flow rejects a missing pixel BEFORE any network call, so a
+// conversion campaign is never created and then orphaned at ad-group creation for
+// want of a pixel.
+func TestCreateCampaign_ConversionPixelRejectedBeforeNetwork(t *testing.T) {
+	var called atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called.Store(true)
+		http.Error(w, "should not be called", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "Conv No Pixel",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "conversions",
+	})
+	if err == nil {
+		t.Fatal("expected rejection for conversions objective with no pixel")
+	}
+	if !strings.Contains(err.Error(), "conversion pixel ID is required") {
+		t.Errorf("error %q does not name the missing conversion pixel", err.Error())
+	}
+	if called.Load() {
+		t.Errorf("a network call was made before the conversion-pixel validation")
+	}
+}
+
+// TestCreateCampaign_ConversionPixelSentWhenPresent verifies that when a pixel is
+// supplied for a conversion objective, it is written into BOTH the campaign and
+// ad-group payloads, and the full campaign->ad-group flow completes.
+func TestCreateCampaign_ConversionPixelSentWhenPresent(t *testing.T) {
+	c, bodies, cleanup := newBodyCaptureServers(t)
+	defer cleanup()
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:         "Conv With Pixel",
+		RegistrationURL:   "https://example.com/reg",
+		BudgetUSD:         100,
+		StartDate:         "2026-09-01",
+		EndDate:           "2026-09-10",
+		GeoTargets:        []string{"us"},
+		Keywords:          []string{"k8s"},
+		Objective:         "conversions",
+		ConversionPixelID: "pixel_xyz",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	campaignBody, adGroupBody := bodies()
+	if campaignBody["conversion_pixel_id"] != "pixel_xyz" {
+		t.Errorf("campaign conversion_pixel_id = %v, want pixel_xyz", campaignBody["conversion_pixel_id"])
+	}
+	if adGroupBody["conversion_pixel_id"] != "pixel_xyz" {
+		t.Errorf("ad group conversion_pixel_id = %v, want pixel_xyz", adGroupBody["conversion_pixel_id"])
+	}
+}
+
+// TestCreateCampaign_VideoGoalRejectedBeforeNetwork verifies the video_views
+// objective rejects a missing/invalid video goal BEFORE any network call, so a
+// bare "VIDEO_VIEWS" optimization goal is never sent to Reddit.
+func TestCreateCampaign_VideoGoalRejectedBeforeNetwork(t *testing.T) {
+	for _, goal := range []string{"", "VIDEO_VIEWS", "VIDEO_VIEW_99S"} {
+		var called atomic.Bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called.Store(true)
+			http.Error(w, "should not be called", http.StatusInternalServerError)
+		}))
+		c := NewClient(testCreds, testAccount,
+			WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:       "Vid Bad Goal",
+			RegistrationURL: "https://example.com/reg",
+			BudgetUSD:       100,
+			StartDate:       "2026-09-01",
+			EndDate:         "2026-09-10",
+			GeoTargets:      []string{"us"},
+			Keywords:        []string{"k8s"},
+			Objective:       "video_views",
+			VideoGoal:       goal,
+		})
+		srv.Close()
+		if err == nil {
+			t.Errorf("video goal %q: expected rejection, got nil", goal)
+		} else if !strings.Contains(err.Error(), "invalid video goal") {
+			t.Errorf("video goal %q: error %q does not name the invalid video goal", goal, err.Error())
+		}
+		if called.Load() {
+			t.Errorf("video goal %q: a network call was made before video-goal validation", goal)
+		}
+	}
+}
+
+// TestCreateCampaign_VideoGoalMappedToOptimizationGoal verifies that a valid
+// concrete video goal is mapped into the campaign and ad-group optimization_goal
+// (replacing the invalid bare "VIDEO_VIEWS"), and is case-insensitive.
+func TestCreateCampaign_VideoGoalMappedToOptimizationGoal(t *testing.T) {
+	for in, want := range map[string]string{
+		"VIDEO_VIEW_6S":  "VIDEO_VIEW_6S",
+		"video_view_15s": "VIDEO_VIEW_15S",
+	} {
+		c, bodies, cleanup := newBodyCaptureServers(t)
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:       "Vid Goal",
+			RegistrationURL: "https://example.com/reg",
+			BudgetUSD:       100,
+			StartDate:       "2026-09-01",
+			EndDate:         "2026-09-10",
+			GeoTargets:      []string{"us"},
+			Keywords:        []string{"k8s"},
+			Objective:       "video_views",
+			VideoGoal:       in,
+		})
+		if err != nil {
+			cleanup()
+			t.Fatalf("VideoGoal %q: CreateCampaign: %v", in, err)
+		}
+		campaignBody, adGroupBody := bodies()
+		if campaignBody["optimization_goal"] != want {
+			t.Errorf("VideoGoal %q: campaign optimization_goal = %v, want %v", in, campaignBody["optimization_goal"], want)
+		}
+		if adGroupBody["optimization_goal"] != want {
+			t.Errorf("VideoGoal %q: ad group optimization_goal = %v, want %v", in, adGroupBody["optimization_goal"], want)
+		}
+		cleanup()
 	}
 }
 
@@ -796,15 +989,16 @@ func TestExtractRedditPostID_ShortLinkEscapedPath(t *testing.T) {
 func TestCreateCampaign_InvalidGeoRejectedBeforeNetwork(t *testing.T) {
 	baseInput := func(geos []string) CampaignInput {
 		return CampaignInput{
-			EventName:       "Open Source Summit",
-			EventSlug:       "oss-2026",
-			RegistrationURL: "https://events.linuxfoundation.org/oss/",
-			BudgetUSD:       500,
-			StartDate:       "2026-08-01",
-			EndDate:         "2026-08-31",
-			GeoTargets:      geos,
-			Subreddits:      []string{"linux"},
-			Objective:       "conversions",
+			EventName:         "Open Source Summit",
+			EventSlug:         "oss-2026",
+			RegistrationURL:   "https://events.linuxfoundation.org/oss/",
+			BudgetUSD:         500,
+			StartDate:         "2026-08-01",
+			EndDate:           "2026-08-31",
+			GeoTargets:        geos,
+			Subreddits:        []string{"linux"},
+			Objective:         "conversions",
+			ConversionPixelID: "pixel_abc",
 		}
 	}
 
@@ -988,6 +1182,12 @@ func TestCreateCampaign_SameDayStartNotInPast(t *testing.T) {
 	}
 	if !ts.After(fixedNow) {
 		t.Errorf("campaign start_time %q is not after now %v (finding #1: sent in the past)", campStart, fixedNow)
+	}
+	// The nudged start must clear the worst-case retry window for a single create,
+	// so it stays in the future even if request honors a Retry-After and resends
+	// the same timestamp on a 429 (Copilot: start_time may be past after a retry).
+	if !ts.After(fixedNow.Add(redditWorstCaseCreateWait)) {
+		t.Errorf("campaign start_time %q is only %v ahead of now; must clear the worst-case retry window %v so a retried request never sends a past start", campStart, ts.Sub(fixedNow), redditWorstCaseCreateWait)
 	}
 	// The ad group must use the same adjusted start.
 	agStart, _ := adGroupBody["start_time"].(string)
