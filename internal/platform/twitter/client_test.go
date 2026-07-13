@@ -9,6 +9,7 @@ import (
 	"crypto/sha1" //nolint:gosec // OAuth 1.0a mandates HMAC-SHA1; test mirrors production signing.
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -2289,10 +2290,7 @@ func TestParseRetryAfterOverflowGuard(t *testing.T) {
 // test is deterministic.
 func TestPartialResultAfterLineItemCreated(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	// Server: account + find return empty; campaign and line item create OK; the
-	// line_items handler cancels the ctx as a side effect so the next pace() (before
-	// the promoted step) observes cancellation — a deterministic fatal downstream
-	// failure after both paid resources exist.
+	// Server: account + find return empty; campaign and line item create OK.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
@@ -2305,28 +2303,28 @@ func TestPartialResultAfterLineItemCreated(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
 			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
-			// Line item now created. Cancel from a goroutine after a short delay so
-			// the line_items response is fully read by the client FIRST (an immediate
-			// cancel could race the response read and fail the line-item create call
-			// itself). The client then waits in pace() (10ms) before the promoted
-			// step; that pace observes the cancellation and returns a fatal ctx error,
-			// deterministically exercising the post-line-item partial path.
-			go func() {
-				time.Sleep(5 * time.Millisecond)
-				cancel()
-			}()
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer srv.Close()
 
+	// Cancellation is driven off the CLIENT side, not a timed sleep: a RoundTripper
+	// wrapper detects the line_items create response and wraps its Body so that
+	// Body.Close() fires cancel(). doRequest reads the full body and THEN closes it
+	// before returning, so by the time cancel() runs the line-item create has already
+	// succeeded (LineItemID captured). The very next pace() — before the promoted
+	// step, with a large WithWriteDelay so it actually blocks on ctx.Done() — then
+	// deterministically observes the cancellation and returns a fatal ctx error,
+	// exercising the post-line-item partial path with zero timing dependence.
+	transport := &cancelOnLineItemCloseTransport{cancel: cancel}
 	c := NewClient(
 		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
-		// A real write delay so pace() selects on ctx.Done() with a comfortable
-		// margin over the 5ms cancel delay above (cancellation lands mid-sleep).
+		WithHTTPClient(&http.Client{Transport: transport}),
+		// A real write delay so the post-line-item pace() blocks in its select on
+		// ctx.Done(); the client-side cancel above lands before this pace runs.
 		WithWriteDelay(100*time.Millisecond),
 	)
 	c.nonceFn = func() string { return "n" }
@@ -2349,6 +2347,43 @@ func TestPartialResultAfterLineItemCreated(t *testing.T) {
 	if res.LineItemID != "li1" {
 		t.Errorf("partial result must carry LineItemID li1 (created before the failure), got %q", res.LineItemID)
 	}
+}
+
+// cancelOnLineItemCloseTransport is an http.RoundTripper that forwards every
+// request to the default transport, but for the line_items create (POST) response
+// it wraps the response Body so that Body.Close() invokes cancel(). doRequest
+// fully reads then closes each response body before returning, so this fires the
+// cancellation deterministically AFTER the line item has been created and its ID
+// captured, and BEFORE the next pace() — no sleep, no timing race.
+type cancelOnLineItemCloseTransport struct {
+	cancel context.CancelFunc
+}
+
+func (t *cancelOnLineItemCloseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return resp, err
+	}
+	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "line_items") {
+		resp.Body = &cancelOnCloseBody{ReadCloser: resp.Body, cancel: t.cancel}
+	}
+	return resp, nil
+}
+
+// cancelOnCloseBody calls cancel() exactly once, when the wrapped body is closed.
+type cancelOnCloseBody struct {
+	io.ReadCloser
+	cancel   context.CancelFunc
+	canceled bool
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	if !b.canceled {
+		b.canceled = true
+		b.cancel()
+	}
+	return err
 }
 
 // TestPartialResultAfterCampaignCreated verifies that a failure AFTER campaign
@@ -2404,4 +2439,215 @@ func TestPartialResultAfterCampaignCreated(t *testing.T) {
 	if !strings.Contains(err.Error(), "cmp1") {
 		t.Errorf("error should name the orphaned campaign id cmp1, got %v", err)
 	}
+}
+
+// TestNormalizeSigningURL is a direct unit test of the RFC 5849 §3.4.1.2 signing
+// URL normalization: scheme + host are lowercased, a port equal to the scheme's
+// default (http:80 / https:443) is dropped, a non-default port is preserved, and
+// the query string is excluded from the base-string URL.
+func TestNormalizeSigningURL(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"https default port dropped, scheme+host lowered", "HTTPS://Host:443/p", "https://host/p"},
+		{"http default port dropped, scheme+host lowered", "http://Host:80/p", "http://host/p"},
+		{"non-default port preserved", "https://host:8080/p", "https://host:8080/p"},
+		{"query excluded from base string", "https://Host:443/p?a=1&b=2", "https://host/p"},
+		{"http non-default port preserved", "HTTP://HOST:8080/x/y", "http://host:8080/x/y"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := url.Parse(tc.in)
+			if err != nil {
+				t.Fatalf("url.Parse(%q): %v", tc.in, err)
+			}
+			if got := normalizeSigningURL(u); got != tc.want {
+				t.Errorf("normalizeSigningURL(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNormalizeSigningURLAppliedInSignature proves the normalization is actually
+// wired into the OAuth base string: two clients that differ ONLY in how their base
+// URL is written — one "HTTPS://ADS-API.X.COM:443" (upper-cased scheme+host, the
+// explicit https default port) and one "https://ads-api.x.com" (already canonical)
+// — must, with an identical injected nonce/time, produce the SAME oauth_signature
+// for a request to the same account-scoped path. If normalization were dropped, the
+// verbatim upper-cased/port-bearing base string would sign to a different value and
+// X would reject it; equality here is the guard.
+func TestNormalizeSigningURLAppliedInSignature(t *testing.T) {
+	creds := Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"}
+	acct := AccountConfig{AccountID: "acc1"}
+
+	newSigner := func(base string) *Client {
+		c := NewClient(creds, acct, WithBaseURL(base))
+		c.nonceFn = func() string { return "fixednonce" }
+		c.timeFn = staticTime
+		return c
+	}
+
+	raw := newSigner("HTTPS://ADS-API.X.COM:443")
+	canonical := newSigner("https://ads-api.x.com")
+
+	// Each client builds its own account-scoped request URL (differs textually in
+	// scheme case / explicit :443) for the same logical path; the query string is
+	// present to confirm it is excluded from the signing base yet still signed as a
+	// param on both sides identically.
+	pathSuffix := "/campaigns?count=1000&q=KubeCon+EU"
+	rawURL := raw.accountURL() + pathSuffix
+	canonicalURL := canonical.accountURL() + pathSuffix
+
+	if rawURL == canonicalURL {
+		t.Fatalf("test precondition: the two base URLs must yield textually different request URLs, both were %q", rawURL)
+	}
+
+	rawHdr, err := raw.buildOAuthHeader("GET", rawURL, nil)
+	if err != nil {
+		t.Fatalf("buildOAuthHeader (raw): %v", err)
+	}
+	canonicalHdr, err := canonical.buildOAuthHeader("GET", canonicalURL, nil)
+	if err != nil {
+		t.Fatalf("buildOAuthHeader (canonical): %v", err)
+	}
+
+	rawSig := extractOAuthSignature(t, rawHdr)
+	canonicalSig := extractOAuthSignature(t, canonicalHdr)
+	if rawSig != canonicalSig {
+		t.Fatalf("normalization not applied to the signing base string: signatures differ\n raw base=%q sig=%q\ncanon base=%q sig=%q", rawURL, rawSig, canonicalURL, canonicalSig)
+	}
+}
+
+// TestReuseExistingCampaignSurfacesWarning covers FINDING 2: when a campaign with
+// the same name already exists it is reused (idempotent), the campaign create POST
+// is skipped, AND a warning step is surfaced noting the existing budget/config was
+// NOT updated to match this request (authoritative reconcile is the orchestrator's
+// job, LFXV2-2665). Here the line item does NOT already exist, so ONLY the campaign
+// reuse warning must appear — isolating the campaign branch.
+func TestReuseExistingCampaignSurfacesWarning(t *testing.T) {
+	campaignName := buildTwitterCampaignName(CampaignInput{EventName: "KubeCon EU", Project: "CNCF"})
+
+	var postCampaign int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			b, _ := json.Marshal(map[string]any{"data": []map[string]string{{"id": "existingCmp", "name": campaignName}}})
+			_, _ = w.Write(b)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			// No existing line item -> the line item is created fresh (no reuse warning).
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			postCampaign++
+			_, _ = w.Write([]byte(`{"data":{"id":"shouldNotHappen"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 750,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if res.CampaignID != "existingCmp" {
+		t.Errorf("expected reused campaign existingCmp, got %q", res.CampaignID)
+	}
+	if postCampaign != 0 {
+		t.Errorf("campaign create POST must be skipped on reuse, got %d POST(s)", postCampaign)
+	}
+	if !stepsContain(res.Steps, "reused existing campaign existingCmp by name") ||
+		!stepsContain(res.Steps, "NOT updated to match this request") {
+		t.Errorf("expected a campaign-reuse config-drift warning step, got steps: %v", res.Steps)
+	}
+}
+
+// TestReuseExistingLineItemSurfacesWarning covers FINDING 3: when a line item with
+// the same name already exists it is reused without re-checking its entity_status /
+// flight dates, and a warning step must be surfaced noting the status/dates were NOT
+// reset to the requested PAUSED/flight (it may already be ENABLED and serving);
+// authoritative reconcile is the orchestrator's job (LFXV2-2665). Here the campaign
+// is created fresh so ONLY the line-item reuse warning must appear.
+func TestReuseExistingLineItemSurfacesWarning(t *testing.T) {
+	lineItemName := "Events | KubeCon EU | Promoted Tweets | AUTO"
+
+	var postLineItem int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			// No existing campaign -> the campaign is created fresh (no reuse warning).
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			b, _ := json.Marshal(map[string]any{"data": []map[string]string{{"id": "existingLi", "name": lineItemName}}})
+			_, _ = w.Write(b)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			postLineItem++
+			_, _ = w.Write([]byte(`{"data":{"id":"shouldNotHappen"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if res.LineItemID != "existingLi" {
+		t.Errorf("expected reused line item existingLi, got %q", res.LineItemID)
+	}
+	if postLineItem != 0 {
+		t.Errorf("line item create POST must be skipped on reuse, got %d POST(s)", postLineItem)
+	}
+	if !stepsContain(res.Steps, "reused existing line item existingLi by name") ||
+		!stepsContain(res.Steps, "NOT reset to the requested PAUSED") {
+		t.Errorf("expected a line-item-reuse status/dates warning step, got steps: %v", res.Steps)
+	}
+}
+
+// stepsContain reports whether any step in steps contains substr.
+func stepsContain(steps []string, substr string) bool {
+	for _, s := range steps {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
+	return false
 }
