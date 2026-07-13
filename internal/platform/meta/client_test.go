@@ -451,6 +451,65 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignAdSetFailureReturnsPartialResult verifies that when the ad
+// set POST fails AFTER the campaign was already created, CreateCampaign returns
+// a non-nil partial CampaignResult carrying the orphaned campaign's ID (so a
+// caller can reconcile/clean up without parsing the error string) alongside the
+// error.
+func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_TEST") && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency_offset":100}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			// Ad set creation fails after the campaign already exists.
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"bad targeting","type":"OAuthException","code":100}}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-abc"},
+		AccountConfig{AccountID: "act_TEST", PageID: "PAGE99", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
+	)
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "tlf",
+		RegistrationURL: "https://events.example.org/kubecon",
+		Objective:       "traffic",
+		GeoTargets:      []string{"US"},
+		Budget:          500,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "Join us", Headline: "KubeCon 2026"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when ad set creation fails")
+	}
+	if res == nil {
+		t.Fatal("expected a non-nil partial result carrying the orphaned campaign ID, got nil")
+	}
+	if res.CampaignID != "camp_orphan" {
+		t.Errorf("partial result CampaignID = %q, want camp_orphan", res.CampaignID)
+	}
+	if res.AdSetID != "" {
+		t.Errorf("partial result AdSetID = %q, want empty (ad set was never created)", res.AdSetID)
+	}
+	if res.AdCount != 0 {
+		t.Errorf("partial result AdCount = %d, want 0", res.AdCount)
+	}
+}
+
 func TestCreateCampaignLifetimeBudget(t *testing.T) {
 	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1123,8 +1182,17 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error after context cancellation, got success: %+v", res)
 	}
-	if res != nil {
-		t.Errorf("result must be nil on context cancellation, got %+v", res)
+	// A caller-cancel during ad creation is still fatal (error returned), but the
+	// campaign + ad set already exist, so a partial result must carry their IDs for
+	// cleanup/reconcile rather than being discarded.
+	if res == nil {
+		t.Fatal("expected a non-nil partial result carrying the created campaign/ad set IDs, got nil")
+	}
+	if res.CampaignID != "camp_1" {
+		t.Errorf("partial result CampaignID = %q, want camp_1", res.CampaignID)
+	}
+	if res.AdSetID != "adset_1" {
+		t.Errorf("partial result AdSetID = %q, want adset_1", res.AdSetID)
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want it to wrap context.Canceled", err)
@@ -1180,8 +1248,17 @@ func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error after context cancellation, got success: %+v", res)
 	}
-	if res != nil {
-		t.Errorf("result must be nil on context cancellation, got %+v", res)
+	// Fatal (error returned), but campaign + ad set already exist, so a partial
+	// result must carry their IDs. The orphaned creative id has no CampaignResult
+	// field, so it stays surfaced in the error string (asserted below).
+	if res == nil {
+		t.Fatal("expected a non-nil partial result carrying the created campaign/ad set IDs, got nil")
+	}
+	if res.CampaignID != "camp_1" {
+		t.Errorf("partial result CampaignID = %q, want camp_1", res.CampaignID)
+	}
+	if res.AdSetID != "adset_1" {
+		t.Errorf("partial result AdSetID = %q, want adset_1", res.AdSetID)
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want it to wrap context.Canceled", err)

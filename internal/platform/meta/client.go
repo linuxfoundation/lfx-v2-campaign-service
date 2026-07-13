@@ -1260,6 +1260,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// front, before the campaign was created).
 	adSetName := fmt.Sprintf("%s - %s", in.EventName, objectiveLabel(objective))
 
+	// partialResult builds a *CampaignResult carrying the resources already created
+	// (the PAUSED campaign, and the ad set once it exists) plus the steps so far.
+	// It is returned ALONGSIDE the error at every downstream failure point after the
+	// campaign POST succeeds, so an orphaned paid resource is identifiable by ID for
+	// cleanup/reconcile without parsing the human-readable error string, and a caller
+	// retry can reconcile instead of blindly re-creating. adSetID/adCount are captured
+	// by reference so the result reflects whatever exists at the failure point.
+	// Mirrors the twitter/reddit clients' partial-result helper.
+	var adSetID string
+	adCount := 0
+	partialResult := func() *CampaignResult {
+		return &CampaignResult{
+			Platform:     "meta-ads",
+			CampaignName: campaignName,
+			CampaignID:   campaignID,
+			AdSetName:    adSetName,
+			AdSetID:      adSetID,
+			AdCount:      adCount,
+			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+			Steps:        steps,
+		}
+	}
+
 	targeting := map[string]any{"geo_locations": map[string]any{"countries": geoCountries}}
 	for k, v := range placementTargeting {
 		targeting[k] = v
@@ -1289,14 +1312,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	var adSetResp createResponse
 	if err := c.doRequest(ctx, http.MethodPost, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
-		// The campaign was already created (PAUSED). Surface its id so the caller can
-		// identify/clean up the orphan; auto-deleting here would race a retry that
-		// reuses it.
-		return nil, fmt.Errorf("meta ad set creation failed (campaign %s created, PAUSED): %w", campaignID, err)
+		// The campaign was already created (PAUSED). Return a partial result carrying
+		// its id so the caller can identify/clean up the orphan without parsing the
+		// error string; auto-deleting here would race a retry that reuses it.
+		return partialResult(), fmt.Errorf("meta ad set creation failed (campaign %s created, PAUSED): %w", campaignID, err)
 	}
-	adSetID := adSetResp.ID
+	adSetID = adSetResp.ID
 	if adSetID == "" {
-		return nil, fmt.Errorf("meta ad set creation succeeded but returned no ad set ID (campaign %s created, PAUSED)", campaignID)
+		return partialResult(), fmt.Errorf("meta ad set creation succeeded but returned no ad set ID (campaign %s created, PAUSED)", campaignID)
 	}
 	budgetLabel := "daily"
 	if in.LifetimeBudget {
@@ -1307,7 +1330,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.Budget, budgetLabel, strings.Join(geoCountries, ", ")))
 
 	// Step 4: creative + ad per variant (per-variant failures are non-fatal).
-	adCount := 0
 	for i, variant := range validVariants {
 		utmURL := buildUTMURL(in, i)
 
@@ -1325,9 +1347,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				// its id in the fatal error too — otherwise this known orphaned creative
 				// is lost (the non-fatal path below already reports it).
 				if creativeID != "" {
-					return nil, fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED; orphaned creative: %s): %w", i+1, campaignID, creativeID, ctx.Err())
+					return partialResult(), fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED; orphaned creative: %s): %w", i+1, campaignID, creativeID, ctx.Err())
 				}
-				return nil, fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, ctx.Err())
+				return partialResult(), fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, ctx.Err())
 			}
 			// If the creative was created before the ad failed, surface its id so the
 			// orphaned creative is visible (can be cleaned up / reused) rather than
@@ -1347,16 +1369,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, "No ads could be created — create them manually in Meta Ads Manager")
 	}
 
-	return &CampaignResult{
-		Platform:     "meta-ads",
-		CampaignName: campaignName,
-		CampaignID:   campaignID,
-		AdSetName:    adSetName,
-		AdSetID:      adSetID,
-		AdCount:      adCount,
-		MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
-		Steps:        steps,
-	}, nil
+	// Success: partialResult() now carries the fully-created campaign, ad set, and
+	// ad count (same fields as a bespoke literal); reuse it so success and partial
+	// failure return an identically-shaped result.
+	return partialResult(), nil
 }
 
 // createVariantAd creates the adcreative and ad for one variant, returning the
