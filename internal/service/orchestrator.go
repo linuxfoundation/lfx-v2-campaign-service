@@ -95,13 +95,23 @@ type Orchestrator struct {
 	draining   bool
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
-	// stopSweeper signals the background recovery sweeper (if started) to stop.
-	// Closed once, guarded by sweeperOnce, at the start of Shutdown so the sweeper
-	// exits promptly without waiting for the dispatch-drain deadline. The sweeper
-	// is a periodic maintenance loop, not in-flight work, so it can stop
-	// immediately — unlike dispatch runs, which drain first.
-	stopSweeper chan struct{}
-	sweeperOnce sync.Once
+	// sweeperCtx / sweeperCancel own the background recovery sweeper's lifetime,
+	// SEPARATELY from rootCtx (which owns dispatch runs). Cancelled once, guarded
+	// by sweeperOnce, at the very START of Shutdown — before the dispatch drain —
+	// so:
+	//   1. A sweep already blocked in the DB is interrupted PROMPTLY (its query
+	//      derives from sweeperCtx, so cancelling it aborts the statement rather
+	//      than waiting for it to return on its own).
+	//   2. The sweeper's own timeout/cancellation is spent up front and can never
+	//      consume any of the dispatch-drain budget — the drain phase (bounded by
+	//      drainTimeout) and the sweeper shutdown do not compete for a deadline,
+	//      so a maintenance query can't starve healthy in-flight dispatches.
+	// The sweeper is still tracked by o.wg, so Shutdown waits for it to return
+	// before the caller closes the pool; but because it's cancelled first, that
+	// wait is effectively instantaneous and does not eat into the drain window.
+	sweeperCtx    context.Context
+	sweeperCancel context.CancelFunc
+	sweeperOnce   sync.Once
 	// sem is a process-wide semaphore bounding concurrent provider dispatches
 	// across ALL jobs (a per-job errgroup limit would let N concurrent jobs each
 	// get maxParallelDispatch slots, leaving total provider calls unbounded).
@@ -115,14 +125,16 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 		dispatchers = map[model.Provider]PlatformDispatcher{}
 	}
 	rootCtx, rootCancel := context.WithCancel(context.Background())
+	sweeperCtx, sweeperCancel := context.WithCancel(context.Background())
 	return &Orchestrator{
-		campaigns:   campaigns,
-		jobs:        jobs,
-		dispatchers: dispatchers,
-		rootCtx:     rootCtx,
-		rootCancel:  rootCancel,
-		stopSweeper: make(chan struct{}),
-		sem:         make(chan struct{}, maxParallelDispatch),
+		campaigns:     campaigns,
+		jobs:          jobs,
+		dispatchers:   dispatchers,
+		rootCtx:       rootCtx,
+		rootCancel:    rootCancel,
+		sweeperCtx:    sweeperCtx,
+		sweeperCancel: sweeperCancel,
+		sem:           make(chan struct{}, maxParallelDispatch),
 	}
 }
 
@@ -137,8 +149,13 @@ const recoverySweepInterval = 5 * time.Minute
 // StartRecoverySweeper launches a background goroutine that periodically fails
 // jobs stuck past staleJobCutoff, complementing the one-time startup scan so a
 // job orphaned by a crash younger than the cutoff is still eventually recovered.
-// The goroutine is tracked by wg and stops when the root context is cancelled
-// (i.e. on Shutdown), so it never runs against a closing pool. Call once after
+//
+// The goroutine is tracked by wg (so Shutdown waits for it before the pool
+// closes) but its lifetime is owned by sweeperCtx, NOT rootCtx: Shutdown cancels
+// sweeperCtx first, before draining dispatch runs. Because the in-flight sweep's
+// query derives from sweeperCtx, cancelling it interrupts a sweep already
+// blocked in the DB promptly, and it does so up front so the sweeper's own
+// shutdown never competes with the dispatch-drain budget. Call once after
 // construction.
 func (o *Orchestrator) StartRecoverySweeper() {
 	o.wg.Add(1)
@@ -148,21 +165,24 @@ func (o *Orchestrator) StartRecoverySweeper() {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-o.stopSweeper:
-				return
-			case <-o.rootCtx.Done():
+			case <-o.sweeperCtx.Done():
 				return
 			case <-ticker.C:
-				// Bound each sweep so a slow DB can't wedge the goroutine. Detach from
-				// rootCtx so a sweep already in flight isn't cut mid-statement by the
-				// stop signal; the loop still exits on the next iteration.
-				sctx, cancel := context.WithTimeout(context.WithoutCancel(o.rootCtx), jobFinalizeTimeout)
+				// Bound each sweep so a slow DB can't wedge the goroutine, but derive it
+				// from sweeperCtx (do NOT detach) so cancelling sweeperCtx at Shutdown
+				// interrupts a sweep already blocked mid-statement rather than letting it
+				// run to its own timeout against a closing pool.
+				sctx, cancel := context.WithTimeout(o.sweeperCtx, jobFinalizeTimeout)
 				n, err := o.jobs.FailStuckJobs(sctx, "job did not complete before a service restart")
 				cancel()
 				if err != nil {
-					slog.ErrorContext(o.rootCtx, "periodic stuck-job sweep failed", "error", err)
+					// A cancellation here is the expected outcome when Shutdown interrupts
+					// an in-flight sweep, not a real failure — don't log it as an error.
+					if o.sweeperCtx.Err() == nil {
+						slog.ErrorContext(o.sweeperCtx, "periodic stuck-job sweep failed", "error", err)
+					}
 				} else if n > 0 {
-					slog.InfoContext(o.rootCtx, "periodic stuck-job sweep recovered jobs", "count", n)
+					slog.InfoContext(o.sweeperCtx, "periodic stuck-job sweep recovered jobs", "count", n)
 				}
 			}
 		}
@@ -191,10 +211,13 @@ func (o *Orchestrator) Shutdown(ctx context.Context, drainTimeout time.Duration)
 	o.draining = true
 	o.mu.Unlock()
 
-	// Stop the periodic recovery sweeper immediately (it's maintenance, not
-	// in-flight work) so wg.Wait below only blocks on real dispatch runs. Safe to
-	// call whether or not the sweeper was started.
-	o.sweeperOnce.Do(func() { close(o.stopSweeper) })
+	// Cancel the periodic recovery sweeper FIRST, before the dispatch drain. It's
+	// maintenance, not in-flight work, so it stops immediately; cancelling its
+	// dedicated context also interrupts any sweep currently blocked in the DB
+	// (see StartRecoverySweeper). Doing this up front means the sweeper's own
+	// shutdown never draws down the dispatch-drain budget, and wg.Wait below then
+	// blocks only on real dispatch runs. Safe whether or not the sweeper started.
+	o.sweeperOnce.Do(o.sweeperCancel)
 
 	done := make(chan struct{})
 	go func() {

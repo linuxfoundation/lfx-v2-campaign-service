@@ -38,6 +38,8 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
+	// NOTE: debug.LogPayloads() is intentionally NOT applied. Every authenticated
+	// payload carries a BearerToken (a valid JWT), and the connection service's
 	// create/set-credential payloads carry plaintext provider credentials (OAuth
 	// refresh tokens, client secrets), so enabling it would leak those secrets
 	// into logs. debug.HTTP() IS still applied below, but in clue v1.2.1 it does
@@ -186,10 +188,28 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 	// phases separately makes the total a true sum: httpShutdownTimeout +
 	// (dispatchDrainTimeout + CancelGracePeriod) <= DefaultShutdownTimeout, which
 	// container.go asserts at init.
+	// Shutdown ordering is explicit:
+	//   1. graceful srv.Shutdown(httpCtx) — stop accepting, drain handlers.
+	//   2. on httpCtx expiry, force srv.Close() — http.Server.Shutdown RETURNS on
+	//      ctx expiry even if handlers are STILL running; those stragglers could
+	//      then touch the DB pool while container/pool close runs (and pgxpool.Close
+	//      itself can block on a connection a handler still holds). Close() forcibly
+	//      terminates all connections so no handler is still using the pool when it
+	//      closes. Force-close only after a timeout — on a clean Shutdown there are
+	//      no lingering connections and Close() is a harmless no-op.
+	//   3. THEN cont.Close(closeCtx) — drain in-flight dispatch, then close the pool.
+	// Fully coordinating handler completion (waiting out each straggler) needs
+	// cross-request tracking beyond this PR — tracked in LFXV2-2665; the srv.Close()
+	// hardening here removes the pool-use-after-close hazard in-scope.
 	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), container.HTTPShutdownTimeout)
 	defer cancelHTTP()
 	if err := srv.Shutdown(httpCtx); err != nil {
-		slog.ErrorContext(ctx, "HTTP server shutdown error", log.ErrKey, err)
+		slog.ErrorContext(ctx, "HTTP server shutdown error; force-closing lingering connections", log.ErrKey, err)
+		// Shutdown's ctx expired with handlers still running (or it otherwise
+		// failed). Force-close so no straggler can touch the pool as it closes.
+		if cerr := srv.Close(); cerr != nil {
+			slog.ErrorContext(ctx, "HTTP server force-close error", log.ErrKey, cerr)
+		}
 	}
 	closeCtx, cancelClose := context.WithTimeout(context.Background(), container.ContainerCloseTimeout)
 	defer cancelClose()

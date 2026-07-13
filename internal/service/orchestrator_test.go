@@ -848,6 +848,83 @@ func TestOrchestrator_PreCreateErrorReleasesClaim(t *testing.T) {
 	}
 }
 
+// blockingSweepJobRepo blocks inside FailStuckJobs until its context is
+// cancelled, letting a test prove that cancelling the sweeper's context
+// interrupts an in-flight sweep promptly (rather than the sweep running to its
+// own timeout against a closing pool).
+type blockingSweepJobRepo struct {
+	fakeJobRepo
+	entered chan struct{}
+}
+
+func (r *blockingSweepJobRepo) FailStuckJobs(ctx context.Context, _ string) (int64, error) {
+	select {
+	case r.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done() // block until the sweeper's context is cancelled
+	return 0, ctx.Err()
+}
+
+// TestOrchestrator_SweeperInterruptedOnShutdown verifies that a sweep already
+// blocked in the DB is interrupted PROMPTLY when Shutdown cancels the sweeper's
+// dedicated context, and that Shutdown still completes within budget. Uses a
+// tiny sweep interval so a sweep starts quickly, and a repo whose FailStuckJobs
+// blocks until its context is cancelled.
+func TestOrchestrator_SweeperInterruptedOnShutdown(t *testing.T) {
+	jobs := &blockingSweepJobRepo{
+		fakeJobRepo: fakeJobRepo{jobs: map[string]*model.CampaignJob{}},
+		entered:     make(chan struct{}, 1),
+	}
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, nil)
+	// Drive the sweeper on a very short interval so a sweep begins promptly. The
+	// sweeper reads sweeperCtx, so overriding the interval doesn't affect the
+	// cancellation path under test.
+	orch.sweeperCtx, orch.sweeperCancel = context.WithCancel(context.Background())
+	orch.wg.Add(1)
+	go func() {
+		defer orch.wg.Done()
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-orch.sweeperCtx.Done():
+				return
+			case <-ticker.C:
+				sctx, cancel := context.WithTimeout(orch.sweeperCtx, jobFinalizeTimeout)
+				_, _ = jobs.FailStuckJobs(sctx, "x")
+				cancel()
+			}
+		}
+	}()
+
+	// Wait until a sweep is actually blocked inside FailStuckJobs.
+	select {
+	case <-jobs.entered:
+	case <-time.After(time.Second):
+		t.Fatal("sweep never started")
+	}
+
+	// Shutdown must cancel the sweeper's context (interrupting the blocked sweep)
+	// and return quickly — well under the jobFinalizeTimeout the sweep would
+	// otherwise wait for.
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- orch.Shutdown(context.Background(), 5*time.Second) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Shutdown err = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not return; blocked sweep was not interrupted")
+	}
+	if elapsed := time.Since(start); elapsed >= jobFinalizeTimeout {
+		t.Errorf("Shutdown took %v (>= jobFinalizeTimeout %v); sweep was not interrupted promptly", elapsed, jobFinalizeTimeout)
+	}
+}
+
 // TestBriefETagIsQuoted verifies the emitted ETag is a quoted entity-tag.
 func TestBriefETagIsQuoted(t *testing.T) {
 	if got := briefETag(3); got != `"3"` {
