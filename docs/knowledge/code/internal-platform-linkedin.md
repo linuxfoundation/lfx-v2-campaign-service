@@ -3,6 +3,13 @@ type: "Go Package"
 title: "internal/platform/linkedin"
 description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting and up-front validation."
 resource: "internal/platform/linkedin"
+tags:
+  - platform-client
+  - linkedin
+  - linkedin-ads
+  - oauth2
+  - go-package
+timestamp: "2026-07-13T19:22:00Z"
 ---
 
 # internal/platform/linkedin
