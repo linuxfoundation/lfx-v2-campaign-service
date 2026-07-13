@@ -787,6 +787,37 @@ func TestCreateCampaign_ConversionPixelSentWhenPresent(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_PixelIgnoredForNonConversion verifies that a stray
+// ConversionPixelID carried by a reused input is NOT sent for a non-conversion
+// objective (the field is documented as ignored outside conversions), so an
+// objective-inapplicable field is never sent upstream.
+func TestCreateCampaign_PixelIgnoredForNonConversion(t *testing.T) {
+	c, bodies, cleanup := newBodyCaptureServers(t)
+	defer cleanup()
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:         "Traffic With Stray Pixel",
+		RegistrationURL:   "https://example.com/reg",
+		BudgetUSD:         100,
+		StartDate:         "2026-09-01",
+		EndDate:           "2026-09-10",
+		GeoTargets:        []string{"us"},
+		Keywords:          []string{"k8s"},
+		Objective:         "traffic",
+		ConversionPixelID: "pixel_should_be_ignored",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	campaignBody, adGroupBody := bodies()
+	if _, present := campaignBody["conversion_pixel_id"]; present {
+		t.Errorf("campaign body must not carry conversion_pixel_id for a non-conversion objective, got %v", campaignBody["conversion_pixel_id"])
+	}
+	if _, present := adGroupBody["conversion_pixel_id"]; present {
+		t.Errorf("ad group body must not carry conversion_pixel_id for a non-conversion objective, got %v", adGroupBody["conversion_pixel_id"])
+	}
+}
+
 // TestCreateCampaign_VideoGoalRejectedBeforeNetwork verifies the video_views
 // objective rejects a missing/invalid video goal BEFORE any network call, so a
 // bare "VIDEO_VIEWS" optimization goal is never sent to Reddit.

@@ -779,14 +779,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		optimizationGoal = videoGoal
 	}
 
-	// Validate the conversion pixel before any mutating call. Reddit requires a
-	// conversion pixel for a conversion ad group, so a missing pixel would create
-	// the campaign in Step 2 and then fail at ad-group creation, orphaning a PAUSED
-	// campaign. Reject up front for the "conversions" objective so nothing is
-	// created; the pixel is not required for other objectives.
-	conversionPixelID := strings.TrimSpace(in.ConversionPixelID)
-	if objective == "conversions" && conversionPixelID == "" {
-		return nil, fmt.Errorf("conversion pixel ID is required for objective conversions")
+	// Validate/resolve the conversion pixel before any mutating call. Reddit
+	// requires a conversion pixel for a conversion ad group, so a missing pixel
+	// would create the campaign in Step 2 and then fail at ad-group creation,
+	// orphaning a PAUSED campaign. Reject up front for the "conversions" objective
+	// so nothing is created.
+	//
+	// conversionPixelID is left EMPTY for every non-conversion objective even if the
+	// caller supplied a value: the field is documented as ignored outside
+	// conversions, and the payloads below add conversion_pixel_id only when this is
+	// non-empty. Gating resolution on the objective (not merely on the input being
+	// non-empty) keeps a reused input carrying a stray pixel from sending an
+	// objective-inapplicable field that Reddit would reject.
+	var conversionPixelID string
+	if objective == "conversions" {
+		conversionPixelID = strings.TrimSpace(in.ConversionPixelID)
+		if conversionPixelID == "" {
+			return nil, fmt.Errorf("conversion pixel ID is required for objective conversions")
+		}
 	}
 
 	var validatedPostID string
