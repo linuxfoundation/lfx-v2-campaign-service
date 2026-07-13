@@ -91,7 +91,11 @@ type ObjectiveParams struct {
 
 // objectiveParams maps the user-facing objective to Meta Graph API v25.0
 // ODAX outcome objectives, optimization goals, and promoted-object needs.
-// Mirrors META_OBJECTIVE_PARAMS from @lfx-one/shared/constants.
+// Mirrors META_OBJECTIVE_PARAMS from @lfx-one/shared/constants, WITH ONE
+// INTENTIONAL EXCEPTION: "leads" maps to OUTCOME_LEADS/LINK_CLICKS/none here
+// rather than the shared LEAD_GENERATION/page_id, because this client builds only
+// a website-click creative and never constructs an on-Facebook instant lead form
+// (see the "leads" entry's comment and LFXV2-2665).
 var objectiveParams = map[string]ObjectiveParams{
 	"awareness": {
 		CampaignObjective:  "OUTCOME_AWARENESS",
@@ -690,16 +694,12 @@ func buildPlacementTargeting(over Placement) (map[string]any, error) {
 	pl := mergePlacements(over)
 
 	var publisherPlatforms, facebookPositions, instagramPositions, messengerPositions []string
-	hasPlatform := func(p string) bool {
-		for _, x := range publisherPlatforms {
-			if x == p {
-				return true
-			}
-		}
-		return false
-	}
+	// Track membership in a set so addPlatform is O(1) rather than a linear scan
+	// of publisherPlatforms on every call (the slice preserves insertion order).
+	seenPlatforms := make(map[string]struct{})
 	addPlatform := func(p string) {
-		if !hasPlatform(p) {
+		if _, ok := seenPlatforms[p]; !ok {
+			seenPlatforms[p] = struct{}{}
 			publisherPlatforms = append(publisherPlatforms, p)
 		}
 	}
