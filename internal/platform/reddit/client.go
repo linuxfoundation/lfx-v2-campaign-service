@@ -66,6 +66,13 @@ const (
 	// small margin so a valid-but-lifetimeless token still works without caching
 	// an already-expired entry.
 	redditFallbackTokenTTL = redditTokenExpiryBuffer + 60*time.Second
+	// maxTokenTTLSeconds caps a server-declared expires_in before it is converted
+	// from seconds to a time.Duration (int64 nanoseconds). A huge positive
+	// expires_in would overflow `time.Duration(expiresIn)*time.Second` and wrap
+	// negative, yielding a past expiry that forces a refresh on every call. 24h
+	// comfortably exceeds any real Reddit token lifetime while staying far below
+	// the ~9.2e9-second overflow point.
+	maxTokenTTLSeconds = int64(24 * 60 * 60)
 	// defaultRedditObjective is used when a campaign input omits an objective.
 	defaultRedditObjective = "conversions"
 
@@ -436,6 +443,14 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	if expiresIn <= 0 {
 		expiresIn = int64(redditFallbackTokenTTL.Seconds())
 	}
+	// Clamp an outsized expires_in before the seconds->Duration conversion:
+	// time.Duration is int64 NANOSECONDS, so expires_in beyond ~9.2e9 seconds
+	// would overflow time.Duration(expiresIn)*time.Second and wrap NEGATIVE,
+	// producing a past expiry that forces a token refresh on every call. Cap it
+	// to maxTokenTTLSeconds so `now + expiresIn*time.Second` can never overflow.
+	if expiresIn > maxTokenTTLSeconds {
+		expiresIn = maxTokenTTLSeconds
+	}
 
 	// Re-acquire the lock only to store the freshly obtained token. Touch
 	// cachedToken/tokenExpireAt exclusively under the lock to keep them
@@ -512,11 +527,16 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 		}
 
 		// A 429 with retries remaining: compute the wait and back off. The body is
-		// discarded (drained + closed) before sleeping so the connection can be
-		// reused. On the final attempt we fall through and surface the 429 as an
-		// ordinary non-2xx error below rather than looping forever.
+		// drained (to EOF, up to maxResponseBody) and then closed before sleeping
+		// so Go's transport can reuse the underlying TCP/TLS connection for the
+		// retry -- closing without draining forces a fresh connection per retry,
+		// which is exactly the wrong behavior while rate-limited. The LimitReader
+		// keeps a hostile/oversized body from being read unbounded. On the final
+		// attempt we fall through and surface the 429 as an ordinary non-2xx error
+		// below rather than looping forever.
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
 			retryAfter, ok := c.parseRetryAfter(resp)
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
 			_ = resp.Body.Close()
 			if ok {
 				// The server declared a reset time. If it exceeds our cap, sleeping
@@ -578,10 +598,21 @@ func (c *Client) parseRetryAfter(resp *http.Response) (time.Duration, bool) {
 	if v == "" {
 		return 0, false
 	}
-	// Delay-seconds form. ParseInt (not Atoi) so an overflowing value is treated
-	// as unusable rather than silently wrapping.
+	// Delay-seconds form. ParseInt (not Atoi) so a non-numeric/overflowing
+	// STRING is treated as unusable rather than silently wrapping.
 	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 		if n > 0 {
+			// Even a validly-parsed int64 seconds value can overflow when scaled
+			// to nanoseconds: time.Duration(n)*time.Second wraps NEGATIVE for n
+			// beyond ~9.2e9, which would slip past the caller's `> maxRetryWait`
+			// abort and trigger an immediate retry. Guard the conversion: any n
+			// at/above the max-wait ceiling (in seconds) already exceeds the cap,
+			// so report a duration just over maxRetryWait (usable=true) and let
+			// the caller's over-cap abort fire -- never perform the wrapping
+			// multiply.
+			if n >= int64(maxRetryWait/time.Second) {
+				return maxRetryWait + time.Second, true
+			}
 			return time.Duration(n) * time.Second, true
 		}
 		return 0, false
@@ -922,7 +953,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// surfaces as DeadlineExceeded but with a live caller ctx, and that
 			// stays a non-fatal warning like any other per-request failure.
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, fmt.Errorf("ad creation aborted: %w", ctxErr)
+				// The campaign AND ad group are already created (both PAUSED) at
+				// this point. Returning a nil result would discard both IDs,
+				// preventing cleanup/reconciliation and letting a caller retry
+				// create a duplicate campaign. Return a partial result carrying
+				// the campaign + ad-group IDs (and steps so far) ALONGSIDE the
+				// wrapped ctx error, mirroring the ad-group-failure paths above.
+				// partialResult() predates ad-group creation, so extend it with the
+				// ad-group fields captured in scope here.
+				pr := partialResult()
+				pr.AdGroupName = adGroupName
+				pr.AdGroupID = adGroupID
+				return pr, fmt.Errorf("ad creation aborted: %w", ctxErr)
 			}
 			steps = append(steps, fmt.Sprintf("Ad creation failed: %s -- add ad manually in Reddit Ads Manager", err.Error()))
 		} else {

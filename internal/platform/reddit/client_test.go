@@ -2186,3 +2186,165 @@ func TestTruncate(t *testing.T) {
 		}
 	}
 }
+
+// TestTokenRefresh_HugeExpiresInDoesNotOverflow verifies that a very large
+// positive expires_in is clamped BEFORE the seconds->nanoseconds conversion, so
+// the cached expiry lands in the FUTURE rather than overflowing time.Duration and
+// wrapping into the past. Without the clamp, `time.Duration(expiresIn)*time.Second`
+// wraps negative for expiresIn beyond ~9.2e9 seconds, producing a pre-expired
+// token and forcing a fresh refresh on every call.
+func TestTokenRefresh_HugeExpiresInDoesNotOverflow(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		// Far beyond the ~9.2e9-second overflow point for int64 nanoseconds.
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": int64(1) << 60})
+	}))
+	defer srv.Close()
+
+	base := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return base }
+
+	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL), WithNowFunc(now))
+	tok, err := c.refreshToken(context.Background())
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if tok != "tok" {
+		t.Fatalf("token = %q, want tok", tok)
+	}
+
+	// The clamped expiry must be strictly in the future (not wrapped negative).
+	c.mu.Lock()
+	expiry := c.tokenExpireAt
+	c.mu.Unlock()
+	if !expiry.After(base) {
+		t.Fatalf("tokenExpireAt = %v is not after now = %v; a huge expires_in overflowed to the past", expiry, base)
+	}
+
+	// A second call within the (clamped, still-future) window must reuse the
+	// cached token rather than refreshing on every call.
+	if _, err := c.refreshToken(context.Background()); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Errorf("token calls = %d, want 1 (huge expires_in must not force a refresh every call)", calls)
+	}
+}
+
+// TestParseRetryAfter_HugeSecondsDoesNotWrap verifies the seconds->Duration
+// overflow guard: a validly-parsed but astronomically large Retry-After seconds
+// value must NOT wrap negative (which would slip past the caller's over-cap
+// abort). It is instead reported as usable but over the cap, so request()'s
+// `> maxRetryWait` abort fires. A normal in-range value still returns its exact
+// duration.
+func TestParseRetryAfter_HugeSecondsDoesNotWrap(t *testing.T) {
+	fixed := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	c := NewClient(testCreds, testAccount, WithNowFunc(func() time.Time { return fixed }))
+
+	mk := func(v string) *http.Response {
+		h := http.Header{}
+		h.Set("Retry-After", v)
+		return &http.Response{Header: h}
+	}
+
+	// A huge positive integer that would overflow time.Duration when multiplied
+	// by time.Second. Must be reported usable (true) and strictly positive and
+	// strictly greater than maxRetryWait, never a wrapped negative value.
+	d, ok := c.parseRetryAfter(mk("99999999999"))
+	if !ok {
+		t.Fatalf("huge Retry-After: ok = false, want true (usable, over-cap)")
+	}
+	if d <= 0 {
+		t.Fatalf("huge Retry-After: d = %v wrapped non-positive; overflow not guarded", d)
+	}
+	if d <= maxRetryWait {
+		t.Errorf("huge Retry-After: d = %v, want > maxRetryWait (%v) so the caller aborts", d, maxRetryWait)
+	}
+
+	// A normal in-range value still parses to its exact duration.
+	if d, ok := c.parseRetryAfter(mk("5")); !ok || d != 5*time.Second {
+		t.Errorf("normal Retry-After: got (%v, %v), want (5s, true)", d, ok)
+	}
+}
+
+// TestCreateCampaign_CtxCancelAfterAdGroupReturnsPartial verifies FINDING 4: a
+// context cancellation that lands AFTER both the campaign and ad group are created
+// must NOT discard their IDs. CreateCampaign returns an error wrapping
+// context.Canceled AND a non-nil *CampaignResult carrying the campaign + ad-group
+// IDs (plus steps), so the orphan is identifiable for cleanup/reconciliation and a
+// caller retry does not blindly create a duplicate campaign.
+func TestCreateCampaign_CtxCancelAfterAdGroupReturnsPartial(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_partial"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_partial"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/ads"):
+			// Cancel the caller ctx, then fail the ad POST. On return, ctx.Err()
+			// is set, exercising the post-ad-group ctx-cancel path.
+			cancel()
+			http.Error(w, "cancelled", http.StatusBadGateway)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	res, err := c.CreateCampaign(ctx, CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+		PostURL:         "https://www.reddit.com/r/opensource/comments/abc123/great_post/",
+	})
+
+	if err == nil {
+		t.Fatalf("expected an error on ctx-cancel after ad-group creation, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error must wrap context.Canceled; got: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected a non-nil partial *CampaignResult carrying the created IDs, got nil")
+	}
+	if res.CampaignID != "camp_partial" {
+		t.Errorf("partial result CampaignID = %q, want camp_partial", res.CampaignID)
+	}
+	if res.AdGroupID != "ag_partial" {
+		t.Errorf("partial result AdGroupID = %q, want ag_partial", res.AdGroupID)
+	}
+	if res.CampaignName == "" {
+		t.Errorf("partial result CampaignName must be set")
+	}
+	if res.RedditURL == "" {
+		t.Errorf("partial result RedditURL must be set")
+	}
+	if len(res.Steps) == 0 {
+		t.Errorf("partial result must retain the steps completed so far")
+	}
+}
