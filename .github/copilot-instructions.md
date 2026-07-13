@@ -1,8 +1,9 @@
 # Copilot instructions — LFX V2 Campaign Service
 
-Backend for LFX Self Serve marketing campaign operations: a **Go 1.25 / Goa**
-HTTP API deployed via Helm, brokering between the LFX UI and paid advertising
+Backend for LFX Self Serve marketing campaign operations: a **Go / Goa** HTTP
+API deployed via Helm, brokering between the LFX UI and paid advertising
 platforms. Module path: `github.com/linuxfoundation/lfx-v2-campaign-service`.
+Treat `go.mod` as the source of truth for the Go version.
 
 Use these instructions when reviewing pull requests and answering questions
 about this repository.
@@ -45,7 +46,8 @@ docs it links (e.g. `architecture/overview.md`, `code/*.md`,
 - **Generated code is off-limits by hand.** Everything under `gen/` is
   produced by Goa from the `design/` DSL. Review the `design/` change and
   confirm `make apigen` was re-run; flag edits made directly to `gen/`.
-- **License headers required.** Every Go source file starts with:
+- **License headers required.** Every non-generated Go source file starts
+  with:
 
   ```go
   // Copyright The Linux Foundation and each contributor to LFX.
