@@ -301,7 +301,11 @@ type apiResponse struct {
 }
 
 // maxListPages caps how many pages a name-lookup will page through, a safety
-// bound against an unexpectedly huge account (200 items/page × 25 = 5000).
+// bound against an unexpectedly huge account. The find-by-name callers request
+// count=1000 (the X Ads v12 list max page size), so 25 pages cover up to
+// 25 × 1000 = 25,000 records — comfortably beyond the ~8,000 active campaigns
+// an X account can hold. Hitting the cap with a cursor still outstanding is
+// treated as inconclusive (an error), never as "not found".
 const maxListPages = 25
 
 func (c *Client) accountURL() string {
@@ -558,7 +562,11 @@ type campaignElement struct {
 // failure (failed GET or undecodable response) — the caller must abort rather
 // than treat it as "not found" and create a duplicate.
 func (c *Client) findCampaignByName(ctx context.Context, name string) (string, error) {
-	return c.findByName(ctx, "campaigns?with_deleted=false", name)
+	// count=1000 requests the max page size (X Ads v12 list count: default 200,
+	// max 1000) so a name lookup covers a realistic large account in far fewer
+	// pages. count is an independent page-size param from cursor, so it takes
+	// effect on every page (not the LinkedIn cursor-contract trap).
+	return c.findByName(ctx, "campaigns?with_deleted=false&count=1000", name)
 }
 
 // findLineItemByName returns the id of a line item matching name within a
@@ -569,7 +577,9 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 	// campaign_id (singular) is the CREATE parameter. Using the singular key here
 	// would leave the lookup unscoped and could reuse a same-named line item from
 	// another campaign.
-	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false", name)
+	// count=1000 requests the max page size (X Ads v12 list count: default 200,
+	// max 1000); see findCampaignByName.
+	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count=1000", name)
 }
 
 // findByName pages through a cursor-paginated X Ads list endpoint (campaigns /

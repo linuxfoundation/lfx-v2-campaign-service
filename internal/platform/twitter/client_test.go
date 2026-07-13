@@ -1087,18 +1087,28 @@ func TestCreateCampaignIdempotent(t *testing.T) {
 }
 
 // TestFindByNamePagination verifies name lookups follow next_cursor so a match
-// on the second page is found (idempotency must not break past page 1).
+// on a deep page (page 3 here) is found (idempotency must not break past page 1),
+// and that every list request carries count=1000 — the X Ads v12 max page size —
+// so the lookup covers a realistic large account within the maxListPages cap.
 func TestFindByNamePagination(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.URL.Query().Get("cursor") == "" {
+		// Every list request must request the max page size.
+		if got := r.URL.Query().Get("count"); got != "1000" {
+			t.Errorf("list request must carry count=1000, got count=%q (query %v)", got, r.URL.Query())
+		}
+		switch r.URL.Query().Get("cursor") {
+		case "":
 			// page 1: no match, hand back a cursor.
 			_, _ = w.Write([]byte(`{"data":[{"id":"c1","name":"other"}],"next_cursor":"CURSOR2"}`))
-			return
+		case "CURSOR2":
+			// page 2: still no match, another cursor.
+			_, _ = w.Write([]byte(`{"data":[{"id":"c2","name":"still-other"}],"next_cursor":"CURSOR3"}`))
+		default:
+			// page 3: the match, no further cursor.
+			_, _ = w.Write([]byte(`{"data":[{"id":"c3","name":"target"}]}`))
 		}
-		// page 2: the match, no further cursor.
-		_, _ = w.Write([]byte(`{"data":[{"id":"c2","name":"target"}]}`))
 	}))
 	defer srv.Close()
 
@@ -1115,11 +1125,84 @@ func TestFindByNamePagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("findCampaignByName: %v", err)
 	}
-	if id != "c2" {
-		t.Errorf("findCampaignByName across pages = %q, want c2", id)
+	if id != "c3" {
+		t.Errorf("findCampaignByName across pages = %q, want c3", id)
 	}
-	if calls != 2 {
-		t.Errorf("expected 2 pages fetched, got %d", calls)
+	if calls != 3 {
+		t.Errorf("expected 3 pages fetched, got %d", calls)
+	}
+}
+
+// TestFindByNameLineItemListSendsCount verifies the line-item lookup path also
+// requests the max page size (count=1000), alongside its campaign_ids scope.
+func TestFindByNameLineItemListSendsCount(t *testing.T) {
+	var sawCount, sawCampaignIDs bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("count") == "1000" {
+			sawCount = true
+		}
+		if q.Get("campaign_ids") != "" {
+			sawCampaignIDs = true
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	if _, err := c.findLineItemByName(context.Background(), "camp1", "target"); err != nil {
+		t.Fatalf("findLineItemByName: %v", err)
+	}
+	if !sawCount {
+		t.Error("line-item lookup must send count=1000")
+	}
+	if !sawCampaignIDs {
+		t.Error("line-item lookup must send campaign_ids scope")
+	}
+}
+
+// TestFindByNameInconclusiveCapIsError verifies that when the page cap is
+// reached with a next_cursor still outstanding (the name was never seen but more
+// results remain), findByName returns an ERROR — never ("", nil). Treating an
+// exhausted-but-inconclusive walk as "not found" would let the caller create a
+// duplicate of an element that may exist further on. This behavior must be
+// preserved by the count/page-size change.
+func TestFindByNameInconclusiveCapIsError(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		// Never match, and ALWAYS return a next_cursor so the walk can never
+		// conclude "not found" — it must hit the maxListPages cap.
+		_, _ = w.Write([]byte(`{"data":[{"id":"x","name":"never-matches"}],"next_cursor":"MORE"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	id, err := c.findCampaignByName(context.Background(), "target")
+	if err == nil {
+		t.Fatalf("expected an inconclusive-cap error, got id=%q, nil error", id)
+	}
+	if id != "" {
+		t.Errorf("expected empty id on inconclusive cap, got %q", id)
+	}
+	if calls != maxListPages {
+		t.Errorf("expected the walk to fetch exactly maxListPages=%d pages, got %d", maxListPages, calls)
 	}
 }
 
