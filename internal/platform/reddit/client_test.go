@@ -2356,3 +2356,25 @@ func TestCreateCampaign_CtxCancelAfterAdGroupReturnsPartial(t *testing.T) {
 		t.Errorf("partial result must retain the steps completed so far")
 	}
 }
+
+// TestCreateCampaign_EmptyEventNameRejected verifies an empty/whitespace
+// EventName is rejected before any network call, so a campaign with an empty
+// name segment can't be created.
+func TestCreateCampaign_EmptyEventNameRejected(t *testing.T) {
+	c, _, cleanup := newBodyCaptureServers(t)
+	defer cleanup()
+	for _, ev := range []string{"", "   ", "\t\n"} {
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:       ev,
+			RegistrationURL: "https://example.com/reg",
+			BudgetUSD:       100,
+			StartDate:       "2026-09-01",
+			EndDate:         "2026-09-10",
+			GeoTargets:      []string{"us"},
+			Objective:       "traffic",
+		})
+		if err == nil {
+			t.Errorf("EventName %q: expected rejection, got nil", ev)
+		}
+	}
+}

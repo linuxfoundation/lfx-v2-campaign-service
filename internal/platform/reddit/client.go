@@ -668,6 +668,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var steps []string
 
 	// Validation.
+	// EventName is required by the campaign-create contract and feeds the campaign
+	// / ad-group / ad names + attribution. Reject an empty/whitespace value up
+	// front (before any mutating call) so it can't create paid resources with an
+	// empty name segment. Mirrors the meta/twitter clients.
+	if strings.TrimSpace(in.EventName) == "" {
+		return nil, fmt.Errorf("event name is required")
+	}
 	switch {
 	case math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0:
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
