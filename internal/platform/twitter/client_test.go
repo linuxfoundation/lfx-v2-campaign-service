@@ -2456,6 +2456,9 @@ func TestNormalizeSigningURL(t *testing.T) {
 		{"non-default port preserved", "https://host:8080/p", "https://host:8080/p"},
 		{"query excluded from base string", "https://Host:443/p?a=1&b=2", "https://host/p"},
 		{"http non-default port preserved", "HTTP://HOST:8080/x/y", "http://host:8080/x/y"},
+		{"escaped path preserved (not decoded)", "https://host/proxy%2Ftwitter/campaigns", "https://host/proxy%2Ftwitter/campaigns"},
+		{"IPv6 literal re-bracketed with port", "http://[::1]:8080/p", "http://[::1]:8080/p"},
+		{"IPv6 literal re-bracketed, default port dropped", "https://[2001:db8::1]:443/p", "https://[2001:db8::1]/p"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

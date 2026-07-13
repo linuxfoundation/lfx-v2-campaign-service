@@ -293,12 +293,23 @@ func (c *Client) buildOAuthHeader(method, rawURL string, bodyParams map[string]s
 func normalizeSigningURL(u *url.URL) string {
 	scheme := strings.ToLower(u.Scheme)
 	host := strings.ToLower(u.Hostname())
+	// Re-bracket an IPv6 literal: Hostname() strips the brackets, but a URI
+	// authority requires them (e.g. "[::1]"), otherwise the host and any ":port"
+	// below would be ambiguous and the base-string authority wouldn't match the
+	// request URI.
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
 	port := u.Port()
 	// Omit the port when it matches the scheme default; keep it otherwise.
 	if port != "" && (scheme != "http" || port != "80") && (scheme != "https" || port != "443") {
 		host = host + ":" + port
 	}
-	return scheme + "://" + host + u.Path
+	// Use EscapedPath(), not the decoded u.Path: the request is sent with the
+	// escaped path, so signing the decoded form (e.g. "/proxy/twitter" for a base
+	// path "/proxy%2Ftwitter") would produce a signature the verifier — which
+	// reconstructs the escaped request URI — rejects.
+	return scheme + "://" + host + u.EscapedPath()
 }
 
 func defaultNonce() string {
