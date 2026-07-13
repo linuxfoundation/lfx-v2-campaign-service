@@ -85,13 +85,17 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	)
 	svcsvr.Mount(mux, server)
 
-	// Mount the connection routes when the connection service is wired (it is
-	// wired even without a database — with a nil repo — so its routes return the
-	// typed 503 rather than a bare 404).
-	if connEndpoints != nil {
-		connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
-		connsvcsvr.Mount(mux, connServer)
+	// Mount the connection routes unconditionally. connEndpoints is always
+	// non-nil (StartServer constructs it and fails loudly if the service is
+	// mis-wired), and the connection service is wired even without a database
+	// (with a nil repo) so its routes return the typed 503 rather than a bare
+	// 404. A nil here would be a programmer error, so fail loudly rather than
+	// silently skipping the mount and serving 404s.
+	if connEndpoints == nil {
+		return fmt.Errorf("handleHTTPServer: connEndpoints is nil (connection routes would be unmounted)")
 	}
+	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	connsvcsvr.Mount(mux, connServer)
 
 	var handler http.Handler = mux
 	handler = middleware.RequestIDMiddleware()(handler)
