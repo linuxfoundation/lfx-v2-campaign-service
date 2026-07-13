@@ -47,13 +47,17 @@ ACCOUNT's own currency — the client does NO foreign-exchange conversion, so th
 caller must pass an amount already in that currency — and it is bounded
 (rejecting rounds-to-zero and overflow-scale values) then converted to minor
 units by multiplying by the account's Meta `currency_offset`
-(`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. When unset (zero)
-the offset DEFAULTS to `100` — correct for USD/EUR/GBP and most currencies — and
-the assumption is surfaced as a result step; it is not hard-required because the
-persisted Meta connection carries only account/page/app IDs (no `currency_offset`),
-so requiring it would break every stored-connection dispatch. A zero-decimal
-currency account (JPY/KRW/CLP) MUST set it to `1` or its budget is over-sent 100×;
-a negative offset is rejected as malformed. `CampaignInput.Project` is
+(`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. The offset is
+never guessed: when `AccountConfig.CurrencyOffset` is unset (zero) — the normal
+case for a dispatch built from a persisted connection, which carries only
+account/page/app IDs — CreateCampaign fetches `currency_offset` (and `currency`,
+for diagnostics) from the ad-account object during the account preflight, BEFORE
+any mutating call, and fails closed if the preflight cannot determine a usable
+offset. Silently defaulting to 100 would encode a zero-decimal-currency
+(JPY/KRW/CLP) budget 100× too high, and a warning after resource creation cannot
+prevent that budget from being activated. A caller MAY set a positive
+`CurrencyOffset` explicitly to bypass the preflight fetch; a negative offset is
+rejected as malformed. `CampaignInput.Project` is
 also required (rejected up front if empty/whitespace): the campaign name's
 Project segment must be the caller-supplied canonical LFX project slug, so the
 client never silently substitutes a placeholder that could mis-attribute a
@@ -61,7 +65,7 @@ campaign to the wrong project.
 Dates are parsed strictly (impossible calendar dates rejected) and a
 past start date is refused, with a same-day ad-set `start_time` nudged to
 now+buffer. `doRequest` retries HTTP 429 and Graph rate-limit envelope codes
-(4/17/32/341/613) with bounded backoff, draining the body before close, and a
+(4/17/32/341/613/80004) with bounded backoff, draining the body before close, and a
 truncated response body is surfaced rather than reported as a false success.
 
 See [internal/platform/meta](../../../internal/platform/meta).

@@ -114,19 +114,24 @@ var objectiveParams = map[string]ObjectiveParams{
 	},
 	// "leads" INTENTIONALLY DIVERGES from the @lfx-one/shared TS contract
 	// (campaign.constants.ts META_OBJECTIVE_PARAMS), which maps leads ->
-	// LEAD_GENERATION with a page_id promoted object. That mapping assumes an
-	// on-Facebook instant lead form: LEAD_GENERATION optimization requires the ad's
-	// creative to reference a lead_gen_form_id (an instant form). This Go client
-	// only builds a website-click creative (object_story_spec.link_data pointing at
-	// the registration URL — see createVariantAd); it never constructs an instant
-	// lead form. Adopting LEAD_GENERATION here would therefore FAIL at ad-set/ad
-	// creation time — AFTER the campaign (a paid resource) already exists — because
-	// no lead_gen_form_id is supplied. To stay fail-safe (never create a paid
-	// resource that can't run), leads is implemented as a WEBSITE-LEADS campaign:
-	// OUTCOME_LEADS optimizing for LINK_CLICKS to the registration (lead-capture)
-	// URL, with no promoted object. That is a consistent, spendable configuration
-	// end-to-end. Full LEAD_GENERATION / instant-form parity with the TS contract
-	// is deferred (LFXV2-2665) until this client can build an instant lead form.
+	// LEAD_GENERATION with a page_id promoted object. This is a deliberate,
+	// documented divergence — NOT an oversight or a bug. That shared mapping assumes
+	// an on-Facebook instant lead form: LEAD_GENERATION optimization requires the
+	// ad's creative to reference a lead_gen_form_id (an instant form). This Go
+	// client only builds a website-click creative (object_story_spec.link_data
+	// pointing at the registration URL — see createVariantAd); it never constructs
+	// an instant lead form. Adopting LEAD_GENERATION here would therefore FAIL at
+	// ad-set/ad creation time — AFTER the campaign (a paid resource) already exists —
+	// because no lead_gen_form_id is supplied.
+	//
+	// Instant-form / lead-form creative support is INTENTIONALLY OUT OF SCOPE for
+	// this PR and is tracked as a follow-up (LFXV2-2665). Until that lands, and to
+	// stay fail-safe (never create a paid resource that can't run), leads is
+	// deliberately implemented as a WEBSITE-LEADS campaign: OUTCOME_LEADS
+	// optimizing for LINK_CLICKS to the registration (lead-capture) URL, with no
+	// promoted object. That is a consistent, spendable configuration end-to-end.
+	// Full LEAD_GENERATION / instant-form parity with the shared TS contract is
+	// deferred to the LFXV2-2665 follow-up.
 	"leads": {
 		CampaignObjective:  "OUTCOME_LEADS",
 		OptimizationGoal:   "LINK_CLICKS",
@@ -228,21 +233,26 @@ type AccountConfig struct {
 	PageID string
 	// Label is an optional human-readable account label.
 	Label string
-	// CurrencyOffset is the ad account's Meta currency_offset: the factor that
-	// converts a whole-currency-unit budget into the minor units Meta expects.
-	// Meta budgets are ALWAYS expressed in minor units scaled by the ACCOUNT's
-	// currency_offset, which is NOT universally 100 — zero-decimal currencies such
-	// as JPY, KRW, and CLP use an offset of 1 (no minor unit), while most (USD,
-	// EUR, GBP) use 100. The client cannot read the account currency itself: the
-	// account-verify call fetches only name/account_status, not currency.
+	// CurrencyOffset is an OPTIONAL override of the ad account's Meta
+	// currency_offset: the factor that converts a whole-currency-unit budget into
+	// the minor units Meta expects. Meta budgets are ALWAYS expressed in minor
+	// units scaled by the ACCOUNT's currency_offset, which is NOT universally 100 —
+	// zero-decimal currencies such as JPY, KRW, and CLP use an offset of 1 (no
+	// minor unit), while most (USD, EUR, GBP) use 100.
 	//
-	// This field is REQUIRED: CreateCampaign fails closed on an unset (zero)
-	// offset rather than assuming 100, because a silent default would encode a
-	// zero-decimal-currency (JPY/KRW/CLP) budget 100× too high and a warning
-	// after resource creation cannot prevent that budget from being activated.
-	// The caller that builds AccountConfig from a persisted connection must
-	// supply the account's currency_offset explicitly (100 for most currencies,
-	// 1 for zero-decimal). A negative value is rejected as malformed.
+	// When left unset (zero), CreateCampaign fetches the offset from Meta during
+	// the account preflight (GET on the ad-account object with
+	// fields=currency_offset,currency) BEFORE any mutating call, and uses the
+	// returned value to encode the budget. If the preflight cannot determine a
+	// usable offset, CreateCampaign fails BEFORE mutation rather than guessing 100
+	// — a silent default would encode a zero-decimal-currency (JPY/KRW/CLP) budget
+	// 100× too high, and a warning after resource creation cannot prevent that
+	// budget from being activated.
+	//
+	// A caller MAY set this field to a positive value to bypass the preflight
+	// fetch (e.g. when the offset is already known from a persisted connection);
+	// the explicit value then takes precedence. A negative value is rejected as
+	// malformed.
 	CurrencyOffset int64
 }
 
@@ -313,10 +323,11 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
 	account.AccountID = strings.TrimSpace(account.AccountID)
 	account.PageID = strings.TrimSpace(account.PageID)
-	// NOTE: CurrencyOffset is NOT coerced here; CreateCampaign rejects an unset
-	// (zero) or negative offset at budget-conversion time (fail closed — see
-	// AccountConfig.CurrencyOffset). It is not defaulted in NewClient so the zero
-	// value remains distinguishable as "unset".
+	// NOTE: CurrencyOffset is NOT coerced here. It is not defaulted in NewClient so
+	// the zero value remains distinguishable as "unset": when unset, CreateCampaign
+	// fetches the account's currency_offset from Meta during the account preflight
+	// (see AccountConfig.CurrencyOffset). A negative offset is rejected as
+	// malformed at budget-conversion time.
 	c := &Client{
 		creds:          creds,
 		account:        account,
@@ -342,6 +353,19 @@ type createResponse struct {
 	ID string `json:"id"`
 }
 
+// accountPreflight models the fields read from the ad-account object during the
+// account preflight (GET /act_<id>?fields=name,account_status,currency_offset,currency).
+// currency_offset is the account's minor-unit multiplier (100 for USD/EUR/GBP, 1
+// for zero-decimal currencies like JPY/KRW/CLP); it is used to encode the budget
+// into Meta minor units before any mutating call. Currency is carried only for
+// diagnostics in error messages.
+type accountPreflight struct {
+	Name           string `json:"name"`
+	AccountStatus  int    `json:"account_status"`
+	CurrencyOffset int64  `json:"currency_offset"`
+	Currency       string `json:"currency"`
+}
+
 // graphErrorEnvelope models the Graph API error body: {"error": {...}}.
 type graphErrorEnvelope struct {
 	Error *graphError `json:"error"`
@@ -358,8 +382,9 @@ type graphError struct {
 // throttling, which Meta commonly returns as an HTTP 400 (not a 429): 4 =
 // application request-limit reached, 17 = user request-limit reached, 32 =
 // page-level throttling, 341 = temporary app-level limit, 613 = ad-account
-// rate limit. These are retried with the same backoff as a 429.
-var graphRateLimitCodes = map[int]bool{4: true, 17: true, 32: true, 341: true, 613: true}
+// rate limit, 80004 = ad-account/business-use-case throttling (Marketing API).
+// These are retried with the same backoff as a 429.
+var graphRateLimitCodes = map[int]bool{4: true, 17: true, 32: true, 341: true, 613: true, 80004: true}
 
 // APIError is returned when the Meta API responds with a non-2xx status.
 type APIError struct {
@@ -769,11 +794,16 @@ func objectiveLabel(objective string) string {
 // placeholder (e.g. "tlf") for an omitted project could mis-attribute a
 // non-Linux-Foundation campaign to the wrong project.
 func buildCampaignName(in CampaignInput, geoTargets []string) string {
-	event := strings.ReplaceAll(in.EventName, "|", "-")
+	// Segments are trimmed as well as pipe-stripped: validation TrimSpaces its
+	// checks, so " cncf " passes validation — but the attribution pipeline joins
+	// the Project segment exactly, and a padded slug would not match.
+	event := strings.ReplaceAll(strings.TrimSpace(in.EventName), "|", "-")
 	region := resolveRegion(geoTargets)
 	objective := objectiveLabel(defaultObjective(in.Objective))
-	project := strings.ReplaceAll(in.Project, "|", "-")
-	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU", event, region, objective, project)
+	project := strings.ReplaceAll(strings.TrimSpace(in.Project), "|", "-")
+	// The Date segment (campaign start, YYYY-MM-DD) is the 9th segment of the
+	// naming convention (docs/api-catalog.md "Campaign Naming Convention").
+	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU | %s", event, region, objective, project, in.StartDate)
 }
 
 // buildUTMURL mirrors buildMetaUtmUrl.
@@ -995,31 +1025,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if in.Budget > maxBudget {
 		return nil, fmt.Errorf("budget too large: must be at most %.0f", maxBudget)
 	}
-	// Convert whole account-currency units to Meta minor units using the ACCOUNT's
-	// currency_offset (NOT an FX conversion — the caller's amount is already in
-	// the account's currency). Most currencies use 100; zero-decimal currencies
-	// (JPY/KRW/CLP) use 1.
-	//
-	// The offset MUST be set explicitly. Defaulting an unset offset to 100 was
-	// considered and rejected: for a zero-decimal-currency account (JPY/KRW/CLP)
-	// it silently encodes the budget 100× too high, and a warning step returned
-	// AFTER the resources are created cannot prevent that budget from later being
-	// activated. Failing closed costs a one-time configuration step for
-	// decimal-currency accounts; defaulting risks a 100× over-spend. The caller
-	// that builds AccountConfig from a persisted connection must supply the
-	// account's currency_offset (100 for most currencies, 1 for zero-decimal).
-	offset := c.account.CurrencyOffset
-	if offset < 0 {
+	// A negative explicit offset is malformed and can be rejected here, before any
+	// network call. The unset (zero) case is resolved from the account preflight
+	// below (Step 1); the minor-unit conversion happens there, once the offset is
+	// known but still BEFORE any mutating call.
+	if c.account.CurrencyOffset < 0 {
 		return nil, fmt.Errorf("meta: AccountConfig.CurrencyOffset must not be negative (100 for most currencies, 1 for zero-decimal like JPY)")
-	}
-	if offset == 0 {
-		return nil, fmt.Errorf("meta: AccountConfig.CurrencyOffset is required (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP): refusing to assume a default that could encode a zero-decimal budget 100x too high")
-	}
-	// Reject budgets that round to zero minor units before any API call: a
-	// zero/invalid budget would otherwise be sent to Meta and create a bad ad set.
-	budgetMinor := int64(math.Round(in.Budget * float64(offset)))
-	if budgetMinor < 1 {
-		return nil, fmt.Errorf("budget too small: must be at least one minor currency unit (offset %d)", offset)
 	}
 
 	if !dateRE.MatchString(in.StartDate) {
@@ -1102,20 +1113,57 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		label = accountID
 	}
 
-	// Step 1: Verify account access (non-fatal, mirrors TS try/catch). A benign
-	// verification failure stays a warning, but a genuine CALLER-context
-	// cancellation/deadline must short-circuit here — otherwise, for inputs that go
-	// on to fail the geo checks, CreateCampaign would return that geo-validation
-	// error and mask the fact that the caller cancelled. Distinguish the caller ctx
-	// (ctx.Err() != nil) from the client's own http.Client.Timeout, which surfaces
-	// as a DeadlineExceeded-wrapped error while the caller ctx is still live.
-	if err := c.doRequest(ctx, http.MethodGet, "/"+accountID+"?fields=name,account_status", nil, &map[string]any{}); err != nil {
+	// Step 1: Account preflight (GET the ad-account object). This both verifies
+	// access and fetches the account's currency_offset — the factor used to encode
+	// the budget into Meta minor units (see below). It runs BEFORE any mutating
+	// call, so a missing/undeterminable offset fails before a paid resource exists.
+	//
+	// A genuine CALLER-context cancellation/deadline must short-circuit here —
+	// otherwise, for inputs that go on to fail the geo checks, CreateCampaign would
+	// return that geo-validation error and mask the fact that the caller cancelled.
+	// Distinguish the caller ctx (ctx.Err() != nil) from the client's own
+	// http.Client.Timeout, which surfaces as a DeadlineExceeded-wrapped error while
+	// the caller ctx is still live.
+	var acct accountPreflight
+	preflightErr := c.doRequest(ctx, http.MethodGet, "/"+accountID+"?fields=name,account_status,currency_offset,currency", nil, &acct)
+	if preflightErr != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("meta campaign aborted during account verification: %w", ctx.Err())
+			return nil, fmt.Errorf("meta campaign aborted during account preflight: %w", ctx.Err())
 		}
-		steps = append(steps, fmt.Sprintf("Account verification warning: %s", truncateErr(err, 300)))
+		steps = append(steps, fmt.Sprintf("Account preflight warning: %s", truncateErr(preflightErr, 300)))
 	} else {
 		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
+	}
+
+	// Resolve the currency offset used to convert the whole-currency-unit budget to
+	// Meta minor units (NOT an FX conversion — the caller's amount is already in the
+	// account's currency). Most currencies use 100; zero-decimal currencies
+	// (JPY/KRW/CLP) use 1. Precedence: an explicit AccountConfig.CurrencyOffset (>0)
+	// wins; otherwise use the value fetched from the account preflight above. If
+	// neither yields a usable (positive) offset, fail HERE — before any mutating
+	// call — rather than guessing 100, which would silently encode a zero-decimal
+	// budget 100× too high (a warning after resource creation cannot prevent that
+	// budget from being activated).
+	offset := c.account.CurrencyOffset
+	if offset == 0 {
+		if preflightErr != nil {
+			return nil, fmt.Errorf("meta: could not determine the account currency_offset because the account preflight failed (%s); set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP)", truncateErr(preflightErr, 200))
+		}
+		if acct.CurrencyOffset < 0 {
+			return nil, fmt.Errorf("meta: account preflight returned a negative currency_offset (%d) for currency %q; refusing to encode a budget with a malformed offset", acct.CurrencyOffset, acct.Currency)
+		}
+		if acct.CurrencyOffset == 0 {
+			return nil, fmt.Errorf("meta: account preflight did not return a usable currency_offset for currency %q; set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP) rather than assuming a default that could encode a zero-decimal budget 100x too high", acct.Currency)
+		}
+		offset = acct.CurrencyOffset
+	}
+
+	// Convert whole account-currency units to Meta minor units and reject budgets
+	// that round to zero minor units — all before any mutating call, so a
+	// zero/invalid budget never creates a bad ad set.
+	budgetMinor := int64(math.Round(in.Budget * float64(offset)))
+	if budgetMinor < 1 {
+		return nil, fmt.Errorf("budget too small: must be at least one minor currency unit (offset %d)", offset)
 	}
 
 	// Step 2: geo filtering + campaign creation.

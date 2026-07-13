@@ -188,13 +188,18 @@ func TestValidateRegistrationURL(t *testing.T) {
 
 func TestBuildCampaignName(t *testing.T) {
 	// The Project segment carries the canonical LFX slug (docs/api-catalog.md),
-	// so the fixture uses the canonical "cncf" rather than a display label.
+	// so the fixture uses the canonical "cncf" rather than a display label. It is
+	// padded with whitespace to prove the builder trims segments: validation
+	// TrimSpaces its checks, so " cncf " passes validation, but the attribution
+	// pipeline joins the Project segment exactly. StartDate becomes the 9th
+	// (Date) segment of the naming convention.
 	name := buildCampaignName(CampaignInput{
 		EventName: "Open|Source Summit",
-		Project:   "cncf",
+		Project:   " cncf ",
 		Objective: "leads",
+		StartDate: "2026-08-01",
 	}, []string{"DE"})
-	want := "Events | Open-Source Summit | EMEA | Leads | Intent | Social | cncf | MoFU"
+	want := "Events | Open-Source Summit | EMEA | Leads | Intent | Social | cncf | MoFU | 2026-08-01"
 	if name != want {
 		t.Errorf("campaign name = %q, want %q", name, want)
 	}
@@ -503,9 +508,11 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 // account's Meta currency_offset instead of a hardcoded ×100: a zero-decimal
 // currency (JPY, offset 1) must NOT be multiplied by 100, and an explicit offset
 // of 100 scales an account-currency amount to minor units. An UNSET (zero) offset
-// is rejected — fail closed (see TestCreateCampaignRejectsUnsetCurrencyOffset);
-// a NEGATIVE offset is rejected (see
-// TestCreateCampaignRejectsNegativeCurrencyOffset).
+// is fetched from the account preflight instead (see
+// TestCreateCampaignUsesPreflightCurrencyOffset), and rejected before mutation
+// when the preflight cannot supply it (see
+// TestCreateCampaignRejectsUnsetOffsetWhenPreflightOmitsIt); a NEGATIVE offset is
+// rejected (see TestCreateCampaignRejectsNegativeCurrencyOffset).
 func TestCreateCampaignCurrencyOffset(t *testing.T) {
 	newSrv := func(cap *bodyCapture) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -584,7 +591,8 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 
 // TestCreateCampaignRejectsNegativeCurrencyOffset verifies a NEGATIVE offset is
 // rejected before any mutating call (it's malformed). An unset (zero) offset is
-// likewise rejected — see TestCreateCampaignRejectsUnsetCurrencyOffset.
+// resolved from the account preflight — see
+// TestCreateCampaignUsesPreflightCurrencyOffset.
 func TestCreateCampaignRejectsNegativeCurrencyOffset(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
@@ -601,16 +609,18 @@ func TestCreateCampaignRejectsNegativeCurrencyOffset(t *testing.T) {
 	}
 }
 
-// TestCreateCampaignRejectsUnsetCurrencyOffset verifies an unset (zero) offset
-// FAILS CLOSED before any mutating call. Defaulting to 100 would silently encode
-// a zero-decimal-currency (JPY/KRW/CLP) budget 100× too high, and a warning step
-// returned after resource creation cannot prevent that budget from being
-// activated — so the client refuses to guess.
-func TestCreateCampaignRejectsUnsetCurrencyOffset(t *testing.T) {
+// TestCreateCampaignRejectsUnsetOffsetWhenPreflightOmitsIt verifies that when
+// CurrencyOffset is unset (0) AND the account preflight succeeds but does NOT
+// return a usable currency_offset, CreateCampaign fails BEFORE any mutating call
+// rather than guessing 100. Defaulting to 100 would silently encode a zero-decimal
+// -currency (JPY/KRW/CLP) budget 100× too high, and a warning step after resource
+// creation cannot prevent that budget from being activated. noPostServer returns
+// {"name":"x"} — no currency_offset field — so the offset resolves to 0.
+func TestCreateCampaignRejectsUnsetOffsetWhenPreflightOmitsIt(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
 
-	// CurrencyOffset omitted (0).
+	// CurrencyOffset omitted (0); preflight body carries no currency_offset.
 	c := NewClient(Credentials{AccessToken: "t"},
 		AccountConfig{AccountID: "act_1", PageID: "p"},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
@@ -619,8 +629,142 @@ func TestCreateCampaignRejectsUnsetCurrencyOffset(t *testing.T) {
 		GeoTargets: []string{"US"}, Budget: 5, StartDate: "2026-08-01", EndDate: "2026-08-31",
 		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "CurrencyOffset is required") {
-		t.Fatalf("err = %v, want it to reject an unset CurrencyOffset (fail closed)", err)
+	if err == nil || !strings.Contains(err.Error(), "did not return a usable currency_offset") {
+		t.Fatalf("err = %v, want it to reject an undeterminable offset before mutation", err)
+	}
+}
+
+// TestCreateCampaignRejectsUnsetOffsetWhenPreflightFails verifies that when
+// CurrencyOffset is unset (0) AND the account preflight FAILS, CreateCampaign
+// fails BEFORE any mutating call (no POST) rather than guessing 100 — the offset
+// cannot be determined, so encoding a budget would be unsafe.
+func TestCreateCampaignRejectsUnsetOffsetWhenPreflightFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("unexpected POST to %s: offset resolution should fail first", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		// Preflight GET fails.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"message":"account lookup failed"}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"},
+		AccountConfig{AccountID: "act_1", PageID: "p"},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 5, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "could not determine the account currency_offset") {
+		t.Fatalf("err = %v, want it to reject an undeterminable offset (preflight failed) before mutation", err)
+	}
+}
+
+// TestCreateCampaignUsesPreflightCurrencyOffset verifies that when CurrencyOffset
+// is unset (0), the offset FETCHED from the account preflight is used to encode
+// the budget — and, crucially, a zero-decimal currency (JPY, offset 1) does NOT
+// get multiplied by 100. With offset 1, a ¥5000 budget stays 5000 minor units.
+func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
+	cases := []struct {
+		name      string
+		offset    int64
+		budget    float64
+		wantMinor float64
+	}{
+		{"jpy preflight offset 1 does not multiply by 100", 1, 5000, 5000},
+		{"usd preflight offset 100 scales x100", 100, 500, 50000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			adsetCap := newBodyCapture()
+			offset := tc.offset
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet:
+					// Preflight returns the account currency_offset.
+					_, _ = io.WriteString(w, `{"name":"x","account_status":1,"currency_offset":`+strconv.FormatInt(offset, 10)+`,"currency":"JPY"}`)
+				case strings.HasSuffix(r.URL.Path, "/campaigns"):
+					_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+				case strings.HasSuffix(r.URL.Path, "/adsets"):
+					adsetCap.set(decodeBody(t, r))
+					_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+				case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+					_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+				case strings.HasSuffix(r.URL.Path, "/ads"):
+					_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			// CurrencyOffset intentionally omitted (0): must be fetched from preflight.
+			c := NewClient(Credentials{AccessToken: "t"},
+				AccountConfig{AccountID: "act_1", PageID: "p"},
+				WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName: "E", Project: "tlf", Objective: "traffic",
+				RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+				Budget: tc.budget, StartDate: "2026-08-01", EndDate: "2026-08-31",
+				Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+			}); err != nil {
+				t.Fatalf("CreateCampaign error: %v", err)
+			}
+			if got := adsetCap.get()["daily_budget"]; got != tc.wantMinor {
+				t.Errorf("daily_budget = %v, want %v (preflight offset %d)", got, tc.wantMinor, tc.offset)
+			}
+		})
+	}
+}
+
+// TestCreateCampaignExplicitOffsetBypassesPreflightValue verifies that an explicit
+// positive AccountConfig.CurrencyOffset takes precedence over the value returned
+// by the preflight (the explicit override wins). Preflight returns 100 but the
+// explicit offset is 1, so a ¥5000 budget must stay 5000 minor units.
+func TestCreateCampaignExplicitOffsetBypassesPreflightValue(t *testing.T) {
+	adsetCap := newBodyCapture()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			// Preflight reports 100, but the explicit override (1) must win.
+			_, _ = io.WriteString(w, `{"name":"x","currency_offset":100,"currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			adsetCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"},
+		AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 1},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 5000, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	}); err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if got := adsetCap.get()["daily_budget"]; got != float64(5000) {
+		t.Errorf("daily_budget = %v, want 5000 (explicit offset 1 overrides preflight 100)", got)
 	}
 }
 
@@ -1158,8 +1302,8 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	if res.AdCount != 1 {
 		t.Errorf("ad count = %d, want 1", res.AdCount)
 	}
-	if !anyStepContains(res.Steps, "Account verification warning") {
-		t.Errorf("expected an 'Account verification warning' step, got %v", res.Steps)
+	if !anyStepContains(res.Steps, "Account preflight warning") {
+		t.Errorf("expected an 'Account preflight warning' step, got %v", res.Steps)
 	}
 }
 
@@ -1748,31 +1892,37 @@ func TestValidateGeoTargetsRejectsBogusISO(t *testing.T) {
 }
 
 // TestDoRequestRetriesOnGraphThrottleCode verifies a 400 with a Graph rate-limit
-// envelope code (e.g. 4) is retried like a 429 and ultimately succeeds.
+// envelope code is retried like a 429 and ultimately succeeds — covering both a
+// classic app-level code (4) and the Marketing API account/business-use-case
+// throttling code (80004), which Meta also reports over HTTP 400.
 func TestDoRequestRetriesOnGraphThrottleCode(t *testing.T) {
-	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&calls, 1) == 1 {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `{"error":{"message":"rate limited","code":4}}`)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"123"}`)
-	}))
-	defer srv.Close()
+	for _, code := range []int{4, 80004} {
+		t.Run(fmt.Sprintf("code %d", code), func(t *testing.T) {
+			var calls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if atomic.AddInt32(&calls, 1) == 1 {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, fmt.Sprintf(`{"error":{"message":"rate limited","code":%d}}`, code))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":"123"}`)
+			}))
+			defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
-		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
-	var out createResponse
-	if err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"k": "v"}, &out); err != nil {
-		t.Fatalf("doRequest: %v", err)
-	}
-	if out.ID != "123" {
-		t.Errorf("id = %q, want 123", out.ID)
-	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Errorf("server calls = %d, want 2 (one throttled 400 + one success)", got)
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+				WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+			var out createResponse
+			if err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"k": "v"}, &out); err != nil {
+				t.Fatalf("doRequest: %v", err)
+			}
+			if out.ID != "123" {
+				t.Errorf("id = %q, want 123", out.ID)
+			}
+			if got := atomic.LoadInt32(&calls); got != 2 {
+				t.Errorf("server calls = %d, want 2 (one throttled 400 + one success)", got)
+			}
+		})
 	}
 }
 
