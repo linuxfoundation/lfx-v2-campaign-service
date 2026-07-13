@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -70,6 +71,10 @@ const (
 	// server-declared reset exceeds this cap we abort with the rate-limit error
 	// instead of sleeping pointlessly (and a hostile huge reset can't hang us).
 	maxRetryWait = 90 * time.Second
+	// maxResponseBody bounds how much of any response body is read into memory,
+	// guarding against a hostile/oversized reply while comfortably exceeding any
+	// normal X Ads response or error envelope.
+	maxResponseBody = 1 << 20 // 1 MiB
 )
 
 // ---------------------------------------------------------------------------
@@ -397,11 +402,19 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 			continue
 		}
 
-		respBody, _ := readAll(resp)
+		respBody, readErr := readAll(resp)
 		_ = resp.Body.Close()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if readErr != nil {
+				return nil, fmt.Errorf("x ads api %s %s -> %d: %s (body read error: %v)", method, path, resp.StatusCode, truncate(respBody, 400), readErr)
+			}
 			return nil, fmt.Errorf("x ads api %s %s -> %d: %s", method, path, resp.StatusCode, truncate(respBody, 400))
+		}
+		if readErr != nil {
+			// A 2xx with a body we couldn't fully/ cleanly read: don't decode a
+			// partial body into a misleading result — surface the I/O failure.
+			return nil, fmt.Errorf("x ads api %s %s: %w", method, path, readErr)
 		}
 
 		var out apiResponse
@@ -488,23 +501,20 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// readAll reads up to maxResponseBody bytes (plus one, so truncation is
+// detectable) from the response, surfacing both read and truncation errors
+// rather than silently discarding them. io.ReadAll can return bytes together
+// with an error, so a discarded error can hide a partial/corrupt body and turn
+// a transport failure into a misleading JSON decode error downstream.
 func readAll(resp *http.Response) ([]byte, error) {
-	const maxBody = 1 << 20 // 1 MiB cap on error/response bodies.
-	buf := make([]byte, 0, 4096)
-	tmp := make([]byte, 4096)
-	for {
-		n, err := resp.Body.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-			if len(buf) >= maxBody {
-				break
-			}
-		}
-		if err != nil {
-			break
-		}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	if err != nil {
+		return body, fmt.Errorf("read response body: %w", err)
 	}
-	return buf, nil
+	if int64(len(body)) > maxResponseBody {
+		return body[:maxResponseBody], fmt.Errorf("response body exceeds %d bytes", maxResponseBody)
+	}
+	return body, nil
 }
 
 func truncate(b []byte, n int) string {
