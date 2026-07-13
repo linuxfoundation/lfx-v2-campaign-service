@@ -993,6 +993,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, err
 	}
+	// Track whether the campaign was created by THIS call or reused from a prior
+	// one, so downstream partial-failure messages don't claim "created" for a
+	// resource this call merely found.
+	campaignReused := campaignID != ""
 	if campaignID != "" {
 		// Find-or-create is idempotent by name, but a reused campaign may have been
 		// created with a DIFFERENT budget/config than THIS request carries (e.g. a
@@ -1052,6 +1056,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// lineItemID is captured by reference so the returned result includes it once
 	// Step 3 has created it.
 	var lineItemID string
+	var lineItemReused bool
 	partialResult := func() *CampaignResult {
 		return &CampaignResult{
 			Platform:     "twitter-ads",
@@ -1063,13 +1068,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			Steps:        steps,
 		}
 	}
+	// campaignStatus / lineItemStatus describe, in partial-failure error messages,
+	// whether the resource that already exists was CREATED by this call or REUSED
+	// (found by name). Wording a reused resource as "created" is misleading during
+	// cleanup/reconcile, so the message reflects the actual provenance.
+	campaignStatus := func() string {
+		if campaignReused {
+			return fmt.Sprintf("campaign %s reused, PRE-EXISTING", campaignID)
+		}
+		return fmt.Sprintf("campaign %s created, PAUSED", campaignID)
+	}
+	lineItemStatus := func() string {
+		if lineItemReused {
+			return fmt.Sprintf("line item %s reused, PRE-EXISTING", lineItemID)
+		}
+		return fmt.Sprintf("line item %s created, PAUSED", lineItemID)
+	}
 
 	// Step 3: create line item (ad group), reusing by name.
 	lineItemID, err = c.findLineItemByName(ctx, campaignID, lineItemName)
 	if err != nil {
-		return partialResult(), fmt.Errorf("x line item lookup failed (campaign %s created, PAUSED): %w", campaignID, err)
+		return partialResult(), fmt.Errorf("x line item lookup failed (%s): %w", campaignStatus(), err)
 	}
 	if lineItemID != "" {
+		lineItemReused = true
 		// A same-name line item is reused without re-checking its entity_status or
 		// flight dates. If it was previously ENABLED, the promoted-tweet POST below
 		// attaches an ACTIVE association to a line item that could be serving — the
@@ -1096,15 +1118,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			"entity_status": "PAUSED",
 		}
 		if err := c.pace(ctx); err != nil {
-			return partialResult(), fmt.Errorf("x line item creation aborted (campaign %s created, PAUSED): %w", campaignID, err)
+			return partialResult(), fmt.Errorf("x line item creation aborted (%s): %w", campaignStatus(), err)
 		}
 		resp, err := c.createRequest(ctx, "line_items", lineItemParams)
 		if err != nil {
-			return partialResult(), fmt.Errorf("x line item creation failed (campaign %s created, PAUSED): %w", campaignID, err)
+			return partialResult(), fmt.Errorf("x line item creation failed (%s): %w", campaignStatus(), err)
 		}
 		lineItemID = extractID(resp)
 		if lineItemID == "" {
-			return partialResult(), fmt.Errorf("x line item creation succeeded but returned no line item ID (campaign %s created, PAUSED)", campaignID)
+			return partialResult(), fmt.Errorf("x line item creation succeeded but returned no line item ID (%s)", campaignStatus())
 		}
 		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
 	}
@@ -1123,7 +1145,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// a nil result would discard both IDs, preventing cleanup/reconciliation
 			// and letting a caller retry create a duplicate. Return a partial result
 			// carrying both IDs (and the steps so far) alongside the wrapped error.
-			return partialResult(), fmt.Errorf("x promoted tweet creation aborted (campaign %s / line item %s created, PAUSED): %w", campaignID, lineItemID, err)
+			return partialResult(), fmt.Errorf("x promoted tweet creation aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
 		}
 		// The promoted_tweets endpoint does not accept entity_status; the API
 		// creates the association ACTIVE. Delivery is still gated by the PAUSED

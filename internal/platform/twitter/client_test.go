@@ -375,10 +375,9 @@ func TestBuildTwitterUtmURL(t *testing.T) {
 
 // TestRetryOn429 verifies the client retries after a 429 then succeeds.
 func TestRetryOn429(t *testing.T) {
-	var calls int
+	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if calls == 1 {
+		if atomic.AddInt32(&calls, 1) == 1 {
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
@@ -402,8 +401,8 @@ func TestRetryOn429(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
-	if calls != 2 {
-		t.Errorf("expected 2 calls (1 retry), got %d", calls)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("expected 2 calls (1 retry), got %d", got)
 	}
 	if id := extractID(resp); id != "cmp123" {
 		t.Errorf("extractID = %q, want cmp123", id)
@@ -477,9 +476,9 @@ func TestParseRetryAfter(t *testing.T) {
 
 // TestRetryExhausted verifies persistent 429s exhaust retries and error out.
 func TestRetryExhausted(t *testing.T) {
-	var calls int
+	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		atomic.AddInt32(&calls, 1)
 		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
@@ -500,8 +499,8 @@ func TestRetryExhausted(t *testing.T) {
 	}
 	// retryMax=3 -> attempts 0..3 that all 429; last attempt (==retryMax) does
 	// not sleep/retry, so total server hits = retryMax+1 = 4.
-	if calls != retryMax+1 {
-		t.Errorf("expected %d calls, got %d", retryMax+1, calls)
+	if got := atomic.LoadInt32(&calls); got != retryMax+1 {
+		t.Errorf("expected %d calls, got %d", retryMax+1, got)
 	}
 	// A persistent 429 across every attempt must surface the intended
 	// exhausted-rate-limit error, not the generic non-2xx path. The message
@@ -659,9 +658,9 @@ func TestCreateCampaignBudgetErrorMessages(t *testing.T) {
 // call. A 200-char event (the per-field max) with a short project composes to
 // ~286 chars — within the per-field bounds but over the entity-name limit.
 func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
-	var calls int
+	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		atomic.AddInt32(&calls, 1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
@@ -696,8 +695,8 @@ func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
 	if !strings.Contains(err.Error(), strconv.Itoa(maxEntityNameLen)) {
 		t.Errorf("error should mention the %d-char limit: %v", maxEntityNameLen, err)
 	}
-	if calls != 0 {
-		t.Errorf("expected no network call before name validation, got %d", calls)
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Errorf("expected no network call before name validation, got %d", got)
 	}
 }
 
@@ -838,9 +837,9 @@ func TestValidateEntityName(t *testing.T) {
 // call, so an empty stored connection value fails fast client-side instead of at
 // the X API. A missing funding_instrument_id must never reach a create POST.
 func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
-	var calls int
+	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		atomic.AddInt32(&calls, 1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
@@ -860,7 +859,7 @@ func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
 		{"empty account id", AccountConfig{AccountID: "", FundingInstrumentID: "fi1"}},
 	}
 	for _, tc := range cases {
-		calls = 0
+		atomic.StoreInt32(&calls, 0)
 		c := NewClient(
 			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 			tc.acct,
@@ -873,8 +872,8 @@ func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
 		if _, err := c.CreateCampaign(context.Background(), base); err == nil {
 			t.Errorf("%s: expected error, got nil", tc.name)
 		}
-		if calls != 0 {
-			t.Errorf("%s: expected no network call before config guard, got %d", tc.name, calls)
+		if got := atomic.LoadInt32(&calls); got != 0 {
+			t.Errorf("%s: expected no network call before config guard, got %d", tc.name, got)
 		}
 	}
 }
@@ -885,9 +884,9 @@ func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
 // '?', '#', or a space must not reach a mutating POST (path injection). A valid
 // alphanumeric id still flows past the guard.
 func TestCreateCampaignRejectsUnsafeAccountID(t *testing.T) {
-	var calls int
+	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		atomic.AddInt32(&calls, 1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
@@ -910,7 +909,7 @@ func TestCreateCampaignRejectsUnsafeAccountID(t *testing.T) {
 		{"funding id with space", AccountConfig{AccountID: "acc1", FundingInstrumentID: "f i"}},
 	}
 	for _, tc := range cases {
-		calls = 0
+		atomic.StoreInt32(&calls, 0)
 		c := NewClient(
 			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
 			tc.acct,
@@ -923,8 +922,8 @@ func TestCreateCampaignRejectsUnsafeAccountID(t *testing.T) {
 		if _, err := c.CreateCampaign(context.Background(), base); err == nil {
 			t.Errorf("%s: expected error, got nil", tc.name)
 		}
-		if calls != 0 {
-			t.Errorf("%s: expected no network call before account-id guard, got %d", tc.name, calls)
+		if got := atomic.LoadInt32(&calls); got != 0 {
+			t.Errorf("%s: expected no network call before account-id guard, got %d", tc.name, got)
 		}
 	}
 
@@ -1092,9 +1091,9 @@ func TestCreateCampaignIdempotent(t *testing.T) {
 // and that every list request carries count=1000 — the X Ads v12 max page size —
 // so the lookup covers a realistic large account within the maxListPages cap.
 func TestFindByNamePagination(t *testing.T) {
-	var calls int
+	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		atomic.AddInt32(&calls, 1)
 		// Every list request must request the max page size AND the server-side
 		// name filter so the lookup is O(matches), not O(account).
 		if got := r.URL.Query().Get("count"); got != "1000" {
@@ -1133,8 +1132,8 @@ func TestFindByNamePagination(t *testing.T) {
 	if id != "c3" {
 		t.Errorf("findCampaignByName across pages = %q, want c3", id)
 	}
-	if calls != 3 {
-		t.Errorf("expected 3 pages fetched, got %d", calls)
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Errorf("expected 3 pages fetched, got %d", got)
 	}
 }
 
@@ -1187,9 +1186,9 @@ func TestFindByNameLineItemListSendsCount(t *testing.T) {
 // duplicate of an element that may exist further on. This behavior must be
 // preserved by the count/page-size change.
 func TestFindByNameInconclusiveCapIsError(t *testing.T) {
-	var calls int
+	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		atomic.AddInt32(&calls, 1)
 		// Never match, and ALWAYS return a next_cursor so the walk can never
 		// conclude "not found" — it must hit the maxListPages cap.
 		_, _ = w.Write([]byte(`{"data":[{"id":"x","name":"never-matches"}],"next_cursor":"MORE"}`))
@@ -1212,8 +1211,8 @@ func TestFindByNameInconclusiveCapIsError(t *testing.T) {
 	if id != "" {
 		t.Errorf("expected empty id on inconclusive cap, got %q", id)
 	}
-	if calls != maxListPages {
-		t.Errorf("expected the walk to fetch exactly maxListPages=%d pages, got %d", maxListPages, calls)
+	if got := atomic.LoadInt32(&calls); got != maxListPages {
+		t.Errorf("expected the walk to fetch exactly maxListPages=%d pages, got %d", maxListPages, got)
 	}
 }
 
@@ -1438,9 +1437,9 @@ func TestCreateSendsQueryParams(t *testing.T) {
 // rate-limit reset longer than maxRetryWait, the client aborts immediately with
 // the rate-limit error rather than sleeping (burning retries or hanging).
 func TestRetryResetExceedsCapAborts(t *testing.T) {
-	var calls int
+	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		atomic.AddInt32(&calls, 1)
 		// Declare a reset far beyond the cap.
 		w.Header().Set("Retry-After", strconv.Itoa(int(maxRetryWait/time.Second)+3600))
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -1462,8 +1461,8 @@ func TestRetryResetExceedsCapAborts(t *testing.T) {
 		t.Fatal("expected error when reset exceeds max wait")
 	}
 	// Must have aborted on the first 429 without sleeping or retrying.
-	if calls != 1 {
-		t.Errorf("expected 1 call (immediate abort), got %d", calls)
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("expected 1 call (immediate abort), got %d", got)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("expected immediate return, took %v", elapsed)
