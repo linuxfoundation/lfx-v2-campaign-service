@@ -1279,7 +1279,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AdSetName:    adSetName,
 		AdSetID:      adSetID,
 		AdCount:      adCount,
-		MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.Replace(accountID, "act_", "", 1)),
+		MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 		Steps:        steps,
 	}, nil
 }
