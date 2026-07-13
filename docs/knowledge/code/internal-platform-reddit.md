@@ -9,7 +9,7 @@ tags:
   - reddit-ads
   - oauth2
   - go-package
-timestamp: "2026-07-13T19:22:00Z"
+timestamp: "2026-07-13T20:30:00Z"
 ---
 
 # internal/platform/reddit
@@ -31,5 +31,14 @@ start time up front so a same-day (past midnight-UTC) start is nudged to
 now+buffer before the campaign POST. Post URLs are validated by parsing the URL
 authority (`reddit.com`/`redd.it` and subdomains only) to prevent host spoofing,
 and UTM parameters are merged into the URL query while preserving any fragment.
+
+Supplied subreddit names (`r/golang` or `golang`) are resolved to Reddit Ads
+subreddit IDs via the Ads API subreddit lookup before the ad-group POST, because
+community targeting matches on subreddit ID, not name. Resolution is best-effort
+per name: a name that cannot be resolved is skipped with a warning step and the
+rest proceed; if none resolve, the ad group is still created without communities
+(with a communities-skipped warning) rather than orphaning the campaign. The
+upstream 400 "invalid communities" retry-without-communities path is preserved
+as a backstop.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).

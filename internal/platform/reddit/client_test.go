@@ -212,6 +212,12 @@ func TestCreateCampaign_TrimsGeoAndSubreddits(t *testing.T) {
 		switch {
 		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/subreddits") && r.Method == http.MethodGet:
+			// Resolve the queried subreddit name to a t5_ ID.
+			name := r.URL.Query().Get("query")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+				{"id": "t5_" + name, "name": name},
+			}})
 		case strings.HasSuffix(path, "/campaigns"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
 		case strings.HasSuffix(path, "/ad_groups"):
@@ -254,9 +260,10 @@ func TestCreateCampaign_TrimsGeoAndSubreddits(t *testing.T) {
 	if len(geos) != 2 || geos[0] != "US" || geos[1] != "CA" {
 		t.Errorf("geolocations = %v, want [US CA]", geos)
 	}
+	// Communities carry the resolved subreddit IDs, not the raw names.
 	comms, _ := targeting["communities"].([]any)
-	if len(comms) != 2 || comms[0] != "golang" || comms[1] != "linux" {
-		t.Errorf("communities = %v, want [golang linux]", comms)
+	if len(comms) != 2 || comms[0] != "t5_golang" || comms[1] != "t5_linux" {
+		t.Errorf("communities = %v, want [t5_golang t5_linux]", comms)
 	}
 }
 
@@ -303,6 +310,11 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/ad_accounts/t2_test"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/subreddits"):
+			name := r.URL.Query().Get("query")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+				{"id": "t5_" + name, "name": name},
+			}})
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/campaigns"):
 			var env struct {
 				Data map[string]any `json:"data"`
@@ -404,11 +416,11 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 		t.Errorf("campaign conversion_pixel_id = %v, want pixel_abc", campaignBody["conversion_pixel_id"])
 	}
 
-	// Ad group targeting: communities stripped of r/ prefix, geos uppercased.
+	// Ad group targeting: communities resolved to subreddit IDs, geos uppercased.
 	targeting, _ := adGroupBody["targeting"].(map[string]any)
 	comms, _ := targeting["communities"].([]any)
-	if len(comms) != 2 || comms[0] != "opensource" || comms[1] != "linux" {
-		t.Errorf("communities = %v, want [opensource linux]", comms)
+	if len(comms) != 2 || comms[0] != "t5_opensource" || comms[1] != "t5_linux" {
+		t.Errorf("communities = %v, want [t5_opensource t5_linux]", comms)
 	}
 	geos, _ := targeting["geolocations"].([]any)
 	if len(geos) != 2 || geos[0] != "US" || geos[1] != "CA" {
@@ -423,6 +435,9 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	want := []string{
 		"GET /api/v3/ad_accounts/t2_test",
 		"POST /api/v3/ad_accounts/t2_test/campaigns",
+		// Subreddit name -> ID resolution happens before the ad-group POST.
+		"GET /api/v3/subreddits",
+		"GET /api/v3/subreddits",
 		"POST /api/v3/ad_accounts/t2_test/ad_groups",
 		"POST /api/v3/ad_accounts/t2_test/ads",
 	}
@@ -452,6 +467,13 @@ func TestCreateCampaign_CommunityFallback(t *testing.T) {
 		switch {
 		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/subreddits") && r.Method == http.MethodGet:
+			// The name resolves to an ID; the upstream still rejects it at ad-group
+			// create, exercising the 400 "invalid communities" fallback backstop.
+			name := r.URL.Query().Get("query")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+				{"id": "t5_" + name, "name": name},
+			}})
 		case strings.HasSuffix(path, "/campaigns"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
 		case strings.HasSuffix(path, "/ad_groups"):
@@ -2607,5 +2629,259 @@ func TestCreateCampaign_EmptyEventNameRejected(t *testing.T) {
 		if err == nil {
 			t.Errorf("EventName %q: expected rejection, got nil", ev)
 		}
+	}
+}
+
+// TestCreateCampaign_SubredditNameResolvedToID verifies subreddit NAMES are
+// resolved to Reddit Ads subreddit IDs (via the /subreddits lookup) before the
+// ad-group POST, and the POST body's `communities` carries the resolved ID, not
+// the raw name (api-catalog: "Subreddit targeting uses subreddit IDs, not
+// names").
+func TestCreateCampaign_SubredditNameResolvedToID(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var mu sync.Mutex
+	var adGroupBody map[string]any
+	var lookupQueries []string
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/subreddits") && r.Method == http.MethodGet:
+			name := r.URL.Query().Get("query")
+			mu.Lock()
+			lookupQueries = append(lookupQueries, name)
+			mu.Unlock()
+			// The lookup returns matches; only the entry whose name matches the
+			// query (case-insensitively) should be chosen, so include a decoy.
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+				{"id": "t5_decoy", "name": name + "-similar"},
+				{"id": "t5_" + name, "name": name},
+			}})
+		case strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			var env struct {
+				Data map[string]any `json:"data"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&env)
+			mu.Lock()
+			adGroupBody = env.Data
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Subreddits:      []string{"r/golang", "kubernetes"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Both names were looked up (r/ prefix stripped before the query).
+	if len(lookupQueries) != 2 || lookupQueries[0] != "golang" || lookupQueries[1] != "kubernetes" {
+		t.Errorf("lookupQueries = %v, want [golang kubernetes]", lookupQueries)
+	}
+	targeting, _ := adGroupBody["targeting"].(map[string]any)
+	comms, _ := targeting["communities"].([]any)
+	if len(comms) != 2 || comms[0] != "t5_golang" || comms[1] != "t5_kubernetes" {
+		t.Fatalf("communities = %v, want [t5_golang t5_kubernetes]", comms)
+	}
+	foundTargeting := false
+	for _, s := range res.Steps {
+		if strings.Contains(s, "2 communities") {
+			foundTargeting = true
+		}
+		if strings.Contains(s, "could not be resolved") {
+			t.Errorf("unexpected unresolved warning when all names resolve: %q", s)
+		}
+	}
+	if !foundTargeting {
+		t.Errorf("expected a '2 communities' targeting step; got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaign_SubredditPartialResolution verifies that when one name
+// resolves and another 404s (not found), the campaign is NOT failed: a warning
+// step names the unresolved subreddit and the ad-group POST carries ONLY the
+// resolved ID.
+func TestCreateCampaign_SubredditPartialResolution(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var mu sync.Mutex
+	var adGroupBody map[string]any
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/subreddits") && r.Method == http.MethodGet:
+			name := r.URL.Query().Get("query")
+			if name == "golang" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+					{"id": "t5_golang", "name": "golang"},
+				}})
+				return
+			}
+			// Unknown subreddit: empty match list (resolvable lookup, not found).
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{}})
+		case strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			var env struct {
+				Data map[string]any `json:"data"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&env)
+			mu.Lock()
+			adGroupBody = env.Data
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Subreddits:      []string{"r/golang", "r/doesnotexist"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign must not fail on partial resolution: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	targeting, _ := adGroupBody["targeting"].(map[string]any)
+	comms, _ := targeting["communities"].([]any)
+	if len(comms) != 1 || comms[0] != "t5_golang" {
+		t.Errorf("communities = %v, want only [t5_golang]", comms)
+	}
+	foundWarning := false
+	for _, s := range res.Steps {
+		if strings.Contains(s, "r/doesnotexist") && strings.Contains(s, "could not be resolved") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected an unresolved-subreddit warning naming r/doesnotexist; got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaign_AllSubredditsUnresolved verifies that when NO supplied
+// subreddit resolves to an ID, the ad group is still created (without
+// communities) rather than orphaning the campaign, and a communities-skipped
+// warning is emitted -- no error is returned.
+func TestCreateCampaign_AllSubredditsUnresolved(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var mu sync.Mutex
+	var adGroupBody map[string]any
+	var adGroupPosts int32
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/subreddits") && r.Method == http.MethodGet:
+			// No matches for any query -> nothing resolves.
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{}})
+		case strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			atomic.AddInt32(&adGroupPosts, 1)
+			var env struct {
+				Data map[string]any `json:"data"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&env)
+			mu.Lock()
+			adGroupBody = env.Data
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Subreddits:      []string{"r/nope1", "r/nope2"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign must not fail when nothing resolves: %v", err)
+	}
+	if res.AdGroupID != "ag_1" {
+		t.Errorf("AdGroupID = %q, want ag_1 (ad group should still be created)", res.AdGroupID)
+	}
+	// The ad group must be created exactly ONCE and carry no communities, since
+	// none resolved (no 400 fallback needed).
+	if n := atomic.LoadInt32(&adGroupPosts); n != 1 {
+		t.Errorf("ad_group POSTs = %d, want 1 (no communities means no fallback re-POST)", n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	targeting, _ := adGroupBody["targeting"].(map[string]any)
+	if _, present := targeting["communities"]; present {
+		t.Errorf("targeting must not carry communities when none resolved; got %v", targeting["communities"])
+	}
+	foundSkipped := false
+	for _, s := range res.Steps {
+		if strings.Contains(s, "communities skipped -- add manually") {
+			foundSkipped = true
+		}
+	}
+	if !foundSkipped {
+		t.Errorf("expected a communities-skipped warning; got %v", res.Steps)
 	}
 }

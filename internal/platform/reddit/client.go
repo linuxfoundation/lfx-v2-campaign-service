@@ -530,7 +530,15 @@ type apiResponse struct {
 // retried regardless of HTTP method: a 429 means the request was REJECTED
 // before processing (nothing was created), so retrying a create POST is safe.
 func (c *Client) request(ctx context.Context, method, path string, body any) (*apiResponse, error) {
-	sanitized := sanitizePath(path)
+	// Split any query string off before sanitizing: sanitizePath escapes each
+	// PATH segment (turning a literal '?'/'=' into %3F/%3D), which would corrupt a
+	// query. The query (built by the caller via url.Values.Encode) is already
+	// percent-encoded, so it is re-appended verbatim after the sanitized path.
+	rawPath, rawQuery, hasQuery := strings.Cut(path, "?")
+	sanitized := sanitizePath(rawPath)
+	if hasQuery {
+		sanitized += "?" + rawQuery
+	}
 	fullURL := c.baseURL + sanitized
 
 	// Marshal the body once; a fresh reader is created per attempt below since
@@ -700,6 +708,94 @@ func sanitizePath(path string) string {
 		segments[i] = url.PathEscape(decoded)
 	}
 	return strings.Join(segments, "/")
+}
+
+// ---------------------------------------------------------------------------
+// Subreddit name -> ID resolution
+// ---------------------------------------------------------------------------
+
+// resolveSubreddit looks up a single subreddit by NAME and returns its Reddit
+// Ads subreddit ID. It queries the Ads API v3 subreddit lookup
+// (GET /subreddits?query=<name>), which returns a list of matching subreddits;
+// the entry whose name matches (case-insensitively) the requested name yields
+// the ID that the ad-group targeting `communities` field expects (per the
+// api-catalog contract: "Subreddit targeting uses subreddit IDs, not names").
+//
+// The lookup goes through request() so it inherits auth (Bearer token refresh)
+// and the 429 retry/backoff. A resolvable-but-not-found name (no matching entry)
+// returns ("", nil): the caller skips it and warns rather than failing the whole
+// campaign. A transport/HTTP error returns ("", err).
+func (c *Client) resolveSubreddit(ctx context.Context, name string) (string, error) {
+	// url.Values.Encode() percent-encodes the value; request() sanitizes only the
+	// PATH, so the query string is built here and appended to the path. A leading
+	// "/subreddits" keeps the same base-relative shape as the other GETs.
+	q := url.Values{}
+	q.Set("query", name)
+	resp, err := c.request(ctx, http.MethodGet, "/subreddits?"+q.Encode(), nil)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil || len(resp.Data) == 0 {
+		return "", nil
+	}
+	// The Ads API returns data as a list of subreddit objects. Each carries an
+	// id (string) and a name; pick the entry whose name matches the request
+	// case-insensitively so a fuzzy/prefix match doesn't target the wrong
+	// community. Fall back to the first entry only when no name field is present.
+	var subs []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(resp.Data, &subs); err != nil {
+		return "", nil
+	}
+	for _, s := range subs {
+		if strings.EqualFold(strings.TrimSpace(s.Name), name) {
+			return strings.TrimSpace(s.ID), nil
+		}
+	}
+	return "", nil
+}
+
+// resolveSubredditIDs resolves each supplied subreddit NAME to its Reddit Ads
+// subreddit ID for use in ad-group `communities` targeting. Names are resolved
+// via the Ads API before the ad-group POST so the POST carries real IDs, not raw
+// names, matching the api-catalog contract.
+//
+// Resolution is best-effort per name: a name that cannot be resolved (not found)
+// is skipped and a warning is appended to *steps naming it, and resolution
+// proceeds with the rest -- one bad subreddit never fails the whole campaign.
+// Results are cached within the call so a repeated name is looked up once. A
+// transport/HTTP error (as opposed to a not-found) aborts and is returned so the
+// caller can surface it. The returned slice preserves input order and is
+// de-duplicated.
+func (c *Client) resolveSubredditIDs(ctx context.Context, names []string, steps *[]string) ([]string, error) {
+	ids := make([]string, 0, len(names))
+	// cache maps a subreddit name to its resolved ID ("" == looked up, not found)
+	// so a repeated name is resolved once per call.
+	cache := make(map[string]string, len(names))
+	seenID := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		id, cached := cache[name]
+		if !cached {
+			var err error
+			id, err = c.resolveSubreddit(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			cache[name] = id
+		}
+		if id == "" {
+			*steps = append(*steps, fmt.Sprintf("subreddit r/%s could not be resolved to an ID; excluded from targeting", name))
+			continue
+		}
+		if _, dup := seenID[id]; dup {
+			continue
+		}
+		seenID[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -961,10 +1057,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		communityNames = append(communityNames, name)
 	}
 
-	targetingWithCommunities := baseTargeting
+	// Reddit Ads targets communities by subreddit ID, not name (api-catalog:
+	// "Subreddit targeting uses subreddit IDs, not names"). Resolve the supplied
+	// names to IDs via the Ads API before the ad-group POST so the POST carries
+	// real IDs. Unresolvable names are skipped with a warning rather than failing
+	// the whole campaign. A transport/HTTP error aborts here (nothing created past
+	// the campaign yet, so surface it with the partial result for cleanup).
+	var communityIDs []string
 	if len(communityNames) > 0 {
+		var resolveErr error
+		communityIDs, resolveErr = c.resolveSubredditIDs(ctx, communityNames, &steps)
+		if resolveErr != nil {
+			return partialResult(), fmt.Errorf("reddit subreddit resolution failed (campaign %s created, PAUSED): %w", campaignID, resolveErr)
+		}
+	}
+
+	targetingWithCommunities := baseTargeting
+	if len(communityIDs) > 0 {
 		targetingWithCommunities = cloneTargeting(baseTargeting)
-		targetingWithCommunities["communities"] = communityNames
+		targetingWithCommunities["communities"] = communityIDs
 	}
 
 	buildAdGroupBody := func(targeting map[string]any) map[string]any {
@@ -987,16 +1098,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return map[string]any{"data": data}
 	}
 
-	// suppliedCommunities records whether the caller actually supplied usable
-	// subreddits. Only in that case is a fallback (dropping communities) worth
-	// warning about; a keyword/geo-only campaign never intended communities.
-	suppliedCommunities := len(communityNames) > 0
-	usedCommunities := suppliedCommunities
-	droppedCommunities := false
+	// resolvedCommunities records whether any supplied subreddit resolved to an
+	// ID and thus went into targeting. Only then is a 400 "invalid communities"
+	// fallback (dropping communities) worth warning about; a keyword/geo-only
+	// campaign never intended communities.
+	resolvedCommunities := len(communityIDs) > 0
+	usedCommunities := resolvedCommunities
+	// droppedCommunities marks that subreddits were requested but ended up NOT in
+	// targeting -- either none resolved to an ID, or the 400 fallback dropped
+	// them -- so the "communities skipped, add manually" warning fires. When names
+	// were supplied but none resolved, the ad-group body already carries no
+	// communities (targetingWithCommunities == baseTargeting), so this is set up
+	// front and the per-name "could not be resolved" warnings already explain why.
+	droppedCommunities := len(communityNames) > 0 && !resolvedCommunities
 	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(targetingWithCommunities))
 	if err != nil {
-		if suppliedCommunities && strings.Contains(err.Error(), "invalid communities") {
-			steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying without communities", strings.Join(communityNames, ", ")))
+		if resolvedCommunities && strings.Contains(err.Error(), "invalid communities") {
+			steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying without communities", strings.Join(communityIDs, ", ")))
 			usedCommunities = false
 			droppedCommunities = true
 			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
@@ -1015,10 +1133,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	steps = append(steps, fmt.Sprintf("Ad group created: %s (PAUSED, geo: %s)", adGroupID, strings.Join(geos, ", ")))
 	switch {
 	case usedCommunities:
-		steps = append(steps, fmt.Sprintf("Targeting: %d communities, %d keywords, %d geos", len(communityNames), len(in.Keywords), len(geos)))
+		steps = append(steps, fmt.Sprintf("Targeting: %d communities, %d keywords, %d geos", len(communityIDs), len(in.Keywords), len(geos)))
 	case droppedCommunities:
-		// Communities were supplied but the lookup failed, so they were dropped
-		// and must be re-added manually.
+		// Communities were supplied but either none resolved to an ID or the
+		// upstream rejected them, so they were dropped and must be re-added
+		// manually.
 		steps = append(steps, fmt.Sprintf("Targeting: %d keywords, %d geos (communities skipped -- add manually in Reddit Ads Manager)", len(in.Keywords), len(geos)))
 	default:
 		// No subreddits were supplied; this is a normal keyword/geo-only campaign.
