@@ -1184,6 +1184,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if strings.TrimSpace(in.EventName) == "" {
 		return nil, fmt.Errorf("event name is required: supply a non-empty base name for the campaign name and attribution segments")
 	}
+	// Normalize EventName to its trimmed form for the rest of the flow. Only
+	// buildCampaignName trims internally; the ad-set/creative/ad names and the UTM
+	// builder (utm_term) consume in.EventName raw, so a padded value like
+	// " KubeCon EU " would otherwise yield inconsistent names and a malformed
+	// utm_term=-kubecon-eu-. Trim once here so every consumer sees the same value.
+	in.EventName = strings.TrimSpace(in.EventName)
 
 	// Resolve the objective and validate deterministic inputs (placements and the
 	// promoted object) BEFORE the first mutating call, so an input error never

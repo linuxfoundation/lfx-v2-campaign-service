@@ -451,6 +451,79 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignNormalizesEventName verifies that a padded EventName is
+// trimmed for ALL generated names and the UTM term — not just the campaign name
+// (which trims internally). A raw " KubeCon EU " would otherwise leak into the
+// ad-set/creative/ad names and produce a malformed utm_term=-kubecon-eu-.
+func TestCreateCampaignNormalizesEventName(t *testing.T) {
+	adsetCap := newBodyCapture()
+	creativeCap := newBodyCapture()
+	adCap := newBodyCapture()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			adsetCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			creativeCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			adCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"},
+		AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "  KubeCon EU  ", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	}); err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+
+	// Drain each capture ONCE (get() consumes the buffered value).
+	adsetBody := adsetCap.get()
+	creativeBody := creativeCap.get()
+	adBody := adCap.get()
+
+	// Ad-set name uses the trimmed event name (no leading/trailing spaces around
+	// the " - Traffic" join).
+	if got, _ := adsetBody["name"].(string); got != "KubeCon EU - Traffic" {
+		t.Errorf("ad set name = %q, want %q", got, "KubeCon EU - Traffic")
+	}
+	// Creative name uses the trimmed event name.
+	if got, _ := creativeBody["name"].(string); got != "KubeCon EU - Variant 1" {
+		t.Errorf("creative name = %q, want %q", got, "KubeCon EU - Variant 1")
+	}
+	// Ad name uses the trimmed event name.
+	if got, _ := adBody["name"].(string); got != "KubeCon EU - Ad 1" {
+		t.Errorf("ad name = %q, want %q", got, "KubeCon EU - Ad 1")
+	}
+	// UTM term is derived from the trimmed name: no leading/trailing dash.
+	oss, _ := creativeBody["object_story_spec"].(map[string]any)
+	linkData, _ := oss["link_data"].(map[string]any)
+	link, _ := linkData["link"].(string)
+	if !strings.Contains(link, "utm_term=kubecon-eu") {
+		t.Errorf("creative link = %q, want clean utm_term=kubecon-eu", link)
+	}
+	if strings.Contains(link, "utm_term=-kubecon") || strings.Contains(link, "kubecon-eu-&") || strings.Contains(link, "kubecon-eu-#") {
+		t.Errorf("creative link = %q, want no leading/trailing dash in utm_term", link)
+	}
+}
+
 // TestCreateCampaignAdSetFailureReturnsPartialResult verifies that when the ad
 // set POST fails AFTER the campaign was already created, CreateCampaign returns
 // a non-nil partial CampaignResult carrying the orphaned campaign's ID (so a
