@@ -1192,11 +1192,12 @@ func validateRegistrationURL(raw string) error {
 // CreateCampaign re-call RE-CREATES all dark posts and creatives, duplicating
 // them. This is the same inherent client-level non-atomicity documented on
 // findOrCreateCampaignGroup and createSponsoredCampaign. The client does NOT
-// attempt per-creative idempotency; the authoritative dedup is the orchestrator's
-// per-(brief, platform) single-flight claim (LFXV2-2665), which ensures only one
-// dispatch per pair ever runs, so in normal operation the creative loop is never
-// re-executed against an already-populated campaign. A caller invoking
-// CreateCampaign outside that claim must serialize on its own.
+// attempt per-creative idempotency. A PLANNED orchestrator per-(brief, platform)
+// single-flight claim (LFXV2-2665) is intended to be the authoritative dedup so
+// the creative loop isn't re-executed against an already-populated campaign, but
+// that claim is NOT implemented/enforced yet — this client provides no dedup
+// guarantee of its own. Until it lands, a caller must serialize CreateCampaign
+// per (brief, platform) itself to avoid duplicate dark posts/creatives.
 //
 // If a later variant fails after earlier ones succeeded, the group and campaign
 // are found (idempotent by name) on a retry, but each already-created dark post is
@@ -1427,8 +1428,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// NOT idempotent: dark posts and creatives have no name-based lookup and
 	// LinkedIn has no upsert, so re-running this loop duplicates every dark post
-	// and creative. Single-flight is enforced one layer up by the orchestrator's
-	// per-(brief, platform) claim (LFXV2-2665), the authoritative dedup — see the
+	// and creative. A single-flight guard one layer up (the PLANNED orchestrator
+	// per-(brief, platform) claim, LFXV2-2665) is intended to prevent re-runs, but
+	// it is NOT implemented yet — this loop provides no dedup itself; see the
 	// CreateCampaign godoc.
 	creativeCount := 0
 	for i, variant := range in.Variants {
