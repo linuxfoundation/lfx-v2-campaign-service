@@ -3,6 +3,13 @@ type: "Go Package"
 title: "internal/platform/reddit"
 description: "Reddit Ads API v3 client: OAuth2 token refresh and Campaign -> Ad Group -> Ad creation."
 resource: "internal/platform/reddit"
+tags:
+  - platform-client
+  - reddit
+  - reddit-ads
+  - oauth2
+  - go-package
+timestamp: "2026-07-13T19:22:00Z"
 ---
 
 # internal/platform/reddit
