@@ -2885,3 +2885,42 @@ func TestCreateCampaign_AllSubredditsUnresolved(t *testing.T) {
 		t.Errorf("expected a communities-skipped warning; got %v", res.Steps)
 	}
 }
+
+// TestValidateRegistrationURL_RejectsUserinfo verifies a registration URL with
+// embedded credentials is rejected so a password can't leak into click_url or
+// the success step.
+func TestValidateRegistrationURL_RejectsUserinfo(t *testing.T) {
+	for _, raw := range []string{
+		"https://user:password@example.com/reg",
+		"https://user@example.com/reg",
+	} {
+		if err := validateRegistrationURL(raw); err == nil {
+			t.Errorf("validateRegistrationURL(%q) = nil, want error", raw)
+		}
+	}
+	// A credential-free URL still passes.
+	if err := validateRegistrationURL("https://example.com/reg"); err != nil {
+		t.Errorf("validateRegistrationURL(clean) = %v, want nil", err)
+	}
+}
+
+// TestExtractRedditPostID_RejectsUserinfo verifies a Reddit post URL carrying
+// userinfo is rejected so a token isn't echoed into Steps.
+func TestExtractRedditPostID_RejectsUserinfo(t *testing.T) {
+	for _, raw := range []string{
+		"https://token@reddit.com/r/go/comments/abc123/x",
+		"https://user:pw@www.reddit.com/r/go/comments/abc123/x",
+	} {
+		if _, err := extractRedditPostID(raw); err == nil {
+			t.Errorf("extractRedditPostID(%q) = nil error, want error", raw)
+		}
+	}
+	// A credential-free Reddit URL still resolves.
+	got, err := extractRedditPostID("https://www.reddit.com/r/go/comments/abc123/x")
+	if err != nil {
+		t.Fatalf("extractRedditPostID(clean) = %v", err)
+	}
+	if got != "t3_abc123" {
+		t.Errorf("got %q, want t3_abc123", got)
+	}
+}

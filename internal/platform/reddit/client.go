@@ -1328,6 +1328,12 @@ func validateRegistrationURL(raw string) error {
 	if !u.IsAbs() || u.Hostname() == "" {
 		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
 	}
+	// Reject embedded userinfo (user[:password]@host): an ad destination never
+	// needs URL credentials, and buildRedditUTMURL would otherwise forward the
+	// password to Reddit as click_url and echo it in the success step, leaking it.
+	if u.User != nil {
+		return fmt.Errorf("registration URL must not contain embedded credentials (userinfo)")
+	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
 		return nil
@@ -1507,6 +1513,12 @@ func extractRedditPostID(urlOrID string) (string, error) {
 			parseTarget = "https://" + trimmed
 		}
 		if u, err := url.Parse(parseTarget); err == nil && u.Host != "" {
+			// Reject embedded userinfo (e.g. token@reddit.com/...): Reddit post links
+			// never require URL credentials, and the raw PostURL is later echoed into
+			// Steps, which would expose the token. Treat it as unparseable.
+			if u.User != nil {
+				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+			}
 			if !isRedditHost(u.Hostname()) {
 				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
 			}
