@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1890,6 +1891,273 @@ func TestExtractRedditPostID_SchemeLessURL(t *testing.T) {
 	for _, bad := range []string{"evil.com/r/x/comments/abc123", "notreddit.com/abc123"} {
 		if _, err := extractRedditPostID(bad); err == nil {
 			t.Errorf("extractRedditPostID(%q) = nil err, want rejection of non-Reddit host", bad)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 429 rate-limit retry + backoff (mirrors the Meta/Twitter clients)
+// ---------------------------------------------------------------------------
+
+// tinyBackoff shrinks the exponential-backoff base so retry tests don't sleep
+// for real seconds. Applied via the unexported withRetryBaseDelay option.
+const tinyBackoff = 1 * time.Millisecond
+
+// TestRequest_429ThenSuccess verifies a single 429 is retried and the following
+// 200 succeeds. The token endpoint and API endpoint use atomic hit counters so
+// the test is race-safe under -race.
+func TestRequest_429ThenSuccess(t *testing.T) {
+	var tokenHits, apiHits int64
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&tokenHits, 1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt64(&apiHits, 1)
+		if n == 1 {
+			// No Retry-After header: exercises the exponential-backoff fallback.
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ok_1"}})
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithBaseURL(apiSrv.URL),
+		WithTokenURL(tokenSrv.URL),
+		WithNowFunc(fixedRedditClock()),
+		withRetryBaseDelay(tinyBackoff),
+	)
+
+	resp, err := c.request(context.Background(), http.MethodPost, "/thing", map[string]any{"k": "v"})
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if got := decodeID(resp); got != "ok_1" {
+		t.Errorf("id = %q, want ok_1", got)
+	}
+	if n := atomic.LoadInt64(&apiHits); n != 2 {
+		t.Errorf("api hits = %d, want 2 (one 429, one success)", n)
+	}
+}
+
+// TestRequest_429ExhaustsRetries verifies that a 429 on every attempt is
+// retried exactly retryMax times (retryMax+1 total sends) and then returns the
+// rate-limit error rather than looping forever.
+func TestRequest_429ExhaustsRetries(t *testing.T) {
+	var apiHits int64
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&apiHits, 1)
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithBaseURL(apiSrv.URL),
+		WithTokenURL(tokenSrv.URL),
+		WithNowFunc(fixedRedditClock()),
+		withRetryBaseDelay(tinyBackoff),
+	)
+
+	_, err := c.request(context.Background(), http.MethodPost, "/thing", map[string]any{"k": "v"})
+	if err == nil {
+		t.Fatal("expected a rate-limit error after exhausting retries, got nil")
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error should mention the 429 status; got: %v", err)
+	}
+	// retryMax retries => retryMax+1 total sends.
+	if n := atomic.LoadInt64(&apiHits); n != int64(retryMax+1) {
+		t.Errorf("api hits = %d, want %d (retryMax+1)", n, retryMax+1)
+	}
+}
+
+// TestParseRetryAfter covers the header parsing matrix: delay-seconds, HTTP-date,
+// absent, non-positive, and unparseable values.
+func TestParseRetryAfter(t *testing.T) {
+	fixed := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	c := NewClient(testCreds, testAccount, WithNowFunc(func() time.Time { return fixed }))
+
+	mk := func(v string) *http.Response {
+		h := http.Header{}
+		if v != "" {
+			h.Set("Retry-After", v)
+		}
+		return &http.Response{Header: h}
+	}
+
+	// Delay-seconds.
+	if d, ok := c.parseRetryAfter(mk("5")); !ok || d != 5*time.Second {
+		t.Errorf("delay-seconds: got (%v, %v), want (5s, true)", d, ok)
+	}
+	// HTTP-date 30s in the future.
+	future := fixed.Add(30 * time.Second).UTC().Format(http.TimeFormat)
+	if d, ok := c.parseRetryAfter(mk(future)); !ok || d < 29*time.Second || d > 31*time.Second {
+		t.Errorf("http-date future: got (%v, %v), want ~30s true", d, ok)
+	}
+	// HTTP-date in the past -> unusable.
+	past := fixed.Add(-30 * time.Second).UTC().Format(http.TimeFormat)
+	if d, ok := c.parseRetryAfter(mk(past)); ok || d != 0 {
+		t.Errorf("http-date past: got (%v, %v), want (0, false)", d, ok)
+	}
+	// Absent header.
+	if d, ok := c.parseRetryAfter(mk("")); ok || d != 0 {
+		t.Errorf("absent: got (%v, %v), want (0, false)", d, ok)
+	}
+	// Non-positive delay.
+	if d, ok := c.parseRetryAfter(mk("0")); ok || d != 0 {
+		t.Errorf("zero delay: got (%v, %v), want (0, false)", d, ok)
+	}
+	if d, ok := c.parseRetryAfter(mk("-5")); ok || d != 0 {
+		t.Errorf("negative delay: got (%v, %v), want (0, false)", d, ok)
+	}
+	// Garbage header.
+	if d, ok := c.parseRetryAfter(mk("soon")); ok || d != 0 {
+		t.Errorf("garbage: got (%v, %v), want (0, false)", d, ok)
+	}
+}
+
+// TestRequest_429OverCapResetAborts verifies that a 429 whose Retry-After
+// declares a reset beyond maxRetryWait aborts immediately with the rate-limit
+// error (no sleep, no further retry) rather than burning retries.
+func TestRequest_429OverCapResetAborts(t *testing.T) {
+	var apiHits int64
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&apiHits, 1)
+		// Declare a reset far beyond maxRetryWait (60s).
+		w.Header().Set("Retry-After", strconv.Itoa(int((maxRetryWait+time.Hour)/time.Second)))
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithBaseURL(apiSrv.URL),
+		WithTokenURL(tokenSrv.URL),
+		WithNowFunc(fixedRedditClock()),
+		withRetryBaseDelay(tinyBackoff),
+	)
+
+	_, err := c.request(context.Background(), http.MethodPost, "/thing", map[string]any{"k": "v"})
+	if err == nil {
+		t.Fatal("expected an abort error for over-cap reset, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds max wait") {
+		t.Errorf("error should note the reset exceeds the cap; got: %v", err)
+	}
+	// Must abort on the first 429 without retrying.
+	if n := atomic.LoadInt64(&apiHits); n != 1 {
+		t.Errorf("api hits = %d, want 1 (abort on first over-cap 429)", n)
+	}
+}
+
+// TestRequest_CtxCancelledDuringBackoff verifies that cancelling the context
+// during a 429 backoff returns promptly with the context error rather than
+// sleeping out the full wait.
+func TestRequest_CtxCancelledDuringBackoff(t *testing.T) {
+	var apiHits int64
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&apiHits, 1)
+		// Long Retry-After (within the cap) so the client enters a real backoff
+		// sleep; the cancel below must break it early.
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithBaseURL(apiSrv.URL),
+		WithTokenURL(tokenSrv.URL),
+		WithNowFunc(fixedRedditClock()),
+		withRetryBaseDelay(tinyBackoff),
+	)
+
+	// Cancel shortly after the request starts, while it is in the 30s backoff.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := c.request(ctx, http.MethodPost, "/thing", map[string]any{"k": "v"})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error %v does not wrap context.Canceled", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("request took %v; should have returned promptly on cancel, not slept the full 30s", elapsed)
+	}
+	if n := atomic.LoadInt64(&apiHits); n != 1 {
+		t.Errorf("api hits = %d, want 1 (cancel during first backoff)", n)
+	}
+}
+
+// TestRequest_429BodyRefreshedPerRetry verifies the request body reader is
+// re-created on each attempt: bytes.NewReader is consumed by the first send, so
+// a retry must supply a fresh reader or the retried request would carry an empty
+// body. The server asserts every attempt received the full JSON body.
+func TestRequest_429BodyRefreshedPerRetry(t *testing.T) {
+	var apiHits int64
+	var mu sync.Mutex
+	var bodies []string
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt64(&apiHits, 1)
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		if n <= 2 {
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ok"}})
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount,
+		WithBaseURL(apiSrv.URL),
+		WithTokenURL(tokenSrv.URL),
+		WithNowFunc(fixedRedditClock()),
+		withRetryBaseDelay(tinyBackoff),
+	)
+
+	if _, err := c.request(context.Background(), http.MethodPost, "/thing", map[string]any{"k": "v"}); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 3 {
+		t.Fatalf("got %d attempts, want 3", len(bodies))
+	}
+	for i, b := range bodies {
+		if b != `{"k":"v"}` {
+			t.Errorf("attempt %d body = %q, want %q (reader not refreshed per retry)", i+1, b, `{"k":"v"}`)
 		}
 	}
 }

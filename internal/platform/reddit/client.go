@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,17 @@ const (
 	redditFallbackTokenTTL = redditTokenExpiryBuffer + 60*time.Second
 	// defaultRedditObjective is used when a campaign input omits an objective.
 	defaultRedditObjective = "conversions"
+
+	// retryMax is the number of times an HTTP 429 (rate-limited) request is
+	// retried before giving up. Mirrors the Meta/Twitter clients.
+	retryMax = 3
+	// retryBaseDelay is the base for exponential backoff when the API returns a
+	// 429 without a usable Retry-After header (1s, 2s, 4s, ...). Mirrors Meta.
+	retryBaseDelay = 1 * time.Second
+	// maxRetryWait caps how long a single 429 backoff waits, so an outsized
+	// Retry-After / reset value can't stall a request past the point of
+	// usefulness. Mirrors Meta's cap.
+	maxRetryWait = 60 * time.Second
 )
 
 // readResponseBody reads up to maxResponseBody bytes (plus one, so truncation is
@@ -143,6 +155,17 @@ func WithNowFunc(now func() time.Time) Option {
 	}
 }
 
+// withRetryBaseDelay overrides the exponential-backoff base for 429 retries.
+// Unexported: only tests use it, to keep retry runs fast (no real multi-second
+// sleeps). Mirrors the Meta client's withRetryBaseDelay.
+func withRetryBaseDelay(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.retryBaseDelay = d
+		}
+	}
+}
+
 // Client is a Reddit Ads API v3 client with cached OAuth token refresh.
 // It is safe for concurrent use.
 type Client struct {
@@ -153,6 +176,11 @@ type Client struct {
 	tokenURL   string
 	httpClient *http.Client
 	now        func() time.Time
+
+	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
+	// retryBaseDelay const; tests may shrink it (via withRetryBaseDelay) to keep
+	// retry runs fast.
+	retryBaseDelay time.Duration
 
 	mu            sync.Mutex
 	cachedToken   string
@@ -183,12 +211,13 @@ type tokenRefresh struct {
 // NewClient builds a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:      creds,
-		account:    account,
-		baseURL:    redditAdsBaseURL,
-		tokenURL:   redditTokenURL,
-		httpClient: &http.Client{Timeout: redditRequestTimeout},
-		now:        time.Now,
+		creds:          creds,
+		account:        account,
+		baseURL:        redditAdsBaseURL,
+		tokenURL:       redditTokenURL,
+		httpClient:     &http.Client{Timeout: redditRequestTimeout},
+		now:            time.Now,
+		retryBaseDelay: retryBaseDelay,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -429,56 +458,155 @@ type apiResponse struct {
 
 // request performs an authenticated Reddit Ads API call, sanitizing the path
 // segments and honoring ctx. Mirrors redditRequest.
+//
+// An HTTP 429 (rate-limited) response is retried up to retryMax times with a
+// bounded backoff, mirroring the Meta/Twitter clients: CreateCampaign issues
+// several sequential Reddit API calls that can trip Reddit's per-account rate
+// limits mid-flow. The wait honors Reddit's Retry-After header when present
+// (delay-seconds or HTTP-date), else falls back to exponential
+// retryBaseDelay*2^attempt, in both cases clamped to maxRetryWait. If a
+// server-declared reset exceeds maxRetryWait, the request aborts with the
+// rate-limit error rather than sleeping past the point of usefulness. A 429 is
+// retried regardless of HTTP method: a 429 means the request was REJECTED
+// before processing (nothing was created), so retrying a create POST is safe.
 func (c *Client) request(ctx context.Context, method, path string, body any) (*apiResponse, error) {
 	sanitized := sanitizePath(path)
 	fullURL := c.baseURL + sanitized
 
-	token, err := c.refreshToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var reqBody io.Reader
+	// Marshal the body once; a fresh reader is created per attempt below since
+	// bytes.NewReader is consumed by the first send.
+	var encoded []byte
 	if body != nil {
-		encoded, err := json.Marshal(body)
+		var err error
+		encoded, err = json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("reddit API %s %s: encode body: %w", method, path, err)
 		}
-		reqBody = bytes.NewReader(encoded)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("reddit API %s %s: build request: %w", method, path, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", redditUserAgent)
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		// Refresh (cached/coalesced) each attempt so a token that expired between
+		// retries is renewed. The reader is rebuilt every attempt because the
+		// previous send consumed it.
+		token, err := c.refreshToken(ctx)
+		if err != nil {
+			return nil, err
+		}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+		var reqBody io.Reader
+		if encoded != nil {
+			reqBody = bytes.NewReader(encoded)
+		}
 
-	raw, readErr := readResponseBody(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		req, err := http.NewRequestWithContext(ctx, method, fullURL, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("reddit API %s %s: build request: %w", method, path, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", redditUserAgent)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
+		}
+
+		// A 429 with retries remaining: compute the wait and back off. The body is
+		// discarded (drained + closed) before sleeping so the connection can be
+		// reused. On the final attempt we fall through and surface the 429 as an
+		// ordinary non-2xx error below rather than looping forever.
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax {
+			retryAfter, ok := c.parseRetryAfter(resp)
+			_ = resp.Body.Close()
+			if ok {
+				// The server declared a reset time. If it exceeds our cap, sleeping
+				// would burn a retry without any chance of the window clearing, so
+				// abort with the rate-limit error (mirrors Meta/Twitter).
+				if retryAfter > maxRetryWait {
+					return nil, fmt.Errorf("reddit API %s %s -> 429: rate-limit reset in %s exceeds max wait %s; aborting", method, path, retryAfter.Round(time.Second), maxRetryWait)
+				}
+				if err := sleepCtx(ctx, retryAfter); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			// No usable header: exponential backoff clamped to the cap.
+			wait := c.retryBaseDelay * time.Duration(1<<uint(attempt))
+			if wait > maxRetryWait {
+				wait = maxRetryWait
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		raw, readErr := readResponseBody(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if readErr != nil {
+				return nil, fmt.Errorf("reddit API %s %s -> %d: %s (body read error: %v)", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes), readErr)
+			}
+			return nil, fmt.Errorf("reddit API %s %s -> %d: %s", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes))
+		}
 		if readErr != nil {
-			return nil, fmt.Errorf("reddit API %s %s -> %d: %s (body read error: %v)", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes), readErr)
+			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, readErr)
 		}
-		return nil, fmt.Errorf("reddit API %s %s -> %d: %s", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes))
-	}
-	if readErr != nil {
-		return nil, fmt.Errorf("reddit API %s %s: %w", method, path, readErr)
+
+		var out apiResponse
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &out); err != nil {
+				return nil, fmt.Errorf("reddit API %s %s: decode response: %w", method, path, err)
+			}
+		}
+		return &out, nil
 	}
 
-	var out apiResponse
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil, fmt.Errorf("reddit API %s %s: decode response: %w", method, path, err)
+	// Unreachable in practice: the loop returns the 429 as a non-2xx error on the
+	// final attempt. Kept as a defensive backstop mirroring Meta/Twitter.
+	return nil, fmt.Errorf("reddit API %s %s -> exhausted %d retries after 429s", method, path, retryMax)
+}
+
+// parseRetryAfter returns how long to wait before retrying a 429 and whether a
+// usable header was found. Reddit sends Retry-After either as a delay in seconds
+// or as an HTTP-date; both forms are honored (mirrors Meta's parseRetryAfter).
+// A non-positive/overflowing delay, a past HTTP-date, or an absent header all
+// return (0, false), signaling the caller to fall back to exponential backoff.
+// The returned duration is never negative.
+func (c *Client) parseRetryAfter(resp *http.Response) (time.Duration, bool) {
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0, false
+	}
+	// Delay-seconds form. ParseInt (not Atoi) so an overflowing value is treated
+	// as unusable rather than silently wrapping.
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		if n > 0 {
+			return time.Duration(n) * time.Second, true
+		}
+		return 0, false
+	}
+	// HTTP-date form: the duration until that instant, relative to the injected
+	// clock. A date already in the past is unusable.
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(c.now()); d > 0 {
+			return d, true
 		}
 	}
-	return &out, nil
+	return 0, false
+}
+
+// sleepCtx waits for d, returning early with ctx.Err() if ctx is cancelled.
+// Mirrors the Meta/Twitter clients' ctx-honoring sleep.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // sanitizePath re-encodes each path segment, mirroring the TS segment sanitizer.
