@@ -40,8 +40,10 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 	// NOTE: debug.LogPayloads() is intentionally NOT applied. Every authenticated
 	// payload carries a BearerToken (a valid JWT), and the connection service's
 	// create/set-credential payloads carry plaintext provider credentials, so
-	// enabling DEBUG would leak those secrets into logs. Debug HTTP logging
-	// (headers/status, no decoded payload) is still applied below via debug.HTTP().
+	// enabling it would leak those secrets into logs. debug.HTTP() IS still
+	// applied below, but in clue v1.2.1 it does not log headers or statuses — it
+	// only propagates the runtime /debug toggle into each request's context (so
+	// debug-level logs elsewhere activate); it decodes no payload.
 	endpoints := svc.NewEndpoints(cont.Service)
 
 	// The container always initializes Connections (NewContainer wires it in both
