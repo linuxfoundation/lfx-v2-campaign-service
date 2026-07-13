@@ -262,8 +262,13 @@ func (c *Client) buildOAuthHeader(method, rawURL string, bodyParams map[string]s
 		}
 	}
 
-	// Base URL for signing excludes the query string (origin + path).
-	signingURL := parsed.Scheme + "://" + parsed.Host + parsed.Path
+	// Base URL for signing excludes the query string (origin + path) and MUST be
+	// normalized per RFC 5849 §3.4.1.2: the scheme and host are lowercased and a
+	// port equal to the scheme's default (80 for http, 443 for https) is omitted.
+	// WithBaseURL accepts any valid URL, so an input like "HTTPS://ADS-API.X.COM:443"
+	// would otherwise be signed verbatim and X would reject the signature. Only the
+	// base STRING is normalized here; the actual request still targets parsed as-is.
+	signingURL := normalizeSigningURL(parsed)
 	oauthParams["oauth_signature"] = generateOAuthSignature(method, signingURL, allParams, c.creds.ConsumerSecret, c.creds.AccessTokenSecret)
 
 	keys := make([]string, 0, len(oauthParams))
@@ -277,6 +282,23 @@ func (c *Client) buildOAuthHeader(method, rawURL string, bodyParams map[string]s
 		parts = append(parts, percentEncode(k)+"=\""+percentEncode(oauthParams[k])+"\"")
 	}
 	return "OAuth " + strings.Join(parts, ", "), nil
+}
+
+// normalizeSigningURL returns the RFC 5849 §3.4.1.2 normalized origin+path used
+// in the OAuth 1.0a signature base string: scheme and host lowercased, and the
+// port dropped when it is the scheme's default (http:80 / https:443). A
+// non-default port is preserved. The query string is excluded (its params are
+// signed separately). This is applied ONLY to the value fed into the base
+// string; the request itself still goes to the un-normalized URL.
+func normalizeSigningURL(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	// Omit the port when it matches the scheme default; keep it otherwise.
+	if port != "" && (scheme != "http" || port != "80") && (scheme != "https" || port != "443") {
+		host = host + ":" + port
+	}
+	return scheme + "://" + host + u.Path
 }
 
 func defaultNonce() string {
@@ -961,7 +983,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	if campaignID != "" {
+		// Find-or-create is idempotent by name, but a reused campaign may have been
+		// created with a DIFFERENT budget/config than THIS request carries (e.g. a
+		// re-dispatch with a corrected BudgetUsd). We deliberately do NOT update the
+		// campaign here — that is a separate PUT endpoint and an authoritative
+		// reconcile is the orchestrator's job (LFXV2-2665). Surface the divergence as
+		// a warning step (mirroring the promoted-tweet warning pattern) so an operator
+		// can see the existing config was NOT changed to match this request.
 		steps = append(steps, fmt.Sprintf("Reusing existing campaign: %s", campaignID))
+		steps = append(steps, fmt.Sprintf("Warning: reused existing campaign %s by name; its budget/config were NOT updated to match this request ($%.2f/day) — verify/reconcile in X Ads Manager", campaignID, in.BudgetUsd))
 	} else {
 		// X Ads v12 create endpoints take parameters as URL query params (not a
 		// JSON body), and use entity_status=PAUSED (not paused=true). Note: the
@@ -1029,7 +1059,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return partialResult(), fmt.Errorf("x line item lookup failed (campaign %s created, PAUSED): %w", campaignID, err)
 	}
 	if lineItemID != "" {
+		// A same-name line item is reused without re-checking its entity_status or
+		// flight dates. If it was previously ENABLED, the promoted-tweet POST below
+		// attaches an ACTIVE association to a line item that could be serving — the
+		// PAUSED/flight gating this request expects is NOT re-applied. We do NOT PATCH
+		// the line item to PAUSED here (separate endpoint; authoritative reconcile is
+		// the orchestrator's job, LFXV2-2665). Surface a warning step so an operator
+		// knows delivery may not be gated as expected.
 		steps = append(steps, fmt.Sprintf("Reusing existing line item: %s", lineItemID))
+		steps = append(steps, fmt.Sprintf("Warning: reused existing line item %s by name; its entity_status/flight dates were NOT reset to the requested PAUSED/%s–%s — it may already be ENABLED and serving; verify in X Ads Manager", lineItemID, in.StartDate, in.EndDate))
 	} else {
 		// X Ads v12 line_items: params go on the query string; start_time and
 		// end_time are REQUIRED; bid_strategy=AUTO selects automatic bidding
