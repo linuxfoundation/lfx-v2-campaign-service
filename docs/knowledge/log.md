@@ -23,7 +23,6 @@ must also be mounted in `server.go`, or its routes 404 despite compiling.
 Reddit Ads API v3 client (OAuth2 token refresh + Campaign -> Ad Group -> Ad
 creation) and listed it in the code index.
 **Creation** — Added OKF concept doc for internal/platform/meta (Meta Ads Graph
-**Update** — Added OKF concept doc for internal/platform/meta (Meta Ads Graph
 API client), listed in the code index.
 
 **Update** — Dropped the Goa CLI path allowlist; twitter-api-secret FP is

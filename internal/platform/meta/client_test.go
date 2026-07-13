@@ -461,7 +461,7 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_TEST") && strings.Contains(r.URL.RawQuery, "account_status"):
-			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency_offset":100}`)
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
@@ -564,7 +564,7 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 }
 
 // TestCreateCampaignCurrencyOffset verifies budget conversion honors the ad
-// account's Meta currency_offset instead of a hardcoded ×100: a zero-decimal
+// account's minor-unit offset instead of a hardcoded ×100: a zero-decimal
 // currency (JPY, offset 1) must NOT be multiplied by 100, and an explicit offset
 // of 100 scales an account-currency amount to minor units. An UNSET (zero) offset
 // is fetched from the account preflight instead (see
@@ -670,16 +670,16 @@ func TestCreateCampaignRejectsNegativeCurrencyOffset(t *testing.T) {
 
 // TestCreateCampaignRejectsUnsetOffsetWhenPreflightOmitsIt verifies that when
 // CurrencyOffset is unset (0) AND the account preflight succeeds but does NOT
-// return a usable currency_offset, CreateCampaign fails BEFORE any mutating call
+// return a usable currency code, CreateCampaign fails BEFORE any mutating call
 // rather than guessing 100. Defaulting to 100 would silently encode a zero-decimal
 // -currency (JPY/KRW/CLP) budget 100× too high, and a warning step after resource
 // creation cannot prevent that budget from being activated. noPostServer returns
-// {"name":"x"} — no currency_offset field — so the offset resolves to 0.
+// {"name":"x"} — no currency field — so the offset can't be derived.
 func TestCreateCampaignRejectsUnsetOffsetWhenPreflightOmitsIt(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
 
-	// CurrencyOffset omitted (0); preflight body carries no currency_offset.
+	// CurrencyOffset omitted (0); preflight body carries no currency code.
 	c := NewClient(Credentials{AccessToken: "t"},
 		AccountConfig{AccountID: "act_1", PageID: "p"},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
@@ -688,7 +688,7 @@ func TestCreateCampaignRejectsUnsetOffsetWhenPreflightOmitsIt(t *testing.T) {
 		GeoTargets: []string{"US"}, Budget: 5, StartDate: "2026-08-01", EndDate: "2026-08-31",
 		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "did not return a usable currency_offset") {
+	if err == nil || !strings.Contains(err.Error(), "did not return a usable currency code") {
 		t.Fatalf("err = %v, want it to reject an undeterminable offset before mutation", err)
 	}
 }
@@ -719,35 +719,37 @@ func TestCreateCampaignRejectsUnsetOffsetWhenPreflightFails(t *testing.T) {
 		GeoTargets: []string{"US"}, Budget: 5, StartDate: "2026-08-01", EndDate: "2026-08-31",
 		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "could not determine the account currency_offset") {
+	if err == nil || !strings.Contains(err.Error(), "could not determine the account currency") {
 		t.Fatalf("err = %v, want it to reject an undeterminable offset (preflight failed) before mutation", err)
 	}
 }
 
 // TestCreateCampaignUsesPreflightCurrencyOffset verifies that when CurrencyOffset
-// is unset (0), the offset FETCHED from the account preflight is used to encode
-// the budget — and, crucially, a zero-decimal currency (JPY, offset 1) does NOT
-// get multiplied by 100. With offset 1, a ¥5000 budget stays 5000 minor units.
+// is unset (0), the offset DERIVED from the ISO currency code returned by the
+// account preflight is used to encode the budget — and, crucially, a zero-decimal
+// currency (JPY, offset 1) does NOT get multiplied by 100. With JPY, a ¥5000
+// budget stays 5000 minor units; with USD it scales ×100.
 func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 	cases := []struct {
 		name      string
-		offset    int64
+		currency  string
 		budget    float64
 		wantMinor float64
 	}{
-		{"jpy preflight offset 1 does not multiply by 100", 1, 5000, 5000},
-		{"usd preflight offset 100 scales x100", 100, 500, 50000},
+		{"jpy preflight code derives offset 1, no ×100", "JPY", 5000, 5000},
+		{"usd preflight code derives offset 100, scales ×100", "USD", 500, 50000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			adsetCap := newBodyCapture()
-			offset := tc.offset
+			currency := tc.currency
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case r.Method == http.MethodGet:
-					// Preflight returns the account currency_offset.
-					_, _ = io.WriteString(w, `{"name":"x","account_status":1,"currency_offset":`+strconv.FormatInt(offset, 10)+`,"currency":"JPY"}`)
+					// Preflight returns the account ISO currency code (NOT a
+					// currency_offset field — the AdAccount node does not expose one).
+					_, _ = io.WriteString(w, `{"name":"x","account_status":1,"currency":"`+currency+`"}`)
 				case strings.HasSuffix(r.URL.Path, "/campaigns"):
 					_, _ = io.WriteString(w, `{"id":"camp_1"}`)
 				case strings.HasSuffix(r.URL.Path, "/adsets"):
@@ -764,7 +766,8 @@ func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			// CurrencyOffset intentionally omitted (0): must be fetched from preflight.
+			// CurrencyOffset intentionally omitted (0): must be derived from the
+			// preflight currency code.
 			c := NewClient(Credentials{AccessToken: "t"},
 				AccountConfig{AccountID: "act_1", PageID: "p"},
 				WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
@@ -777,24 +780,26 @@ func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 				t.Fatalf("CreateCampaign error: %v", err)
 			}
 			if got := adsetCap.get()["daily_budget"]; got != tc.wantMinor {
-				t.Errorf("daily_budget = %v, want %v (preflight offset %d)", got, tc.wantMinor, tc.offset)
+				t.Errorf("daily_budget = %v, want %v (preflight currency %s)", got, tc.wantMinor, tc.currency)
 			}
 		})
 	}
 }
 
 // TestCreateCampaignExplicitOffsetBypassesPreflightValue verifies that an explicit
-// positive AccountConfig.CurrencyOffset takes precedence over the value returned
-// by the preflight (the explicit override wins). Preflight returns 100 but the
-// explicit offset is 1, so a ¥5000 budget must stay 5000 minor units.
+// positive AccountConfig.CurrencyOffset takes precedence over the offset that would
+// be DERIVED from the preflight currency code (the explicit override wins). The
+// preflight reports USD (which would derive offset 100) but the explicit offset is
+// 1, so a ¥5000 budget must stay 5000 minor units.
 func TestCreateCampaignExplicitOffsetBypassesPreflightValue(t *testing.T) {
 	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet:
-			// Preflight reports 100, but the explicit override (1) must win.
-			_, _ = io.WriteString(w, `{"name":"x","currency_offset":100,"currency":"USD"}`)
+			// Preflight reports USD (would derive 100), but the explicit override (1)
+			// must win.
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
@@ -1851,6 +1856,16 @@ func TestParseRetryAfter(t *testing.T) {
 		{"http-date past -> none", fixed.Add(-10 * time.Second).UTC().Format(http.TimeFormat), 0},
 		{"absent -> none", "", 0},
 		{"garbage -> none", "soon", 0},
+		// A huge delay-seconds value must be CLAMPED to just over maxRetryWait, not
+		// multiplied (which overflows time.Duration NEGATIVE and would make the
+		// caller retry far too early). 10_000_000_000s is well past the ~9.2e9-second
+		// wrap threshold.
+		{"huge delay clamps just over max", "10000000000", maxRetryWait + time.Second},
+		// Exactly at the ceiling is allowed through as-is (not spuriously clamped).
+		{"delay exactly at max wait", strconv.FormatInt(int64(maxRetryWait/time.Second), 10), maxRetryWait},
+		// A far-future HTTP-date is clamped the same way rather than returning an
+		// enormous positive duration.
+		{"far-future http-date clamps just over max", fixed.Add(365 * 24 * time.Hour).UTC().Format(http.TimeFormat), maxRetryWait + time.Second},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2066,9 +2081,12 @@ func TestCreateCampaignRejectsHugeBudget(t *testing.T) {
 }
 
 // TestCreateCampaignRejectsOffsetOverflowBeforeAnyPost verifies that a bogus
-// large currency offset (here supplied via the preflight) that would push the
-// scaled minor-unit value past int64 is rejected BEFORE any mutating call, rather
-// than converting an out-of-range float to a wrapped int64.
+// large currency offset (supplied here as an explicit AccountConfig.CurrencyOffset
+// override) that would push the scaled minor-unit value past int64 is rejected
+// BEFORE any mutating call, rather than converting an out-of-range float to a
+// wrapped int64. Note the DERIVED offset can never trigger this (it is at most
+// 100), so an explicit override is the only path that can supply an overflow-scale
+// offset — hence the guard is exercised via the explicit field.
 func TestCreateCampaignRejectsOffsetOverflowBeforeAnyPost(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -2077,14 +2095,13 @@ func TestCreateCampaignRejectsOffsetOverflowBeforeAnyPost(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		// Preflight returns an absurd offset that overflows int64 when scaled.
-		_, _ = io.WriteString(w, `{"name":"x","currency_offset":1000000000000000000,"currency":"XXX"}`)
+		_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 	}))
 	defer srv.Close()
 
-	// CurrencyOffset unset (0): the overflow-scale offset comes from the preflight.
+	// Explicit absurd offset that overflows int64 when scaled by the budget.
 	c := NewClient(Credentials{AccessToken: "t"},
-		AccountConfig{AccountID: "act_1", PageID: "p"},
+		AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 1000000000000000000},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",

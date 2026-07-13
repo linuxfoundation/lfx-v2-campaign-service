@@ -233,28 +233,30 @@ type AccountConfig struct {
 	PageID string
 	// Label is an optional human-readable account label.
 	Label string
-	// CurrencyOffset is an OPTIONAL override of the ad account's Meta
-	// currency_offset: the factor that converts a whole-currency-unit budget into
+	// CurrencyOffset is an OPTIONAL override of the ad account's minor-unit
+	// offset: the factor that converts a whole-currency-unit budget into
 	// the minor units Meta expects. Meta budgets are ALWAYS expressed in minor
-	// units scaled by the ACCOUNT's currency_offset, which is NOT universally 100 —
+	// units scaled by the ACCOUNT's currency, which is NOT universally 100 —
 	// zero-decimal currencies such as JPY, KRW, and CLP use an offset of 1 (no
 	// minor unit), while most (USD, EUR, GBP) use 100.
 	//
-	// When left unset (zero), CreateCampaign fetches the offset from Meta during
-	// the account preflight (GET on the ad-account object with
-	// fields=currency_offset,currency) BEFORE any mutating call, and uses the
-	// returned value to encode the budget. If the preflight cannot determine a
-	// usable offset, CreateCampaign fails BEFORE mutation rather than guessing 100
-	// — a silent default would encode a zero-decimal-currency (JPY/KRW/CLP) budget
-	// 100× too high, and a warning after resource creation cannot prevent that
-	// budget from being activated.
+	// When left unset (zero), CreateCampaign fetches the account's ISO 4217 currency
+	// CODE from Meta during the account preflight (GET on the ad-account object with
+	// fields=name,account_status,currency) BEFORE any mutating call and DERIVES the
+	// offset from it via a reference table (100 for two-decimal currencies, 1 for
+	// zero-decimal ones like JPY/KRW/CLP). The AdAccount node does NOT expose a
+	// currency_offset field — only the ISO code — so the scale is derived, not
+	// fetched. If the currency is unknown or absent, CreateCampaign fails BEFORE
+	// mutation rather than guessing 100 — a silent default would encode a
+	// zero-decimal-currency (JPY/KRW/CLP) budget 100× too high, and a warning after
+	// resource creation cannot prevent that budget from being activated.
 	//
 	// A caller MAY set this field to a positive value when the offset is already
 	// known (e.g. from a persisted connection); the explicit value then takes
-	// precedence over the fetched one. Note the account preflight GET still runs in
-	// that case (it also verifies account access and requests the same fields) — an
-	// explicit offset only skips CONSUMING the fetched currency_offset, not the
-	// network call. A negative value is rejected as malformed.
+	// precedence over the derived one. Note the account preflight GET still runs in
+	// that case (it also verifies account access) — an explicit offset only skips
+	// CONSUMING the derived offset, not the network call. A negative value is
+	// rejected as malformed.
 	CurrencyOffset int64
 }
 
@@ -327,9 +329,9 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	account.PageID = strings.TrimSpace(account.PageID)
 	// NOTE: CurrencyOffset is NOT coerced here. It is not defaulted in NewClient so
 	// the zero value remains distinguishable as "unset": when unset, CreateCampaign
-	// fetches the account's currency_offset from Meta during the account preflight
-	// (see AccountConfig.CurrencyOffset). A negative offset is rejected as
-	// malformed at budget-conversion time.
+	// derives the offset from the account's ISO currency code fetched during the
+	// account preflight (see AccountConfig.CurrencyOffset). A negative offset is
+	// rejected as malformed at budget-conversion time.
 	c := &Client{
 		creds:          creds,
 		account:        account,
@@ -356,16 +358,70 @@ type createResponse struct {
 }
 
 // accountPreflight models the fields read from the ad-account object during the
-// account preflight (GET /act_<id>?fields=name,account_status,currency_offset,currency).
-// currency_offset is the account's minor-unit multiplier (100 for USD/EUR/GBP, 1
-// for zero-decimal currencies like JPY/KRW/CLP); it is used to encode the budget
-// into Meta minor units before any mutating call. Currency is carried only for
-// diagnostics in error messages.
+// account preflight (GET /act_<id>?fields=name,account_status,currency). The
+// AdAccount node exposes the ISO 4217 currency CODE only — it does NOT expose a
+// currency_offset field (only the separate Currency node does). The minor-unit
+// multiplier used to encode the budget is derived from this code via
+// currencyMinorUnitOffset before any mutating call.
 type accountPreflight struct {
-	Name           string `json:"name"`
-	AccountStatus  int    `json:"account_status"`
-	CurrencyOffset int64  `json:"currency_offset"`
-	Currency       string `json:"currency"`
+	Name          string `json:"name"`
+	AccountStatus int    `json:"account_status"`
+	Currency      string `json:"currency"`
+}
+
+// currencyMinorUnitOffset maps an ISO 4217 currency code to the factor that
+// converts a whole-currency-unit budget into the minor units Meta expects. Most
+// currencies are two-decimal (offset 100). The entries below are the zero-decimal
+// currencies (no minor unit, offset 1) — Meta bills these in whole units, so a
+// budget must NOT be multiplied by 100 for them (the JPY/KRW 100× over-spend bug).
+//
+// The AdAccount node exposes only the ISO currency CODE (not a currency_offset
+// field), so the offset is derived here rather than fetched. A code absent from
+// this map is treated as the two-decimal default (100) by currencyOffsetFor's
+// caller ONLY when explicitly resolved; an unknown/blank code with no explicit
+// AccountConfig.CurrencyOffset override fails before mutation rather than guessing.
+//
+// Three-decimal currencies are intentionally NOT special-cased: Meta bills ads in
+// whole minor units, so two-decimal vs zero-decimal is the distinction that
+// matters for budget encoding here.
+var currencyMinorUnitOffset = map[string]int64{
+	"BIF": 1, // Burundian Franc
+	"CLP": 1, // Chilean Peso
+	"DJF": 1, // Djiboutian Franc
+	"GNF": 1, // Guinean Franc
+	"ISK": 1, // Icelandic Krona
+	"JPY": 1, // Japanese Yen
+	"KMF": 1, // Comorian Franc
+	"KRW": 1, // South Korean Won
+	"MGA": 1, // Malagasy Ariary (5-subunit, but Meta treats as integer minor)
+	"PYG": 1, // Paraguayan Guarani
+	"RWF": 1, // Rwandan Franc
+	"UGX": 1, // Ugandan Shilling
+	"VND": 1, // Vietnamese Dong
+	"VUV": 1, // Vanuatu Vatu
+	"XAF": 1, // Central African CFA Franc
+	"XOF": 1, // West African CFA Franc
+	"XPF": 1, // CFP Franc
+}
+
+// defaultCurrencyMinorUnitOffset is the minor-unit multiplier for the common
+// two-decimal currencies (USD, EUR, GBP, ...) not enumerated as zero-decimal.
+const defaultCurrencyMinorUnitOffset int64 = 100
+
+// currencyOffsetFor derives the minor-unit multiplier for an ISO 4217 currency
+// code returned by the account preflight. It returns (offset, true) for a
+// recognized code (any non-blank code maps to its zero-decimal entry or the
+// two-decimal default) and (0, false) for a blank/absent code, where the caller
+// must fail before mutation rather than guess.
+func currencyOffsetFor(currency string) (int64, bool) {
+	code := strings.ToUpper(strings.TrimSpace(currency))
+	if code == "" {
+		return 0, false
+	}
+	if off, ok := currencyMinorUnitOffset[code]; ok {
+		return off, true
+	}
+	return defaultCurrencyMinorUnitOffset, true
 }
 
 // graphErrorEnvelope models the Graph API error body: {"error": {...}}.
@@ -550,14 +606,30 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 	if v == "" {
 		return 0
 	}
-	if n, err := strconv.Atoi(v); err == nil {
-		if n > 0 {
-			return time.Duration(n) * time.Second
+	// Delay-seconds form. ParseInt into an int64 (not Atoi, whose platform int can
+	// overflow on 32-bit and silently drop a real, if outsized, value) and CLAMP
+	// before multiplying: time.Duration(n)*time.Second wraps NEGATIVE for n beyond
+	// ~9.2e9, which would make the caller retry far too early. Any n strictly above
+	// the max-wait ceiling (in seconds) already exceeds the cap, so report a
+	// duration just over maxRetryWait and let the caller's own cap apply — never
+	// perform the wrapping multiply. Mirrors internal/platform/twitter/client.go.
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		if n <= 0 {
+			return 0
 		}
-		return 0
+		if n > int64(maxRetryWait/time.Second) {
+			return maxRetryWait + time.Second
+		}
+		return time.Duration(n) * time.Second
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		if d := t.Sub(c.timeNow()); d > 0 {
+			// Clamp an outsized HTTP-date reset the same way, so a far-future date
+			// can't wait past the point of usefulness (the caller also caps to
+			// maxRetryWait, but keep the two branches consistent).
+			if d > maxRetryWait {
+				return maxRetryWait + time.Second
+			}
 			return d
 		}
 	}
@@ -964,10 +1036,10 @@ type CampaignInput struct {
 	// IMPORTANT: this is NOT a USD amount and the client performs NO foreign-
 	// exchange conversion. Meta bills the ad set in the account's own currency, so
 	// the caller must supply an amount already denominated in that currency. The
-	// value is converted to minor units by multiplying by the account's Meta
-	// currency_offset (resolved from AccountConfig.CurrencyOffset when set,
-	// otherwise fetched from the account preflight; 100 for most currencies, 1 for
-	// zero-decimal currencies like JPY) and sent as-is.
+	// value is converted to minor units by multiplying by the account's minor-unit
+	// offset (resolved from AccountConfig.CurrencyOffset when set, otherwise derived
+	// from the ISO currency code fetched during the account preflight; 100 for most
+	// currencies, 1 for zero-decimal currencies like JPY) and sent as-is.
 	// (Renamed from BudgetUSD:
 	// the field never carried FX-converted USD — the old name implied a conversion
 	// this client does not do.)
@@ -1137,9 +1209,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Step 1: Account preflight (GET the ad-account object). This both verifies
-	// access and fetches the account's currency_offset — the factor used to encode
-	// the budget into Meta minor units (see below). It runs BEFORE any mutating
-	// call, so a missing/undeterminable offset fails before a paid resource exists.
+	// access and fetches the account's ISO 4217 currency CODE — from which the
+	// minor-unit offset used to encode the budget is DERIVED (see below; the
+	// AdAccount node does not expose a currency_offset field). It runs BEFORE any
+	// mutating call, so an unknown/undeterminable currency fails before a paid
+	// resource exists.
 	//
 	// A genuine CALLER-context cancellation/deadline must short-circuit here —
 	// otherwise, for inputs that go on to fail the geo checks, CreateCampaign would
@@ -1148,7 +1222,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// http.Client.Timeout, which surfaces as a DeadlineExceeded-wrapped error while
 	// the caller ctx is still live.
 	var acct accountPreflight
-	preflightErr := c.doRequest(ctx, http.MethodGet, "/"+accountID+"?fields=name,account_status,currency_offset,currency", nil, &acct)
+	preflightErr := c.doRequest(ctx, http.MethodGet, "/"+accountID+"?fields=name,account_status,currency", nil, &acct)
 	if preflightErr != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("meta campaign aborted during account preflight: %w", ctx.Err())
@@ -1162,23 +1236,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Meta minor units (NOT an FX conversion — the caller's amount is already in the
 	// account's currency). Most currencies use 100; zero-decimal currencies
 	// (JPY/KRW/CLP) use 1. Precedence: an explicit AccountConfig.CurrencyOffset (>0)
-	// wins; otherwise use the value fetched from the account preflight above. If
-	// neither yields a usable (positive) offset, fail HERE — before any mutating
-	// call — rather than guessing 100, which would silently encode a zero-decimal
-	// budget 100× too high (a warning after resource creation cannot prevent that
-	// budget from being activated).
+	// wins; otherwise DERIVE the offset from the ISO currency code returned by the
+	// account preflight above (via currencyMinorUnitOffset). If neither yields a
+	// usable (positive) offset — the currency is unknown/absent — fail HERE, before
+	// any mutating call, rather than guessing 100, which would silently encode a
+	// zero-decimal budget 100× too high (a warning after resource creation cannot
+	// prevent that budget from being activated).
 	offset := c.account.CurrencyOffset
 	if offset == 0 {
 		if preflightErr != nil {
-			return nil, fmt.Errorf("meta: could not determine the account currency_offset because the account preflight failed (%s); set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP)", truncateErr(preflightErr, 200))
+			return nil, fmt.Errorf("meta: could not determine the account currency because the account preflight failed (%s); set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP)", truncateErr(preflightErr, 200))
 		}
-		if acct.CurrencyOffset < 0 {
-			return nil, fmt.Errorf("meta: account preflight returned a negative currency_offset (%d) for currency %q; refusing to encode a budget with a malformed offset", acct.CurrencyOffset, acct.Currency)
+		derived, ok := currencyOffsetFor(acct.Currency)
+		if !ok {
+			return nil, fmt.Errorf("meta: account preflight did not return a usable currency code (got %q); set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP) rather than assuming a default that could encode a zero-decimal budget 100x too high", acct.Currency)
 		}
-		if acct.CurrencyOffset == 0 {
-			return nil, fmt.Errorf("meta: account preflight did not return a usable currency_offset for currency %q; set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP) rather than assuming a default that could encode a zero-decimal budget 100x too high", acct.Currency)
-		}
-		offset = acct.CurrencyOffset
+		offset = derived
 	}
 
 	// Convert whole account-currency units to Meta minor units and reject budgets

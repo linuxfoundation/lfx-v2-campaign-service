@@ -46,19 +46,25 @@ non-fatal creative creation; `CampaignInput.Budget` is denominated in the ad
 ACCOUNT's own currency — the client does NO foreign-exchange conversion, so the
 caller must pass an amount already in that currency — and it is bounded
 (rejecting rounds-to-zero and overflow-scale values) then converted to minor
-units by multiplying by the account's Meta `currency_offset`
-(`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. The offset is
-never guessed: when `AccountConfig.CurrencyOffset` is unset (zero) — the normal
+units by multiplying by the account's minor-unit offset
+(`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. That offset is
+DERIVED from the account's ISO 4217 currency code, not fetched: the Meta AdAccount
+node exposes only `currency` (the ISO code) — it does NOT expose a
+`currency_offset` field (only the separate Currency node does). CreateCampaign
+maps the code through a reference table (`currencyMinorUnitOffset`): the
+zero-decimal currencies (JPY, KRW, CLP, VND, and the rest of the standard set) map
+to 1, and every other recognized code defaults to the two-decimal 100. The offset
+is never guessed: when `AccountConfig.CurrencyOffset` is unset (zero) — the normal
 case for a dispatch built from a persisted connection, which carries only
-account/page/app IDs — CreateCampaign fetches `currency_offset` (and `currency`,
-for diagnostics) from the ad-account object during the account preflight, BEFORE
-any mutating call, and fails closed if the preflight cannot determine a usable
-offset. Silently defaulting to 100 would encode a zero-decimal-currency
+account/page/app IDs — CreateCampaign fetches the account's `currency` (ISO code)
+from the ad-account object during the account preflight, BEFORE any mutating call,
+derives the offset from it, and fails closed if the currency is unknown or absent.
+Silently defaulting to 100 would encode a zero-decimal-currency
 (JPY/KRW/CLP) budget 100× too high, and a warning after resource creation cannot
 prevent that budget from being activated. A caller MAY set a positive
 `CurrencyOffset` explicitly when the value is already known; the account preflight
 GET still runs (it also verifies access), but the explicit offset takes precedence
-over the fetched `currency_offset` rather than skipping the request. A negative
+over the derived one rather than skipping the request. A negative
 offset is rejected as malformed. `CampaignInput.Project` is
 also required (rejected up front if empty/whitespace): the campaign name's
 Project segment must be the caller-supplied canonical LFX project slug, so the
