@@ -502,8 +502,10 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 // TestCreateCampaignCurrencyOffset verifies budget conversion honors the ad
 // account's Meta currency_offset instead of a hardcoded ×100: a zero-decimal
 // currency (JPY, offset 1) must NOT be multiplied by 100, and an explicit offset
-// of 100 scales an account-currency amount to minor units. There is no silent
-// default: an unset offset is rejected (see TestCreateCampaignRejectsUnsetCurrencyOffsetBeforeAnyPost).
+// of 100 scales an account-currency amount to minor units. An UNSET (zero) offset
+// defaults to 100 with a surfaced result step (see
+// TestCreateCampaignDefaultsUnsetCurrencyOffset); a NEGATIVE offset is rejected
+// (see TestCreateCampaignRejectsNegativeCurrencyOffset).
 func TestCreateCampaignCurrencyOffset(t *testing.T) {
 	newSrv := func(cap *bodyCapture) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
