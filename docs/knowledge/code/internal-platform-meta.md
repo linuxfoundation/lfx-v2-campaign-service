@@ -3,6 +3,13 @@ type: "Go Package"
 title: "internal/platform/meta"
 description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation."
 resource: "internal/platform/meta"
+tags:
+  - platform-client
+  - meta
+  - facebook-ads
+  - graph-api
+  - go-package
+timestamp: "2026-07-13T19:22:00Z"
 ---
 
 # internal/platform/meta
