@@ -1445,6 +1445,37 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// sanctioned), fail rather than silently falling back to US and targeting a
 	// country they didn't ask for. An empty input legitimately defaults to US.
 	allGeo := validateGeoTargets(in.GeoTargets)
+	// Surface geos that were supplied but dropped by validateGeoTargets (bogus/
+	// non-ISO codes, or Meta-ineligible/sanctioned countries like IR/CU/KP/RU) as
+	// an explicit step, so a caller who mixed eligible + ineligible codes isn't
+	// left believing an excluded country is being targeted. This mirrors the
+	// regulated-country (SG/TW/KR) step emitted below. Skip the note when the only
+	// difference is the empty-input US fallback.
+	if len(in.GeoTargets) > 0 {
+		kept := make(map[string]struct{}, len(allGeo))
+		for _, g := range allGeo {
+			kept[g] = struct{}{}
+		}
+		droppedGeos := make([]string, 0)
+		seenDropped := make(map[string]struct{})
+		for _, g := range in.GeoTargets {
+			up := strings.ToUpper(strings.TrimSpace(g))
+			if up == "" {
+				continue
+			}
+			if _, ok := kept[up]; ok {
+				continue
+			}
+			if _, dup := seenDropped[up]; dup {
+				continue
+			}
+			seenDropped[up] = struct{}{}
+			droppedGeos = append(droppedGeos, up)
+		}
+		if len(droppedGeos) > 0 {
+			steps = append(steps, fmt.Sprintf("Geo targets dropped (invalid code or not eligible for Meta ad targeting, e.g. sanctioned/excluded countries): %s", strings.Join(droppedGeos, ", ")))
+		}
+	}
 	if len(in.GeoTargets) > 0 && len(allGeo) == 1 && allGeo[0] == "US" {
 		// Only a real problem if the caller didn't actually ask for US: this means
 		// every supplied geo was invalid or sanctioned and we fell back to US.

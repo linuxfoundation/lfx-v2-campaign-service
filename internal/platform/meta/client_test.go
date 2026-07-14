@@ -1044,6 +1044,59 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignReportsDroppedIneligibleGeos verifies that when eligible and
+// ineligible/sanctioned geos are mixed (US + IR), the dropped ineligible code is
+// surfaced in a step — a caller must not silently believe a sanctioned country is
+// being targeted.
+func TestCreateCampaignReportsDroppedIneligibleGeos(t *testing.T) {
+	adsetCap := newBodyCapture()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"c1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			adsetCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"a1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"cr1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad1"}`)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US", "IR"}, // IR is sanctioned/ineligible
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	geo := adsetCap.get()["targeting"].(map[string]any)["geo_locations"].(map[string]any)["countries"].([]any)
+	if len(geo) != 1 || geo[0] != "US" {
+		t.Errorf("geo countries = %v, want [US] (IR dropped)", geo)
+	}
+	dropStep := false
+	for _, s := range res.Steps {
+		if strings.Contains(s, "Geo targets dropped") && strings.Contains(s, "IR") {
+			dropStep = true
+		}
+	}
+	if !dropStep {
+		t.Errorf("expected a step naming the dropped ineligible geo IR, got %v", res.Steps)
+	}
+}
+
 func TestCreateCampaignAllGeosRegulated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"name":"x"}`)
