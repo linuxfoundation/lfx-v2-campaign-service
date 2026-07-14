@@ -602,13 +602,14 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 // aggregateStatus folds per-platform outcomes into the job's status.
 //
 // Skipped platforms (single-flight SKIP: another dispatch owns the pair) are NOT
-// counted as failures — a skip is not this job's outcome. If any platform was
-// skipped and none of THIS job's own dispatches failed, the job is not yet done:
-// the owning dispatch is still deciding the skipped pair's fate, so the job stays
-// non-terminal (running) and a re-poll after the owner finishes reflects the true
-// outcome (rather than the old behavior, which recorded the skip as a terminal
-// failure that GetJob could never correct). Full cross-request adoption of the
-// owner's result is tracked under LFXV2-2665.
+// counted as failures — a skip is a deferral to that owner, not this job's outcome
+// and not this job's work to finish. If a platform was skipped and none of THIS
+// job's own dispatches failed, the job terminalizes as SUCCEEDED: it is neither a
+// failure (spurious) nor left non-terminal (a stuck `running` job is never
+// revisited — GetJob only reads it and the recovery sweeper would eventually fail
+// it after staleJobCutoff). The per-platform result carries Skipped=true so a
+// caller can see which platforms a concurrent request handled; full cross-request
+// adoption of the owner's result is tracked under LFXV2-2665.
 func aggregateStatus(results []platformResult) model.JobStatus {
 	var ok, failed, skipped int
 	for _, r := range results {
@@ -631,10 +632,18 @@ func aggregateStatus(results []platformResult) model.JobStatus {
 		// hiding it behind a still-running status).
 		return model.JobPartial
 	case skipped > 0:
-		// No failures, but at least one pair is owned by a concurrent dispatch whose
-		// outcome isn't ours to know yet. Stay non-terminal so a re-poll after the
-		// owner completes reflects the real result instead of a spurious failure.
-		return model.JobRunning
+		// No failures, and every platform this job actually dispatched succeeded; the
+		// remaining pair(s) were SKIPPED because a concurrent dispatch already owns
+		// the (brief, platform) claim and is creating them. A skip is a deferral to
+		// that owner, NOT this job's failure and NOT this job's work to finish — the
+		// owner's own job records the real per-platform result. So this job is
+		// TERMINAL: return succeeded rather than staying `running` forever (nothing
+		// revisits a running job — GetJob only reads it and the recovery sweeper would
+		// eventually fail it after staleJobCutoff, turning a correct deferral into a
+		// spurious failure). The per-platform result already carries Skipped=true so a
+		// caller can see which platforms were handled by a concurrent request; full
+		// cross-request adoption of the owner's outcome is tracked under LFXV2-2665.
+		return model.JobSucceeded
 	default:
 		return model.JobSucceeded
 	}

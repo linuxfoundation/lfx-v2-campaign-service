@@ -379,10 +379,12 @@ func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
 	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
-	// The single skipped platform must NOT drive the job to a terminal status.
+	// A skipped platform (owned by a concurrent dispatch) is a deferral, not a
+	// failure — the job terminalizes as SUCCEEDED (not stuck-running, which the
+	// recovery sweeper would later fail; not failed, which would be spurious).
 	j := waitForFinalized(t, jobs, id)
-	if j.Status != model.JobRunning {
-		t.Errorf("status = %s, want running (a lone skipped platform must not falsely terminate the job)", j.Status)
+	if j.Status != model.JobSucceeded {
+		t.Errorf("status = %s, want succeeded (a lone skipped platform is a deferral, terminalizes succeeded)", j.Status)
 	}
 	disp.mu.Lock()
 	calls := disp.calls
@@ -401,8 +403,8 @@ func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 // TestOrchestrator_SkipDoesNotFailAlongsideSuccess verifies that when one
 // platform succeeds and another is skipped (owned by a concurrent dispatch), the
 // job is not falsely reported failed/partial: with a real success and no real
-// failure, an outstanding skip keeps the job non-terminal (running) pending the
-// owner's outcome.
+// failure, an outstanding skip (a deferral to the owner) terminalizes the job as
+// succeeded rather than a spurious failure/partial or a stuck running state.
 func TestOrchestrator_SkipDoesNotFailAlongsideSuccess(t *testing.T) {
 	jobs := newFakeJobRepo()
 	// LinkedIn is already held pending by another dispatch; Google Ads is free.
@@ -416,8 +418,8 @@ func TestOrchestrator_SkipDoesNotFailAlongsideSuccess(t *testing.T) {
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
 	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
 	j := waitForFinalized(t, jobs, id)
-	if j.Status != model.JobRunning {
-		t.Errorf("status = %s, want running (a skip alongside a success must not fail/partial the job)", j.Status)
+	if j.Status != model.JobSucceeded {
+		t.Errorf("status = %s, want succeeded (a skip alongside a success terminalizes succeeded, not failed/partial/stuck)", j.Status)
 	}
 }
 
@@ -430,10 +432,11 @@ func TestAggregateStatus(t *testing.T) {
 		{"all ok", []platformResult{{OK: true}, {OK: true}}, model.JobSucceeded},
 		{"all fail", []platformResult{{OK: false}, {OK: false}}, model.JobFailed},
 		{"mixed", []platformResult{{OK: true}, {OK: false}}, model.JobPartial},
-		// A single-flight SKIP is not a failure: a lone skip stays non-terminal
-		// (running) pending the owning dispatch's outcome.
-		{"only skipped", []platformResult{{Skipped: true}}, model.JobRunning},
-		{"skip + ok", []platformResult{{OK: true}, {Skipped: true}}, model.JobRunning},
+		// A single-flight SKIP is a deferral to the owning dispatch, not a failure
+		// and not this job's work to finish: it terminalizes as succeeded (not stuck
+		// running, which the sweeper would later fail).
+		{"only skipped", []platformResult{{Skipped: true}}, model.JobSucceeded},
+		{"skip + ok", []platformResult{{OK: true}, {Skipped: true}}, model.JobSucceeded},
 		// A real failure still surfaces even when another platform was skipped.
 		{"skip + fail", []platformResult{{OK: false}, {Skipped: true}}, model.JobPartial},
 		{"ok + fail + skip", []platformResult{{OK: true}, {OK: false}, {Skipped: true}}, model.JobPartial},
