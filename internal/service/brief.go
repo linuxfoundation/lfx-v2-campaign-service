@@ -186,8 +186,8 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	// Pass the version we just observed as 'approved'. Start gates job creation on
 	// the brief still being approved at this exact version, so a concurrent replace
 	// (which resets it to draft, bumping version) or archive committing between this
-	// read and job creation makes Start fail (ErrConflict → 409) rather than
-	// launching paid campaigns from a stale "approved" snapshot.
+	// read and job creation makes Start fail (domain.ErrStaleApproval → 409) rather
+	// than launching paid campaigns from a stale "approved" snapshot.
 	jobID, err := s.orch.Start(ctx, brief, brief.Version, platforms, marshalAny(p.Input.Config))
 	if err != nil {
 		return nil, mapBriefErr(err)

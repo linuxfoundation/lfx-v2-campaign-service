@@ -53,7 +53,8 @@ func (r *JobRepo) CreateJob(ctx context.Context, briefID string) (*model.Campaig
 // a concurrent ReplaceBrief (resets to 'draft', version+1) or ArchiveBrief
 // ('archived', version+1) committing in the window bumps the brief's version, so
 // the guarded INSERT ... SELECT ... WHERE EXISTS evaluates its EXISTS predicate
-// against that committed change and inserts zero rows — surfaced as ErrConflict.
+// against that committed change and inserts zero rows (pgx.ErrNoRows) — surfaced
+// as domain.ErrStaleApproval (mapped to 409).
 //
 // The INSERT-from-SELECT-WHERE-EXISTS is a single statement, so the approval
 // re-check and the job insert share one snapshot and cannot be split by a

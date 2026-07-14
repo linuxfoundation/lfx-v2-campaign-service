@@ -301,8 +301,9 @@ type platformResult struct {
 // (CreateJobForApprovedBrief), closing the approve→dispatch TOCTOU race: a
 // concurrent ReplaceBrief (resets to draft) or ArchiveBrief committing between the
 // caller's approval read and this insert bumps the brief's version, so the
-// guarded insert affects zero rows and Start returns ErrConflict (409) rather
-// than launching paid campaigns from a stale "approved" snapshot.
+// guarded insert affects zero rows and Start returns domain.ErrStaleApproval
+// (mapped to 409) rather than launching paid campaigns from a stale "approved"
+// snapshot.
 //
 // The dispatch goroutine runs under the orchestrator's root context (not the
 // request context), so it survives the request ending but can still be cancelled
