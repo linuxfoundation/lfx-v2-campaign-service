@@ -1311,6 +1311,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// utm_term=-kubecon-eu-. Trim once here so every consumer sees the same value.
 	in.EventName = strings.TrimSpace(in.EventName)
 
+	// Normalize Objective in place (trim + lowercase) so every consumer sees the
+	// same value: objectiveParams keys are lowercase, so a padded/upper value like
+	// " Traffic" would otherwise fail the lookup as "unknown" even though it is
+	// valid, and a whitespace-only value would not be treated as empty (and so not
+	// default to "traffic"). buildCampaignName also reads in.Objective, so normalize
+	// before it is called.
+	in.Objective = strings.ToLower(strings.TrimSpace(in.Objective))
+
 	// Resolve the objective and validate deterministic inputs (placements and the
 	// promoted object) BEFORE the first mutating call, so an input error never
 	// creates a paid campaign.

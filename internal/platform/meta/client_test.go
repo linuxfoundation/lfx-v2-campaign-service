@@ -1469,6 +1469,68 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignNormalizesObjective verifies that a padded / mixed-case
+// Objective is trimmed and lowercased so it resolves like the canonical value
+// instead of failing the objectiveParams lookup as "unknown", and that a
+// whitespace-only Objective defaults to traffic.
+func TestCreateCampaignNormalizesObjective(t *testing.T) {
+	cases := []struct {
+		name         string
+		objective    string
+		wantCampaign string
+		wantOptGoal  string
+	}{
+		{"padded lowercase", "  traffic  ", "OUTCOME_TRAFFIC", "LINK_CLICKS"},
+		{"mixed case", "AwArEnEsS", "OUTCOME_AWARENESS", "REACH"},
+		{"whitespace only defaults to traffic", "   ", "OUTCOME_TRAFFIC", "LINK_CLICKS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			campaignCap := newBodyCapture()
+			adsetCap := newBodyCapture()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet:
+					_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+				case strings.HasSuffix(r.URL.Path, "/campaigns"):
+					campaignCap.set(decodeBody(t, r))
+					_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+				case strings.HasSuffix(r.URL.Path, "/adsets"):
+					adsetCap.set(decodeBody(t, r))
+					_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+				case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+					_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+				case strings.HasSuffix(r.URL.Path, "/ads"):
+					_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+				WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName: "E", Project: "tlf", Objective: tc.objective,
+				RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+				Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+				Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+			})
+			if err != nil {
+				t.Fatalf("objective %q should normalize and succeed, got err = %v", tc.objective, err)
+			}
+			if got := campaignCap.get()["objective"]; got != tc.wantCampaign {
+				t.Errorf("campaign objective = %v, want %v", got, tc.wantCampaign)
+			}
+			if got := adsetCap.get()["optimization_goal"]; got != tc.wantOptGoal {
+				t.Errorf("optimization_goal = %v, want %v", got, tc.wantOptGoal)
+			}
+		})
+	}
+}
+
 // TestCreateCampaignRejectsInactiveAccountBeforeAnyPost verifies that a successful
 // preflight reporting a known-inactive account_status (e.g. 2 = disabled) fails
 // BEFORE any mutating call, rather than creating a paid campaign that Meta would
