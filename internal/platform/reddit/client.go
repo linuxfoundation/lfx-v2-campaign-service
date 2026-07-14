@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -83,6 +84,12 @@ const (
 	// redditMaxBudgetUSD caps the budget below the int64 micro-dollar overflow
 	// threshold so the ×1e6 conversion in toMicrodollars can't wrap.
 	redditMaxBudgetUSD = 1_000_000_000.0
+	// maxEventNameRunes / maxProjectRunes bound the caller-supplied name segments
+	// so the composed campaign/ad-group names stay within Reddit's ~200-char name
+	// limit (the fixed template segments consume the rest). Validated up front so
+	// an over-long name fails before the campaign is created, not after (orphan).
+	maxEventNameRunes = 120
+	maxProjectRunes   = 40
 	// maxResponseBody bounds how much of any response body is read into memory,
 	// guarding against a hostile/oversized reply while comfortably exceeding any
 	// normal success or error envelope.
@@ -844,6 +851,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// and UTM fields all use the same trimmed value (a padded name otherwise
 	// leaks into attribution, e.g. utm_term=-kubecon-).
 	in.EventName = strings.TrimSpace(in.EventName)
+	// Length-validate EventName and Project up front (by rune count): both are
+	// folded into the campaign and ad-group names, and an over-long value would be
+	// rejected by Reddit only at the ad-group POST — AFTER the campaign already
+	// exists, orphaning it. Fail before any mutating call instead. The bounds leave
+	// headroom for the fixed name-template segments within Reddit's name limit.
+	if n := utf8.RuneCountInString(in.EventName); n > maxEventNameRunes {
+		return nil, fmt.Errorf("event name is too long: %d characters (max %d)", n, maxEventNameRunes)
+	}
+	if n := utf8.RuneCountInString(in.Project); n > maxProjectRunes {
+		return nil, fmt.Errorf("project is too long: %d characters (max %d)", n, maxProjectRunes)
+	}
 	switch {
 	case math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0:
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
@@ -1741,8 +1759,8 @@ func redactURL(raw string) string {
 		redacted := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
 		return redacted.String()
 	}
-	// Unparseable / non-absolute input CANNOT be redacted reliably — e.g.
-	// "https://user:password@example.com/%zz" fails url.Parse and its authority
+	// Unparseable / non-absolute input CANNOT be redacted reliably — e.g. a value
+	// like "https://<user>:<pass>@example.com/%zz" fails url.Parse and its authority
 	// (with userinfo) would otherwise be echoed. Rather than risk leaking a secret,
 	// strip the query/fragment AND anything up to and including a userinfo "@", and
 	// if a credential delimiter is present at all, don't echo the value.
