@@ -64,11 +64,13 @@ from the ad-account object during the account preflight, BEFORE any mutating cal
 derives the offset from it, and fails closed if the currency is unknown or absent.
 Silently defaulting to 100 would encode a zero-decimal-currency
 (JPY/KRW/CLP) budget 100× too high, and a warning after resource creation cannot
-prevent that budget from being activated. A caller MAY set a positive
-`CurrencyOffset` explicitly when the value is already known; the account preflight
-GET still runs (it also verifies access), but the explicit offset takes precedence
-over the derived one rather than skipping the request. A negative
-offset is rejected as malformed. The preflight also reads `account_status`: a
+prevent that budget from being activated. The account currency is
+authoritative: a caller MAY set a positive `CurrencyOffset` as a FALLBACK, but if
+the preflight returns a recognized currency whose true offset differs, the request
+is REJECTED (a stale override would mis-scale the budget). The explicit offset is
+only used when the preflight fails or its currency isn't in the supported map. The
+preflight GET always runs (it also verifies access). A negative offset is
+rejected as malformed. The preflight also reads `account_status`: a
 successful GET is not treated as "active" — if the account is in a known-inactive
 state (disabled, closed, pending review/settlement, etc.) CreateCampaign fails
 BEFORE any mutating call rather than creating a paid campaign Meta would reject

@@ -248,12 +248,14 @@ type AccountConfig struct {
 	// zero-decimal-currency (JPY/KRW/CLP) budget 100× too high, and a warning after
 	// resource creation cannot prevent that budget from being activated.
 	//
-	// A caller MAY set this field to a positive value when the offset is already
-	// known (e.g. from a persisted connection); the explicit value then takes
-	// precedence over the derived one. Note the account preflight GET still runs in
-	// that case (it also verifies account access) — an explicit offset only skips
-	// CONSUMING the derived offset, not the network call. A negative value is
-	// rejected as malformed.
+	// A caller MAY set this field to a positive value as a FALLBACK for when the
+	// account preflight can't identify the currency. The account currency is
+	// authoritative: if the preflight returns a RECOGNIZED currency whose true
+	// offset DIFFERS from this explicit value, CreateCampaign REJECTS the request
+	// (a stale override would mis-scale the budget, e.g. 100 on a JPY account). The
+	// explicit value is only used when the preflight fails or its currency is not
+	// in the supported-currency map. The preflight GET always runs (it also
+	// verifies account access). A negative value is rejected as malformed.
 	CurrencyOffset int64
 }
 
@@ -635,10 +637,26 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		}
 
 		if throttled && attempt < retryMax {
-			wait := retryAfter
-			if wait <= 0 {
-				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
+			if retryAfter > 0 {
+				// The server DECLARED when the limit clears. If that exceeds our cap,
+				// sleeping only maxRetryWait would retry while Meta is still throttling
+				// — burning attempts and stalling this synchronous flow — so ABORT with
+				// the rate-limit error instead of clamping (mirrors the twitter/reddit
+				// clients). Only when the server gives no usable reset do we fall back to
+				// a capped exponential backoff.
+				if retryAfter > maxRetryWait {
+					return &APIError{
+						StatusCode: status, Method: method, Path: path,
+						Message: fmt.Sprintf("rate-limit reset (Retry-After: %s) exceeds max wait %s; aborting", retryAfter, maxRetryWait),
+					}
+				}
+				if err := sleepCtx(ctx, retryAfter); err != nil {
+					return err
+				}
+				continue
 			}
+			// No server-declared reset: capped exponential backoff.
+			wait := c.retryBaseDelay * time.Duration(1<<uint(attempt))
 			if wait > maxRetryWait {
 				wait = maxRetryWait
 			}
@@ -1384,11 +1402,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Resolve the currency offset used to convert the whole-currency-unit budget to
 	// Meta minor units (NOT an FX conversion — the caller's amount is already in the
 	// account's currency). Most currencies use 100; zero-decimal currencies
-	// (JPY/KRW/CLP) use 1. Precedence: an explicit AccountConfig.CurrencyOffset (>0)
-	// wins; otherwise DERIVE the offset from the ISO currency code returned by the
-	// account preflight above (via currencyMinorUnitOffset). If neither yields a
-	// usable (positive) offset — the currency is unknown/absent — fail HERE, before
-	// any mutating call, rather than guessing 100, which would silently encode a
+	// (JPY/KRW/CLP) use 1. Precedence: the ACCOUNT CURRENCY is authoritative — if
+	// the preflight returns a recognized currency, its derived offset is used, and a
+	// conflicting explicit AccountConfig.CurrencyOffset is REJECTED (a stale
+	// override would mis-scale the budget). An explicit offset is only relied on as
+	// a FALLBACK when the preflight fails or its currency isn't in the
+	// supported-currency map. If neither yields a usable (positive) offset — the
+	// currency is unknown/absent AND no explicit offset — fail HERE, before any
+	// mutating call, rather than guessing 100, which would silently encode a
 	// zero-decimal budget 100× too high (a warning after resource creation cannot
 	// prevent that budget from being activated).
 	offset := c.account.CurrencyOffset

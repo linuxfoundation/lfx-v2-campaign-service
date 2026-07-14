@@ -2051,6 +2051,31 @@ func TestDoRequestRetriesOn429(t *testing.T) {
 	}
 }
 
+// TestDoRequestAbortsOnOverCapRetryAfter verifies that a server-declared
+// Retry-After exceeding maxRetryWait ABORTS immediately (does not clamp and retry
+// early while Meta is still throttling), issuing exactly one request.
+func TestDoRequestAbortsOnOverCapRetryAfter(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Retry-After", "600") // 10 min, well over maxRetryWait
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"k": "v"}, &out)
+	if err == nil {
+		t.Fatal("expected a rate-limit abort error on an over-cap Retry-After")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("server calls = %d, want 1 (abort, not clamp+retry)", got)
+	}
+}
+
 // TestDoRequestExhaustsRetries verifies that persistent 429s return an error
 // after retryMax attempts rather than looping forever.
 func TestDoRequestExhaustsRetries(t *testing.T) {
