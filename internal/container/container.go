@@ -32,7 +32,12 @@ const startupDBTimeout = 15 * time.Second
 // ContainerCloseTimeout, which is reserved out of the overall graceful-shutdown
 // budget (constants.DefaultShutdownTimeout) so the HTTP-drain phase and this
 // phase can't sum past it and get SIGKILLed. Validated by the init() below.
-const dispatchDrainTimeout = 8 * time.Second
+//
+// Sized so dispatchDrainTimeout + CancelGracePeriod leaves a positive HTTP-drain
+// budget: CancelGracePeriod grew to cover the post-provider persist AND the
+// terminal finalize write (both detached, both must complete during grace), so
+// the drain window is trimmed to keep the total within DefaultShutdownTimeout.
+const dispatchDrainTimeout = 6 * time.Second
 
 // ContainerCloseTimeout is the wall-clock budget for Container.Close: the
 // orchestrator drain (dispatchDrainTimeout) plus its post-cancel grace

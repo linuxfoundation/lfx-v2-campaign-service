@@ -47,6 +47,42 @@ func (r *JobRepo) CreateJob(ctx context.Context, briefID string) (*model.Campaig
 	return j, nil
 }
 
+// CreateJobForApprovedBrief inserts a queued job only if the brief is still
+// approved at expectedVersion, re-verifying the approval atomically in the same
+// statement. This closes the approve→dispatch TOCTOU race described on the port:
+// a concurrent ReplaceBrief (resets to 'draft', version+1) or ArchiveBrief
+// ('archived', version+1) committing in the window bumps the brief's version, so
+// the guarded INSERT ... SELECT ... WHERE EXISTS evaluates its EXISTS predicate
+// against that committed change and inserts zero rows — surfaced as ErrConflict.
+//
+// The INSERT-from-SELECT-WHERE-EXISTS is a single statement, so the approval
+// re-check and the job insert share one snapshot and cannot be split by a
+// concurrent commit (no held lock, matching the lock-free single-flight claim).
+// A replace/archive committed BEFORE this statement fails the EXISTS (→ 0 rows →
+// conflict); one committed AFTER means the job was created while the brief was
+// genuinely still approved at the read version, which is correct.
+func (r *JobRepo) CreateJobForApprovedBrief(ctx context.Context, briefID string, expectedVersion int64) (*model.CampaignJob, error) {
+	q := `INSERT INTO campaign_jobs (brief_id)
+		SELECT $1
+		WHERE EXISTS (
+			SELECT 1 FROM campaign_briefs
+			WHERE id = $1 AND status = 'approved' AND version = $2
+		)
+		RETURNING ` + jobCols
+	j, err := scanJob(r.db.QueryRow(ctx, q, briefID, expectedVersion))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No row inserted: the brief is no longer approved at expectedVersion (a
+			// concurrent replace/archive committed in the window, or it was never
+			// approved). Treat as a conflict with the concurrent mutation so the
+			// request fails rather than dispatching from a stale snapshot.
+			return nil, domain.ErrConflict
+		}
+		return nil, fmt.Errorf("create job for approved brief: %w", err)
+	}
+	return j, nil
+}
+
 // GetJob returns a job by id.
 func (r *JobRepo) GetJob(ctx context.Context, projectID, id string) (*model.CampaignJob, error) {
 	// Scope the lookup to the caller's project by joining through the owning

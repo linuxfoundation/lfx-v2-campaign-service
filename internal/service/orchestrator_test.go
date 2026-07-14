@@ -29,11 +29,25 @@ func newFakeJobRepo() *fakeJobRepo { return &fakeJobRepo{jobs: map[string]*model
 func (r *fakeJobRepo) CreateJob(_ context.Context, briefID string) (*model.CampaignJob, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.createLocked(briefID)
+}
+
+// createLocked inserts a queued job. Caller must hold r.mu.
+func (r *fakeJobRepo) createLocked(briefID string) (*model.CampaignJob, error) {
 	r.counter++
 	id := "job-" + string(rune('a'+r.counter))
 	j := &model.CampaignJob{ID: id, BriefID: briefID, Status: model.JobQueued}
 	r.jobs[id] = j
 	return j, nil
+}
+
+// CreateJobForApprovedBrief mirrors the unconditional create for the orchestrator
+// tests (which don't wire a brief store, so the approval guard is exercised
+// separately by the brief-service TOCTOU test with its own version-aware fake).
+func (r *fakeJobRepo) CreateJobForApprovedBrief(_ context.Context, briefID string, _ int64) (*model.CampaignJob, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.createLocked(briefID)
 }
 
 func (r *fakeJobRepo) GetJob(_ context.Context, _, id string) (*model.CampaignJob, error) {
@@ -194,7 +208,7 @@ func TestOrchestrator_AllSucceed(t *testing.T) {
 		model.ProviderLinkedInAds: okDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, err := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -215,7 +229,7 @@ func TestOrchestrator_PartialFailure(t *testing.T) {
 		model.ProviderLinkedInAds: failDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobPartial {
 		t.Errorf("status = %s, want partial", j.Status)
@@ -227,7 +241,7 @@ func TestOrchestrator_NoDispatcherFails(t *testing.T) {
 	camps := &fakeCampaignRepo{}
 	orch := NewOrchestrator(camps, jobs, nil) // no dispatchers
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -241,7 +255,7 @@ func TestOrchestrator_NilCampaignFailsWithoutPanic(t *testing.T) {
 		model.ProviderGoogleAds: nilDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -278,7 +292,7 @@ func TestOrchestrator_SkipsAlreadyDispatchedPlatform(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, err := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -316,7 +330,7 @@ func TestOrchestrator_ClaimErrorIsFailure(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -343,7 +357,7 @@ func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	// A single in-progress platform aggregates to failed (not ok), and the
 	// dispatcher must not have been called.
@@ -394,7 +408,7 @@ func TestOrchestrator_EmptyUpstreamIDIsFailure(t *testing.T) {
 		model.ProviderGoogleAds: emptyIDDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -415,7 +429,7 @@ func TestOrchestrator_ReusesExistingWhenDispatcherGone(t *testing.T) {
 	// No dispatchers registered at all.
 	orch := NewOrchestrator(camps, jobs, nil)
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobSucceeded {
 		t.Errorf("status = %s, want succeeded (existing campaign reused despite no dispatcher)", j.Status)
@@ -442,7 +456,7 @@ func TestOrchestrator_RecoversFromDispatcherPanic(t *testing.T) {
 		model.ProviderGoogleAds: panicDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -469,7 +483,7 @@ func TestOrchestrator_PersistErrorIsSanitized(t *testing.T) {
 		model.ProviderGoogleAds: okDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -511,7 +525,7 @@ func TestOrchestrator_DispatchGoesThroughClaim(t *testing.T) {
 		model.ProviderLinkedInAds: okDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
 	waitForTerminal(t, jobs, id)
 	camps.cmu.Lock()
 	defer camps.cmu.Unlock()
@@ -542,7 +556,7 @@ func TestOrchestrator_ShutdownDrainsInFlight(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	<-disp.started // dispatch is now in-flight
 
 	shutdownReturned := make(chan error, 1)
@@ -578,7 +592,7 @@ func TestOrchestrator_ShutdownGraceHonorsContextCancel(t *testing.T) {
 	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	<-disp.started
 	<-ctxSeen
 
@@ -644,7 +658,7 @@ func TestOrchestrator_StartRejectedAfterShutdown(t *testing.T) {
 		t.Fatalf("Shutdown: %v", err)
 	}
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	if _, err := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil); err == nil {
+	if _, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil); err == nil {
 		t.Fatal("expected Start to be rejected after Shutdown")
 	}
 }
@@ -681,7 +695,7 @@ func TestOrchestrator_ShutdownCancelsOnTimeout(t *testing.T) {
 	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	<-disp.started
 	dctx := <-ctxSeen
 
@@ -711,7 +725,7 @@ func TestOrchestrator_ShutdownGraceBoundedByContext(t *testing.T) {
 	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	<-disp.started
 	<-ctxSeen // drain the captured ctx so Dispatch can proceed to <-release
 
@@ -747,7 +761,7 @@ func TestOrchestrator_ShutdownGivesGraceWhenBudgetRemains(t *testing.T) {
 	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	<-disp.started
 	dctx := <-ctxSeen // the dispatch's own context, cancelled by rootCancel
 
@@ -805,7 +819,7 @@ func TestOrchestrator_NoDispatcherDoesNotLeavePendingClaim(t *testing.T) {
 	camps := &fakeCampaignRepo{}
 	orch := NewOrchestrator(camps, jobs, nil) // no dispatchers
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	waitForTerminal(t, jobs, id)
 	camps.mu.Lock()
 	defer camps.mu.Unlock()
@@ -838,7 +852,7 @@ func TestOrchestrator_PreCreateErrorReleasesClaim(t *testing.T) {
 		model.ProviderGoogleAds: preCreateErrDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
 	waitForTerminal(t, jobs, id)
 	camps.mu.Lock()
 	defer camps.mu.Unlock()
@@ -923,6 +937,82 @@ func TestOrchestrator_SweeperInterruptedOnShutdown(t *testing.T) {
 	if elapsed := time.Since(start); elapsed >= jobFinalizeTimeout {
 		t.Errorf("Shutdown took %v (>= jobFinalizeTimeout %v); sweep was not interrupted promptly", elapsed, jobFinalizeTimeout)
 	}
+}
+
+// ctxAssertingCampaignRepo asserts UpsertCampaign is invoked with a live (not
+// cancelled) context — proving the post-provider persist runs on a context
+// detached from the cancelled dispatch context.
+type ctxAssertingCampaignRepo struct {
+	fakeCampaignRepo
+	upsertCtxErr error // context error observed inside UpsertCampaign
+	upsertCalled chan struct{}
+}
+
+func (r *ctxAssertingCampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error) {
+	r.mu.Lock()
+	r.upsertCtxErr = ctx.Err()
+	r.mu.Unlock()
+	close(r.upsertCalled)
+	return r.fakeCampaignRepo.UpsertCampaign(ctx, c)
+}
+
+// TestOrchestrator_PersistSurvivesDispatchCancel verifies that a provider result
+// completing AFTER the dispatch context is cancelled (the phase-two shutdown
+// grace) is still persisted: the upsert must run on a detached context, not the
+// cancelled dispatch context, so the record of the created upstream campaign is
+// not lost.
+func TestOrchestrator_PersistSurvivesDispatchCancel(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &ctxAssertingCampaignRepo{upsertCalled: make(chan struct{})}
+	ctxSeen := make(chan context.Context, 1)
+	// The dispatcher returns its campaign only after observing cancellation, so the
+	// persist step necessarily runs while the dispatch ctx is already cancelled.
+	disp := &cancelThenReturnDispatcher{ctxSeen: ctxSeen}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	<-ctxSeen // dispatch is in-flight
+
+	// Drain with an already-past deadline so Shutdown immediately cancels the run's
+	// context, but give a real outer budget so the grace phase lets it finish.
+	outerCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go func() { _ = orch.Shutdown(outerCtx, time.Millisecond) }()
+
+	// The upsert must be reached and must see a LIVE context (detached), then the
+	// job reaches a terminal state with the campaign persisted.
+	select {
+	case <-camps.upsertCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("UpsertCampaign was never called; persist did not survive dispatch cancel")
+	}
+	camps.mu.Lock()
+	upsertErr := camps.upsertCtxErr
+	upsertCount := len(camps.upserted)
+	camps.mu.Unlock()
+	if upsertErr != nil {
+		t.Errorf("UpsertCampaign ran on a cancelled context (%v); persist must use a detached context", upsertErr)
+	}
+	if upsertCount != 1 {
+		t.Errorf("persisted %d campaigns, want 1 (created upstream campaign must be recorded)", upsertCount)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Errorf("status = %s, want succeeded", j.Status)
+	}
+}
+
+// cancelThenReturnDispatcher waits until its context is cancelled, then returns a
+// successful campaign — forcing the orchestrator's persist step to run while the
+// dispatch context is already cancelled.
+type cancelThenReturnDispatcher struct {
+	ctxSeen chan context.Context
+}
+
+func (d *cancelThenReturnDispatcher) Dispatch(ctx context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	d.ctxSeen <- ctx
+	<-ctx.Done() // return only after Shutdown cancels the dispatch context
+	return &model.Campaign{PlatformCampaignID: "pc-" + string(p), Status: "active", CampaignName: "n"}, nil
 }
 
 // TestBriefETagIsQuoted verifies the emitted ETag is a quoted entity-tag.

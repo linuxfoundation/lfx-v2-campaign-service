@@ -15,6 +15,9 @@ import (
 // fakeBriefRepo is a minimal in-memory BriefRepository for handler tests.
 type fakeBriefRepo struct {
 	briefs map[string]*model.CampaignBrief // key: projectID|id
+	// onGet, when set, fires once after the next GetBrief read, modelling a
+	// concurrent brief mutation that commits in the approve→dispatch window.
+	onGet func()
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -28,7 +31,18 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
-	return b, nil
+	// Return a snapshot copy so a caller holding the result observes the state as
+	// of the read, even if the stored brief is subsequently mutated (used to model
+	// a concurrent replace committing in the approve→dispatch window).
+	cp := *b
+	// onGet, if set, fires after the read to simulate a concurrent mutation
+	// committing between this read and a later guarded write.
+	if r.onGet != nil {
+		hook := r.onGet
+		r.onGet = nil // one-shot
+		hook()
+	}
+	return &cp, nil
 }
 
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief) (*model.CampaignBrief, error) {
@@ -272,6 +286,103 @@ func TestParseBriefIfMatch_AcceptsQuotedETag(t *testing.T) {
 	var nilp *string
 	if _, err := parseBriefIfMatch(nilp); err == nil {
 		t.Error("parseBriefIfMatch(nil) = nil error, want PreconditionRequired")
+	}
+}
+
+// versionGuardedJobRepo models the atomic approve-re-check that
+// CreateJobForApprovedBrief performs in SQL: it creates a job only if the brief
+// in the shared store is still 'approved' at the expected version. It lets a test
+// exercise the approve→dispatch TOCTOU guard without a real database.
+type versionGuardedJobRepo struct {
+	fakeJobRepo
+	store *fakeBriefRepo
+}
+
+func (r *versionGuardedJobRepo) CreateJobForApprovedBrief(_ context.Context, briefID string, expectedVersion int64) (*model.CampaignJob, error) {
+	// Re-verify approval atomically with the create, mirroring the guarded
+	// INSERT ... WHERE EXISTS: any concurrent replace/archive that bumped the
+	// version or changed the status fails the guard.
+	var stillApproved bool
+	for _, b := range r.store.briefs {
+		if b.ID == briefID && b.Status == model.BriefApproved && b.Version == expectedVersion {
+			stillApproved = true
+			break
+		}
+	}
+	if !stillApproved {
+		return nil, domain.ErrConflict
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.createLocked(briefID)
+}
+
+// TestBriefService_CreateCampaigns_TOCTOURaceFailsClosed verifies the
+// approve→dispatch race is closed: if a concurrent replace resets the brief to
+// draft (and bumps its version) AFTER CreateCampaigns reads it as approved but
+// BEFORE the job is created, the request FAILS (409 conflict) rather than
+// launching paid campaigns from the stale "approved" snapshot.
+func TestBriefService_CreateCampaigns_TOCTOURaceFailsClosed(t *testing.T) {
+	repo := newFakeBriefRepo()
+	// The brief is approved at version 5 when CreateCampaigns reads it.
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefApproved, Version: 5,
+	}
+	camps := &fakeCampaignRepo{}
+	jobs := &versionGuardedJobRepo{
+		fakeJobRepo: fakeJobRepo{jobs: map[string]*model.CampaignJob{}},
+		store:       repo,
+	}
+	orch := NewOrchestrator(camps, jobs, nil)
+	s := NewBriefService(repo, camps, jobs, orch)
+
+	// Model the concurrent replace committing in the window: it fires AFTER
+	// CreateCampaigns reads the brief as approved@v5 (GetBrief returns a snapshot)
+	// but BEFORE the guarded job create re-checks the store. It resets the brief to
+	// draft and bumps the version, exactly as ReplaceBrief does, so the guarded
+	// create must now fail (409) rather than dispatch from the stale snapshot.
+	repo.onGet = func() {
+		repo.briefs[briefKey("cncf", "b1")].Status = model.BriefDraft
+		repo.briefs[briefKey("cncf", "b1")].Version = 6
+	}
+
+	_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{Platforms: []string{"google-ads"}},
+	})
+	if _, ok := err.(*briefs.ConflictError); !ok {
+		t.Fatalf("expected *briefs.ConflictError (concurrent replace closed the TOCTOU race), got %T (%v)", err, err)
+	}
+	if len(jobs.jobs) != 0 {
+		t.Errorf("a job was created despite the brief no longer being approved: %d jobs", len(jobs.jobs))
+	}
+}
+
+// TestBriefService_CreateCampaigns_ApprovedAtVersionSucceeds verifies the guard
+// does not over-reject: when the brief is still approved at the read version, the
+// job is created normally.
+func TestBriefService_CreateCampaigns_ApprovedAtVersionSucceeds(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefApproved, Version: 5,
+	}
+	camps := &fakeCampaignRepo{}
+	jobs := &versionGuardedJobRepo{
+		fakeJobRepo: fakeJobRepo{jobs: map[string]*model.CampaignJob{}},
+		store:       repo,
+	}
+	orch := NewOrchestrator(camps, jobs, nil)
+	s := NewBriefService(repo, camps, jobs, orch)
+
+	resp, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{Platforms: []string{"google-ads"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaigns: %v", err)
+	}
+	if resp.JobID == "" {
+		t.Error("expected a job id for a brief still approved at the read version")
 	}
 }
 

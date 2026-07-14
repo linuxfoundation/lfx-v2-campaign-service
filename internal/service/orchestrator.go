@@ -21,12 +21,17 @@ import (
 // maxParallelDispatch bounds concurrent per-platform campaign creation.
 const maxParallelDispatch = 5
 
-// cancelGracePeriod is how long Shutdown waits, after cancelling in-flight runs
+// CancelGracePeriod is how long Shutdown waits, after cancelling in-flight runs
 // on a drain timeout, for them to unwind before it returns (and the pool closes).
-// It must be >= jobFinalizeTimeout so a run cancelled at the drain deadline still
-// has time to write its terminal status (on the detached finalize context) before
-// the pool is closed.
-const CancelGracePeriod = jobFinalizeTimeout + time.Second
+// A run cancelled at the drain deadline may, in its worst case, still owe TWO
+// detached writes that must complete before the pool closes: persisting a
+// just-created upstream campaign (persistResultTimeout) and then writing the
+// terminal job status (jobFinalizeTimeout). Sizing the grace to cover both (plus a
+// second of slack) keeps the documented invariant honest — both detached writes
+// fit inside the grace window rather than racing the pool close. (In practice both
+// are single-row statements that finish in milliseconds; the ceilings only bound a
+// pathological hang.)
+const CancelGracePeriod = jobFinalizeTimeout + persistResultTimeout + time.Second
 
 // claimReleaseTimeout bounds the best-effort pending-claim cleanup, which runs on
 // a context detached from the (possibly-cancelled) dispatch context.
@@ -53,6 +58,19 @@ const providerCallTimeout = 2 * time.Minute
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
 const jobFinalizeTimeout = 10 * time.Second
+
+// persistResultTimeout bounds the post-provider persistence upsert that records a
+// successfully-created upstream campaign. Like the finalize write it runs on a
+// context DETACHED from the dispatch context: once the provider has created the
+// paid resource upstream, persisting its id must not be abandoned merely because
+// Shutdown cancelled the dispatch context — that would lose the record of a
+// campaign that WAS created (an unreconcilable orphan). It is kept well below
+// CancelGracePeriod so it completes within the shutdown grace window and can never
+// itself hang shutdown. Kept modest (and below jobFinalizeTimeout) so the sum of
+// both detached writes fits within CancelGracePeriod without pushing
+// ContainerCloseTimeout past the overall shutdown budget (asserted in container
+// init()).
+const persistResultTimeout = 5 * time.Second
 
 // PlatformDispatcher creates a campaign on one ad platform. Implementations are
 // the per-provider adapters (added as those integrations land); the
@@ -278,10 +296,18 @@ type platformResult struct {
 // Start creates a queued job for the brief and launches dispatch asynchronously,
 // returning the job id immediately. The caller polls GetJob for progress.
 //
+// approvedVersion is the brief version the caller observed as 'approved'. Job
+// creation is gated on the brief still being approved at that exact version
+// (CreateJobForApprovedBrief), closing the approve→dispatch TOCTOU race: a
+// concurrent ReplaceBrief (resets to draft) or ArchiveBrief committing between the
+// caller's approval read and this insert bumps the brief's version, so the
+// guarded insert affects zero rows and Start returns ErrConflict (409) rather
+// than launching paid campaigns from a stale "approved" snapshot.
+//
 // The dispatch goroutine runs under the orchestrator's root context (not the
 // request context), so it survives the request ending but can still be cancelled
 // by Shutdown when the drain deadline expires.
-func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage) (string, error) {
+func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage) (string, error) {
 	// Register the run with the drain WaitGroup under the lock so a concurrent
 	// Shutdown can't start waiting between the draining check and wg.Add (which
 	// would let an untracked goroutine outlive Shutdown).
@@ -293,7 +319,11 @@ func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, pl
 	o.wg.Add(1)
 	o.mu.Unlock()
 
-	job, err := o.jobs.CreateJob(ctx, brief.ID)
+	// Create the job ONLY if the brief is still approved at the version the caller
+	// read. This re-verifies approval atomically with job creation, so a concurrent
+	// replace/archive that commits in the approve→dispatch window causes this
+	// request to FAIL (ErrConflict → 409) instead of dispatching from stale state.
+	job, err := o.jobs.CreateJobForApprovedBrief(ctx, brief.ID, approvedVersion)
 	if err != nil {
 		o.wg.Done()
 		return "", err
@@ -524,7 +554,17 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	campaign.BriefID = brief.ID
 	campaign.ProjectID = brief.ProjectID
 	campaign.Platform = p
-	if _, err := o.campaigns.UpsertCampaign(ctx, campaign); err != nil {
+	// Persist the successful result on a context DETACHED from the dispatch ctx.
+	// The upstream (paid) campaign now EXISTS; on the phase-two shutdown path
+	// rootCancel has already cancelled the dispatch ctx, and reusing it here would
+	// make pgx reject the upsert immediately — losing the record of a campaign that
+	// was actually created (an unreconcilable orphan) even though Shutdown is still
+	// inside its grace window. A bounded detached context (persistResultTimeout,
+	// sized to fit within CancelGracePeriod) lets the persist complete during grace
+	// while still bounding it so it can never hang shutdown.
+	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
+	defer cancelPersist()
+	if _, err := o.campaigns.UpsertCampaign(persistCtx, campaign); err != nil {
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
