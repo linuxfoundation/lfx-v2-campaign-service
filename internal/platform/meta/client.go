@@ -711,9 +711,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 
 		// Meta reports throttling either as HTTP 429 or, commonly, as HTTP 400 with
 		// a Graph error envelope whose code is a known rate-limit code. Treat both
-		// as retryable with the same bounded backoff.
+		// as retryable with the same bounded backoff. The envelope is only consumed
+		// on the non-2xx paths (throttle detection here and the error/abort branches
+		// below), so only unmarshal it then — a 2xx success body never populates it.
 		var env graphErrorEnvelope
-		_ = json.Unmarshal(raw, &env)
+		if status < 200 || status >= 300 {
+			_ = json.Unmarshal(raw, &env)
+		}
 		throttled := status == http.StatusTooManyRequests ||
 			(status < 200 || status >= 300) && env.Error != nil && graphRateLimitCodes[env.Error.Code]
 
@@ -975,42 +979,8 @@ var metaIneligibleCountries = map[string]bool{
 	"UM": true, // United States Minor Outlying Islands (no permanent population)
 }
 
-// iso3166Alpha2 is the set of assigned ISO 3166-1 alpha-2 country codes, used to
-// reject well-shaped but non-existent codes before they reach Meta.
-var iso3166Alpha2 = map[string]bool{
-	"AD": true, "AE": true, "AF": true, "AG": true, "AI": true, "AL": true, "AM": true, "AO": true,
-	"AQ": true, "AR": true, "AS": true, "AT": true, "AU": true, "AW": true, "AX": true, "AZ": true,
-	"BA": true, "BB": true, "BD": true, "BE": true, "BF": true, "BG": true, "BH": true, "BI": true,
-	"BJ": true, "BL": true, "BM": true, "BN": true, "BO": true, "BQ": true, "BR": true, "BS": true,
-	"BT": true, "BV": true, "BW": true, "BY": true, "BZ": true, "CA": true, "CC": true, "CD": true,
-	"CF": true, "CG": true, "CH": true, "CI": true, "CK": true, "CL": true, "CM": true, "CN": true,
-	"CO": true, "CR": true, "CU": true, "CV": true, "CW": true, "CX": true, "CY": true, "CZ": true,
-	"DE": true, "DJ": true, "DK": true, "DM": true, "DO": true, "DZ": true, "EC": true, "EE": true,
-	"EG": true, "EH": true, "ER": true, "ES": true, "ET": true, "FI": true, "FJ": true, "FK": true,
-	"FM": true, "FO": true, "FR": true, "GA": true, "GB": true, "GD": true, "GE": true, "GF": true,
-	"GG": true, "GH": true, "GI": true, "GL": true, "GM": true, "GN": true, "GP": true, "GQ": true,
-	"GR": true, "GS": true, "GT": true, "GU": true, "GW": true, "GY": true, "HK": true, "HM": true,
-	"HN": true, "HR": true, "HT": true, "HU": true, "ID": true, "IE": true, "IL": true, "IM": true,
-	"IN": true, "IO": true, "IQ": true, "IR": true, "IS": true, "IT": true, "JE": true, "JM": true,
-	"JO": true, "JP": true, "KE": true, "KG": true, "KH": true, "KI": true, "KM": true, "KN": true,
-	"KP": true, "KR": true, "KW": true, "KY": true, "KZ": true, "LA": true, "LB": true, "LC": true,
-	"LI": true, "LK": true, "LR": true, "LS": true, "LT": true, "LU": true, "LV": true, "LY": true,
-	"MA": true, "MC": true, "MD": true, "ME": true, "MF": true, "MG": true, "MH": true, "MK": true,
-	"ML": true, "MM": true, "MN": true, "MO": true, "MP": true, "MQ": true, "MR": true, "MS": true,
-	"MT": true, "MU": true, "MV": true, "MW": true, "MX": true, "MY": true, "MZ": true, "NA": true,
-	"NC": true, "NE": true, "NF": true, "NG": true, "NI": true, "NL": true, "NO": true, "NP": true,
-	"NR": true, "NU": true, "NZ": true, "OM": true, "PA": true, "PE": true, "PF": true, "PG": true,
-	"PH": true, "PK": true, "PL": true, "PM": true, "PN": true, "PR": true, "PS": true, "PT": true,
-	"PW": true, "PY": true, "QA": true, "RE": true, "RO": true, "RS": true, "RU": true, "RW": true,
-	"SA": true, "SB": true, "SC": true, "SD": true, "SE": true, "SG": true, "SH": true, "SI": true,
-	"SJ": true, "SK": true, "SL": true, "SM": true, "SN": true, "SO": true, "SR": true, "SS": true,
-	"ST": true, "SV": true, "SX": true, "SY": true, "SZ": true, "TC": true, "TD": true, "TF": true,
-	"TG": true, "TH": true, "TJ": true, "TK": true, "TL": true, "TM": true, "TN": true, "TO": true,
-	"TR": true, "TT": true, "TV": true, "TW": true, "TZ": true, "UA": true, "UG": true, "UM": true,
-	"US": true, "UY": true, "UZ": true, "VA": true, "VC": true, "VE": true, "VG": true, "VI": true,
-	"VN": true, "VU": true, "WF": true, "WS": true, "YE": true, "YT": true, "ZA": true, "ZM": true,
-	"ZW": true,
-}
+// iso3166Alpha2 (the large ISO 3166-1 alpha-2 lookup table) lives in
+// countries.go to keep the static data out of the core client logic.
 
 // regulatedCountries require a Universal Ads Declaration / regional compliance
 // and are excluded from API targeting (mirrors REGULATED_COUNTRIES).
