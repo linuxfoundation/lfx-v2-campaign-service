@@ -1051,9 +1051,7 @@ func buildCampaignName(in CampaignInput, geoTargets []string) string {
 	region := resolveRegion(geoTargets)
 	objective := objectiveLabel(defaultObjective(in.Objective))
 	project := strings.ReplaceAll(strings.TrimSpace(in.Project), "|", "-")
-	// The Date segment (campaign start, YYYY-MM-DD) is the 9th segment of the
-	// naming convention (docs/api-catalog.md "Campaign Naming Convention").
-	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU | %s", event, region, objective, project, in.StartDate)
+	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU", event, region, objective, project)
 }
 
 // buildUTMURL mirrors buildMetaUtmUrl.

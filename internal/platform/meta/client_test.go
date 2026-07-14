@@ -210,15 +210,15 @@ func TestBuildCampaignName(t *testing.T) {
 	// so the fixture uses the canonical "cncf" rather than a display label. It is
 	// padded with whitespace to prove the builder trims segments: validation
 	// TrimSpaces its checks, so " cncf " passes validation, but the attribution
-	// pipeline joins the Project segment exactly. StartDate becomes the 9th
-	// (Date) segment of the naming convention.
+	// pipeline joins the Project segment exactly. The name is the 8-segment
+	// convention ending in the Funnel (MoFU) segment.
 	name := buildCampaignName(CampaignInput{
 		EventName: "Open|Source Summit",
 		Project:   " cncf ",
 		Objective: "leads",
 		StartDate: "2026-08-01",
 	}, []string{"DE"})
-	want := "Events | Open-Source Summit | EMEA | Leads | Intent | Social | cncf | MoFU | 2026-08-01"
+	want := "Events | Open-Source Summit | EMEA | Leads | Intent | Social | cncf | MoFU"
 	if name != want {
 		t.Errorf("campaign name = %q, want %q", name, want)
 	}
