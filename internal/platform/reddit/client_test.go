@@ -1355,6 +1355,57 @@ func TestCreateCampaign_AdWithoutIDIsWarning(t *testing.T) {
 	if !foundWarning {
 		t.Errorf("expected a malformed-response warning step, got %v", res.Steps)
 	}
+	// The degraded outcome must also be exposed structurally so a caller can
+	// detect it without parsing Steps and can tell it apart from the no-PostURL
+	// case (which also has AdCount == 0 but no AdWarning).
+	if res.AdWarning == "" {
+		t.Error("AdWarning must be set when an ad is attempted but not confirmed")
+	}
+}
+
+// TestCreateCampaign_NoPostURLHasNoAdWarning verifies the no-ad path (no PostURL,
+// no variants) leaves AdWarning empty, so AdWarning distinguishes a genuinely
+// failed/unconfirmed ad from the valid "nothing to create" case.
+func TestCreateCampaign_NoPostURLHasNoAdWarning(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "No Ad",
+		Project:         "tlf",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if res.AdWarning != "" {
+		t.Errorf("AdWarning = %q, want empty for the no-PostURL path", res.AdWarning)
+	}
 }
 
 // TestCreateCampaign_AdCreateContextCancelledIsFatal verifies that a CALLER

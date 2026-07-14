@@ -62,9 +62,13 @@ const (
 	// slipped into the past by the time either request is finally accepted.
 	// redditWorstCaseCreateWait is the worst-case wall-clock a single mutating
 	// create can consume before it is accepted: every 429 backoff (retryMax waits
-	// clamped to maxRetryWait) plus every attempt's HTTP round-trip
-	// (retryMax+1 request timeouts).
-	redditWorstCaseCreateWait = retryMax*maxRetryWait + (retryMax+1)*redditRequestTimeout
+	// clamped to maxRetryWait), every attempt's HTTP round-trip (retryMax+1
+	// request timeouts), AND a token refresh per attempt — refreshToken runs at
+	// the start of each attempt and, when the cached token is within the expiry
+	// buffer, performs its own bounded HTTP fetch (one request timeout). Counting
+	// (retryMax+1) token fetches keeps the buffer conservative so a nudged start
+	// can't slip into the past even if every attempt re-fetches the token.
+	redditWorstCaseCreateWait = retryMax*maxRetryWait + (retryMax+1)*redditRequestTimeout + (retryMax+1)*redditRequestTimeout
 	// redditStartWorkflowBuffer covers the full campaign + up-to-two ad-group
 	// creates (the community fallback re-POSTs the ad group) plus a 60s margin, so
 	// a nudged start time stays in the future for every request that reuses it.
@@ -296,15 +300,23 @@ type CampaignInput struct {
 
 // CampaignResult mirrors RedditCampaignCreateResult.
 type CampaignResult struct {
-	Platform     string   `json:"platform"`
-	CampaignName string   `json:"campaignName"`
-	CampaignID   string   `json:"campaignId"`
-	AdGroupName  string   `json:"adGroupName"`
-	AdGroupID    string   `json:"adGroupId"`
-	AdCount      int      `json:"adCount"`
-	AdID         string   `json:"adId,omitempty"`
-	RedditURL    string   `json:"redditUrl"`
-	Steps        []string `json:"steps"`
+	Platform     string `json:"platform"`
+	CampaignName string `json:"campaignName"`
+	CampaignID   string `json:"campaignId"`
+	AdGroupName  string `json:"adGroupName"`
+	AdGroupID    string `json:"adGroupId"`
+	AdCount      int    `json:"adCount"`
+	AdID         string `json:"adId,omitempty"`
+	// AdWarning is set (non-empty) when a promoted-post ad was attempted but not
+	// confirmed — the ad POST failed, or returned a 2xx with no ad id. Ad creation
+	// is intentionally non-fatal (the campaign + ad group already succeeded), so
+	// the overall error stays nil; this field lets a caller detect the degraded
+	// outcome structurally instead of parsing Steps or inferring it from
+	// AdCount == 0 (which also covers the valid no-PostURL path). Mirrors the
+	// twitter client's promoted-tweet warning.
+	AdWarning string   `json:"adWarning,omitempty"`
+	RedditURL string   `json:"redditUrl"`
+	Steps     []string `json:"steps"`
 }
 
 // ---------------------------------------------------------------------------
@@ -733,14 +745,23 @@ func stripSubredditPrefix(s string) string {
 // executeRedditCampaignCreation. Every step is recorded in the result's Steps.
 //
 // PARTIAL-RESULT CONTRACT: once the campaign POST succeeds, a subsequent
-// ad-group/ad failure returns BOTH a non-nil *CampaignResult (carrying the
-// created, PAUSED campaign id and the steps completed so far) AND a non-nil
-// error. This is deliberate so the orphaned paid resource is identifiable for
-// cleanup/reconciliation. Callers MUST NOT follow the usual
-// `if err != nil { return err }` pattern that discards the result: inspect the
-// returned *CampaignResult (e.g. CampaignID) even when err != nil, or a retry
-// may create a duplicate campaign. Before the campaign POST succeeds, a failure
-// returns (nil, err) as usual.
+// AD-GROUP failure (or a caller-context cancellation mid-flow) returns BOTH a
+// non-nil *CampaignResult (carrying the created, PAUSED campaign id and the
+// steps completed so far) AND a non-nil error. This is deliberate so the
+// orphaned paid resource is identifiable for cleanup/reconciliation. Callers
+// MUST NOT follow the usual `if err != nil { return err }` pattern that discards
+// the result: inspect the returned *CampaignResult (e.g. CampaignID) even when
+// err != nil, or a retry may create a duplicate campaign. Before the campaign
+// POST succeeds, a failure returns (nil, err) as usual.
+//
+// AD creation (the optional promoted post) is by contrast NON-fatal: the
+// campaign and ad group already succeeded, so an ad-POST failure or an
+// unconfirmed (no-id) ad returns a nil error with the degraded outcome recorded
+// BOTH in Steps and, structurally, in CampaignResult.AdWarning (so a caller can
+// detect it without parsing Steps, and can tell it apart from the valid
+// no-PostURL case where AdCount is also 0). A caller-context cancellation during
+// the ad POST is the exception — it is fatal and follows the partial-result rule
+// above.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	var steps []string
 
@@ -1091,6 +1112,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Step 4: Create ad from post URL if provided, otherwise emit instructions.
 	adCount := 0
 	var adID string
+	var adWarning string
 
 	if in.PostURL != "" && validatedPostID != "" {
 		postID := validatedPostID
@@ -1131,6 +1153,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				pr.AdGroupID = adGroupID
 				return pr, fmt.Errorf("ad creation aborted: %w", ctxErr)
 			}
+			adWarning = "ad creation failed; the campaign and ad group were created (PAUSED) but the promoted-post ad was not — add it manually in Reddit Ads Manager"
 			steps = append(steps, fmt.Sprintf("Ad creation failed: %s -- add ad manually in Reddit Ads Manager", err.Error()))
 		} else {
 			adID = decodeID(adResp)
@@ -1143,6 +1166,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				// A 2xx response missing data.id is a malformed success: don't
 				// silently count it as a created ad. Surface it as a manual-action
 				// warning so the caller knows the ad was not confirmed.
+				adWarning = "ad creation returned no ad id (malformed response); the ad was not confirmed — verify/add it manually in Reddit Ads Manager"
 				steps = append(steps, fmt.Sprintf("Ad creation returned no ad ID (malformed response, post: %s) -- add ad manually in Reddit Ads Manager", postID))
 			}
 		}
@@ -1168,6 +1192,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AdGroupID:    adGroupID,
 		AdCount:      adCount,
 		AdID:         adID,
+		AdWarning:    adWarning,
 		RedditURL:    redditAdsManagerURL,
 		Steps:        steps,
 	}, nil
@@ -1265,10 +1290,12 @@ func validateRegistrationURL(raw string) error {
 	}
 	u, err := url.Parse(trimmed)
 	if err != nil {
-		return fmt.Errorf("registration URL %q is not a valid URL: %w", raw, err)
+		// Redact before echoing: a malformed value may still carry a secret in
+		// userinfo/query that would otherwise land in the error/logs.
+		return fmt.Errorf("registration URL %q is not a valid URL: %w", redactURL(raw), err)
 	}
 	if !u.IsAbs() || u.Hostname() == "" {
-		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
+		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", redactURL(raw))
 	}
 	// Reject embedded userinfo (user[:password]@host): an ad destination never
 	// needs URL credentials, and buildRedditUTMURL would otherwise forward the
@@ -1280,7 +1307,7 @@ func validateRegistrationURL(raw string) error {
 	case "http", "https":
 		return nil
 	default:
-		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", raw, u.Scheme)
+		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", redactURL(raw), u.Scheme)
 	}
 }
 
