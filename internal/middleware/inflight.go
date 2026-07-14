@@ -5,7 +5,6 @@ package middleware
 
 import (
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -21,8 +20,7 @@ import (
 // those goroutines to actually return before the pool closes, closing the
 // pool-use-after-close window that Shutdown/Close alone leave open.
 type InflightTracker struct {
-	wg  sync.WaitGroup
-	cnt atomic.Int64 // current in-flight count, so an unbounded-free Wait can read it directly
+	cnt atomic.Int64 // current in-flight handler count
 }
 
 // NewInflightTracker returns a ready-to-use tracker.
@@ -32,16 +30,16 @@ func NewInflightTracker() *InflightTracker { return &InflightTracker{} }
 func (t *InflightTracker) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			t.wg.Add(1)
 			t.cnt.Add(1)
-			defer func() {
-				t.cnt.Add(-1)
-				t.wg.Done()
-			}()
+			defer t.cnt.Add(-1)
 			next.ServeHTTP(w, r)
 		})
 	}
 }
+
+// inflightPollInterval is how often Wait re-checks the in-flight counter while
+// bounded-waiting for stragglers to drain.
+const inflightPollInterval = 5 * time.Millisecond
 
 // Wait blocks until all in-flight handlers have returned or the timeout elapses,
 // reporting whether every handler drained (true) or the wait timed out with
@@ -49,23 +47,29 @@ func (t *InflightTracker) Middleware() func(http.Handler) http.Handler {
 // can never wedge shutdown past its budget; on a clean shutdown (Shutdown already
 // drained the handlers) it returns immediately. A non-positive timeout never
 // blocks: it reports drained iff nothing is in flight at the moment of the call.
+//
+// Implemented by POLLING the atomic counter rather than a WaitGroup + goroutine:
+// a done-channel goroutine blocked on wg.Wait() would LEAK past a timeout (it
+// stays parked until every handler finishes), and wg.Add racing wg.Wait across
+// repeated calls is unsafe. Polling has no such goroutine and is safe to call
+// multiple times.
 func (t *InflightTracker) Wait(timeout time.Duration) bool {
-	if timeout <= 0 {
-		// No budget to wait: report drained only if nothing is in flight right now.
-		// Read the atomic counter directly rather than racing a wg.Wait goroutine.
-		return t.cnt.Load() == 0
-	}
-	done := make(chan struct{})
-	go func() {
-		t.wg.Wait()
-		close(done)
-	}()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-done:
+	if t.cnt.Load() == 0 {
 		return true
-	case <-timer.C:
+	}
+	if timeout <= 0 {
 		return false
+	}
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(inflightPollInterval)
+	defer ticker.Stop()
+	for {
+		<-ticker.C
+		if t.cnt.Load() == 0 {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return t.cnt.Load() == 0
+		}
 	}
 }
