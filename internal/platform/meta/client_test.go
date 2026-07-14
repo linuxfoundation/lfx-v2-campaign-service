@@ -506,7 +506,10 @@ func TestCreateCampaignNormalizesEventName(t *testing.T) {
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "  KubeCon EU  ", Project: "tlf", Objective: "traffic",
-		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		// Padded RegistrationURL: validation trims its own copy, but buildUTMURL
+		// reads in.RegistrationURL directly — CreateCampaign must trim it in place
+		// so the creative click URL is built from the clean base, not " https...".
+		RegistrationURL: "  https://x.example.org/e  ", GeoTargets: []string{"US"},
 		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
 		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	}); err != nil {
@@ -537,6 +540,11 @@ func TestCreateCampaignNormalizesEventName(t *testing.T) {
 	link, _ := linkData["link"].(string)
 	if !strings.Contains(link, "utm_term=kubecon-eu") {
 		t.Errorf("creative link = %q, want clean utm_term=kubecon-eu", link)
+	}
+	// The padded RegistrationURL was trimmed in place: the creative link must start
+	// with the clean base, never a leading space or an unparseable " https".
+	if !strings.HasPrefix(link, "https://x.example.org/e") {
+		t.Errorf("creative link = %q, want it to start with the trimmed base URL", link)
 	}
 	if strings.Contains(link, "utm_term=-kubecon") || strings.Contains(link, "kubecon-eu-&") || strings.Contains(link, "kubecon-eu-#") {
 		t.Errorf("creative link = %q, want no leading/trailing dash in utm_term", link)

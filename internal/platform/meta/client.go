@@ -1376,6 +1376,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// before it is called.
 	in.Objective = strings.ToLower(strings.TrimSpace(in.Objective))
 
+	// Normalize RegistrationURL in place so validation and UTM construction see the
+	// same value: validateRegistrationURL trims before parsing, but buildUTMURL reads
+	// in.RegistrationURL directly — a padded URL like " https://x/ " would otherwise
+	// pass validation yet be concatenated un-trimmed into the creative click URL,
+	// producing a malformed parse. Trim once here, ahead of both consumers.
+	in.RegistrationURL = strings.TrimSpace(in.RegistrationURL)
+
 	// Resolve the objective and validate deterministic inputs (placements and the
 	// promoted object) BEFORE the first mutating call, so an input error never
 	// creates a paid campaign.
