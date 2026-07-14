@@ -599,15 +599,21 @@ func (e *transportError) Unwrap() error { return e.Err }
 // server and its outcome is unknowable. It is the single source of truth shared
 // by the campaign, ad-group, and ad create paths so they classify identically:
 //   - transportError: the round-trip failed AFTER a connection was established
-//     (see isPreSendDialError — a DNS/dial/connection-refused failure is NOT
-//     wrapped as transportError, so it never reaches here), so the request may
-//     have been received;
+//     (see isPreSendDialError — a DNS/dial/connection-refused/TLS-handshake
+//     failure is NOT wrapped as transportError, so it never reaches here), so the
+//     request may have been received. This is ALSO the path a context
+//     cancellation/deadline from the in-flight Do takes: the per-attempt timeout
+//     wraps the whole round trip, so a ctx error can fire after the POST reached
+//     Reddit, and request() wraps it as transportError so it is treated as
+//     ambiguous (UNCONFIRMED), never definitely-failed;
 //   - apiError with a 5xx status: Reddit received it and may have committed the
 //     mutation before erroring.
 //
 // A definite 4xx (Reddit rejected it), or any pre-send failure (token refresh,
-// body encode/build, a pre-connect dial error), means NOT applied → returns false
-// so the caller returns a clean (nil, err) / "failed" rather than "may exist".
+// body encode/build, a pre-connect dial/TLS-handshake error, or a caller-cancel
+// that surfaces raw BEFORE the POST — e.g. from refreshToken), means NOT applied
+// → returns false so the caller returns a clean (nil, err) / "failed" rather than
+// "may exist".
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
@@ -620,14 +626,22 @@ func createOutcomeAmbiguous(err error) bool {
 // isPreSendDialError reports whether a httpClient.Do error clearly happened
 // BEFORE any request bytes could have reached the server, so the request was NOT
 // sent and must NOT be treated as an ambiguous "may exist" transportError. It
-// covers:
-//   - DNS resolution failure;
+// covers ONLY failures that PROVE no request body was transmitted:
+//   - DNS resolution failure (the host never resolved);
 //   - connection refused / no route / network unreachable (never connected);
 //   - TLS handshake / certificate errors (the secure channel was never
-//     established, so no request body was sent);
-//   - context cancellation/deadline that fired before or during connection setup
-//     (the caller aborted; treated as not-sent — the campaign path additionally
-//     checks ctx.Err() first, so a genuine caller-cancel is handled there).
+//     established, so no request body was sent).
+//
+// A context cancellation/deadline is deliberately NOT treated as pre-send here:
+// the per-attempt attemptCtx wraps the ENTIRE round trip (send + response read),
+// so a context.Canceled/DeadlineExceeded surfacing from Do can fire AFTER the
+// POST body already reached Reddit (Reddit may have created the resource; we
+// just never read the response). Classifying that as pre-send would let a caller
+// treat a possibly-created campaign as definitely-failed and retry, risking a
+// double-create. Such ctx errors therefore fall through to the transportError
+// wrapping in request(), which createOutcomeAmbiguous treats as ambiguous
+// (UNCONFIRMED) — never FAILED. A genuine caller-cancel before any POST is still
+// handled precisely by the ctx.Err() checks in the create path.
 //
 // A failure AFTER a connection is established and bytes were sent (mid-flight
 // timeout, unexpected EOF on the response) is genuinely ambiguous and IS wrapped
@@ -647,16 +661,7 @@ func isPreSendDialError(err error) bool {
 		return true
 	}
 	var recordErr tls.RecordHeaderError
-	if errors.As(err, &recordErr) {
-		return true
-	}
-	// Context cancellation/deadline surfacing from Do (e.g. cancelled between token
-	// refresh and the send, or during connection setup): the request did not
-	// complete a send that could have been applied.
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	return false
+	return errors.As(err, &recordErr)
 }
 
 // request performs an authenticated Reddit Ads API call, sanitizing the path

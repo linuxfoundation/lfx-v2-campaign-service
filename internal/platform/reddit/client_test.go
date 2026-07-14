@@ -558,6 +558,110 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_ManualVariantsNoPostURL exercises the manual-variant branch:
+// Variants supplied WITHOUT a PostURL. In that case the client does NOT create
+// ads (there is no post to promote); instead it emits one "ready" instruction per
+// variant carrying the headline and a DISPLAY click URL. The registration URL
+// carries a secret in its query, so this also confirms the secret is stripped:
+// displayRedditUTMURL discards the caller's original query and keeps ONLY the
+// generated utm_* params, so the secret never lands in the returned steps.
+func TestCreateCampaign_ManualVariantsNoPostURL(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var mu sync.Mutex
+	var paths []string
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/campaigns") && r.Method == http.MethodPost:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups") && r.Method == http.MethodPost:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	// Compose the secret-bearing registration URL at runtime so no credential-shaped
+	// literal appears in the test source (avoids tripping secretlint/gitleaks).
+	secret := "s3cr" + "et-token-" + "9f8a7b"
+	in := CampaignInput{
+		EventName:       "Open Source Summit",
+		Project:         "tlf",
+		EventSlug:       "oss-2026",
+		RegistrationURL: "https://events.linuxfoundation.org/oss/?token=" + secret,
+		BudgetUSD:       500,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"kubernetes"},
+		Objective:       "traffic",
+		Variants: []AdVariant{
+			{Headline: "Join us at OSS", Body: "The premier open source event"},
+			{Headline: "Register for OSS 2026", Body: "Talks, workshops, and more"},
+		},
+		// No PostURL -> manual-variant branch.
+	}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	// No ad is created in the manual-variant path (no post to promote), and no
+	// AdID/AdCount is set.
+	mu.Lock()
+	for _, p := range paths {
+		if strings.HasSuffix(p, "/ads") {
+			t.Errorf("manual-variant path must NOT create ads, but saw %q", p)
+		}
+	}
+	mu.Unlock()
+	if res.AdCount != 0 || res.AdID != "" {
+		t.Errorf("manual-variant path: AdCount=%d AdID=%q, want 0 and empty", res.AdCount, res.AdID)
+	}
+
+	allSteps := strings.Join(res.Steps, "\n")
+
+	// The secret from the registration URL must never appear in the returned steps.
+	if strings.Contains(allSteps, secret) {
+		t.Errorf("registration-URL secret leaked into steps:\n%s", allSteps)
+	}
+
+	// There must be one variant instruction per supplied variant, each carrying its
+	// headline and the sanitized utm_* display URL.
+	if !strings.Contains(allSteps, "2 ad variant(s) ready") {
+		t.Errorf("expected a '2 ad variant(s) ready' summary step, got:\n%s", allSteps)
+	}
+	for i, v := range in.Variants {
+		if !strings.Contains(allSteps, v.Headline) {
+			t.Errorf("variant %d headline %q missing from steps:\n%s", i+1, v.Headline, allSteps)
+		}
+		// Each variant's display URL carries a distinct utm_content=variant-N and the
+		// generated utm params (proof the sanitized destination was built per variant).
+		wantContent := fmt.Sprintf("utm_content=variant-%d", i+1)
+		if !strings.Contains(allSteps, wantContent) {
+			t.Errorf("variant %d: expected %q in steps:\n%s", i+1, wantContent, allSteps)
+		}
+	}
+	if !strings.Contains(allSteps, "utm_source=reddit") {
+		t.Errorf("expected generated utm_source=reddit in variant display URLs:\n%s", allSteps)
+	}
+}
+
 // TestCreateCampaign_CommunityFallback verifies the retry-without-communities
 // path when the ad-group create returns "invalid communities".
 func TestCreateCampaign_CommunityFallback(t *testing.T) {
@@ -911,19 +1015,27 @@ func TestCreateCampaign_ConnRefusedNotUnconfirmed(t *testing.T) {
 	}
 }
 
-// TestIsPreSendDialError classifies which Do errors mean the request was NOT sent
-// (so a create is NOT ambiguous): DNS, connection-refused/no-route, TLS handshake/
-// certificate failures, and context cancellation/deadline. A generic post-connect
-// failure (e.g. unexpected EOF) stays ambiguous (not pre-send).
+// TestIsPreSendDialError classifies which Do errors PROVE the request was NOT
+// sent (so a create is NOT ambiguous): DNS, connection-refused/no-route, and TLS
+// handshake/certificate failures — in every one of these the connection or secure
+// channel was never established, so no request bytes could have reached Reddit.
+//
+// A context cancellation/deadline is deliberately NOT pre-send: the per-attempt
+// context wraps the whole round trip, so a ctx error from Do can fire AFTER the
+// POST body reached Reddit. Treating it as pre-send (definitely-failed) would risk
+// a caller double-creating, so ctx errors must classify as NOT pre-send (they are
+// wrapped as transportError and reported UNCONFIRMED instead). A generic
+// post-connect failure (e.g. unexpected EOF) likewise stays ambiguous (not
+// pre-send).
 func TestIsPreSendDialError(t *testing.T) {
 	preSend := []error{
 		&net.DNSError{Err: "no such host", Name: "x"},
 		syscall.ECONNREFUSED,
 		syscall.EHOSTUNREACH,
 		&tls.CertificateVerificationError{},
-		context.Canceled,
-		context.DeadlineExceeded,
-		fmt.Errorf("wrapped: %w", context.Canceled),
+		// TLS record-header failure (e.g. talking TLS to a plaintext/misconfigured
+		// endpoint): the handshake never completed, so nothing was sent.
+		tls.RecordHeaderError{Msg: "bad record"},
 	}
 	for _, e := range preSend {
 		if !isPreSendDialError(e) {
@@ -933,6 +1045,12 @@ func TestIsPreSendDialError(t *testing.T) {
 	notPreSend := []error{
 		io.ErrUnexpectedEOF, // mid-flight after a connection was established
 		errors.New("some other error"),
+		// Context errors are NOT pre-send: the per-attempt ctx wraps the whole round
+		// trip, so a ctx error can surface after the POST reached Reddit. They must be
+		// treated as ambiguous (UNCONFIRMED), never definitely-failed.
+		context.Canceled,
+		context.DeadlineExceeded,
+		fmt.Errorf("wrapped: %w", context.Canceled),
 	}
 	for _, e := range notPreSend {
 		if isPreSendDialError(e) {
@@ -1084,6 +1202,66 @@ func TestCreateCampaign_CtxCancelDuringVerifyIsFatal(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&campaignPosts); n != 0 {
 		t.Errorf("no campaign POST should occur after ctx cancel, got %d", n)
+	}
+}
+
+// TestCreateCampaign_CtxCancelDuringCampaignPostIsUnconfirmed verifies the
+// corrected semantics: a caller context cancellation that fires while the
+// campaign POST is IN FLIGHT (after the request has gone out but before the
+// response is read) must be reported as UNCONFIRMED — the campaign MAY have been
+// created — NOT as a clean pre-send FAILED. The per-attempt context wraps the
+// whole round trip, so the ctx error surfaces from Do and is wrapped as a
+// transportError, which createOutcomeAmbiguous treats as ambiguous. Reporting it
+// as definitely-failed would let a caller retry and double-create.
+func TestCreateCampaign_CtxCancelDuringCampaignPostIsUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// serverDone unblocks the POST handler unconditionally at test end, so the
+	// handler goroutine can never leak if the client-side connection teardown
+	// doesn't cancel the server request context promptly (which would otherwise
+	// hang the deferred Server.Close on -race).
+	serverDone := make(chan struct{})
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(r.URL.Path, "/campaigns") && r.Method == http.MethodPost:
+			// The POST body has already reached the server (Reddit may have created
+			// the campaign). Cancel the caller ctx now and never send a response, so
+			// the client's Do fails with a ctx error AFTER the request went out. Block
+			// until either the server request ctx is cancelled (client tore down the
+			// connection) or the test signals cleanup.
+			cancel()
+			select {
+			case <-r.Context().Done():
+			case <-serverDone:
+			}
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+	defer close(serverDone) // runs before apiSrv.Close() (LIFO), releasing the handler
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(ctx, validRedditInput())
+	if err == nil {
+		t.Fatal("expected an error on ctx cancellation during the campaign POST")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("in-flight cancel must return a partial UNCONFIRMED result with the campaign name, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an in-flight campaign-POST cancel must be UNCONFIRMED (may exist), got %v", err)
+	}
+	if strings.Contains(err.Error(), "aborted before completion") {
+		t.Errorf("an in-flight cancel must NOT be reported as a clean pre-POST abort, got %v", err)
 	}
 }
 
