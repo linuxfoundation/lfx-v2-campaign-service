@@ -2164,7 +2164,15 @@ func TestRefreshToken_FollowerUsesLeaderResult(t *testing.T) {
 		leaderTok <- tok
 	}()
 
-	<-entered // leader is now inside the network call, refreshing=true
+	// Bounded wait for the leader to reach the handler. If the refresh regresses
+	// before entering the handler (e.g. request construction fails), an unbounded
+	// receive would hang the whole suite; time out, unblock the leader, and fail.
+	select {
+	case <-entered: // leader is now inside the network call, refreshing=true
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for the leader to enter the token-refresh handler")
+	}
 
 	// Follower arrives while the leader is in flight; it must wait, not refresh.
 	// followerParked is closed when the follower provably reaches the coalescer's

@@ -600,8 +600,16 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 			reqBody = bytes.NewReader(encoded)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, fullURL, reqBody)
+		// Bound EACH attempt with a per-attempt context deadline, not just the
+		// http.Client.Timeout: a WithHTTPClient override could supply a client with
+		// no Timeout, and request() takes the caller ctx directly (which may be
+		// context.Background()), so without this a create could hang indefinitely —
+		// and redditWorstCaseCreateWait (which sizes the past-start buffer) assumes
+		// every attempt is capped by redditRequestTimeout.
+		attemptCtx, cancel := context.WithTimeout(ctx, redditRequestTimeout)
+		req, err := http.NewRequestWithContext(attemptCtx, method, fullURL, reqBody)
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("reddit API %s %s: build request: %w", method, path, err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -610,6 +618,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
 		}
 
@@ -625,6 +634,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 			retryAfter, ok := c.parseRetryAfter(resp)
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
 			_ = resp.Body.Close()
+			cancel() // release the per-attempt deadline before backing off / retrying
 			if ok {
 				// The server declared a reset time. If it exceeds our cap, sleeping
 				// would burn a retry without any chance of the window clearing, so
@@ -653,6 +663,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 
 		raw, readErr := readResponseBody(resp.Body)
 		_ = resp.Body.Close()
+		cancel() // body fully read; release the per-attempt deadline
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			body := truncate(string(raw), redditErrBodyMaxRunes)
 			if readErr != nil {
@@ -1025,7 +1036,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	campaignResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
 	if err != nil {
-		return nil, err
+		// A definite client error (4xx) means the campaign was NOT created — safe to
+		// return (nil, err). But a transport timeout, a read/decode failure, or an
+		// ambiguous 5xx can occur AFTER Reddit accepted the create, so the campaign
+		// may exist. In that ambiguous case return a partial result carrying the
+		// campaign NAME (reconcilable by name) with an UNCONFIRMED note, matching the
+		// ad path — so a caller doesn't blindly retry and duplicate the campaign.
+		var apiErr *apiError
+		definiteClientError := errors.As(err, &apiErr) && apiErr.StatusCode >= 400 && apiErr.StatusCode < 500
+		if definiteClientError {
+			return nil, err
+		}
+		steps = append(steps, "Campaign creation is UNCONFIRMED (the create request failed or was not acknowledged); a PAUSED campaign may exist -- verify by name in Reddit Ads Manager before retrying to avoid a duplicate")
+		return &CampaignResult{
+			Platform:     "reddit-ads",
+			CampaignName: campaignName,
+			RedditURL:    redditAdsManagerURL,
+			Steps:        steps,
+		}, fmt.Errorf("reddit campaign creation UNCONFIRMED (a PAUSED campaign %q may exist): %w", campaignName, err)
 	}
 	campaignID := decodeID(campaignResp)
 	if campaignID == "" {
@@ -1044,29 +1072,35 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f lifetime)", campaignID, in.BudgetUSD))
 
+	// The ad-group NAME is deterministic (built from the same normalized geos used
+	// in targeting) and is computed UP FRONT so partialResult can include it: on an
+	// ad-group failure or a 2xx-without-id malformed success, an ad group may exist
+	// and its name is the only reconciliation handle, so dropping it could lead to a
+	// duplicate ad group during recovery.
+	geoLabel := strings.Join(geos, "+")
+	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
+
 	// partialResult builds a *CampaignResult carrying the already-created (PAUSED)
-	// campaign id and the steps completed so far. It is returned ALONGSIDE the
-	// error whenever an ad-group step fails after the campaign POST already
-	// succeeded, so the orphaned PAUSED campaign is identifiable for cleanup and a
-	// caller retry can reconcile it instead of blindly creating a duplicate. This
-	// only makes the orphan IDENTIFIABLE -- it does not resume creation. True
-	// retry-safe idempotency (not re-creating the campaign on retry) needs provider
-	// idempotency keys / the orchestrator claim, tracked in LFXV2-2665.
+	// campaign id, the deterministic ad-group name, and the steps completed so far.
+	// It is returned ALONGSIDE the error whenever an ad-group step fails after the
+	// campaign POST already succeeded, so the orphaned PAUSED campaign (and a
+	// possibly-created ad group, identifiable by name) is reconcilable for cleanup
+	// and a caller retry doesn't blindly create a duplicate. This only makes the
+	// orphan IDENTIFIABLE -- it does not resume creation. True retry-safe
+	// idempotency needs provider idempotency keys / the orchestrator claim, tracked
+	// in LFXV2-2665.
 	partialResult := func() *CampaignResult {
 		return &CampaignResult{
 			Platform:     "reddit-ads",
 			CampaignName: campaignName,
 			CampaignID:   campaignID,
+			AdGroupName:  adGroupName,
 			RedditURL:    redditAdsManagerURL,
 			Steps:        steps,
 		}
 	}
 
-	// Step 3: Create ad group with targeting. The label is built from the same
-	// normalized (trimmed, uppercased) geos used in targeting, so a
-	// whitespace-padded input can't produce a name inconsistent with targeting.
-	geoLabel := strings.Join(geos, "+")
-	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
+	// Step 3: Create ad group with targeting.
 
 	baseTargeting := map[string]any{
 		"geolocations":     geos,
@@ -1224,11 +1258,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				// query) so a secret in RegistrationURL isn't persisted in Steps.
 				steps = append(steps, fmt.Sprintf("Ad created: %s (post: %s, click URL: %s)", adID, postID, displayRedditUTMURL(in, 0)))
 			} else {
-				// A 2xx response missing data.id is a malformed success: don't
-				// silently count it as a created ad. Surface it as a manual-action
-				// warning so the caller knows the ad was not confirmed.
-				adWarning = "ad creation returned no ad id (malformed response); the ad was not confirmed — verify/add it manually in Reddit Ads Manager"
-				steps = append(steps, fmt.Sprintf("Ad creation returned no ad ID (malformed response, post: %s) -- add ad manually in Reddit Ads Manager", postID))
+				// A 2xx response missing data.id is a malformed success — Reddit may
+				// still have created the ad. Don't count it as created, and don't tell
+				// the operator to add it (which could duplicate it); mark it UNCONFIRMED
+				// and require verification first, matching the transport-error path.
+				adWarning = "promoted-post ad creation is UNCONFIRMED (2xx response with no ad id); the ad may already exist — verify in Reddit Ads Manager BEFORE creating it manually to avoid a duplicate"
+				steps = append(steps, fmt.Sprintf("Ad creation UNCONFIRMED (2xx with no ad ID, post: %s) -- verify in Reddit Ads Manager before adding manually", postID))
 			}
 		}
 	} else {
