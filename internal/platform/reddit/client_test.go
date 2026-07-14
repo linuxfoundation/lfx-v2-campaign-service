@@ -2841,6 +2841,19 @@ func TestValidateRegistrationURL_RejectsUserinfo(t *testing.T) {
 	}
 }
 
+// TestValidateRegistrationURL_RejectsMalformedQuery verifies a URL whose query
+// has invalid percent-encoding is rejected up front — url.Parse accepts it but
+// u.Query() would silently drop the pair, changing the ad's destination.
+func TestValidateRegistrationURL_RejectsMalformedQuery(t *testing.T) {
+	if err := validateRegistrationURL("https://example.com/reg?token=%zz"); err == nil {
+		t.Error("validateRegistrationURL with malformed query = nil, want error")
+	}
+	// A well-formed query still passes.
+	if err := validateRegistrationURL("https://example.com/reg?a=b&c=d%20e"); err != nil {
+		t.Errorf("validateRegistrationURL(well-formed query) = %v, want nil", err)
+	}
+}
+
 // TestDisplayRedditUTMURL_StripsSecrets verifies the display click URL (used in
 // Steps) drops userinfo and any pre-existing query/fragment secrets, keeping only
 // the generated utm_* params — while buildRedditUTMURL (the real click_url sent
@@ -2928,6 +2941,10 @@ func TestRedactURL(t *testing.T) {
 		"https://user:pw@reddit.com/p?a=b":                                "https://reddit.com/p",
 		"https://reddit.com/clean":                                        "https://reddit.com/clean",
 		"not a url?token=secret":                                          "not a url",
+		// Unparseable URL carrying userinfo must NOT echo the credential: the
+		// %zz makes url.Parse fail, so the raw authority (with user:password)
+		// would otherwise be returned. It must be fully redacted instead.
+		"https://user:password@example.com/%zz": "[unparseable-url-redacted]",
 	}
 	for in, want := range cases {
 		if got := redactURL(in); got != want {

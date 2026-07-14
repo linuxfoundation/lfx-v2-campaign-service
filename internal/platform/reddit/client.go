@@ -1339,6 +1339,14 @@ func validateRegistrationURL(raw string) error {
 	if !u.IsAbs() || u.Hostname() == "" {
 		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", redactURL(raw))
 	}
+	// url.Parse does NOT validate percent-encoding in the query. A URL like
+	// ".../reg?token=%zz" parses fine here, but u.Query() (used by
+	// buildRedditUTMURL) silently DROPS the malformed pair, so the paid ad would be
+	// created with a different destination than the caller supplied. Reject a
+	// malformed query up front, before any mutating call.
+	if _, qerr := url.ParseQuery(u.RawQuery); qerr != nil {
+		return fmt.Errorf("registration URL %q has a malformed query string", redactURL(raw))
+	}
 	// Reject embedded userinfo (user[:password]@host): an ad destination never
 	// needs URL credentials, and buildRedditUTMURL would otherwise forward the
 	// password to Reddit as click_url and echo it in the success step, leaking it.
@@ -1635,9 +1643,18 @@ func redactURL(raw string) string {
 		redacted := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
 		return redacted.String()
 	}
-	// Not an absolute URL: keep only what precedes a query/fragment delimiter.
+	// Unparseable / non-absolute input CANNOT be redacted reliably — e.g.
+	// "https://user:password@example.com/%zz" fails url.Parse and its authority
+	// (with userinfo) would otherwise be echoed. Rather than risk leaking a secret,
+	// strip the query/fragment AND anything up to and including a userinfo "@", and
+	// if a credential delimiter is present at all, don't echo the value.
 	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
 		trimmed = trimmed[:i]
+	}
+	// A "user:pass@host" authority still carries the credential; if an "@" remains
+	// after dropping the query/fragment, redact the whole value.
+	if strings.Contains(trimmed, "@") {
+		return "[unparseable-url-redacted]"
 	}
 	return truncate(trimmed, redditErrBodyMaxRunes)
 }
