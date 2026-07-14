@@ -60,15 +60,20 @@ func (t *InflightTracker) Wait(timeout time.Duration) bool {
 	if timeout <= 0 {
 		return false
 	}
-	deadline := time.Now().Add(timeout)
+	// Bound the total wait with a deadline timer and poll on a separate ticker,
+	// selecting on both — so a timeout SHORTER than inflightPollInterval fires on
+	// the deadline rather than overshooting by up to a full tick.
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
 	ticker := time.NewTicker(inflightPollInterval)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
-		if t.cnt.Load() == 0 {
-			return true
-		}
-		if !time.Now().Before(deadline) {
+		select {
+		case <-ticker.C:
+			if t.cnt.Load() == 0 {
+				return true
+			}
+		case <-deadline.C:
 			return t.cnt.Load() == 0
 		}
 	}
