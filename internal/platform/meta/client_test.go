@@ -602,6 +602,68 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignNoIDReturnsPartial verifies a 2xx campaign create with no id
+// returns a partial result carrying the campaign name (reconcilable by name), not
+// a bare (nil, err).
+func TestCreateCampaignNoIDReturnsPartial(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{}`) // 2xx, no id
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a campaign with no id")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a partial result with the campaign name, got %+v", res)
+	}
+	if res.CampaignID != "" {
+		t.Errorf("CampaignID = %q, want empty", res.CampaignID)
+	}
+}
+
+// TestCreateCampaignAllGeosInvalidNamesThem verifies the all-invalid-geo error
+// names the dropped codes (the discarded "Geo targets dropped" step otherwise
+// hides them).
+func TestCreateCampaignAllGeosInvalidNamesThem(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("no POST should happen when all geos are invalid: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"IR", "ZZ"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no usable geo targets") {
+		t.Fatalf("err = %v, want 'no usable geo targets'", err)
+	}
+	if !strings.Contains(err.Error(), "IR") || !strings.Contains(err.Error(), "ZZ") {
+		t.Errorf("error should name the dropped geos IR and ZZ, got: %v", err)
+	}
+}
+
 func TestCreateCampaignLifetimeBudget(t *testing.T) {
 	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

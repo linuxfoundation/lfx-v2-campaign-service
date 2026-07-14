@@ -648,10 +648,22 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				// clients). Only when the server gives no usable reset do we fall back to
 				// a capped exponential backoff.
 				if retryAfter > maxRetryWait {
-					return &APIError{
+					// Preserve the Graph envelope's diagnostics (Type/Code/FBTraceID and
+					// original message) on the abort — support may need them exactly when a
+					// rate limit is hit — rather than discarding them for a bare message.
+					abortErr := &APIError{
 						StatusCode: status, Method: method, Path: path,
 						Message: fmt.Sprintf("rate-limit reset (Retry-After: %s) exceeds max wait %s; aborting", retryAfter, maxRetryWait),
 					}
+					if env.Error != nil {
+						abortErr.Type = env.Error.Type
+						abortErr.Code = env.Error.Code
+						abortErr.FBTraceID = env.Error.FBTraceID
+						if env.Error.Message != "" {
+							abortErr.Message = fmt.Sprintf("%s (Graph: %s)", abortErr.Message, env.Error.Message)
+						}
+					}
+					return abortErr
 				}
 				if err := sleepCtx(ctx, retryAfter); err != nil {
 					return err
@@ -1475,12 +1487,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// left believing an excluded country is being targeted. This mirrors the
 	// regulated-country (SG/TW/KR) step emitted below. Skip the note when the only
 	// difference is the empty-input US fallback.
+	var droppedGeos []string
 	if len(in.GeoTargets) > 0 {
 		kept := make(map[string]struct{}, len(allGeo))
 		for _, g := range allGeo {
 			kept[g] = struct{}{}
 		}
-		droppedGeos := make([]string, 0)
 		seenDropped := make(map[string]struct{})
 		for _, g := range in.GeoTargets {
 			up := strings.ToUpper(strings.TrimSpace(g))
@@ -1511,7 +1523,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 		}
 		if !askedUS {
-			return nil, fmt.Errorf("no usable geo targets: all supplied geos are invalid or ineligible for Meta ads targeting — refusing to silently fall back to US")
+			// NAME the dropped geos in the error (the "Geo targets dropped" step is
+			// discarded when we return nil), so the caller learns exactly which codes
+			// were invalid/ineligible rather than a generic message.
+			return nil, fmt.Errorf("no usable geo targets: all supplied geos are invalid or ineligible for Meta ads targeting (dropped: %s) — refusing to silently fall back to US", strings.Join(droppedGeos, ", "))
 		}
 	}
 	geoCountries := make([]string, 0, len(allGeo))
@@ -1545,7 +1560,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	campaignID := campaignResp.ID
 	if campaignID == "" {
-		return nil, fmt.Errorf("meta campaign creation succeeded but returned no campaign ID")
+		// A 2xx with no id is a malformed success: Meta may have created a PAUSED
+		// campaign whose id we couldn't read. Return a partial result carrying the
+		// campaign NAME so an orphan is reconcilable by name (not discarded), with an
+		// UNCONFIRMED note. NOTE: the campaign POST is not retry-safe in general —
+		// Meta exposes no create idempotency key, so a lost/timed-out response can't
+		// be distinguished from a not-created one; true retry-safe idempotency is
+		// tracked in LFXV2-2665. This makes the malformed-success case reconcilable.
+		steps = append(steps, "Campaign creation returned no campaign ID (malformed response); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
+		return &CampaignResult{
+			Platform:     "meta-ads",
+			CampaignName: campaignName,
+			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+			Steps:        steps,
+		}, fmt.Errorf("meta campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (%s, PAUSED)", campaignID, objectiveLabel(objective)))
 
