@@ -273,6 +273,14 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			slog.ErrorContext(ctx, "failed to decode persisted job result", "job_id", j.ID, "error", err)
 			return nil, &briefs.InternalServerError{Code: "500", Message: "an internal server error occurred"}
 		}
+		if len(stored) == 0 && (j.Status == model.JobSucceeded || j.Status == model.JobPartial) {
+			// null/[] decode to an empty slice with len(j.Result) > 0, so they slip
+			// past the outer length guard. A succeeded/partial job is an aggregate
+			// over per-platform outcomes and MUST carry them; an empty decoded slice
+			// on such a terminal status means the stored row is corrupt.
+			slog.ErrorContext(ctx, "terminal job has empty per-platform results", "job_id", j.ID, "status", j.Status)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "an internal server error occurred"}
+		}
 		resp.Result = make([]*briefs.PlatformResult, 0, len(stored))
 		for _, r := range stored {
 			pr := &briefs.PlatformResult{Platform: r.Platform, OK: r.OK}
@@ -281,18 +289,22 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 				pr.CampaignID = &id
 			}
 			switch {
-			case r.Error != "":
-				e := r.Error
-				pr.Error = &e
 			case r.Skipped && !r.OK:
 				// A SKIPPED platform is OK=false but is NOT a failure — a concurrent
 				// dispatch already owns the (brief, platform) claim and is creating it.
-				// The generated PlatformResult has no dedicated "skipped" field (a Goa
-				// design change / regen, tracked in LFXV2-2665), so surface the deferral
-				// through Error with an explicit non-failure message rather than leaving
-				// an unexplained ok=false that reads as a silent failure.
+				// The orchestrator persists a skip with BOTH Skipped=true AND a raw
+				// internal Error string, so this case MUST be checked before the Error
+				// case or the friendly message below is unreachable and polling leaks
+				// the internal string. The generated PlatformResult has no dedicated
+				// "skipped" field (a Goa design change / regen, tracked in LFXV2-2665),
+				// so surface the deferral through Error with an explicit non-failure
+				// message rather than leaving an unexplained ok=false that reads as a
+				// silent failure.
 				msg := "skipped: a concurrent request already owns this platform's campaign creation (not a failure)"
 				pr.Error = &msg
+			case r.Error != "":
+				e := r.Error
+				pr.Error = &e
 			}
 			resp.Result = append(resp.Result, pr)
 		}

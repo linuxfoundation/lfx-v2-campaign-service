@@ -363,9 +363,10 @@ func TestOrchestrator_ClaimErrorIsFailure(t *testing.T) {
 
 // TestOrchestrator_AlreadyClaimedPendingSkips verifies that when another worker
 // holds the pending claim (no upstream id yet), this worker does not dispatch and
-// the skip is NOT recorded as a terminal failure: a single skipped platform must
-// leave the job non-terminal (running) so a re-poll after the owner completes
-// reflects the true outcome, rather than the old behavior of falsely failing it.
+// the skip is NOT recorded as a terminal failure: a single skipped platform is a
+// deferral to the owning dispatch, so the job terminalizes as succeeded (not
+// failed, which would be spurious; not left running, which the staleness sweeper
+// would later fail), rather than the old behavior of falsely failing it.
 func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 	jobs := newFakeJobRepo()
 	// Seed a pending claim (no upstream id) for the pair, so ClaimCampaignDispatch

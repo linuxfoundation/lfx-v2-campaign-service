@@ -230,7 +230,14 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 	// so the graceful Shutdown gets the rest of the HTTP budget. This guarantees
 	// the inflight wait has a real budget even when Shutdown times out (which would
 	// otherwise exhaust the whole HTTP context).
-	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), container.HTTPShutdownTimeout-container.HandlerDrainTimeout)
+	shutdownWait := container.HTTPShutdownTimeout - container.HandlerDrainTimeout
+	if shutdownWait <= 0 {
+		// HandlerDrainTimeout must leave room within the overall shutdown budget;
+		// if misconfigured so it doesn't, fall back to the full budget rather than
+		// a zero/negative deadline that would force-close immediately.
+		shutdownWait = container.HTTPShutdownTimeout
+	}
+	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), shutdownWait)
 	defer cancelHTTP()
 	if err := srv.Shutdown(httpCtx); err != nil {
 		slog.ErrorContext(ctx, "HTTP server shutdown error; force-closing lingering connections", log.ErrKey, err)

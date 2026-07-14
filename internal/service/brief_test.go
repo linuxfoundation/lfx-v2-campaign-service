@@ -491,6 +491,54 @@ func TestBriefService_GetJob_TerminalWithoutResultsIsInternalError(t *testing.T)
 	}
 }
 
+// A succeeded/partial job whose stored Result is the raw JSON null or [] decodes
+// to an EMPTY slice with len(j.Result) > 0, so it slips past the outer length
+// guard. GetJob must still treat this as corruption on a terminal-aggregate status
+// and surface a 500, not a 200 with zero per-platform results.
+func TestBriefService_GetJob_EmptyDecodedResultIsInternalError(t *testing.T) {
+	for _, raw := range []string{`null`, `[]`} {
+		for _, st := range []model.JobStatus{model.JobSucceeded, model.JobPartial} {
+			s := getJobTestService(&model.CampaignJob{
+				ID: "j1", BriefID: "b1", Status: st, Result: []byte(raw),
+			})
+			_, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+			if _, ok := err.(*briefs.InternalServerError); !ok {
+				t.Fatalf("raw %q status %s: expected *briefs.InternalServerError for an empty decoded result on a terminal job, got %T (%v)", raw, st, err, err)
+			}
+		}
+	}
+}
+
+// The orchestrator persists a skipped platform with BOTH skipped=true AND a raw
+// internal error string ("skipped: another concurrent dispatch owns..."). GetJob
+// must check the skipped case before the error case so it surfaces the explicit
+// "not a failure" message rather than leaking the internal string.
+func TestBriefService_GetJob_SkippedWithInternalErrorSurfacesNonFailure(t *testing.T) {
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: []byte(`[{"platform":"google-ads","ok":true,"campaign_id":"pc-1"},{"platform":"linkedin-ads","ok":false,"skipped":true,"error":"skipped: another concurrent dispatch owns this platform"}]`),
+	})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	var li *briefs.PlatformResult
+	for _, r := range resp.Result {
+		if r.Platform == "linkedin-ads" {
+			li = r
+		}
+	}
+	if li == nil {
+		t.Fatal("linkedin-ads result missing")
+	}
+	if li.Error == nil || !strings.Contains(*li.Error, "not a failure") {
+		t.Errorf("skipped platform must surface the friendly non-failure message, got %v", li.Error)
+	}
+	if li.Error != nil && strings.Contains(*li.Error, "another concurrent dispatch owns") {
+		t.Errorf("skipped platform leaked the internal error string: %v", *li.Error)
+	}
+}
+
 // A valid persisted result decodes into typed per-platform results, and a failed
 // job carrying only an error (no results — a legitimate finalize-marshal-failure
 // outcome) is NOT treated as corruption: it returns 200 with the error surfaced.

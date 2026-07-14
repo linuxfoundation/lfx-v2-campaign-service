@@ -294,10 +294,11 @@ func (o *Orchestrator) Shutdown(ctx context.Context, drainTimeout time.Duration)
 // aggregate job terminal-failed/partial even when the owning dispatch succeeds
 // (and GetJob only decodes the stored result; it never re-checks the campaign
 // row). aggregateStatus therefore excludes skipped platforms from the failure
-// tally, and a job with only skipped platforms stays non-terminal (running) so a
-// re-poll after the owner finishes reflects the true outcome. Full cross-request
-// reconciliation (this job actively adopting the owner's result) is tracked under
-// LFXV2-2665.
+// tally, and a job with only skipped platforms terminalizes as succeeded (nothing
+// revisits a running job — GetJob only reads it — so leaving it running would
+// strand it until the staleness sweeper failed it, turning a correct deferral into
+// a spurious failure). Full cross-request reconciliation (this job actively
+// adopting the owner's result) is tracked under LFXV2-2665.
 type platformResult struct {
 	Platform   string `json:"platform"`
 	OK         bool   `json:"ok"`
@@ -502,10 +503,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// as a failure would falsely drive THIS job to terminal failed/partial even
 		// when the owner succeeds (GetJob only decodes the stored result and never
 		// re-checks the campaign row, so the false failure would be permanent).
-		// aggregateStatus excludes skipped platforms from the failure tally and keeps
-		// a wholly-skipped job non-terminal (running) so a re-poll after the owner
-		// finishes reflects the true outcome. Fully adopting the owner's async result
-		// into this job is tracked under LFXV2-2665.
+		// aggregateStatus excludes skipped platforms from the failure tally and
+		// returns succeeded for a wholly-skipped job (leaving it running would strand
+		// it until the staleness sweeper failed it, since nothing revisits a running
+		// job). Fully adopting the owner's async result into this job is tracked under
+		// LFXV2-2665.
 		res.Skipped = true
 		res.Error = "skipped: another concurrent dispatch owns this platform"
 		return res
