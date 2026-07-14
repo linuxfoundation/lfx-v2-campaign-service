@@ -1614,6 +1614,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// clearly non-ambiguous error (a 4xx rejection, or a search error before the
 		// create POST) means nothing was created — keep the plain (nil, err). Mirrors
 		// the Meta client's createOutcomeAmbiguous handling.
+		//
+		// A CALLER cancellation (ctx cancelled / deadline exceeded) is a deliberate
+		// abort, NOT an ambiguous server outcome: doRequest wraps context.Canceled as
+		// a transportError, so without this guard createOutcomeAmbiguous would report a
+		// misleading "UNCONFIRMED / verify before recreating" step. Abort cleanly with
+		// the cancellation error instead. Mirrors the Reddit client's ctx.Err() guard.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("linkedin campaign creation aborted (campaign group creation): %w", ctxErr)
+		}
 		if createOutcomeAmbiguous(err) {
 			steps = append(steps, fmt.Sprintf("Campaign group creation outcome is UNCONFIRMED (timeout or server error); an ACTIVE group %q may exist — verify by name in Campaign Manager before recreating", groupName))
 			return c.buildResult(accountID, groupName, "", campaignName, "", 0, steps),
@@ -1641,6 +1650,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// outcome rather than a definite failure that could let a retry duplicate it.
 		// A definite (4xx / pre-send / search) error means the campaign was not
 		// created. Mirrors the Meta client's createOutcomeAmbiguous handling.
+		//
+		// A CALLER cancellation (ctx cancelled / deadline exceeded) is a deliberate
+		// abort, NOT an ambiguous server outcome: doRequest wraps context.Canceled as
+		// a transportError, so without this guard createOutcomeAmbiguous would report a
+		// misleading "UNCONFIRMED / verify before recreating" step. Abort cleanly with
+		// the cancellation error instead. Mirrors the Reddit client's ctx.Err() guard.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("linkedin campaign creation aborted (campaign creation): %w", ctxErr)
+		}
 		if createOutcomeAmbiguous(err) {
 			steps = append(steps, fmt.Sprintf("Campaign creation outcome is UNCONFIRMED (timeout or server error); a PAUSED campaign %q may exist — verify by name before recreating", campaignName))
 			return c.buildResult(accountID, groupName, groupID, campaignName, "", 0, steps),
@@ -1675,6 +1693,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// recreating) rather than a definite failure. A definite (4xx / pre-send)
 			// error means nothing was created. Mirrors the Meta client's ambiguous ad/
 			// creative handling.
+			//
+			// A CALLER cancellation (ctx cancelled / deadline exceeded) is a deliberate
+			// abort, NOT an ambiguous server outcome: doRequest wraps context.Canceled as
+			// a transportError, so without this guard createOutcomeAmbiguous would report a
+			// misleading "UNCONFIRMED / verify before recreating" step. Abort cleanly with
+			// the cancellation error instead. Mirrors the Reddit client's ctx.Err() guard.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, fmt.Errorf("linkedin campaign creation aborted (dark post creation): %w", ctxErr)
+			}
 			if createOutcomeAmbiguous(err) {
 				steps = append(steps, fmt.Sprintf("Dark post variant-%d outcome UNCONFIRMED (timeout or server error); it may have been created — verify before recreating (a dark post has no idempotency lookup)", i+1))
 				return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
@@ -1701,6 +1728,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// definite failure, since a blind retry would orphan a duplicate. A definite
 			// (4xx / pre-send) error means the creative was not created. Mirrors the Meta
 			// client's ambiguous ad/creative handling.
+			//
+			// A CALLER cancellation (ctx cancelled / deadline exceeded) is a deliberate
+			// abort, NOT an ambiguous server outcome: doRequest wraps context.Canceled as
+			// a transportError, so without this guard createOutcomeAmbiguous would report a
+			// misleading "UNCONFIRMED / verify before recreating" step. Abort cleanly with
+			// the cancellation error instead. Mirrors the Reddit client's ctx.Err() guard.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, fmt.Errorf("linkedin campaign creation aborted (creative creation): %w", ctxErr)
+			}
 			if createOutcomeAmbiguous(err) {
 				steps = append(steps, fmt.Sprintf("Creative variant-%d outcome UNCONFIRMED (timeout or server error); it may have been created — verify before recreating (orphaned dark post: %s)", i+1, shareURN))
 				return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),

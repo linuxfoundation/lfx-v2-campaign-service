@@ -6,6 +6,7 @@ package linkedin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -14,6 +15,7 @@ import (
 	neturl "net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -2917,6 +2919,76 @@ func TestCreateCampaign_AmbiguousDarkPostIsUnconfirmed(t *testing.T) {
 	}
 	if res == nil || res.CampaignID == "" {
 		t.Fatalf("expected a partial result carrying the created campaign id, got %+v", res)
+	}
+}
+
+// roundTripFunc adapts a function to http.RoundTripper so a test can inject a
+// caller-ctx cancellation mid-flight without a blocking server goroutine.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestCreateCampaign_CallerCancelDuringCreateAborts verifies that a CALLER
+// context cancellation while a create POST is in flight aborts CLEANLY — the
+// returned error wraps context.Canceled and is worded as an "aborted" abort —
+// rather than being misclassified as an ambiguous server outcome. doRequest
+// wraps context.Canceled as a transportError, so createOutcomeAmbiguous would
+// otherwise report a misleading "UNCONFIRMED / verify before recreating" step;
+// the ctx.Err() guard at each create-error site must fire first. Contrast with
+// TestCreateCampaign_AmbiguousCampaignCreateIsUnconfirmed, where the ctx is NOT
+// cancelled and a genuine 5xx must still be UNCONFIRMED.
+func TestCreateCampaign_CallerCancelDuringCreateAborts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Succeed for the group-create POST and all search GETs, but on the campaign
+	// create POST cancel the caller ctx and return the context.Canceled error that
+	// c.httpClient.Do surfaces mid-flight. Deterministic and non-blocking (no server
+	// goroutine to drain). A caller cancellation is a deliberate abort.
+	var campaignPosts int32
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Path, "adCampaigns") && req.Method == http.MethodPost {
+			atomic.AddInt32(&campaignPosts, 1)
+			cancel()
+			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
+		}
+		body := `{"elements":[]}`
+		if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "adCampaignGroups") {
+			body = `{"id":"urn:li:sponsoredCampaignGroup:100"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL("http://linkedin.test"),
+		WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateCampaign(ctx, baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error on caller ctx cancellation during the campaign create")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("caller-cancel abort should wrap context.Canceled, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "aborted") {
+		t.Errorf("caller-cancel error should be worded as an abort, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a caller cancellation must NOT be reported as an ambiguous UNCONFIRMED outcome, got: %v", err)
+	}
+	if n := atomic.LoadInt32(&campaignPosts); n == 0 {
+		t.Fatal("expected the campaign-create POST to be attempted (so the cancel fires in flight)")
+	}
+	// The abort must not emit a misleading "verify before recreating" UNCONFIRMED step.
+	if res != nil {
+		for _, s := range res.Steps {
+			if strings.Contains(s, "UNCONFIRMED") || strings.Contains(s, "verify before recreating") {
+				t.Errorf("caller-cancel abort must not emit an UNCONFIRMED step, got: %q", s)
+			}
+		}
 	}
 }
 
