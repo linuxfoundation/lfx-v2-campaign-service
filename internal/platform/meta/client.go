@@ -366,6 +366,28 @@ type accountPreflight struct {
 	Currency      string `json:"currency"`
 }
 
+// metaAccountStatusActive is Meta's account_status value for an ACTIVE ad account.
+const metaAccountStatusActive = 1
+
+// inactiveAccountStatusLabels maps the well-known non-active Meta account_status
+// values to a human-readable reason. A campaign created against an account in one
+// of these states would only fail at a later mutating call, so CreateCampaign
+// refuses BEFORE any paid resource is created when the preflight reports one of
+// these. account_status 0 (absent/unreported) and any value not listed here are
+// treated as "not known-bad" and allowed through — this is a conservative block
+// on definitively-disabled accounts, not a positive allowlist.
+var inactiveAccountStatusLabels = map[int]string{
+	2:   "disabled",
+	3:   "unsettled",
+	7:   "pending risk review",
+	8:   "pending settlement",
+	9:   "in grace period",
+	100: "pending closure",
+	101: "closed",
+	201: "any active review",
+	202: "any closed review",
+}
+
 // currencyMinorUnitOffset is the AUTHORITATIVE map of the Meta ad-account
 // currencies this client supports, each mapped to the factor that converts a
 // whole-currency-unit budget into the minor units Meta expects. This map — NOT a
@@ -1315,7 +1337,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		steps = append(steps, fmt.Sprintf("Account preflight warning: %s", truncateErr(preflightErr, 300)))
 	} else {
-		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
+		// The preflight fetched account_status; a successful GET is not the same as an
+		// ACTIVE account. If the account is in a known-inactive state, fail BEFORE any
+		// mutating call rather than creating a paid campaign that Meta would reject at a
+		// later step. A status of 0 (unreported) or any value not known to be bad is
+		// allowed through — this blocks only definitively-disabled accounts.
+		if reason, bad := inactiveAccountStatusLabels[acct.AccountStatus]; bad {
+			return nil, fmt.Errorf("meta ad account %s is not active (account_status %d: %s); resolve the account status in Meta Ads Manager before creating campaigns", accountID, acct.AccountStatus, reason)
+		}
+		if acct.AccountStatus == metaAccountStatusActive {
+			steps = append(steps, fmt.Sprintf("Account verified: %s (%s, active)", label, accountID))
+		} else {
+			steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
+		}
 	}
 
 	// Resolve the currency offset used to convert the whole-currency-unit budget to

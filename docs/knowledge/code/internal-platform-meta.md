@@ -51,10 +51,13 @@ units by multiplying by the account's minor-unit offset
 DERIVED from the account's ISO 4217 currency code, not fetched: the Meta AdAccount
 node exposes only `currency` (the ISO code) — it does NOT expose a
 `currency_offset` field (only the separate Currency node does). CreateCampaign
-maps the code through a reference table (`currencyMinorUnitOffset`): the
-zero-decimal currencies (JPY, KRW, CLP, VND, and the rest of the standard set) map
-to 1, and every other recognized code defaults to the two-decimal 100. The offset
-is never guessed: when `AccountConfig.CurrencyOffset` is unset (zero) — the normal
+maps the code through an AUTHORITATIVE supported-currency table
+(`currencyMinorUnitOffset`), which is the single source of truth: the zero-decimal
+currencies (JPY, KRW, CLP, VND, and the rest of the standard set) map to 1, and the
+enumerated two-decimal currencies (USD, EUR, GBP, and the other supported majors)
+map to 100. There is NO fall-through default — a code absent from the table
+(blank, or a well-formed-but-unknown code such as `ZZZ`) is treated as unsupported.
+The offset is never guessed: when `AccountConfig.CurrencyOffset` is unset (zero) — the normal
 case for a dispatch built from a persisted connection, which carries only
 account/page/app IDs — CreateCampaign fetches the account's `currency` (ISO code)
 from the ad-account object during the account preflight, BEFORE any mutating call,
@@ -65,7 +68,12 @@ prevent that budget from being activated. A caller MAY set a positive
 `CurrencyOffset` explicitly when the value is already known; the account preflight
 GET still runs (it also verifies access), but the explicit offset takes precedence
 over the derived one rather than skipping the request. A negative
-offset is rejected as malformed. `CampaignInput.Project` is
+offset is rejected as malformed. The preflight also reads `account_status`: a
+successful GET is not treated as "active" — if the account is in a known-inactive
+state (disabled, closed, pending review/settlement, etc.) CreateCampaign fails
+BEFORE any mutating call rather than creating a paid campaign Meta would reject
+later; an unreported status (0) or any value not known to be bad is allowed
+through. `CampaignInput.Project` is
 also required (rejected up front if empty/whitespace): the campaign name's
 Project segment must be the caller-supplied canonical LFX project slug, so the
 client never silently substitutes a placeholder that could mis-attribute a

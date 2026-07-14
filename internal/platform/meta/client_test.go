@@ -1469,6 +1469,35 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignRejectsInactiveAccountBeforeAnyPost verifies that a successful
+// preflight reporting a known-inactive account_status (e.g. 2 = disabled) fails
+// BEFORE any mutating call, rather than creating a paid campaign that Meta would
+// reject at a later step. account_status is fetched during the preflight, so a
+// successful GET alone must not be treated as "verified/active".
+func TestCreateCampaignRejectsInactiveAccountBeforeAnyPost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("unexpected POST to %s: an inactive account must fail before mutation", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"name":"x","account_status":2,"currency":"USD"}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not active") {
+		t.Fatalf("err = %v, want inactive-account rejection before mutation", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Input validation errors
 // ---------------------------------------------------------------------------
