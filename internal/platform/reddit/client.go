@@ -971,8 +971,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		geos = []string{"US"}
 	}
 
-	// Step 1: Verify account (non-fatal, mirrors TS try/catch).
+	// Step 1: Verify account (non-fatal, mirrors TS try/catch). A verification
+	// FAILURE is only a warning — but a CALLER context cancellation is fatal:
+	// continuing would run the campaign POST under a dead ctx and then
+	// mis-report an "unconfirmed, may exist" partial even though nothing was
+	// created. Abort here on ctx cancellation, before any mutating call.
 	if _, err := c.request(ctx, http.MethodGet, "/ad_accounts/"+accountID, nil); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("reddit campaign creation aborted during account verification: %w", ctxErr)
+		}
 		steps = append(steps, "Account verification warning: "+err.Error())
 	} else {
 		steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
@@ -1057,6 +1064,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	campaignResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
 	if err != nil {
+		// A CALLER context cancellation (even one that surfaced as a transportError
+		// during an EARLIER step like account verification, then propagated here) is
+		// NOT an ambiguous create: no campaign POST completed. Honor the documented
+		// pre-POST (nil, err) contract rather than returning a misleading "may exist"
+		// partial. Key this off the caller ctx directly, not the error type.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("reddit campaign creation aborted before completion: %w", ctxErr)
+		}
 		// Only treat the failure as AMBIGUOUS ("campaign may exist") when the request
 		// actually reached Reddit and the outcome is unknowable:
 		//   - a transportError (the round-trip itself failed after the request was

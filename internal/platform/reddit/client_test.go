@@ -825,6 +825,51 @@ func TestCreateCampaign_TokenRefreshFailureNotUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_CtxCancelDuringVerifyIsFatal verifies that a caller context
+// cancellation during the (non-fatal) account-verification GET aborts with
+// (nil, err) BEFORE any campaign POST — it must not be downgraded to a warning
+// and then mis-reported as an UNCONFIRMED "may exist" partial.
+func TestCreateCampaign_CtxCancelDuringVerifyIsFatal(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var campaignPosts int32
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			cancel() // cancel the caller ctx while the verification GET is in flight
+			<-r.Context().Done()
+			return
+		case strings.HasSuffix(r.URL.Path, "/campaigns") && r.Method == http.MethodPost:
+			atomic.AddInt32(&campaignPosts, 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(ctx, validRedditInput())
+	if err == nil {
+		t.Fatal("expected an error on ctx cancellation during verification")
+	}
+	if res != nil {
+		t.Errorf("ctx cancel before any campaign POST must return nil result, got %+v", res)
+	}
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a cancellation before the campaign POST must NOT be UNCONFIRMED, got %v", err)
+	}
+	if n := atomic.LoadInt32(&campaignPosts); n != 0 {
+		t.Errorf("no campaign POST should occur after ctx cancel, got %d", n)
+	}
+}
+
 // TestCreateCampaign_NoSubredditsNoSkipWarning verifies FINDING 3: a normal
 // keyword/geo-only campaign (no subreddits supplied) must NOT be reported as
 // having skipped communities that need manual action.
