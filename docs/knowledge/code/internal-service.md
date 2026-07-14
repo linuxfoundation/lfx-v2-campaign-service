@@ -21,9 +21,11 @@ platform sets (a duplicate would create two paid upstream campaigns), then hands
 off to the `Orchestrator`, which persists a job and dispatches per platform
 asynchronously (bounded concurrency). Dispatch is idempotent: a brief already
 carrying a campaign with an upstream id for a platform is reused rather than
-re-created, and a transient existing-campaign lookup error is recorded as a
-failure rather than risking a duplicate. Replacing a brief's content resets it to
-`draft` (re-approval required). Optimistic concurrency is enforced via
+re-created, and a transient existing-campaign fast-path lookup error does NOT
+fail the dispatch — it falls through to `ClaimCampaignDispatch`, whose atomic
+claim safely either claims-and-dispatches or reuses the conflicting row, so a
+duplicate is avoided without failing on the transient error. Replacing a brief's
+content resets it to `draft` (re-approval required). Optimistic concurrency is enforced via
 version/If-Match (`428` when missing, `412` on mismatch).
 
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is

@@ -54,6 +54,15 @@ const ContainerCloseTimeout = dispatchDrainTimeout + service.CancelGracePeriod
 // wall-clock, not bound by a shared context).
 const HTTPShutdownTimeout = constants.DefaultShutdownTimeout - ContainerCloseTimeout
 
+// HandlerDrainTimeout is a SEPARATE, dedicated budget for waiting on in-flight
+// handler goroutines to return AFTER a forced srv.Close(). It must not be derived
+// from the HTTP-shutdown context's remaining time: when srv.Shutdown times out,
+// that context is already exhausted, so a "remaining budget" would be zero and
+// the wait would return immediately — defeating the tracker exactly when a
+// straggler is running. Reserving a small fixed slice guarantees a bounded wait
+// in that case. It is carved from HTTPShutdownTimeout so the total still fits.
+const HandlerDrainTimeout = 2 * time.Second
+
 func init() {
 	if dispatchDrainTimeout+service.CancelGracePeriod > constants.DefaultShutdownTimeout {
 		panic("dispatchDrainTimeout + service.CancelGracePeriod exceeds DefaultShutdownTimeout")

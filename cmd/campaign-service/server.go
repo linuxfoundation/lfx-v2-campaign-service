@@ -164,17 +164,6 @@ type inflightWaiter interface {
 	Wait(timeout time.Duration) bool
 }
 
-// httpDeadline returns the HTTP-shutdown context's deadline, or now if it has
-// none — so the caller's remaining-budget computation yields a non-positive
-// duration (an immediate, non-blocking inflight check) rather than an
-// unbounded wait when no deadline is set.
-func httpDeadline(httpCtx context.Context) time.Time {
-	if d, ok := httpCtx.Deadline(); ok {
-		return d
-	}
-	return time.Now()
-}
-
 func errorHandler(logCtx context.Context) func(context.Context, http.ResponseWriter, error) {
 	return func(ctx context.Context, _ http.ResponseWriter, err error) {
 		slog.ErrorContext(ctx, "HTTP error occurred", log.ErrKey, err, "outer_context", logCtx)
@@ -232,7 +221,11 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 	//   4. THEN cont.Close(closeCtx) — drain in-flight dispatch, then close the pool.
 	// A residual remains only if a handler outlasts the bounded wait; that window
 	// is tracked under LFXV2-2665.
-	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), container.HTTPShutdownTimeout)
+	// Reserve HandlerDrainTimeout for the post-force-close inflight wait (step 3),
+	// so the graceful Shutdown gets the rest of the HTTP budget. This guarantees
+	// the inflight wait has a real budget even when Shutdown times out (which would
+	// otherwise exhaust the whole HTTP context).
+	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), container.HTTPShutdownTimeout-container.HandlerDrainTimeout)
 	defer cancelHTTP()
 	if err := srv.Shutdown(httpCtx); err != nil {
 		slog.ErrorContext(ctx, "HTTP server shutdown error; force-closing lingering connections", log.ErrKey, err)
@@ -244,11 +237,11 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 	}
 	// Wait for in-flight handler goroutines to return before closing the pool. On a
 	// clean Shutdown they are already drained and this returns immediately; on the
-	// force-close path it bounds the wait by the HTTP budget still remaining so a
-	// straggler is awaited but can never push total shutdown past its window.
+	// force-close path it waits up to the DEDICATED HandlerDrainTimeout (NOT the
+	// HTTP context's remaining time — that is exhausted precisely when Shutdown
+	// timed out and a straggler is running, which would make the wait a no-op).
 	if inflight != nil {
-		remaining := time.Until(httpDeadline(httpCtx))
-		if !inflight.Wait(remaining) {
+		if !inflight.Wait(container.HandlerDrainTimeout) {
 			slog.ErrorContext(ctx, "in-flight HTTP handlers did not return before pool close; a straggler may touch the pool (LFXV2-2665)")
 		}
 	}
