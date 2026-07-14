@@ -519,12 +519,12 @@ func TestCreateSponsoredCampaign_SameNameDifferentGroupNotMatched(t *testing.T) 
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	startMs, endMs := testScheduleMs(t, c)
+	_, endMs := testScheduleMs(t, c)
 	id, err := c.createSponsoredCampaign(
 		context.Background(),
-		"123456789", wantGroupID, "Same Name",
+		"123456789", wantGroupID, "Same Name", "2099-01-01", endMs,
 		100, []string{"urn:li:geo:103644278"}, "cloud-native",
-		startMs, endMs, false,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("createSponsoredCampaign: %v", err)
@@ -561,12 +561,12 @@ func TestCreateSponsoredCampaign_SameNameSameGroupMatched(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	startMs, endMs := testScheduleMs(t, c)
+	_, endMs := testScheduleMs(t, c)
 	id, err := c.createSponsoredCampaign(
 		context.Background(),
-		"123456789", groupID, "Same Name",
+		"123456789", groupID, "Same Name", "2099-01-01", endMs,
 		100, []string{"urn:li:geo:103644278"}, "cloud-native",
-		startMs, endMs, false,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("createSponsoredCampaign: %v", err)
@@ -1484,7 +1484,9 @@ func TestDoRequest_GET429StillRetried(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"urn:li:x:99"}`)
+		// A GET is a search: include `elements` so the response is a valid search
+		// envelope (doRequest rejects a GET whose elements field is absent).
+		_, _ = io.WriteString(w, `{"id":"urn:li:x:99","elements":[]}`)
 	}))
 	defer srv.Close()
 
@@ -3066,5 +3068,378 @@ func TestResolveGeoTargets_ReportsUnresolvedAndIgnoresBlank(t *testing.T) {
 		if unresolved[i] != want[i] {
 			t.Errorf("unresolved[%d] = %q, want %q (original spelling)", i, unresolved[i], want[i])
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Third-round Copilot findings: method-aware ambiguity, 2xx overflow, and
+// missing-elements search guards.
+// ---------------------------------------------------------------------------
+
+// TestCreateOutcomeAmbiguous_MethodAware verifies FIX 1: only a MUTATING-method
+// failure can be an ambiguous create. A transportError or 5xx apiError from a GET
+// (a search) ran no POST, so nothing was created — it must NOT read as ambiguous.
+// A POST failure of either kind still IS ambiguous.
+func TestCreateOutcomeAmbiguous_MethodAware(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"GET transportError not ambiguous", &transportError{Method: http.MethodGet, Path: "adCampaigns", Err: fmt.Errorf("timeout")}, false},
+		{"POST transportError ambiguous", &transportError{Method: http.MethodPost, Path: "adCampaigns", Err: fmt.Errorf("timeout")}, true},
+		{"GET 5xx apiError not ambiguous", &apiError{StatusCode: 502, Method: http.MethodGet, Path: "adCampaigns"}, false},
+		{"POST 5xx apiError ambiguous", &apiError{StatusCode: 502, Method: http.MethodPost, Path: "adCampaigns"}, true},
+		{"POST 4xx apiError not ambiguous", &apiError{StatusCode: 400, Method: http.MethodPost, Path: "adCampaigns"}, false},
+		{"PUT transportError ambiguous", &transportError{Method: http.MethodPut, Path: "adCampaigns", Err: fmt.Errorf("reset")}, true},
+		{"DELETE 5xx apiError ambiguous", &apiError{StatusCode: 500, Method: http.MethodDelete, Path: "adCampaigns"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := createOutcomeAmbiguous(tc.err); got != tc.want {
+				t.Errorf("createOutcomeAmbiguous(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_GET5xxSearchIsNotAmbiguous verifies FIX 1 end to end: a 5xx
+// on the campaign-GROUP SEARCH (a GET) surfaces as a plain error, NOT an
+// UNCONFIRMED "a group may exist" outcome — because a GET search created nothing.
+// It must also NOT reach any create POST.
+func TestCreateCampaign_GET5xxSearchIsNotAmbiguous(t *testing.T) {
+	var mu sync.Mutex
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			posts++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:1"}`)
+			return
+		}
+		// The GET search fails with a 5xx.
+		http.Error(w, "search boom", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateCampaign(context.Background(), baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error from the 5xx search, got nil")
+	}
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a GET search 5xx must NOT report an ambiguous UNCONFIRMED create, got: %v", err)
+	}
+	// A non-ambiguous search failure returns nil,err (no partial result to reconcile).
+	if res != nil {
+		for _, s := range res.Steps {
+			if strings.Contains(s, "UNCONFIRMED") || strings.Contains(s, "may exist") {
+				t.Errorf("a GET search 5xx must not emit an UNCONFIRMED/may-exist step, got: %q", s)
+			}
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 0 {
+		t.Errorf("a failing search must not proceed to a create POST, got %d POSTs", posts)
+	}
+}
+
+// TestCreateCampaign_POST5xxCreateStillAmbiguous is the counterpart to FIX 1: a
+// 5xx on the campaign CREATE (a POST) must STILL be classified as ambiguous
+// (UNCONFIRMED), because the mutation may have committed. This guards against the
+// method-awareness change over-narrowing and losing genuine create ambiguity.
+func TestCreateCampaign_POST5xxCreateStillAmbiguous(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			http.Error(w, "create boom", http.StatusBadGateway)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	_, err := c.CreateCampaign(context.Background(), baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error from the 5xx campaign create, got nil")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a POST create 5xx must still report an ambiguous UNCONFIRMED outcome, got: %v", err)
+	}
+}
+
+// TestDoRequest_Oversized2xxPOSTIsAmbiguous verifies FIX 2: an oversized (over
+// maxResponseBytes) SUCCESSFUL (2xx) POST response is wrapped as transportError so
+// createOutcomeAmbiguous classifies it as ambiguous — the create may already have
+// committed, so a blind retry could duplicate it.
+func TestDoRequest_Oversized2xxPOSTIsAmbiguous(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Write a body strictly larger than maxResponseBytes.
+		big := make([]byte, maxResponseBytes+1024)
+		for i := range big {
+			big[i] = 'x'
+		}
+		_, _ = w.Write(big)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"x": 1}, nil)
+	if err == nil {
+		t.Fatal("expected an error for the oversized 2xx POST response, got nil")
+	}
+	var te *transportError
+	if !errors.As(err, &te) {
+		t.Fatalf("oversized 2xx POST response must be a transportError, got %T: %v", err, err)
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("oversized 2xx POST response must be classified as an ambiguous create (may exist)")
+	}
+}
+
+// TestDoRequest_Oversized2xxGETNotAmbiguous verifies the flip side of FIX 2 under
+// FIX 1's method gate: an oversized 2xx GET response is wrapped as transportError
+// but, because a GET created nothing, it must NOT classify as an ambiguous create.
+func TestDoRequest_Oversized2xxGETNotAmbiguous(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		big := make([]byte, maxResponseBytes+1024)
+		for i := range big {
+			big[i] = 'x'
+		}
+		_, _ = w.Write(big)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns", nil, nil)
+	if err == nil {
+		t.Fatal("expected an error for the oversized 2xx GET response, got nil")
+	}
+	if createOutcomeAmbiguous(err) {
+		t.Error("an oversized 2xx GET response must NOT be classified as an ambiguous create")
+	}
+}
+
+// TestDoRequest_OversizedNon2xxIsPlainError verifies FIX 2 leaves a NON-2xx
+// oversized body as a plain error (not a committed mutation, so not ambiguous).
+func TestDoRequest_OversizedNon2xxIsPlainError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		big := make([]byte, maxResponseBytes+1024)
+		for i := range big {
+			big[i] = 'x'
+		}
+		_, _ = w.Write(big)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"x": 1}, nil)
+	if err == nil {
+		t.Fatal("expected an error for the oversized non-2xx response, got nil")
+	}
+	var te *transportError
+	if errors.As(err, &te) {
+		t.Errorf("an oversized NON-2xx response must be a plain error, not a transportError, got: %v", err)
+	}
+}
+
+// TestFindByName_MissingElementsFieldIsError verifies FIX 3: a malformed 2xx
+// search body like `{}` (elements field ABSENT) cannot confirm absence and is
+// surfaced as an error, NOT a clean "not found" that would permit a duplicate
+// create.
+func TestFindByName_MissingElementsFieldIsError(t *testing.T) {
+	for _, body := range []string{`{}`, `null`, `{"metadata":{"nextPageToken":""}}`} {
+		body := body
+		t.Run(body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			_, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | X | CNCF")
+			if err == nil {
+				t.Fatalf("body %q with no elements field must be an error (cannot confirm absence), got nil", body)
+			}
+			if !strings.Contains(err.Error(), "missing elements field") {
+				t.Errorf("expected a missing-elements error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestFindByName_EmptyElementsSliceIsConfirmedAbsent verifies the FIX 3 boundary:
+// an INTENTIONAL empty result `{"elements":[]}` (field PRESENT, len 0) IS a valid
+// confirmed-absence — findByName returns "" (not found) with no error, so the
+// caller may proceed to create.
+func TestFindByName_EmptyElementsSliceIsConfirmedAbsent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{"nextPageToken":""}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | X | CNCF")
+	if err != nil {
+		t.Fatalf("an explicit empty elements slice is a confirmed not-found, got error: %v", err)
+	}
+	if id != "" {
+		t.Errorf("expected confirmed not-found (empty id), got %q", id)
+	}
+}
+
+// TestFindByName_ElementsPresentWithHitStillWorks verifies FIX 3 does not regress a
+// real search hit: `{"elements":[{...}]}` still returns the matched id.
+func TestFindByName_ElementsPresentWithHitStillWorks(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Hit | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:555"}],"metadata":{"nextPageToken":""}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | Hit | CNCF")
+	if err != nil {
+		t.Fatalf("findByName with a real hit: %v", err)
+	}
+	if id != "555" {
+		t.Errorf("expected matched id 555, got %q", id)
+	}
+}
+
+// TestCreateCampaign_MissingElementsDoesNotTriggerDuplicateCreate verifies FIX 3
+// end to end: a `{}` search body (elements absent) aborts the find-or-create flow
+// with an error and issues NO create POST — so no duplicate paid resource.
+func TestCreateCampaign_MissingElementsDoesNotTriggerDuplicateCreate(t *testing.T) {
+	var mu sync.Mutex
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			posts++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:1"}`)
+			return
+		}
+		// Search GET returns a malformed body with the elements field absent.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error from the missing-elements search body, got nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 0 {
+		t.Errorf("a search that cannot confirm absence must not trigger a create POST, got %d POSTs", posts)
+	}
+}
+
+// TestCreateCampaign_CampaignStartRecomputedBeforePOST verifies FIX 4: for a
+// today/past start date, the campaign's runSchedule.start is recomputed
+// (now+startTimeBuffer) JUST BEFORE the campaign POST, not reused from a value
+// fixed at the top of the flow. The clock is advanced between the group create and
+// the campaign create; the campaign start must reflect the LATER now, proving it
+// was re-derived per mutation rather than carried over stale.
+func TestCreateCampaign_CampaignStartRecomputedBeforePOST(t *testing.T) {
+	// A mutable clock: each read returns the current value; the group POST advances
+	// it so the campaign POST sees a later "now".
+	var mu sync.Mutex
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	nowT := base
+	clock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return nowT
+	}
+	const advance = 3 * time.Minute
+
+	var groupStart, campaignStart int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(b, &body)
+		start := int64(0)
+		if rs, ok := body["runSchedule"].(map[string]any); ok {
+			if s, ok := rs["start"].(float64); ok {
+				start = int64(s)
+			}
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			groupStart = start
+			// Simulate elapsed time during the group create + subsequent campaign lookup.
+			mu.Lock()
+			nowT = nowT.Add(advance)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			campaignStart = start
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	in := baseValidInput()
+	// A TODAY start (past-of-now at server time) so toMs nudges it to now+buffer and
+	// the recompute is observable. Use the clock's date.
+	in.StartDate = base.Format("2006-01-02")
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(clock))
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if groupStart == 0 || campaignStart == 0 {
+		t.Fatalf("expected both starts recorded, got group=%d campaign=%d", groupStart, campaignStart)
+	}
+	// The campaign start must be LATER than the group start by ~the advance, proving
+	// it was recomputed against the advanced clock rather than reused.
+	delta := campaignStart - groupStart
+	if delta < advance.Milliseconds() {
+		t.Errorf("campaign start (%d) should be >= group start (%d) + %s (recomputed per mutation), delta=%dms",
+			campaignStart, groupStart, advance, delta)
+	}
+	// And the campaign start must equal the LATER now + buffer exactly.
+	wantCampaignStart := base.Add(advance).UnixMilli() + startTimeBuffer.Milliseconds()
+	if campaignStart != wantCampaignStart {
+		t.Errorf("campaign start = %d, want now+buffer at POST time = %d", campaignStart, wantCampaignStart)
 	}
 }

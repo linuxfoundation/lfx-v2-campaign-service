@@ -736,7 +736,9 @@ func TestDoRequestRetriesOn429(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"urn:li:x:99"}`)
+		// A GET is a search: include `elements` so the response is a valid search
+		// envelope (doRequest rejects a GET whose elements field is absent).
+		_, _ = io.WriteString(w, `{"id":"urn:li:x:99","elements":[]}`)
 	}))
 	defer srv.Close()
 

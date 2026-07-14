@@ -146,11 +146,18 @@ type CampaignResult struct {
 // linkedInResponse is the decoded JSON body plus the resource ID promoted from
 // the x-restli-id header. Mirrors LinkedInResponse.
 type linkedInResponse struct {
-	ID       flexibleID        `json:"id"`
-	Name     string            `json:"name"`
-	Status   string            `json:"status"`
-	Elements []responseElement `json:"elements"`
-	Metadata linkedInMetadata  `json:"metadata"`
+	ID     flexibleID `json:"id"`
+	Name   string     `json:"name"`
+	Status string     `json:"status"`
+	// Elements is a POINTER slice so the "elements field absent or null" case is
+	// distinguishable from the "elements present but empty" case. A malformed 2xx
+	// search body like `{}` or `null` decodes with Elements == nil (field absent)
+	// and CANNOT prove absence, whereas an intentional empty result `{"elements":[]}`
+	// decodes with a non-nil, len-0 slice and IS a confirmed not-found. Collapsing
+	// both to a plain nil slice let a `{}`/`null` body read as "no elements → not
+	// found", permitting a DUPLICATE create. See doRequest's search-presence guard.
+	Elements *[]responseElement `json:"elements"`
+	Metadata linkedInMetadata   `json:"metadata"`
 }
 
 // linkedInMetadata carries the cursor-pagination block used by the LinkedIn
@@ -280,28 +287,49 @@ func isPreSendDialError(err error) bool {
 		errors.Is(err, syscall.ENETUNREACH)
 }
 
-// createOutcomeAmbiguous reports whether a failed mutating request MAY have been
-// applied by LinkedIn despite the error — i.e. the request plausibly reached the
-// server and its outcome is unknowable. It is the single source of truth shared
-// by the create paths so they classify identically:
-//   - transportError: the round-trip failed AFTER a connection was established
-//     (a pre-connect dial error is NOT wrapped as transportError, so it never
-//     reaches here), or a 2xx body could not be read/decoded — so the request may
-//     have been received and the mutation committed;
-//   - *apiError with a 5xx status: LinkedIn received it and may have committed the
-//     mutation before erroring.
+// isMutatingMethod reports whether an HTTP method mutates server state (POST,
+// PUT, PATCH, DELETE). A failure on a non-mutating method (GET/HEAD) created
+// nothing, so it can never be an ambiguous create. Used by
+// createOutcomeAmbiguous to scope ambiguity to the calls that actually POST.
+func isMutatingMethod(m string) bool {
+	switch m {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+// createOutcomeAmbiguous reports whether a failed MUTATING request MAY have been
+// applied by LinkedIn despite the error — i.e. a POST/PUT/PATCH/DELETE plausibly
+// reached the server and its outcome is unknowable. It is the single source of
+// truth shared by the create paths so they classify identically:
+//   - transportError from a mutating method: the round-trip failed AFTER a
+//     connection was established (a pre-connect dial error is NOT wrapped as
+//     transportError, so it never reaches here), or a 2xx body could not be
+//     read/decoded — so the mutation may have been received and committed;
+//   - *apiError with a 5xx status from a mutating method: LinkedIn received it and
+//     may have committed the mutation before erroring.
 //
-// A definite 4xx (LinkedIn rejected it), or any pre-send failure (request build,
-// a pre-connect dial error), means NOT applied → returns false so the caller
-// reports a clean "failed" rather than "may exist". Mirrors the Reddit/Meta
-// clients' createOutcomeAmbiguous.
+// The METHOD gate is essential: a GET search that times out, returns a 5xx, or
+// yields an undecodable/oversized 2xx body ran NO POST — nothing was created — so
+// it must NOT read as an ambiguous create ("a campaign may exist"). A GET failure
+// surfaces to the find-or-create caller as a plain error, which correctly aborts
+// the flow before any create rather than reporting a phantom resource. Only a
+// mutating-method failure can be an ambiguous create.
+//
+// A definite 4xx (LinkedIn rejected it), any pre-send failure (request build, a
+// pre-connect dial error), or ANY non-mutating-method failure means NOT applied →
+// returns false so the caller reports a clean "failed" rather than "may exist".
+// The transportError/apiError types both carry the request Method (set at every
+// wrap site alongside Path), so the classification needs no extra plumbing.
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
-		return true
+		return isMutatingMethod(te.Method)
 	}
 	var ae *apiError
-	return errors.As(err, &ae) && ae.StatusCode >= 500
+	return errors.As(err, &ae) && ae.StatusCode >= 500 && isMutatingMethod(ae.Method)
 }
 
 // doRequest performs one API call. It honors ctx, sets the OAuth2 bearer and
@@ -419,6 +447,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		}
 		if int64(buf.Len()) > maxResponseBytes {
 			_ = resp.Body.Close()
+			// An oversized 2xx body is AMBIGUOUS just like a read/decode failure: the
+			// mutation may already be committed but we can't read the confirmation
+			// (id/elements). Wrap it as transportError so a mutating request is treated
+			// as "may exist" (createOutcomeAmbiguous → UNCONFIRMED) rather than a clean
+			// failure a blind retry would duplicate. The Method is carried so FIX 1's
+			// method gate still classifies a GET overflow as NOT-a-create. A non-2xx
+			// oversized body is not a committed mutation, so it stays a plain error.
+			// Mirrors the Reddit/Meta clients wrapping a 2xx read failure as transportError.
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+			}
 			return nil, fmt.Errorf("linkedin %s %s: response exceeds %d bytes", method, path, maxResponseBytes)
 		}
 
@@ -460,6 +499,22 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// the x-restli-id header, handled by the header fallback below.)
 			_ = resp.Body.Close()
 			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("search response had an empty body (no elements/metadata) — cannot confirm absence")}
+		}
+
+		// A GET search MUST carry the `elements` field to prove a result set. A
+		// non-empty but malformed 2xx body like `{}` or `null` decodes cleanly yet
+		// leaves Elements == nil (field absent/null): that CANNOT confirm absence, so
+		// treating it as an empty result set would make findMatch report a false "not
+		// found" and let the find-or-create caller create a DUPLICATE paid resource.
+		// An intentional empty result `{"elements":[]}` decodes to a non-nil, len-0
+		// slice and IS a valid confirmed-absence, so it is allowed through. Reject only
+		// the field-absent/null case, as a transportError — with FIX 1's method gate a
+		// GET surfaces this as a plain error (correct: a GET that can't confirm absence
+		// must fail, not create). POST/other mutations are exempt: a create legitimately
+		// returns an id-only body (e.g. {"id":...}) with no elements.
+		if method == http.MethodGet && out.Elements == nil {
+			_ = resp.Body.Close()
+			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("search response missing elements field — cannot confirm absence")}
 		}
 
 		// Promote the resource ID header when the body carried no id. Mirrors the
@@ -660,7 +715,14 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			// the find-or-create caller aborts rather than proceeding to create.
 			return "", fmt.Errorf("search %q by name: %w", nestedPath, err)
 		}
-		for _, el := range resp.Elements {
+		// resp.Elements is guaranteed non-nil here for a GET: doRequest rejects a
+		// search whose elements field is absent/null (see the search-presence guard).
+		// A non-nil, len-0 slice (`{"elements":[]}`) is a confirmed-empty page.
+		var elements []responseElement
+		if resp.Elements != nil {
+			elements = *resp.Elements
+		}
+		for _, el := range elements {
 			if !match(el) {
 				continue
 			}
@@ -787,21 +849,24 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 
 // validateSchedule enforces the start/end date contract ONCE, up front in
 // CreateCampaign, before any idempotency lookup or mutating POST, and RETURNS the
-// computed epoch-millisecond start/end so they are the single source of truth
-// threaded through the create helpers. It mirrors what toMs (plus the
+// computed epoch-millisecond start/end. It mirrors what toMs (plus the
 // endMs<=startMs guard) enforces: both dates must parse as YYYY-MM-DD, the end
 // date must not be in the past, and the end must be strictly after the start.
 //
-// This up-front computation is necessary for two reasons. First, toMs is
-// otherwise only reached AFTER the create helpers' find-existing idempotency
-// lookups: if a same-name group AND campaign already exist, malformed/past/
-// reversed dates would bypass toMs entirely and the flow would still proceed to
-// create dark posts and creatives on a broken schedule. Second, toMs is
-// non-deterministic for a today/past start (it returns a moving now+5min), so
-// calling it separately in each helper could yield DIFFERENT start millis than
-// the value this preflight validated. Computing startMs/endMs here ONCE and
-// passing them down guarantees the campaign group and campaign share identical,
-// preflight-validated timestamps.
+// This up-front computation is necessary because toMs is otherwise only reached
+// AFTER the create helpers' find-existing idempotency lookups: if a same-name
+// group AND campaign already exist, malformed/past/reversed dates would bypass
+// toMs entirely and the flow would still proceed to create dark posts and
+// creatives on a broken schedule.
+//
+// The returned startMs is used for the campaign GROUP create (which runs right
+// after this preflight, so its start is still fresh). The CAMPAIGN's start is NOT
+// taken from this value: createSponsoredCampaign recomputes it (now+buffer) just
+// before its POST, because the campaign create runs after the group lookup+create
+// and the campaign lookup, by which time a once-computed today/past start could
+// have slipped into the past (see startTimeBuffer and createSponsoredCampaign).
+// endMs is a fixed calendar instant that does not drift, so it is threaded through
+// to the campaign unchanged.
 func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int64, err error) {
 	startMs, err = c.toMs(startDate, false)
 	if err != nil {
@@ -907,7 +972,7 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name 
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name string, budgetUSD float64, geoURNs []string, targetingProfile string, startMs, endMs int64, lifetimeBudget bool) (string, error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -922,10 +987,28 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		return existing, nil
 	}
 
-	// startMs/endMs are the schedule timestamps computed ONCE by validateSchedule
-	// in CreateCampaign and threaded through, so the campaign shares the exact
-	// values used for its campaign group (toMs is not re-called here — that would
-	// drift for a today/past start).
+	// Re-derive the campaign's start JUST BEFORE this mutating POST, rather than
+	// reusing the value computed by validateSchedule at the top of CreateCampaign.
+	// For a today/past start, toMs returns now+startTimeBuffer; that value was
+	// computed BEFORE the (worst-case ~5min) campaign-group lookup + group create +
+	// (worst-case ~5min) campaign lookup ran, so by the time this POST fires the
+	// preflight start could already be in the PAST — LinkedIn would reject the POST
+	// and orphan the just-created ACTIVE group. Recomputing here guarantees the
+	// start is `now + startTimeBuffer` at the moment of the mutation, independent of
+	// how long the preceding lookups took. The endMs was validated up front (end is
+	// a fixed calendar instant that does not drift) and threaded through unchanged.
+	startMs, err := c.toMs(startDate, false)
+	if err != nil {
+		return "", err
+	}
+	// Guard the recomputed start against the (fixed) end: a start nudged forward by
+	// the buffer must still precede the end, or LinkedIn would reject the schedule
+	// only after the group already exists. This can only trip for an end date very
+	// close to now, but fail closed rather than POST an invalid schedule.
+	if endMs <= startMs {
+		return "", fmt.Errorf("campaign start (now+%s buffer) is not before the end date — the run window is too short", startTimeBuffer)
+	}
+
 	targeting, err := c.buildTargetingCriteria(targetingProfile, geoURNs)
 	if err != nil {
 		return "", err
@@ -1632,7 +1715,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
 
-	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.BudgetUSD, geoURNs, in.TargetingProfile, startMs, endMs, in.LifetimeBudget)
+	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, in.LifetimeBudget)
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here

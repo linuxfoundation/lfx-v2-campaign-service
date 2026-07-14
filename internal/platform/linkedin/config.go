@@ -62,16 +62,23 @@ const maxRetryWait = 60 * time.Second
 // the campaign group and campaign runSchedule.start isn't already in the past by
 // the time LinkedIn receives the POST.
 //
-// It MUST comfortably exceed doRequest's worst-case retry budget. A single
-// find-existing lookup can span up to (retryMax+1)=4 request attempts, each
-// bounded by requestTimeout (30s), plus up to retryMax=3 Retry-After waits each
-// capped at maxRetryWait (60s) — i.e. roughly 4×30s + 3×60s ≈ 5 minutes. And the
-// campaign create runs AFTER the campaign-group lookup+create, so its start can
-// be nudged, then the group creation can consume that whole ~5-minute budget
-// before the campaign POST. A ~5-minute buffer could therefore expire mid-flow,
-// letting the campaign POST carry a start that has already slipped into the past
-// (which LinkedIn rejects, orphaning the just-created group). 10 minutes clears
-// that ~5-minute worst case with headroom for network/scheduling latency.
+// The buffer must exceed a SINGLE lookup+create step's worst-case latency, NOT
+// the whole multi-lookup flow: the start is recomputed as (now + startTimeBuffer)
+// immediately before EACH mutation — the group start just before the group create
+// (via validateSchedule at the top of CreateCampaign, which runs right before the
+// group create) and the campaign start just before the campaign POST (recomputed
+// inside createSponsoredCampaign, NOT reused from the preflight value). A fixed
+// buffer alone could never reliably cover a variable multi-lookup flow — the
+// campaign create runs AFTER the group lookup+create AND the campaign lookup, so a
+// once-computed start could slip into the past before the campaign POST, orphaning
+// the just-created ACTIVE group. Recomputing per mutation removes that dependence
+// on total elapsed time; the buffer only has to absorb one step.
+//
+// One step's worst case: a single find-existing lookup can span up to
+// (retryMax+1)=4 request attempts, each bounded by requestTimeout (30s), plus up
+// to retryMax=3 Retry-After waits each capped at maxRetryWait (60s) — i.e. roughly
+// 4×30s + 3×60s ≈ 5 minutes. 10 minutes clears that ~5-minute worst case with
+// headroom for network/scheduling latency between the recompute and the POST.
 const startTimeBuffer = 10 * time.Minute
 
 // jobFunctions are the default job-function facets included in targeting.
