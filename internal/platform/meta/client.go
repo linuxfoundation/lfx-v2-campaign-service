@@ -14,14 +14,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -53,7 +56,17 @@ const (
 	maxResponseBody = 10 << 20 // 10 MiB
 	// adSetStartBuffer is added to "now" when a campaign starts today, so the ad
 	// set start_time isn't already in the past by the time Meta receives it.
-	adSetStartBuffer = 5 * time.Minute
+	//
+	// It MUST comfortably exceed doRequest's worst-case retry budget: with the
+	// default client a single doRequest can span up to (retryMax+1)=4 attempts,
+	// each bounded by DefaultRequestTimeout (30s), plus up to retryMax=3
+	// Retry-After waits each capped at maxRetryWait (60s) — i.e. roughly
+	// 4×30s + 3×60s ≈ 5 minutes. If the buffer were only ~5 minutes, the ad-set
+	// POST on the LAST retry could carry a start_time that has already slipped
+	// into the past (or, at a day boundary, onto the wrong day), which Meta
+	// rejects. 10 minutes clears that ~5-minute worst case with headroom for
+	// scheduling/network latency before the request actually reaches Meta.
+	adSetStartBuffer = 10 * time.Minute
 	// Per-variant copy limits (in runes), mirroring the repo contract in
 	// docs/api-catalog.md. Over-limit copy is rejected up front so it fails before
 	// any paid campaign/ad-set resource is created rather than at creative
@@ -578,6 +591,66 @@ func (e *APIError) Error() string {
 	return b.String()
 }
 
+// transportError wraps a failure of the HTTP round-trip itself (httpClient.Do)
+// that happened AFTER the request was plausibly sent (mid-flight timeout,
+// unexpected EOF, connection reset): the server may or may not have processed
+// it, so the outcome is AMBIGUOUS. This is distinct from a pre-send failure
+// (access token missing, body encode, request build, or a pre-connect dial
+// error — see isPreSendDialError), where the request never reached Meta and a
+// mutation definitely did not happen. Callers use it to decide whether a failed
+// create is "may exist" (ambiguous) vs "not created". Mirrors the reddit client.
+type transportError struct {
+	Method string
+	Path   string
+	Err    error
+}
+
+func (e *transportError) Error() string {
+	return fmt.Sprintf("meta API %s %s: %v", e.Method, e.Path, e.Err)
+}
+func (e *transportError) Unwrap() error { return e.Err }
+
+// isPreSendDialError reports whether a httpClient.Do error clearly happened
+// BEFORE any request bytes could have reached Meta (DNS resolution failure,
+// connection refused, or no route/network unreachable). Such a failure means the
+// request was NOT sent, so it must NOT be treated as an ambiguous "may exist"
+// transportError. A failure AFTER a connection is established (mid-flight
+// timeout, unexpected EOF) is genuinely ambiguous and IS wrapped as
+// transportError. Mirrors the reddit client.
+func isPreSendDialError(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	return false
+}
+
+// createOutcomeAmbiguous reports whether a failed mutating request MAY have been
+// applied by Meta despite the error — i.e. the request plausibly reached the
+// server and its outcome is unknowable. It is the single source of truth shared
+// by the campaign and ad/creative create paths so they classify identically:
+//   - transportError: the round-trip failed AFTER a connection was established
+//     (a pre-connect dial error is NOT wrapped as transportError, so it never
+//     reaches here), so the request may have been received;
+//   - *APIError with a 5xx status: Meta received it and may have committed the
+//     mutation before erroring.
+//
+// A definite 4xx (Meta rejected it), or any pre-send failure (token missing,
+// body encode/build, a pre-connect dial error), means NOT applied → returns
+// false so the caller returns a clean (nil, err) / "failed" rather than "may
+// exist". Mirrors the reddit client's createOutcomeAmbiguous.
+func createOutcomeAmbiguous(err error) bool {
+	var te *transportError
+	if errors.As(err, &te) {
+		return true
+	}
+	var ae *APIError
+	return errors.As(err, &ae) && ae.StatusCode >= 500
+}
+
 // doRequest performs a Graph API call and decodes the JSON body into out.
 // It honors ctx via http.NewRequestWithContext. A 429 (rate-limited) response is
 // retried up to retryMax times with a bounded backoff (honoring Retry-After when
@@ -612,7 +685,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("meta API %s %s: %w", method, path, err)
+			// A Do error that clearly happened BEFORE the request could be sent (DNS
+			// failure, connection refused, no route) means NOT sent — return it plain
+			// so callers treat a create as "not applied". A failure after a connection
+			// was established (mid-flight timeout, EOF) is genuinely ambiguous: wrap it
+			// as transportError so callers treat a create as "may exist". Mirrors the
+			// reddit client.
+			if isPreSendDialError(err) {
+				return fmt.Errorf("meta API %s %s: %w", method, path, err)
+			}
+			return &transportError{Method: method, Path: path, Err: err}
 		}
 
 		// Read one byte past the cap so a truncation is detectable: io.LimitReader
@@ -642,6 +724,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		// retry (its body is discarded anyway) — only fail when we would otherwise
 		// consume this response as final.
 		if readErr != nil && (!throttled || attempt >= retryMax) {
+			// A read failure on a 2xx is AMBIGUOUS: Meta committed the mutation but we
+			// couldn't read the result — wrap it as transportError so a create is
+			// treated as "may exist". A read failure on a non-2xx isn't a committed
+			// mutation, so return it plain. Mirrors the reddit client wrapping 2xx
+			// read/decode failures as transportError.
+			if status >= 200 && status < 300 {
+				return &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
+			}
 			return fmt.Errorf("meta API %s %s: read response body: %w", method, path, readErr)
 		}
 
@@ -714,7 +804,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 
 		if out != nil {
 			if err := json.Unmarshal(raw, out); err != nil {
-				return fmt.Errorf("decode response: %w", err)
+				// A 2xx we can't decode is AMBIGUOUS: Meta committed the mutation but we
+				// can't read the id. Wrap as transportError so a create is treated as
+				// "may exist". Mirrors the reddit client.
+				return &transportError{Method: method, Path: path, Err: fmt.Errorf("decode response: %w", err)}
 			}
 		}
 		return nil
@@ -1061,13 +1154,12 @@ func buildCampaignName(in CampaignInput, geoTargets []string) string {
 	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU", event, region, objective, project)
 }
 
-// buildUTMURL mirrors buildMetaUtmUrl.
-func buildUTMURL(in CampaignInput, variantIndex int) string {
-	// Trim defensively rather than trusting callers to pre-normalize: CreateCampaign
-	// trims RegistrationURL/EventName in place today, but this helper is also called
-	// directly from tests, and untrimmed inputs would otherwise reintroduce a
-	// leading/trailing dash in utm_term or a parse failure from a padded URL.
-	base := strings.TrimSpace(in.RegistrationURL)
+// metaUTMParams returns the exact set of utm_* parameters this client generates
+// for a click URL. It is the single source of truth for both the real click URL
+// (buildUTMURL) and the sanitized display URL (displayMetaUTMURL), so the display
+// allowlist can never drift from what is actually sent to Meta. Mirrors the
+// reddit client's redditUTMParams.
+func metaUTMParams(in CampaignInput, variantIndex int) map[string]string {
 	eventName := strings.TrimSpace(in.EventName)
 
 	slug := in.EventSlug
@@ -1080,13 +1172,28 @@ func buildUTMURL(in CampaignInput, variantIndex int) string {
 		campaign = slug
 	}
 
-	utm := map[string]string{
+	return map[string]string{
 		"utm_source":   "meta",
 		"utm_medium":   "paid-social",
 		"utm_campaign": campaign,
 		"utm_term":     strings.ToLower(collapseSpacesToDash(eventName)),
 		"utm_content":  fmt.Sprintf("variant-%d", variantIndex+1),
 	}
+}
+
+// buildUTMURL mirrors buildMetaUtmUrl. It returns the REAL click URL sent to Meta
+// (link_data.link): the caller's original query and fragment are preserved and
+// the generated utm_* params are merged in. This is intentionally NOT sanitized —
+// the ad must land on the caller's full destination. For a value safe to persist
+// in Steps, use displayMetaUTMURL.
+func buildUTMURL(in CampaignInput, variantIndex int) string {
+	// Trim defensively rather than trusting callers to pre-normalize: CreateCampaign
+	// trims RegistrationURL/EventName in place today, but this helper is also called
+	// directly from tests, and untrimmed inputs would otherwise reintroduce a
+	// leading/trailing dash in utm_term or a parse failure from a padded URL.
+	base := strings.TrimSpace(in.RegistrationURL)
+
+	utm := metaUTMParams(in, variantIndex)
 
 	// Parse the URL so UTM params merge into the existing query and any fragment
 	// stays at the very end (a fragment must not be pushed after the query).
@@ -1118,6 +1225,56 @@ func buildUTMURL(in CampaignInput, variantIndex int) string {
 	}
 	parsed.RawQuery = q.Encode()
 	return parsed.String()
+}
+
+// displayMetaUTMURL builds a click URL safe to persist in Steps / return to
+// callers: it strips any userinfo and any PRE-EXISTING query parameters from the
+// registration URL (which may carry secrets like ?token=...) and any fragment,
+// keeping ONLY the generated utm_* parameters. The full URL — including the
+// caller's original query — is still sent to Meta as the real link (buildUTMURL);
+// only this display copy is sanitized. variantIndex mirrors buildUTMURL. Mirrors
+// the reddit client's displayRedditUTMURL.
+func displayMetaUTMURL(in CampaignInput, variantIndex int) string {
+	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
+	if err != nil {
+		// Fall back to a plain redaction (scheme+host+path) if the URL won't parse —
+		// never return the raw value with its secrets.
+		return redactURL(in.RegistrationURL)
+	}
+	u.User = nil    // drop any basic-auth userinfo
+	u.Fragment = "" // a fragment can carry sensitive data; drop it for display
+	// Rebuild the query from ONLY the utm_* params THIS client generates (with our
+	// values), discarding the caller's entire original query. Filtering the merged
+	// query by a "utm_" prefix would be unsafe: a caller-supplied ?utm_secret=... or
+	// ?utm_source=<override> would survive. An explicit allowlist from the shared
+	// generator (metaUTMParams) is the source of truth.
+	safe := url.Values{}
+	for k, v := range metaUTMParams(in, variantIndex) {
+		safe.Set(k, v)
+	}
+	u.RawQuery = safe.Encode()
+	return u.String()
+}
+
+// redactURL returns a URL safe to persist in a result step: scheme://host/path
+// only, dropping the query and fragment (which can carry sensitive tokens) and
+// any userinfo. If the input does not parse as an absolute URL, only the portion
+// before any '?' or '#' is kept, and a value that still contains userinfo ("@")
+// is dropped entirely rather than risk echoing a credential. Mirrors the reddit
+// client's redactURL.
+func redactURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if u, err := url.Parse(trimmed); err == nil && u.IsAbs() && u.Host != "" {
+		redacted := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+		return redacted.String()
+	}
+	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
+		trimmed = trimmed[:i]
+	}
+	if strings.Contains(trimmed, "@") {
+		return "[unparseable-url-redacted]"
+	}
+	return trimmed
 }
 
 var wsRE = regexp.MustCompile(`\s+`)
@@ -1238,6 +1395,20 @@ type CampaignResult struct {
 // CreateCampaign creates a PAUSED Meta campaign, ad set, and one ad per valid
 // variant. It faithfully ports executeMetaCampaignCreation: per-variant ad
 // failures are recorded in Steps rather than aborting the whole operation.
+//
+// PARTIAL-RESULT CONTRACT: on a downstream failure AFTER the campaign and/or ad
+// set already exist, CreateCampaign returns a NON-NIL *CampaignResult (carrying
+// the created CampaignID / AdSetID / CampaignName, plus the steps so far) TOGETHER
+// WITH a non-nil error. This is deliberate so the orphaned paid resource is
+// identifiable for cleanup/reconciliation. It also applies to an AMBIGUOUS
+// campaign-create failure (a timeout or 5xx that may have committed the create
+// before erroring): the result then carries the deterministic CampaignName even
+// though no id was read. Callers MUST NOT follow the usual
+// `if err != nil { return err }` pattern that discards the result: inspect the
+// returned *CampaignResult (CampaignID / CampaignName) even when err != nil to
+// reconcile or avoid duplicate creation, since Meta exposes no create idempotency
+// key. Before the campaign POST plausibly reached Meta (a clear pre-create or
+// validation failure), a failure returns (nil, err) as usual.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	steps := []string{}
 
@@ -1612,6 +1783,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"is_adset_budget_sharing_enabled": false,
 	}, &campaignResp)
 	if err != nil {
+		// An AMBIGUOUS failure (transport/timeout or a 5xx) can occur AFTER Meta
+		// committed the create: the possibly-created PAUSED campaign has the
+		// deterministic campaignName, so return a partial result carrying it (like
+		// the no-id 2xx case below) plus an UNCONFIRMED step, rather than discarding
+		// the name and letting a retry duplicate it. A clear 4xx/validation error
+		// means nothing was created, so keep the plain (nil, err). Meta exposes no
+		// create idempotency key, so this reconcile-by-name is the safeguard
+		// (retry-safe idempotency is tracked in LFXV2-2665). Mirrors the reddit
+		// client's createOutcomeAmbiguous handling.
+		if createOutcomeAmbiguous(err) {
+			steps = append(steps, "Campaign creation outcome is UNCONFIRMED (timeout or server error); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
+			return &CampaignResult{
+				Platform:     "meta-ads",
+				CampaignName: campaignName,
+				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+				Steps:        steps,
+			}, fmt.Errorf("meta campaign creation UNCONFIRMED (a PAUSED campaign %q may exist): %w", campaignName, err)
+		}
 		return nil, err
 	}
 	campaignID := campaignResp.ID
@@ -1728,6 +1917,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				}
 				return partialResult(), fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, ctx.Err())
 			}
+			// An AMBIGUOUS ad/creative error (transport/timeout, 5xx, or a 2xx with no
+			// id — all surfaced by createVariantAd) means Meta MAY already have created
+			// the object, so a definite "create it manually" instruction could
+			// duplicate it. Record it as UNCONFIRMED (verify before recreating) instead.
+			// A clearly non-ambiguous error (a 4xx Meta rejection — nothing created)
+			// keeps the definite failure wording. Mirrors how the reddit client words
+			// UNCONFIRMED vs FAILED ad outcomes. Per-variant behavior is unchanged:
+			// record in Steps and continue.
+			if createOutcomeAmbiguous(verr) {
+				if creativeID != "" {
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, truncateErr(verr, 300)))
+				} else {
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, truncateErr(verr, 300)))
+				}
+				continue
+			}
 			// If the creative was created before the ad failed, surface its id so the
 			// orphaned creative is visible (can be cleaned up / reused) rather than
 			// silently discarded.
@@ -1739,7 +1944,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			continue
 		}
 		adCount++
-		steps = append(steps, fmt.Sprintf("Ad %d created: %s (creative: %s) → %s", i+1, adID, creativeID, utmURL))
+		// Show the SANITIZED display URL in the human-readable step (Steps may be
+		// persisted/logged), not the full utmURL — which preserves the caller's
+		// original query/fragment and could leak a secret like ?token=... The real
+		// ad still uses the full utmURL as its click destination (createVariantAd).
+		steps = append(steps, fmt.Sprintf("Ad %d created: %s (creative: %s) → %s", i+1, adID, creativeID, displayMetaUTMURL(in, i)))
 	}
 
 	if adCount == 0 && len(in.Variants) > 0 {
@@ -1779,7 +1988,10 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		return "", "", err
 	}
 	if creativeResp.ID == "" {
-		return "", "", fmt.Errorf("creative creation returned no ID")
+		// A 2xx with no id is AMBIGUOUS: Meta may have created the creative but we
+		// couldn't read its id. Wrap as transportError so the caller classifies it
+		// as "may exist" (createOutcomeAmbiguous) rather than a definite failure.
+		return "", "", &transportError{Method: http.MethodPost, Path: "/adcreatives", Err: fmt.Errorf("creative creation returned no ID")}
 	}
 
 	var adResp createResponse
@@ -1795,7 +2007,10 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		return "", creativeResp.ID, err
 	}
 	if adResp.ID == "" {
-		return "", creativeResp.ID, fmt.Errorf("ad creation returned no ID")
+		// A 2xx with no id is AMBIGUOUS: Meta may have created the ad but we couldn't
+		// read its id. Wrap as transportError so the caller classifies it as "may
+		// exist" (createOutcomeAmbiguous) rather than a definite failure.
+		return "", creativeResp.ID, &transportError{Method: http.MethodPost, Path: "/ads", Err: fmt.Errorf("ad creation returned no ID")}
 	}
 	return adResp.ID, creativeResp.ID, nil
 }

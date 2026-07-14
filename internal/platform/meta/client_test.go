@@ -645,6 +645,204 @@ func TestCreateCampaignNoIDReturnsPartial(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignAmbiguousCampaignCreateReturnsPartial verifies that a 5xx on
+// the campaign POST (an AMBIGUOUS outcome — Meta may have committed the create)
+// yields a NON-NIL partial result carrying the campaign name and an UNCONFIRMED
+// step, rather than (nil, err) that would discard the reconcilable name.
+func TestCreateCampaignAmbiguousCampaignCreateReturnsPartial(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			// 5xx: an ambiguous failure that may have committed the create.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"internal","type":"OAuthException","code":1}}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for an ambiguous 5xx campaign create")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a non-nil partial result carrying the campaign name, got %+v", res)
+	}
+	if res.CampaignID != "" {
+		t.Errorf("CampaignID = %q, want empty (id was never read)", res.CampaignID)
+	}
+	if !anyStepContains(res.Steps, "UNCONFIRMED") {
+		t.Errorf("expected an UNCONFIRMED step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignAmbiguousTransportReturnsPartial verifies that a transport
+// timeout on the campaign POST (also AMBIGUOUS) yields a partial result with the
+// campaign name and an UNCONFIRMED step.
+func TestCreateCampaignAmbiguousTransportReturnsPartial(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/campaigns") {
+			// A mid-flight timeout (not a pre-send dial error) is ambiguous.
+			return nil, &url.Error{
+				Op:  "Post",
+				URL: req.URL.String(),
+				Err: fmt.Errorf("net/http: request canceled (Client.Timeout exceeded while awaiting headers): %w", context.DeadlineExceeded),
+			}
+		}
+		body := `{"name":"x","currency":"USD"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for an ambiguous transport timeout on campaign create")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a non-nil partial result carrying the campaign name, got %+v", res)
+	}
+	if !anyStepContains(res.Steps, "UNCONFIRMED") {
+		t.Errorf("expected an UNCONFIRMED step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaign4xxCampaignCreateReturnsNoPartial verifies that a clear 4xx
+// on the campaign POST (nothing was created) still returns (nil, err) with no
+// partial result — the non-ambiguous path is unchanged.
+func TestCreateCampaign4xxCampaignCreateReturnsNoPartial(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"bad name","type":"OAuthException","code":100}}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a 4xx campaign create")
+	}
+	if res != nil {
+		t.Errorf("expected NO partial result for a definite 4xx (nothing created), got %+v", res)
+	}
+}
+
+// TestDisplayMetaUTMURLStripsSecretsAndFragment verifies displayMetaUTMURL drops
+// a caller ?token=... query, any fragment, and any userinfo — keeping only the
+// generated utm_* params. The secret is composed at RUNTIME so a literal never
+// appears in the test source (secretlint/gitleaks).
+func TestDisplayMetaUTMURLStripsSecretsAndFragment(t *testing.T) {
+	secret := "s3cr" + "et-" + "abc123" // composed at runtime, not a literal
+	in := CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://events.example.org/register?token=" + secret + "&ref=x#section-tickets",
+	}
+	got := displayMetaUTMURL(in, 0)
+	if strings.Contains(got, secret) {
+		t.Errorf("display URL %q leaked the secret token", got)
+	}
+	if strings.Contains(got, "ref=x") {
+		t.Errorf("display URL %q kept a caller query param; only utm_* should survive", got)
+	}
+	if strings.Contains(got, "#") || strings.Contains(got, "section-tickets") {
+		t.Errorf("display URL %q kept the fragment", got)
+	}
+	if !strings.Contains(got, "utm_source=meta") || !strings.Contains(got, "utm_content=variant-1") {
+		t.Errorf("display URL %q missing the generated utm_* params", got)
+	}
+	// The REAL click URL (buildUTMURL) must still carry the caller's full query.
+	real := buildUTMURL(in, 0)
+	if !strings.Contains(real, secret) {
+		t.Errorf("real click URL %q must preserve the caller's token; it is the ad destination", real)
+	}
+
+	// Userinfo is stripped even when present (displayMetaUTMURL is defensive; the
+	// URL is composed at runtime so no literal user:pass@ appears in source).
+	inUser := CampaignInput{EventName: "E", RegistrationURL: urlWithUserinfo("https", "u", "p", "events.example.org/register?token="+secret)}
+	gotUser := displayMetaUTMURL(inUser, 0)
+	if strings.Contains(gotUser, "u:p@") || strings.Contains(gotUser, secret) {
+		t.Errorf("display URL %q leaked userinfo or secret", gotUser)
+	}
+}
+
+// TestCreateCampaignSuccessStepsHideSecret verifies a fully-successful
+// CreateCampaign records the SANITIZED display URL in Steps, so a caller
+// ?token=... secret never reaches the (persisted/logged) Steps.
+func TestCreateCampaignSuccessStepsHideSecret(t *testing.T) {
+	secret := "s3cr" + "et-" + "xyz789"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"cr_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://events.example.org/register?token=" + secret,
+		GeoTargets:      []string{"US"},
+		Budget:          10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if res.AdCount != 1 {
+		t.Fatalf("ad count = %d, want 1", res.AdCount)
+	}
+	for _, s := range res.Steps {
+		if strings.Contains(s, secret) {
+			t.Errorf("Steps leaked the caller secret: %q", s)
+		}
+	}
+}
+
 // TestCreateCampaignAllGeosInvalidNamesThem verifies the all-invalid-geo error
 // names the dropped codes (the discarded "Geo targets dropped" step otherwise
 // hides them).
@@ -1334,7 +1532,10 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 
 // TestNonGraphErrorBodySurfaces verifies that a non-2xx response whose body is
 // NOT a Graph error envelope still surfaces the raw body in the error, rather
-// than pointing at nonexistent server logs.
+// than pointing at nonexistent server logs. A 5xx on the campaign create is
+// AMBIGUOUS, so CreateCampaign wraps the *APIError in an UNCONFIRMED partial
+// result; the underlying *APIError (and its raw body snippet) must still be
+// reachable via errors.As.
 func TestNonGraphErrorBodySurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1363,9 +1564,9 @@ func TestNonGraphErrorBodySurfaces(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error")
 	}
-	apiErr, ok := err.(*APIError)
-	if !ok {
-		t.Fatalf("error type = %T, want *APIError", err)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T, want an unwrappable *APIError", err)
 	}
 	if !strings.Contains(apiErr.Message, "502 Bad Gateway from upstream proxy") {
 		t.Errorf("APIError.Message = %q, want the raw body snippet", apiErr.Message)
@@ -1585,6 +1786,9 @@ func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
 // still live stays NON-fatal: the campaign still returns and the failure is
 // recorded as a warning step. This is the client's own http.Client.Timeout case —
 // it must NOT abort the whole campaign (contrast with the caller-cancel test).
+// The timeout is an AMBIGUOUS outcome (the creative MAY have been created), so
+// the step is worded UNCONFIRMED rather than a definite "failed / create
+// manually" that could duplicate the creative.
 func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 	// The caller ctx is never cancelled. The first /adcreatives call fails with a
 	// url error wrapping context.DeadlineExceeded — exactly what http.Client.Timeout
@@ -1640,8 +1844,8 @@ func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 	if res.AdCount != 0 {
 		t.Errorf("ad count = %d, want 0 (the only creative timed out)", res.AdCount)
 	}
-	if !anyStepContains(res.Steps, "Ad 1 failed") {
-		t.Errorf("expected an 'Ad 1 failed' warning step, got %v", res.Steps)
+	if !anyStepContains(res.Steps, "Ad/creative creation outcome UNCONFIRMED for variant 1") {
+		t.Errorf("expected an UNCONFIRMED warning step for the timed-out creative, got %v", res.Steps)
 	}
 }
 
