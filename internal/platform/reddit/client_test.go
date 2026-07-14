@@ -49,6 +49,41 @@ func TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_OverlongAdGroupNameFailsBeforeAnyPOST verifies that a geo
+// list large enough to push the composed ad-group name past Reddit's limit is
+// rejected BEFORE the campaign POST — so it can't orphan a paid campaign.
+func TestCreateCampaign_OverlongAdGroupNameFailsBeforeAnyPOST(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("no POST should happen for an over-long ad-group name: %s", r.URL.Path)
+		}
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	// Many valid ISO codes → the "+"-joined geo label makes adGroupName exceed 200.
+	geos := make([]string, 0, 120)
+	for _, cc := range []string{"US", "CA", "GB", "DE", "FR", "IT", "ES", "NL", "SE", "NO", "DK", "FI", "IE", "PT", "AT", "BE", "CH", "PL", "CZ", "AU", "NZ", "JP", "KR", "SG", "BR", "MX", "AR", "CL", "CO", "PE", "ZA", "IN", "ID", "MY", "TH", "PH", "VN", "TR", "AE", "SA", "IL", "EG", "NG", "KE"} {
+		for i := 0; i < 3; i++ {
+			geos = append(geos, cc)
+		}
+	}
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	in := validRedditInput()
+	in.GeoTargets = geos
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "ad group name is too long") {
+		t.Errorf("err = %v, want 'ad group name is too long'", err)
+	}
+	if res != nil {
+		t.Errorf("over-long ad-group name (pre-POST) must return nil result, got %+v", res)
+	}
+}
+
 // urlWithUserinfo composes a URL with embedded userinfo at runtime, so the test
 // source never contains a literal "user:pass@host" — which secretlint's
 // basic-auth rule (MegaLinter) flags as a credential and fails CI on. The

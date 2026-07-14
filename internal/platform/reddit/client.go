@@ -1117,17 +1117,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	// Step 2: Create campaign (PAUSED, lifetime budget, objective-aware params).
-	// objective / objParams were validated above, before the network call.
+	// Compute BOTH composed names (campaign + ad group) and validate their lengths
+	// up front — before the campaign POST. The per-field EventName/Project bounds
+	// keep caller inputs sane, but the composed names also include region/objective
+	// (campaign) and a "+"-joined geo list (ad group), and GeoTargets has no count
+	// limit, so enough valid codes could push adGroupName past Reddit's limit.
+	// Validating both here means an over-limit name fails BEFORE any paid resource
+	// exists, rather than orphaning the campaign at the ad-group step.
 	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
-
-	// The per-field EventName/Project bounds keep the caller inputs sane, but the
-	// COMPOSED campaign name also includes region + objective segments, so enforce
-	// Reddit's total name limit on the final string — before any POST — rather than
-	// assuming the per-field caps guarantee it. The ad-group name is checked at its
-	// own construction site below (also pre-POST for the ad group).
+	geoLabel := strings.Join(geos, "+")
+	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
 	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
 		return nil, fmt.Errorf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
+	}
+	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
+		return nil, fmt.Errorf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
 	}
 
 	campaignData := map[string]any{
@@ -1198,13 +1202,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f lifetime)", campaignID, in.BudgetUSD))
 
-	// The ad-group NAME is deterministic (built from the same normalized geos used
-	// in targeting) and is computed UP FRONT so partialResult can include it: on an
-	// ad-group failure or a 2xx-without-id malformed success, an ad group may exist
-	// and its name is the only reconciliation handle, so dropping it could lead to a
-	// duplicate ad group during recovery.
-	geoLabel := strings.Join(geos, "+")
-	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
+	// campaignName / adGroupName were composed and length-validated up front (before
+	// the campaign POST). The ad-group name is deterministic so partialResult can
+	// include it: on an ad-group failure or a 2xx-without-id malformed success, an
+	// ad group may exist and its name is the only reconciliation handle.
 
 	// partialResult builds a *CampaignResult carrying the already-created (PAUSED)
 	// campaign id, the deterministic ad-group name, and the steps completed so far.
@@ -1224,13 +1225,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			RedditURL:    redditAdsManagerURL,
 			Steps:        steps,
 		}
-	}
-
-	// Enforce Reddit's total name limit on the composed ad-group name before the
-	// ad-group POST. The campaign already exists here, so return a partial result
-	// (reconcilable by campaign id/name) alongside the error, not a bare (nil, err).
-	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
-		return partialResult(), fmt.Errorf("composed ad group name is too long: %d characters (max %d); campaign %s created (PAUSED)", n, redditMaxNameRunes, campaignID)
 	}
 
 	// Step 3: Create ad group with targeting.
