@@ -32,18 +32,14 @@ now+buffer before the campaign POST. Post URLs are validated by parsing the URL
 authority (`reddit.com`/`redd.it` and subdomains only) to prevent host spoofing,
 and UTM parameters are merged into the URL query while preserving any fragment.
 
-Supplied subreddit names (`r/golang` or `golang`) are resolved to Reddit Ads
-subreddit IDs via the Ads API v3 subreddit targeting lookup
-(`GET /targeting/subreddits?query=<name>`) BEFORE the campaign POST, because
-community targeting matches on subreddit ID, not name. Resolving up front means a
-hard lookup failure (bad endpoint/HTTP/transport or a malformed response) aborts
-before any paid resource is created -- no orphaned PAUSED campaign -- and the
-lookups cannot consume the past-start buffer. Resolution is best-effort per name:
-a name that cannot be resolved (a genuine 2xx not-found) is skipped with a
-warning step and the rest proceed; a malformed lookup response aborts rather than
-silently dropping targeting. If none resolve, the ad group is still created
-without communities (with a communities-skipped warning) rather than orphaning
-the campaign. The upstream 400 "invalid communities"
-retry-without-communities path is preserved as a backstop.
+Supplied subreddit names (`r/golang` or `golang`) are sent to the ad-group
+`communities` targeting field as NAMES with the `r/` prefix stripped (and
+case-insensitive duplicates removed) -- Reddit's Ads API targets communities by
+name, not `t5_` ID, and rejects `t5_` values as "invalid communities". This
+matches the reference TS implementation, which sends the stripped names
+directly. If the ad-group create returns a 400 "invalid communities" the client
+retries once WITHOUT communities (keyword/geo-only) and emits a
+communities-skipped warning step, so an invalid subreddit never orphans the
+PAUSED campaign.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).

@@ -373,7 +373,7 @@ pacingLabel: string             — underspending | normal | constrained | overs
 
 ### Reddit Ads
 - Token refresh with expiry buffer (tokens expire; must refresh before expiry)
-- Subreddit targeting uses subreddit IDs, not names; supplied names are resolved to IDs via the Ads API v3 subreddit targeting lookup (`GET /targeting/subreddits?query=<name>`) before the campaign create, so a lookup failure never orphans a PAUSED campaign
+- Subreddit targeting uses subreddit **names** (the `r/` prefix stripped), not `t5_` IDs — the Ads API `communities` field rejects `t5_` values as "invalid communities" (matches the reference TS implementation, which sends the stripped names directly); if any supplied name is invalid the ad-group create falls back to keyword/geo-only targeting with a warning rather than orphaning the PAUSED campaign
 - Account must be whitelisted in runtime config
 
 ### X/Twitter Ads
