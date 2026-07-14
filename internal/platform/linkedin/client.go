@@ -118,7 +118,7 @@ type CampaignInput struct {
 	GeoTargets       []GeoTarget
 	TargetingProfile string
 	Variants         []CreativeVariant
-	Project          string // optional; defaults to "TLF"
+	Project          string // required; the canonical LFX project slug (name's Project segment)
 	// AdAccountID optionally overrides the default account. Must be in the
 	// runtime config's accounts list when set.
 	AdAccountID string
@@ -1359,16 +1359,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	// Trim Project ONCE and use the trimmed value everywhere. Checking only the
-	// exact empty string let a whitespace-only Project like "   " slip past the
-	// default and be embedded verbatim in the group/campaign names; a padded
-	// project like "  cncf  " would likewise carry its whitespace into resource
-	// names. Default to "TLF" when empty after trimming.
 	// Project is the campaign-name Project segment the data pipeline joins on for
 	// foundation attribution. Require the caller's canonical LFX slug rather than
 	// silently defaulting (a hardcoded default mis-attributes every non-TLF
 	// campaign), matching the api-catalog contract and the twitter/reddit clients.
-	// Sanitize "|" -> "-" so it can't inject extra pipe-delimited name fields.
+	// Trim once (a whitespace-only value is treated as empty and rejected), and
+	// sanitize "|" -> "-" so it can't inject extra pipe-delimited name fields.
 	project := strings.ReplaceAll(strings.TrimSpace(in.Project), "|", "-")
 	if project == "" {
 		return nil, fmt.Errorf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
