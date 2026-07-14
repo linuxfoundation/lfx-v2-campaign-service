@@ -3,10 +3,8 @@
 ## 2026-07-13
 
 **Creation** — Added OKF concept doc for internal/platform/meta (Meta Ads Graph
-API client), listed in the code index.
-
-**Update** — Added OKF-recommended `tags` and `timestamp` frontmatter to the
-internal/platform/meta concept doc (queryable fields per OKF v0.1 §4.1).
+API client) with `tags`/`timestamp` frontmatter (queryable fields per OKF v0.1
+§4.1), listed in the code index.
 
 ## 2026-07-10
 

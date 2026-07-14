@@ -791,6 +791,7 @@ var accountIDRE = regexp.MustCompile(`^act_[0-9]+$`)
 var numericIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 func validateRegistrationURL(raw string) error {
+	raw = strings.TrimSpace(raw)
 	parsed, err := url.Parse(raw)
 	// Require an absolute URL with a real hostname. parsed.Host can be a
 	// port-only authority (e.g. "https://:443" parses to Host==":443" with an
@@ -1049,7 +1050,7 @@ func buildCampaignName(in CampaignInput, geoTargets []string) string {
 	// the Project segment exactly, and a padded slug would not match.
 	event := strings.ReplaceAll(strings.TrimSpace(in.EventName), "|", "-")
 	region := resolveRegion(geoTargets)
-	objective := objectiveLabel(defaultObjective(in.Objective))
+	objective := objectiveLabel(defaultObjective(strings.ToLower(strings.TrimSpace(in.Objective))))
 	project := strings.ReplaceAll(strings.TrimSpace(in.Project), "|", "-")
 	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU", event, region, objective, project)
 }
@@ -1261,7 +1262,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// ad-creative names at maxCreativeNameChars. Validate the COMPOSED name up
 		// front too — a long EventName would otherwise pass the copy checks, create
 		// the campaign + ad set, then fail at every creative (orphaning both).
-		creativeName := fmt.Sprintf("%s - Variant %d", in.EventName, i+1)
+		creativeName := fmt.Sprintf("%s - Variant %d", strings.TrimSpace(in.EventName), i+1)
 		if n := utf8.RuneCountInString(creativeName); n > maxCreativeNameChars {
 			return nil, fmt.Errorf("variant %d ad-creative name is %d characters; Meta allows at most %d (shorten the event name)", i+1, n, maxCreativeNameChars)
 		}
