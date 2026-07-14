@@ -14,6 +14,7 @@ package reddit
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -617,17 +618,42 @@ func createOutcomeAmbiguous(err error) bool {
 }
 
 // isPreSendDialError reports whether a httpClient.Do error clearly happened
-// BEFORE any request bytes could have reached the server (DNS resolution failure,
-// connection refused, or no route/network unreachable). Such a failure means the
-// request was NOT sent, so it must NOT be treated as an ambiguous "may exist"
-// transportError. A failure AFTER a connection is established (mid-flight timeout,
-// unexpected EOF) is genuinely ambiguous and IS wrapped as transportError.
+// BEFORE any request bytes could have reached the server, so the request was NOT
+// sent and must NOT be treated as an ambiguous "may exist" transportError. It
+// covers:
+//   - DNS resolution failure;
+//   - connection refused / no route / network unreachable (never connected);
+//   - TLS handshake / certificate errors (the secure channel was never
+//     established, so no request body was sent);
+//   - context cancellation/deadline that fired before or during connection setup
+//     (the caller aborted; treated as not-sent — the campaign path additionally
+//     checks ctx.Err() first, so a genuine caller-cancel is handled there).
+//
+// A failure AFTER a connection is established and bytes were sent (mid-flight
+// timeout, unexpected EOF on the response) is genuinely ambiguous and IS wrapped
+// as transportError.
 func isPreSendDialError(err error) bool {
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		return true
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	// TLS handshake / certificate verification failures: the secure channel was
+	// never established, so no request bytes were sent.
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return true
+	}
+	var recordErr tls.RecordHeaderError
+	if errors.As(err, &recordErr) {
+		return true
+	}
+	// Context cancellation/deadline surfacing from Do (e.g. cancelled between token
+	// refresh and the send, or during connection setup): the request did not
+	// complete a send that could have been applied.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	return false
@@ -1425,10 +1451,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else {
 		variantCount := len(in.Variants)
 		if variantCount > 0 {
-			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines:", variantCount))
+			// The click URLs below show ONLY the generated utm_* parameters on the
+			// destination — any pre-existing query on the registration URL is omitted
+			// here to avoid persisting a secret in the returned steps. When building the
+			// ads manually, use YOUR registration URL (with its own query params intact)
+			// as the base and add these utm_* parameters, so the destination matches
+			// what an automated ad would use.
+			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (append the shown utm_* params to your registration URL, keeping its existing query):", variantCount))
 			for i := 0; i < variantCount; i++ {
-				// These are manual-action instructions returned to the caller; show the
-				// sanitized click URL (utm_* only) so no pre-existing secret leaks.
 				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, displayRedditUTMURL(in, i)))
 			}
 		} else {

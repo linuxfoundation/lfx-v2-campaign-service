@@ -5,8 +5,10 @@ package reddit
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -905,6 +908,36 @@ func TestCreateCampaign_ConnRefusedNotUnconfirmed(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Errorf("a pre-send dial failure must NOT be UNCONFIRMED, got %v", err)
+	}
+}
+
+// TestIsPreSendDialError classifies which Do errors mean the request was NOT sent
+// (so a create is NOT ambiguous): DNS, connection-refused/no-route, TLS handshake/
+// certificate failures, and context cancellation/deadline. A generic post-connect
+// failure (e.g. unexpected EOF) stays ambiguous (not pre-send).
+func TestIsPreSendDialError(t *testing.T) {
+	preSend := []error{
+		&net.DNSError{Err: "no such host", Name: "x"},
+		syscall.ECONNREFUSED,
+		syscall.EHOSTUNREACH,
+		&tls.CertificateVerificationError{},
+		context.Canceled,
+		context.DeadlineExceeded,
+		fmt.Errorf("wrapped: %w", context.Canceled),
+	}
+	for _, e := range preSend {
+		if !isPreSendDialError(e) {
+			t.Errorf("isPreSendDialError(%v) = false, want true (pre-send / not sent)", e)
+		}
+	}
+	notPreSend := []error{
+		io.ErrUnexpectedEOF, // mid-flight after a connection was established
+		errors.New("some other error"),
+	}
+	for _, e := range notPreSend {
+		if isPreSendDialError(e) {
+			t.Errorf("isPreSendDialError(%v) = true, want false (ambiguous / post-connect)", e)
+		}
 	}
 }
 
