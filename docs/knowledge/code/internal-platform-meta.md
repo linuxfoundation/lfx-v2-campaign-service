@@ -31,11 +31,15 @@ promoted object). LEAD_GENERATION optimization requires the ad creative to carry
 an on-Facebook instant lead form (`lead_gen_form_id`), which this client does not
 construct — it only builds a website-click creative pointing at the registration
 URL. Adopting LEAD_GENERATION would fail at ad-set/ad creation, after the paid
-campaign already exists. To stay fail-safe, `leads` runs a WEBSITE-LEADS campaign
-— OUTCOME_LEADS optimizing for LINK_CLICKS to the registration (lead-capture)
-URL, with no promoted object — a spendable configuration end-to-end. Full
-LEAD_GENERATION / instant-form parity with the TS contract is deferred
-(LFXV2-2665).
+campaign already exists. To stay fail-safe, `leads` runs an interim WEBSITE-TRAFFIC
+campaign — OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration
+(lead-capture) URL, with no promoted object. OUTCOME_TRAFFIC is used (not
+OUTCOME_LEADS) because OUTCOME_LEADS + LINK_CLICKS requires a `pixel_id` +
+`custom_event_type` that this interim flow does not supply — that pairing would
+create the campaign then fail at the ad set, orphaning it. OUTCOME_TRAFFIC
+supports LINK_CLICKS with no pixel requirement, so the flow is spendable
+end-to-end. Full LEAD_GENERATION / instant-form (or OUTCOME_LEADS + pixel) parity
+with the TS contract is deferred (LFXV2-2665).
 
 Inputs are validated up front, before any mutating call: geo targets are checked
 against ISO 3166-1 alpha-2 and comprehensively-sanctioned countries are

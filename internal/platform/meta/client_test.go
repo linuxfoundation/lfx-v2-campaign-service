@@ -45,7 +45,7 @@ func TestObjectiveParamsMapping(t *testing.T) {
 		{"awareness", "OUTCOME_AWARENESS", "REACH", PromotedObjectNone},
 		{"traffic", "OUTCOME_TRAFFIC", "LINK_CLICKS", PromotedObjectNone},
 		{"engagement", "OUTCOME_ENGAGEMENT", "POST_ENGAGEMENT", PromotedObjectPageID},
-		{"leads", "OUTCOME_LEADS", "LINK_CLICKS", PromotedObjectNone},
+		{"leads", "OUTCOME_TRAFFIC", "LINK_CLICKS", PromotedObjectNone},
 		{"conversions", "OUTCOME_SALES", "OFFSITE_CONVERSIONS", PromotedObjectPixelID},
 	}
 	for _, tc := range cases {
@@ -2176,9 +2176,9 @@ func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
 	}
 }
 
-// TestCreateCampaignSupportsLeadsObjective verifies the leads objective creates a
-// website-leads campaign: OUTCOME_LEADS optimizing for LINK_CLICKS to the
-// registration URL, with no promoted object and no lead form required.
+// TestCreateCampaignSupportsLeadsObjective verifies the leads objective creates an
+// interim website-traffic campaign: OUTCOME_TRAFFIC optimizing for LINK_CLICKS to
+// the registration URL, with no promoted object and no pixel/lead form required.
 func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
 	campaignCap := newBodyCapture()
 	adsetCap := newBodyCapture()
@@ -2224,8 +2224,8 @@ func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
 	}
 	campaignBody := campaignCap.get()
 	adsetBody := adsetCap.get()
-	if campaignBody["objective"] != "OUTCOME_LEADS" {
-		t.Errorf("campaign objective = %v, want OUTCOME_LEADS", campaignBody["objective"])
+	if campaignBody["objective"] != "OUTCOME_TRAFFIC" {
+		t.Errorf("campaign objective = %v, want OUTCOME_TRAFFIC", campaignBody["objective"])
 	}
 	if adsetBody["optimization_goal"] != "LINK_CLICKS" {
 		t.Errorf("optimization_goal = %v, want LINK_CLICKS", adsetBody["optimization_goal"])

@@ -89,7 +89,7 @@ type ObjectiveParams struct {
 // objectiveParams maps the user-facing objective to Meta Graph API v25.0
 // ODAX outcome objectives, optimization goals, and promoted-object needs.
 // Mirrors META_OBJECTIVE_PARAMS from @lfx-one/shared/constants, WITH ONE
-// INTENTIONAL EXCEPTION: "leads" maps to OUTCOME_LEADS/LINK_CLICKS/none here
+// INTENTIONAL EXCEPTION: "leads" maps to OUTCOME_TRAFFIC/LINK_CLICKS/none here
 // rather than the shared LEAD_GENERATION/page_id, because this client builds only
 // a website-click creative and never constructs an on-Facebook instant lead form
 // (see the "leads" entry's comment and LFXV2-2665).
@@ -113,24 +113,27 @@ var objectiveParams = map[string]ObjectiveParams{
 	// (campaign.constants.ts META_OBJECTIVE_PARAMS), which maps leads ->
 	// LEAD_GENERATION with a page_id promoted object. This is a deliberate,
 	// documented divergence — NOT an oversight or a bug. That shared mapping assumes
-	// an on-Facebook instant lead form: LEAD_GENERATION optimization requires the
-	// ad's creative to reference a lead_gen_form_id (an instant form). This Go
-	// client only builds a website-click creative (object_story_spec.link_data
-	// pointing at the registration URL — see createVariantAd); it never constructs
-	// an instant lead form. Adopting LEAD_GENERATION here would therefore FAIL at
-	// ad-set/ad creation time — AFTER the campaign (a paid resource) already exists —
-	// because no lead_gen_form_id is supplied.
+	// an on-Facebook instant lead form: LEAD_GENERATION requires the ad's creative
+	// to reference a lead_gen_form_id (an instant form). This Go client only builds
+	// a website-click creative (object_story_spec.link_data pointing at the
+	// registration URL — see createVariantAd); it never constructs an instant lead
+	// form, so LEAD_GENERATION would fail at ad-set/ad creation.
 	//
-	// Instant-form / lead-form creative support is INTENTIONALLY OUT OF SCOPE for
-	// this PR and is tracked as a follow-up (LFXV2-2665). Until that lands, and to
-	// stay fail-safe (never create a paid resource that can't run), leads is
-	// deliberately implemented as a WEBSITE-LEADS campaign: OUTCOME_LEADS
+	// The interim mapping runs a WEBSITE-TRAFFIC campaign: OUTCOME_TRAFFIC
 	// optimizing for LINK_CLICKS to the registration (lead-capture) URL, with no
-	// promoted object. That is a consistent, spendable configuration end-to-end.
-	// Full LEAD_GENERATION / instant-form parity with the shared TS contract is
-	// deferred to the LFXV2-2665 follow-up.
+	// promoted object. OUTCOME_TRAFFIC is the objective that cleanly supports
+	// LINK_CLICKS optimization with NO pixel/promoted-object requirement, so the
+	// ad-set POST always succeeds (a consistent, spendable configuration
+	// end-to-end). OUTCOME_LEADS + LINK_CLICKS is avoided precisely because Meta
+	// requires a pixel_id + custom_event_type for that pairing, which this interim
+	// flow does not supply — it would create the campaign then fail at the ad set,
+	// orphaning a paid resource.
+	//
+	// Full LEAD_GENERATION / instant-form (or OUTCOME_LEADS + pixel) parity with the
+	// shared TS contract is INTENTIONALLY OUT OF SCOPE for this PR and tracked as a
+	// follow-up (LFXV2-2665).
 	"leads": {
-		CampaignObjective:  "OUTCOME_LEADS",
+		CampaignObjective:  "OUTCOME_TRAFFIC",
 		OptimizationGoal:   "LINK_CLICKS",
 		PromotedObjectType: PromotedObjectNone,
 	},
@@ -1153,10 +1156,10 @@ type CampaignInput struct {
 	Project         string
 	RegistrationURL string
 	// Objective is one of awareness|traffic|engagement|leads|conversions. Empty
-	// defaults to "traffic". "leads" runs a website-leads campaign (OUTCOME_LEADS
-	// optimizing for LINK_CLICKS to the registration URL); it does not build an
-	// on-Facebook instant lead form. Only status-toggling and analytics remain
-	// deferred relative to the upstream contract.
+	// defaults to "traffic". "leads" runs an interim website-traffic campaign
+	// (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration URL); it does
+	// not build an on-Facebook instant lead form. Full LEAD_GENERATION / instant-
+	// form parity (and status-toggling + analytics) are deferred to LFXV2-2665.
 	Objective  string
 	GeoTargets []string
 	// Budget is the budget amount in whole units of the ad ACCOUNT's currency.
