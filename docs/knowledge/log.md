@@ -6,6 +6,9 @@
 API client) with `tags`/`timestamp` frontmatter (queryable fields per OKF v0.1
 §4.1), listed in the code index.
 
+**Update** — Added OKF-recommended `tags` and `timestamp` frontmatter to the
+internal/platform/reddit concept doc (queryable fields per OKF v0.1 §4.1).
+
 ## 2026-07-10
 
 **Update** — Addressed Copilot review on the X/Twitter Ads client (PR #19):
@@ -19,6 +22,10 @@ errors instead of masking them as not-found. Added the
 **Update** — Mount connection routes in the HTTP server (LFXV2-2556): the
 `cmd/campaign-service` concept now notes that every container-wired service
 must also be mounted in `server.go`, or its routes 404 despite compiling.
+
+**Creation** — Added the `internal/platform/reddit` concept doc for the new
+Reddit Ads API v3 client (OAuth2 token refresh + Campaign -> Ad Group -> Ad
+creation) and listed it in the code index.
 
 **Update** — Dropped the Goa CLI path allowlist; twitter-api-secret FP is
 fingerprint-only in `.gitleaksignore`. Clarified `.grype.yaml` rationale

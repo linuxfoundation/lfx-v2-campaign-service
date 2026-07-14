@@ -657,9 +657,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 					// Preserve the Graph envelope's diagnostics (Type/Code/FBTraceID and
 					// original message) on the abort — support may need them exactly when a
 					// rate limit is hit — rather than discarding them for a bare message.
+					// Include the RAW Retry-After header alongside the parsed duration so
+					// the log matches what Meta actually sent (seconds or an HTTP-date),
+					// not just the derived time.Duration rendering (e.g. "10m0s").
+					rawRetryAfter := strings.TrimSpace(resp.Header.Get("Retry-After"))
 					abortErr := &APIError{
 						StatusCode: status, Method: method, Path: path,
-						Message: fmt.Sprintf("rate-limit reset (Retry-After: %s) exceeds max wait %s; aborting", retryAfter, maxRetryWait),
+						Message: fmt.Sprintf("rate-limit reset (parsed %s from Retry-After: %q) exceeds max wait %s; aborting", retryAfter, rawRetryAfter, maxRetryWait),
 					}
 					if env.Error != nil {
 						abortErr.Type = env.Error.Type
@@ -1006,7 +1010,7 @@ func buildPlacementTargeting(over Placement) (map[string]any, error) {
 		instagramPositions = append(instagramPositions, "reels")
 	}
 	if deref(pl.AudienceNetwork) {
-		publisherPlatforms = append(publisherPlatforms, "audience_network")
+		addPlatform("audience_network")
 	}
 	if deref(pl.MessengerInbox) {
 		// Messenger Inbox was removed as a Meta Ads placement in November 2025, so
