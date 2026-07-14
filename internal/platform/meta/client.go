@@ -657,13 +657,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 					// Preserve the Graph envelope's diagnostics (Type/Code/FBTraceID and
 					// original message) on the abort — support may need them exactly when a
 					// rate limit is hit — rather than discarding them for a bare message.
-					// Include the RAW Retry-After header alongside the parsed duration so
-					// the log matches what Meta actually sent (seconds or an HTTP-date),
-					// not just the derived time.Duration rendering (e.g. "10m0s").
+					// Report the RAW Retry-After header as authoritative: parseRetryAfter
+					// CLAMPS an oversized reset to maxRetryWait+1s (a sentinel used only to
+					// trip this cap comparison), so `retryAfter` here can read "1m1s" even
+					// when the server sent "600" or a far-future HTTP-date. The raw header
+					// is what actually needs to be debugged against upstream.
 					rawRetryAfter := strings.TrimSpace(resp.Header.Get("Retry-After"))
 					abortErr := &APIError{
 						StatusCode: status, Method: method, Path: path,
-						Message: fmt.Sprintf("rate-limit reset (parsed %s from Retry-After: %q) exceeds max wait %s; aborting", retryAfter, rawRetryAfter, maxRetryWait),
+						Message: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait),
 					}
 					if env.Error != nil {
 						abortErr.Type = env.Error.Type
@@ -1061,11 +1063,16 @@ func buildCampaignName(in CampaignInput, geoTargets []string) string {
 
 // buildUTMURL mirrors buildMetaUtmUrl.
 func buildUTMURL(in CampaignInput, variantIndex int) string {
-	base := in.RegistrationURL
+	// Trim defensively rather than trusting callers to pre-normalize: CreateCampaign
+	// trims RegistrationURL/EventName in place today, but this helper is also called
+	// directly from tests, and untrimmed inputs would otherwise reintroduce a
+	// leading/trailing dash in utm_term or a parse failure from a padded URL.
+	base := strings.TrimSpace(in.RegistrationURL)
+	eventName := strings.TrimSpace(in.EventName)
 
 	slug := in.EventSlug
 	if slug == "" {
-		slug = collapseSpacesToDash(strings.ToLower(in.EventName))
+		slug = collapseSpacesToDash(strings.ToLower(eventName))
 	}
 
 	campaign := in.HSToken
@@ -1077,7 +1084,7 @@ func buildUTMURL(in CampaignInput, variantIndex int) string {
 		"utm_source":   "meta",
 		"utm_medium":   "paid-social",
 		"utm_campaign": campaign,
-		"utm_term":     strings.ToLower(collapseSpacesToDash(in.EventName)),
+		"utm_term":     strings.ToLower(collapseSpacesToDash(eventName)),
 		"utm_content":  fmt.Sprintf("variant-%d", variantIndex+1),
 	}
 
