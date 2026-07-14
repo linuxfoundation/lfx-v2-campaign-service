@@ -1136,7 +1136,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			adID = decodeID(adResp)
 			if adID != "" {
 				adCount = 1
-				steps = append(steps, fmt.Sprintf("Ad created: %s (post: %s, click URL: %s)", adID, postID, utmURL))
+				// Display a sanitized click URL (utm_* only, no userinfo / original
+				// query) so a secret in RegistrationURL isn't persisted in Steps.
+				steps = append(steps, fmt.Sprintf("Ad created: %s (post: %s, click URL: %s)", adID, postID, displayRedditUTMURL(in, 0)))
 			} else {
 				// A 2xx response missing data.id is a malformed success: don't
 				// silently count it as a created ad. Surface it as a manual-action
@@ -1149,8 +1151,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if variantCount > 0 {
 			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines:", variantCount))
 			for i := 0; i < variantCount; i++ {
-				utmURL := buildRedditUTMURL(in, i)
-				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, utmURL))
+				// These are manual-action instructions returned to the caller; show the
+				// sanitized click URL (utm_* only) so no pre-existing secret leaks.
+				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, displayRedditUTMURL(in, i)))
 			}
 		} else {
 			steps = append(steps, "No ad variants or post URL provided -- add ads manually in Reddit Ads Manager")
@@ -1343,6 +1346,35 @@ func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
 	return u.String()
 }
 
+// displayRedditUTMURL builds a click URL safe to persist in Steps / return to
+// callers: it strips any userinfo and any PRE-EXISTING query parameters from the
+// registration URL (which may carry secrets like ?token=...) and keeps ONLY the
+// generated utm_* parameters. The full URL — including the caller's original
+// query — is still sent to Reddit as the real click_url; only the display copy
+// is sanitized. variantIndex mirrors buildRedditUTMURL.
+func displayRedditUTMURL(in CampaignInput, variantIndex int) string {
+	full := buildRedditUTMURL(in, variantIndex)
+	u, err := url.Parse(full)
+	if err != nil {
+		// Fall back to a plain redaction (scheme+host+path) if the composed URL
+		// somehow won't parse — never return the raw value with its secrets.
+		return redactURL(in.RegistrationURL)
+	}
+	u.User = nil // drop any basic-auth userinfo
+	// Keep only the utm_* params we generated; discard everything else in the
+	// original query so no pre-existing secret survives into the display URL.
+	orig := u.Query()
+	safe := url.Values{}
+	for k, vs := range orig {
+		if strings.HasPrefix(k, "utm_") {
+			safe[k] = vs
+		}
+	}
+	u.RawQuery = safe.Encode()
+	u.Fragment = "" // a fragment can also carry sensitive data; drop it for display
+	return u.String()
+}
+
 var (
 	// Extract the post ID from the URL PATH only. The host is validated
 	// separately (see isRedditHost) so a path segment can never masquerade as
@@ -1437,7 +1469,7 @@ func extractRedditPostID(urlOrID string) (string, error) {
 		if postIDRe.MatchString(rest) {
 			return trimmed, nil
 		}
-		return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+		return "", fmt.Errorf("cannot extract Reddit post ID from: %s", redactURL(trimmed))
 	}
 
 	// If it looks like a URL, validate the HOST is genuinely Reddit before
@@ -1456,10 +1488,10 @@ func extractRedditPostID(urlOrID string) (string, error) {
 			// never require URL credentials, and the raw PostURL is later echoed into
 			// Steps, which would expose the token. Treat it as unparseable.
 			if u.User != nil {
-				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", redactURL(trimmed))
 			}
 			if !isRedditHost(u.Hostname()) {
-				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", redactURL(trimmed))
 			}
 			// redd.it short links: the post ID is the first path segment.
 			// Match against EscapedPath(), not the decoded u.Path (same reason as
@@ -1476,7 +1508,7 @@ func extractRedditPostID(urlOrID string) (string, error) {
 				if postIDRe.MatchString(id) {
 					return "t3_" + id, nil
 				}
-				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+				return "", fmt.Errorf("cannot extract Reddit post ID from: %s", redactURL(trimmed))
 			}
 			// reddit.com: extract the comments/<id> segment from the path.
 			// Match against EscapedPath(), not the decoded u.Path: an encoded
@@ -1488,16 +1520,16 @@ func extractRedditPostID(urlOrID string) (string, error) {
 			if m := postPathRe.FindStringSubmatch(u.EscapedPath()); m != nil {
 				return "t3_" + m[1], nil
 			}
-			return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+			return "", fmt.Errorf("cannot extract Reddit post ID from: %s", redactURL(trimmed))
 		}
-		return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+		return "", fmt.Errorf("cannot extract Reddit post ID from: %s", redactURL(trimmed))
 	}
 
 	// Otherwise treat the whole input as a bare base36 post ID.
 	if postIDRe.MatchString(trimmed) {
 		return "t3_" + trimmed, nil
 	}
-	return "", fmt.Errorf("cannot extract Reddit post ID from: %s", trimmed)
+	return "", fmt.Errorf("cannot extract Reddit post ID from: %s", redactURL(trimmed))
 }
 
 // replacePipes replaces "|" with "-" so composed names stay unambiguous.

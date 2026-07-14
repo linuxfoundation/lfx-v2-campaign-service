@@ -2728,6 +2728,46 @@ func TestValidateRegistrationURL_RejectsUserinfo(t *testing.T) {
 	}
 }
 
+// TestDisplayRedditUTMURL_StripsSecrets verifies the display click URL (used in
+// Steps) drops userinfo and any pre-existing query/fragment secrets, keeping only
+// the generated utm_* params — while buildRedditUTMURL (the real click_url sent
+// to Reddit) still carries the original query.
+func TestDisplayRedditUTMURL_StripsSecrets(t *testing.T) {
+	in := CampaignInput{
+		EventName:       "KubeCon",
+		RegistrationURL: "https://user:s3cr3t@example.com/reg?token=abc123&next=/x#frag",
+	}
+	display := displayRedditUTMURL(in, 0)
+	for _, leak := range []string{"s3cr3t", "token", "abc123", "user:", "#frag"} {
+		if strings.Contains(display, leak) {
+			t.Errorf("display URL %q leaks %q", display, leak)
+		}
+	}
+	if !strings.Contains(display, "utm_source=reddit") {
+		t.Errorf("display URL %q dropped the utm_ params", display)
+	}
+	// The REAL click URL sent to Reddit must still carry the original query so the
+	// destination works; only the display copy is sanitized.
+	full := buildRedditUTMURL(in, 0)
+	if !strings.Contains(full, "token=abc123") {
+		t.Errorf("full click URL %q must retain the original query for the real request", full)
+	}
+}
+
+// TestExtractRedditPostID_ErrorRedactsURL verifies a rejected URL's secrets are
+// not echoed in the returned error.
+func TestExtractRedditPostID_ErrorRedactsURL(t *testing.T) {
+	_, err := extractRedditPostID("https://tok3n@evil.example.com/comments/abc123?secret=xyz")
+	if err == nil {
+		t.Fatal("expected an error for a non-Reddit host")
+	}
+	for _, leak := range []string{"tok3n", "secret", "xyz"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("error %q leaks %q", err.Error(), leak)
+		}
+	}
+}
+
 // TestExtractRedditPostID_RejectsUserinfo verifies a Reddit post URL carrying
 // userinfo is rejected so a token isn't echoed into Steps.
 func TestExtractRedditPostID_RejectsUserinfo(t *testing.T) {
