@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -829,6 +830,108 @@ func TestCreateCampaign_5xxOnCampaignIsUnconfirmed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Errorf("err = %v, want it to be UNCONFIRMED", err)
+	}
+}
+
+// TestCreateCampaign_ConnRefusedNotUnconfirmed verifies a pre-send dial failure
+// (connection refused — the request never reached Reddit) returns (nil, err),
+// NOT an UNCONFIRMED "may exist" partial.
+func TestCreateCampaign_ConnRefusedNotUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	// Bind then immediately close a listener to get a definitely-refused port.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	deadAddr := ln.Addr().String()
+	_ = ln.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL("http://"+deadAddr+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(context.Background(), validRedditInput())
+	if err == nil {
+		t.Fatal("expected an error on connection-refused")
+	}
+	if res != nil {
+		t.Errorf("connection-refused (pre-send) must return nil result, got %+v", res)
+	}
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a pre-send dial failure must NOT be UNCONFIRMED, got %v", err)
+	}
+}
+
+// TestCreateCampaign_2xxUndecodableIsUnconfirmed verifies a campaign create that
+// returns 2xx with an undecodable body is treated as UNCONFIRMED (the mutation
+// likely succeeded), returning a partial with the campaign name.
+func TestCreateCampaign_2xxUndecodableIsUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(r.URL.Path, "/campaigns") && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{not valid json`)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(context.Background(), validRedditInput())
+	if err == nil {
+		t.Fatal("expected an error on undecodable 2xx campaign body")
+	}
+	if res == nil || res.CampaignName == "" || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx undecodable should be an UNCONFIRMED partial with the campaign name, got res=%+v err=%v", res, err)
+	}
+}
+
+// TestCreateCampaign_Ad4xxIsFailedNotUnconfirmed verifies a definite 4xx on the
+// ad POST reports the ad as FAILED (Reddit rejected it), not UNCONFIRMED.
+func TestCreateCampaign_Ad4xxIsFailedNotUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(r.URL.Path, "/ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			http.Error(w, `{"error":"bad ad"}`, http.StatusBadRequest)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	in := validRedditInput()
+	in.PostURL = "https://www.reddit.com/r/opensource/comments/abc123/great_post/"
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("ad failure is non-fatal; CreateCampaign should succeed: %v", err)
+	}
+	if strings.Contains(res.AdWarning, "UNCONFIRMED") {
+		t.Errorf("a 4xx ad rejection must be FAILED, not UNCONFIRMED; AdWarning=%q", res.AdWarning)
+	}
+	if !strings.Contains(res.AdWarning, "FAILED") {
+		t.Errorf("expected AdWarning to mark the ad FAILED, got %q", res.AdWarning)
 	}
 }
 

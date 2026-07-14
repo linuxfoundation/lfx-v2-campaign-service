@@ -20,12 +20,14 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -90,6 +92,10 @@ const (
 	// an over-long name fails before the campaign is created, not after (orphan).
 	maxEventNameRunes = 120
 	maxProjectRunes   = 40
+	// redditMaxNameRunes is Reddit's limit for a campaign/ad-group name. The
+	// per-field caps above keep caller inputs bounded, but the COMPOSED name (with
+	// region/objective segments) is validated against this before any POST.
+	redditMaxNameRunes = 200
 	// maxResponseBody bounds how much of any response body is read into memory,
 	// guarding against a hostile/oversized reply while comfortably exceeding any
 	// normal success or error envelope.
@@ -554,7 +560,13 @@ type apiError struct {
 }
 
 func (e *apiError) Error() string {
-	return fmt.Sprintf("reddit API %s %s -> %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
+	// Deliberately DO NOT include e.Body: the upstream response body is untrusted
+	// and can reflect request material (e.g. the click_url's secret query, or a
+	// bearer token in a proxy diagnostic). Body is retained on the struct for
+	// internal classification (e.g. the "invalid communities" 400 match) but is
+	// never surfaced when the error is stringified into Steps / returned to a
+	// caller / logged. Report only the method, path, and status.
+	return fmt.Sprintf("reddit API %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }
 
 // transportError wraps a failure of the HTTP round-trip itself (httpClient.Do):
@@ -574,6 +586,46 @@ func (e *transportError) Error() string {
 	return fmt.Sprintf("reddit API %s %s: %v", e.Method, e.Path, e.Err)
 }
 func (e *transportError) Unwrap() error { return e.Err }
+
+// createOutcomeAmbiguous reports whether a failed mutating request MAY have been
+// applied by Reddit despite the error — i.e. the request plausibly reached the
+// server and its outcome is unknowable. It is the single source of truth shared
+// by the campaign, ad-group, and ad create paths so they classify identically:
+//   - transportError: the round-trip failed AFTER a connection was established
+//     (see isPreSendDialError — a DNS/dial/connection-refused failure is NOT
+//     wrapped as transportError, so it never reaches here), so the request may
+//     have been received;
+//   - apiError with a 5xx status: Reddit received it and may have committed the
+//     mutation before erroring.
+//
+// A definite 4xx (Reddit rejected it), or any pre-send failure (token refresh,
+// body encode/build, a pre-connect dial error), means NOT applied → returns false
+// so the caller returns a clean (nil, err) / "failed" rather than "may exist".
+func createOutcomeAmbiguous(err error) bool {
+	var te *transportError
+	if errors.As(err, &te) {
+		return true
+	}
+	var ae *apiError
+	return errors.As(err, &ae) && ae.StatusCode >= 500
+}
+
+// isPreSendDialError reports whether a httpClient.Do error clearly happened
+// BEFORE any request bytes could have reached the server (DNS resolution failure,
+// connection refused, or no route/network unreachable). Such a failure means the
+// request was NOT sent, so it must NOT be treated as an ambiguous "may exist"
+// transportError. A failure AFTER a connection is established (mid-flight timeout,
+// unexpected EOF) is genuinely ambiguous and IS wrapped as transportError.
+func isPreSendDialError(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	return false
+}
 
 // request performs an authenticated Reddit Ads API call, sanitizing the path
 // segments and honoring ctx. Mirrors redditRequest.
@@ -644,9 +696,15 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			cancel()
-			// The request was sent; a Do error (transport failure/timeout) leaves the
-			// outcome ambiguous — wrap it so callers can distinguish it from a pre-send
-			// failure when deciding whether a created resource "may exist".
+			// A Do error that clearly happened BEFORE the request could be sent (DNS
+			// failure, connection refused, no route) means NOT sent — return it plain
+			// so callers treat the create as "not applied". A failure after a
+			// connection was established (mid-flight timeout, EOF) is genuinely
+			// ambiguous: wrap it as transportError so callers treat the create as
+			// "may exist".
+			if isPreSendDialError(err) {
+				return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
+			}
 			return nil, &transportError{Method: method, Path: path, Err: err}
 		}
 
@@ -699,14 +757,18 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 			}
 			return nil, &apiError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: body}
 		}
+		// A 2xx whose body can't be read or decoded means the mutation SUCCEEDED but
+		// we can't parse the result — wrap as transportError so callers classify it
+		// as ambiguous ("may exist"), not a clean not-created failure. (A caller
+		// retry off a plain error could duplicate the resource.)
 		if readErr != nil {
-			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, readErr)
+			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read 2xx response body: %w", readErr)}
 		}
 
 		var out apiResponse
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &out); err != nil {
-				return nil, fmt.Errorf("reddit API %s %s: decode response: %w", method, path, err)
+				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("decode 2xx response: %w", err)}
 			}
 		}
 		return &out, nil
@@ -1059,6 +1121,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// objective / objParams were validated above, before the network call.
 	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
 
+	// The per-field EventName/Project bounds keep the caller inputs sane, but the
+	// COMPOSED campaign name also includes region + objective segments, so enforce
+	// Reddit's total name limit on the final string — before any POST — rather than
+	// assuming the per-field caps guarantee it. The ad-group name is checked at its
+	// own construction site below (also pre-POST for the ad group).
+	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
+		return nil, fmt.Errorf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
+	}
+
 	campaignData := map[string]any{
 		"name":                            campaignName,
 		"objective":                       objParams.redditObjective,
@@ -1086,25 +1157,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// during an EARLIER step like account verification, then propagated here) is
 		// NOT an ambiguous create: no campaign POST completed. Honor the documented
 		// pre-POST (nil, err) contract rather than returning a misleading "may exist"
-		// partial. Key this off the caller ctx directly, not the error type.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, fmt.Errorf("reddit campaign creation aborted before completion: %w", ctxErr)
-		}
-		// Only treat the failure as AMBIGUOUS ("campaign may exist") when the request
-		// actually reached Reddit and the outcome is unknowable:
-		//   - a transportError (the round-trip itself failed after the request was
-		//     sent), or
-		//   - a 5xx apiError (Reddit received it and may have created the campaign
-		//     before erroring).
-		// Everything else means the campaign was NOT created — a pre-send failure
-		// (token refresh, body encode/build), a 429 over-cap abort, a 4xx client
-		// error, or a context cancellation before send — so return (nil, err) and let
-		// a caller retry safely without duplicate risk.
-		var transportErr *transportError
-		var apiErr *apiError
-		ambiguous := errors.As(err, &transportErr) ||
-			(errors.As(err, &apiErr) && apiErr.StatusCode >= 500)
-		if !ambiguous {
+		// Classify AMBIGUITY FIRST, before the ctx check: a cancellation that
+		// interrupts the create's in-flight round-trip surfaces as a transportError,
+		// and the campaign MAY already have been committed — so it must be treated as
+		// "may exist", NOT a clean pre-POST abort. createOutcomeAmbiguous is true only
+		// when the request plausibly reached Reddit (transportError or a 5xx).
+		if !createOutcomeAmbiguous(err) {
+			// Not ambiguous → the campaign was definitely NOT created: a pre-send
+			// failure (token refresh, body encode/build, a pre-connect dial error), a
+			// 429 over-cap abort, a definite 4xx, or a cancellation before the request
+			// went out. Return (nil, err) so a caller can retry safely. If a caller
+			// cancellation is the cause, surface it as an abort.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, fmt.Errorf("reddit campaign creation aborted before completion: %w", ctxErr)
+			}
 			return nil, err
 		}
 		steps = append(steps, "Campaign creation is UNCONFIRMED (the create request reached Reddit but the outcome is unknown); a PAUSED campaign may exist -- verify by name in Reddit Ads Manager before retrying to avoid a duplicate")
@@ -1160,6 +1226,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// Enforce Reddit's total name limit on the composed ad-group name before the
+	// ad-group POST. The campaign already exists here, so return a partial result
+	// (reconcilable by campaign id/name) alongside the error, not a bare (nil, err).
+	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
+		return partialResult(), fmt.Errorf("composed ad group name is too long: %d characters (max %d); campaign %s created (PAUSED)", n, redditMaxNameRunes, campaignID)
+	}
+
 	// Step 3: Create ad group with targeting.
 
 	baseTargeting := map[string]any{
@@ -1208,6 +1281,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	usedCommunities := suppliedCommunities
 	droppedCommunities := false
 	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(targetingWithCommunities))
+	// adGroupErr words an ad-group failure as UNCONFIRMED when the outcome is
+	// ambiguous (transportError / 5xx — the ad group MAY exist, and partialResult
+	// carries its deterministic name for reconciliation) vs a flat "failed" for a
+	// definite not-created error (4xx / pre-send). A caller-cancel that interrupted
+	// the in-flight POST surfaces as a transportError, so it too is UNCONFIRMED.
+	adGroupErr := func(e error) error {
+		if createOutcomeAmbiguous(e) {
+			return fmt.Errorf("reddit ad group creation UNCONFIRMED (campaign %s created, PAUSED; the ad group %q may exist — verify before recreating): %w", campaignID, adGroupName, e)
+		}
+		return fmt.Errorf("reddit ad group creation failed (campaign %s created, PAUSED): %w", campaignID, e)
+	}
 	if err != nil {
 		// Only fall back to a communities-less retry on a 400 (validation) response
 		// whose body names invalid communities. Restricting to 400 (and matching the
@@ -1223,16 +1307,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			droppedCommunities = true
 			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
 			if err != nil {
-				return partialResult(), fmt.Errorf("reddit ad group creation failed (campaign %s created, PAUSED): %w", campaignID, err)
+				return partialResult(), adGroupErr(err)
 			}
 		} else {
-			return partialResult(), fmt.Errorf("reddit ad group creation failed (campaign %s created, PAUSED): %w", campaignID, err)
+			return partialResult(), adGroupErr(err)
 		}
 	}
 
 	adGroupID := decodeID(adGroupResp)
 	if adGroupID == "" {
-		return partialResult(), fmt.Errorf("reddit ad group creation succeeded but returned no ad group ID (campaign %s created, PAUSED)", campaignID)
+		// A 2xx with no ad-group id is a malformed success — the ad group may exist;
+		// treat it as UNCONFIRMED (partialResult carries the name for reconcile).
+		return partialResult(), fmt.Errorf("reddit ad group creation UNCONFIRMED: 2xx returned no ad group ID (campaign %s created, PAUSED; ad group %q may exist)", campaignID, adGroupName)
 	}
 	steps = append(steps, fmt.Sprintf("Ad group created: %s (PAUSED, geo: %s)", adGroupID, strings.Join(geos, ", ")))
 	switch {
@@ -1269,46 +1355,49 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 		adResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ads", adBody)
 		if err != nil {
-			// Distinguish a CALLER context cancellation/deadline from an ordinary
-			// per-request failure. If the caller's ctx is done, the whole
-			// operation was cancelled: honor the context-aware contract and
-			// return a fatal error wrapping ctx.Err() so callers can tell
-			// cancellation from success. Key this off the caller ctx, NOT
-			// errors.Is on err -- the client's own http.Client.Timeout also
-			// surfaces as DeadlineExceeded but with a live caller ctx, and that
-			// stays a non-fatal warning like any other per-request failure.
+			// A caller context cancellation is fatal (return an error, not just a
+			// warning). Whether the ad "may exist" depends on whether the request was
+			// in flight: an ambiguous error (transportError / 5xx — which is also how a
+			// cancellation that interrupted the in-flight POST surfaces) means the ad
+			// MAY exist; a clean pre-send cancel means it does not. Return a partial
+			// result carrying both IDs so the (created, PAUSED) campaign+ad group are
+			// reconcilable regardless.
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				// The campaign AND ad group are already created (both PAUSED) at
-				// this point. Returning a nil result would discard both IDs,
-				// preventing cleanup/reconciliation and letting a caller retry
-				// create a duplicate campaign. Return a partial result carrying
-				// the campaign + ad-group IDs (and steps so far) ALONGSIDE the
-				// wrapped ctx error, mirroring the ad-group-failure paths above.
-				// partialResult() predates ad-group creation, so extend it with the
-				// ad-group fields captured in scope here.
 				pr := partialResult()
 				pr.AdGroupName = adGroupName
 				pr.AdGroupID = adGroupID
-				return pr, fmt.Errorf("ad creation aborted: %w", ctxErr)
+				if createOutcomeAmbiguous(err) {
+					pr.AdWarning = "promoted-post ad is UNCONFIRMED: the create was interrupted in flight and the ad MAY exist — verify in Reddit Ads Manager before recreating"
+					return pr, fmt.Errorf("ad creation interrupted, outcome UNCONFIRMED: %w", ctxErr)
+				}
+				return pr, fmt.Errorf("ad creation aborted before send: %w", ctxErr)
 			}
-			// A per-request failure here (e.g. a transport timeout or dropped
-			// response) does NOT prove Reddit failed to create the ad — the request
-			// may have reached Reddit and succeeded. Report the outcome as UNCONFIRMED
-			// and require verification before manual creation, so an operator doesn't
-			// blindly add a duplicate promoted-post ad.
-			adWarning = "promoted-post ad creation is UNCONFIRMED (the campaign and ad group were created, PAUSED); the ad request failed or was not acknowledged — verify in Reddit Ads Manager whether the ad exists BEFORE creating it manually to avoid a duplicate"
-			// Report ONLY the HTTP status in the step, never err.Error(): request()'s
-			// apiError carries the upstream response body, and a reflective Reddit
-			// validation error can echo the full click_url (which holds the caller's
-			// permitted secret-bearing query params). Persisting the body in Steps
-			// would leak those. The status is enough for an operator to triage; the
-			// failure is also surfaced structurally via adWarning above. The package
-			// has no logger, so make no claim that details are logged elsewhere.
+			// Not a caller cancel. Classify by outcome:
+			//   - ambiguous (transportError / 5xx): the ad MAY exist — UNCONFIRMED,
+			//     require verification before manual creation (avoids a duplicate);
+			//   - definite (4xx / pre-send): the ad was NOT created — report FAILED so
+			//     the operator's manual remediation isn't blocked by a misleading
+			//     "may exist".
+			// Report ONLY the HTTP status, never err.Error()/apiError.Body: a
+			// reflective Reddit validation error can echo the click_url (which holds
+			// the caller's permitted secret-bearing query params); persisting it in
+			// Steps would leak those.
 			var adAPIErr *apiError
-			if errors.As(err, &adAPIErr) {
-				steps = append(steps, fmt.Sprintf("Ad creation UNCONFIRMED (HTTP %d) -- verify in Reddit Ads Manager before adding manually", adAPIErr.StatusCode))
+			gotStatus := errors.As(err, &adAPIErr)
+			if createOutcomeAmbiguous(err) {
+				adWarning = "promoted-post ad creation is UNCONFIRMED (campaign and ad group created, PAUSED); the ad request may have reached Reddit — verify whether the ad exists BEFORE creating it manually to avoid a duplicate"
+				if gotStatus {
+					steps = append(steps, fmt.Sprintf("Ad creation UNCONFIRMED (HTTP %d) -- verify in Reddit Ads Manager before adding manually", adAPIErr.StatusCode))
+				} else {
+					steps = append(steps, "Ad creation UNCONFIRMED (request may have reached Reddit) -- verify in Reddit Ads Manager before adding manually")
+				}
 			} else {
-				steps = append(steps, "Ad creation UNCONFIRMED (request failed/unacknowledged) -- verify in Reddit Ads Manager before adding manually")
+				adWarning = "promoted-post ad creation FAILED (campaign and ad group created, PAUSED); Reddit rejected the ad — add it manually in Reddit Ads Manager"
+				if gotStatus {
+					steps = append(steps, fmt.Sprintf("Ad creation failed (HTTP %d) -- add ad manually in Reddit Ads Manager", adAPIErr.StatusCode))
+				} else {
+					steps = append(steps, "Ad creation failed -- add ad manually in Reddit Ads Manager")
+				}
 			}
 		} else {
 			adID = decodeID(adResp)
