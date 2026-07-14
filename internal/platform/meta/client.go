@@ -1245,15 +1245,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("at least one ad variant is required for Meta campaign creation")
 	}
 
-	validVariants := make([]AdVariant, 0, len(in.Variants))
-	for _, v := range in.Variants {
-		if strings.TrimSpace(v.PrimaryText) != "" && strings.TrimSpace(v.Headline) != "" {
-			validVariants = append(validVariants, v)
+	// Reject any variant missing primary text or headline by NAMING its index,
+	// rather than silently dropping it. Silent filtering would renumber the
+	// surviving variants, so the ad numbering, creative name ("Variant N"), and
+	// utm_content=variant-N would no longer line up with the caller's original
+	// input ordering — a surprising mismatch. A partially-specified variant is a
+	// caller error, so fail fast (consistent with every other up-front check here).
+	for i, v := range in.Variants {
+		if strings.TrimSpace(v.PrimaryText) == "" || strings.TrimSpace(v.Headline) == "" {
+			return nil, fmt.Errorf("variant %d must have non-empty primary text and headline", i+1)
 		}
 	}
-	if len(validVariants) == 0 {
-		return nil, fmt.Errorf("at least one variant must have non-empty primary text and headline")
-	}
+	validVariants := in.Variants
 
 	// Enforce Meta's per-field copy limits (by rune count) up front, before any
 	// mutating call. Over-limit copy passes the blank checks above but would be
@@ -1312,10 +1315,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, fmt.Errorf("invalid start date format: %s — expected YYYY-MM-DD", in.StartDate)
 	}
-	if _, err := time.Parse("2006-01-02", in.EndDate); err != nil {
+	endDate, err := time.Parse("2006-01-02", in.EndDate)
+	if err != nil {
 		return nil, fmt.Errorf("invalid end date format: %s — expected YYYY-MM-DD", in.EndDate)
 	}
-	if in.EndDate <= in.StartDate {
+	// Compare the parsed time.Time values rather than the raw strings: both are
+	// already parsed here, so !endDate.After(startDate) states the intent directly
+	// instead of relying on lexicographic ordering of the date strings.
+	if !endDate.After(startDate) {
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
 	}
 	// Reject a start date already in the past (compared by calendar day in UTC):
@@ -1520,6 +1527,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// sanctioned), fail rather than silently falling back to US and targeting a
 	// country they didn't ask for. An empty input legitimately defaults to US.
 	allGeo := validateGeoTargets(in.GeoTargets)
+	// "Supplied geos" means NON-BLANK entries: a caller passing only whitespace
+	// (e.g. []string{"   "}) is semantically the same as passing none, which
+	// legitimately defaults to US — so the dropped/fallback checks below must not
+	// treat it as an explicit request and error with an empty "(dropped: )" list.
+	suppliedGeos := 0
+	for _, g := range in.GeoTargets {
+		if strings.TrimSpace(g) != "" {
+			suppliedGeos++
+		}
+	}
 	// Surface geos that were supplied but dropped by validateGeoTargets (bogus/
 	// non-ISO codes, or Meta-ineligible/sanctioned countries like IR/CU/KP/RU) as
 	// an explicit step, so a caller who mixed eligible + ineligible codes isn't
@@ -1527,7 +1544,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// regulated-country (SG/TW/KR) step emitted below. Skip the note when the only
 	// difference is the empty-input US fallback.
 	var droppedGeos []string
-	if len(in.GeoTargets) > 0 {
+	if suppliedGeos > 0 {
 		kept := make(map[string]struct{}, len(allGeo))
 		for _, g := range allGeo {
 			kept[g] = struct{}{}
@@ -1551,7 +1568,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			steps = append(steps, fmt.Sprintf("Geo targets dropped (invalid code or not eligible for Meta ad targeting, e.g. sanctioned/excluded countries): %s", strings.Join(droppedGeos, ", ")))
 		}
 	}
-	if len(in.GeoTargets) > 0 && len(allGeo) == 1 && allGeo[0] == "US" {
+	if suppliedGeos > 0 && len(allGeo) == 1 && allGeo[0] == "US" {
 		// Only a real problem if the caller didn't actually ask for US: this means
 		// every supplied geo was invalid or sanctioned and we fell back to US.
 		askedUS := false

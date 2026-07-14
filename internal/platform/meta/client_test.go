@@ -672,6 +672,76 @@ func TestCreateCampaignAllGeosInvalidNamesThem(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignWhitespaceOnlyGeosDefaultToUS verifies that geo targets
+// consisting solely of blank entries are treated like no geos (a legitimate US
+// default), NOT as an explicit request that errors with an empty "(dropped: )".
+func TestCreateCampaignWhitespaceOnlyGeosDefaultToUS(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"   ", ""},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("whitespace-only geos should default to US, got err: %v", err)
+	}
+	if res == nil || res.CampaignID == "" {
+		t.Fatalf("expected a created campaign, got %+v", res)
+	}
+	for _, s := range res.Steps {
+		if strings.Contains(s, "dropped") {
+			t.Errorf("no 'dropped' step expected for blank-only geos, got: %q", s)
+		}
+	}
+}
+
+// TestCreateCampaignPartialVariantErrorsWithIndex verifies a variant missing
+// primary text or headline is rejected by NAME (1-based index) rather than
+// silently dropped, which would renumber the surviving variants.
+func TestCreateCampaignPartialVariantErrorsWithIndex(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("no POST should happen when a variant is invalid: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{
+			{PrimaryText: "p", Headline: "h"},
+			{PrimaryText: "p2", Headline: ""}, // second variant missing headline
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "variant 2") {
+		t.Fatalf("err = %v, want an error naming 'variant 2'", err)
+	}
+}
+
 func TestCreateCampaignLifetimeBudget(t *testing.T) {
 	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
