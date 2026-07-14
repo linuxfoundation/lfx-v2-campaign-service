@@ -466,6 +466,24 @@ var currencyMinorUnitOffset = map[string]int64{
 	"CZK": 100, // Czech Koruna
 	"RON": 100, // Romanian Leu
 	"HUF": 100, // Hungarian Forint
+	"ARS": 100, // Argentine Peso
+	"BDT": 100, // Bangladeshi Taka
+	"BOB": 100, // Bolivian Boliviano
+	"COP": 100, // Colombian Peso
+	"CRC": 100, // Costa Rican Colon
+	"DZD": 100, // Algerian Dinar
+	"EGP": 100, // Egyptian Pound
+	"GTQ": 100, // Guatemalan Quetzal
+	"HNL": 100, // Honduran Lempira
+	"KES": 100, // Kenyan Shilling
+	"MOP": 100, // Macanese Pataca
+	"NGN": 100, // Nigerian Naira
+	"NIO": 100, // Nicaraguan Cordoba
+	"PEN": 100, // Peruvian Sol
+	"PKR": 100, // Pakistani Rupee
+	"QAR": 100, // Qatari Riyal
+	"TWD": 100, // New Taiwan Dollar
+	"UYU": 100, // Uruguayan Peso
 }
 
 // currencyOffsetFor derives the minor-unit multiplier for an ISO 4217 currency

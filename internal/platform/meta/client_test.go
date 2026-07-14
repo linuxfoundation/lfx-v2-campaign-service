@@ -2536,6 +2536,8 @@ func TestTruncate(t *testing.T) {
 func TestCurrencyOffsetForAuthoritativeMap(t *testing.T) {
 	known := map[string]int64{
 		"USD": 100, "usd": 100, " EUR ": 100, "GBP": 100, "BRL": 100, "AED": 100,
+		// A sampling of the broader Meta-supported two-decimal set.
+		"ARS": 100, "NGN": 100, "TWD": 100, "PKR": 100, "COP": 100, "EGP": 100,
 		"JPY": 1, "KRW": 1, "CLP": 1, "VND": 1, "XOF": 1,
 	}
 	for code, want := range known {
