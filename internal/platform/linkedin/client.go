@@ -909,6 +909,13 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 	if resp.ID == "" {
 		return "", fmt.Errorf("LinkedIn API returned no ID for dark post creation")
 	}
+	// Validate the extracted trailing segment, not just the raw field: a malformed
+	// create response like "urn:li:share:" passes the non-empty check yet has no
+	// id, and would be used verbatim as the creative's share reference. Abort on a
+	// malformed response rather than continue (mirrors the group/campaign creates).
+	if trailingID(resp.ID.String()) == "" {
+		return "", fmt.Errorf("LinkedIn API returned a dark post ID %q with an empty trailing segment", resp.ID.String())
+	}
 	return resp.ID.String(), nil
 }
 
@@ -936,6 +943,12 @@ func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shar
 	}
 	if resp.ID == "" {
 		return "", fmt.Errorf("LinkedIn API returned no ID for creative creation")
+	}
+	// Reject a malformed URN with an empty trailing segment (e.g.
+	// "urn:li:sponsoredCreative:") that passes the non-empty check but carries no
+	// id, mirroring the group/campaign creates.
+	if trailingID(resp.ID.String()) == "" {
+		return "", fmt.Errorf("LinkedIn API returned a creative ID %q with an empty trailing segment", resp.ID.String())
 	}
 	return resp.ID.String(), nil
 }
@@ -1246,6 +1259,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if eventName == "" {
 		return nil, fmt.Errorf("event name is required and must not be empty or whitespace-only")
 	}
+	// The campaign-group/campaign names are pipe-delimited ("Events | <name> | ..."),
+	// so a caller value containing "|" would inject extra fields and corrupt the
+	// naming schema / project attribution and name-based idempotency. Replace "|"
+	// with "-" before composing names, matching the other platform clients.
+	eventName = strings.ReplaceAll(eventName, "|", "-")
 
 	// Trim the registration URL ONCE up front and use the trimmed value both for
 	// validation and everywhere downstream (BuildUTMURL). Validating a trimmed
@@ -1346,9 +1364,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// default and be embedded verbatim in the group/campaign names; a padded
 	// project like "  cncf  " would likewise carry its whitespace into resource
 	// names. Default to "TLF" when empty after trimming.
-	project := strings.TrimSpace(in.Project)
+	// Project is the campaign-name Project segment the data pipeline joins on for
+	// foundation attribution. Require the caller's canonical LFX slug rather than
+	// silently defaulting (a hardcoded default mis-attributes every non-TLF
+	// campaign), matching the api-catalog contract and the twitter/reddit clients.
+	// Sanitize "|" -> "-" so it can't inject extra pipe-delimited name fields.
+	project := strings.ReplaceAll(strings.TrimSpace(in.Project), "|", "-")
 	if project == "" {
-		project = "TLF"
+		return nil, fmt.Errorf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
 	}
 
 	steps := []string{}

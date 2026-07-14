@@ -161,6 +161,7 @@ func TestCreateCampaign_RejectsBadRegistrationURLBeforeAnyPOST(t *testing.T) {
 	for _, bad := range []string{"", "/relative/only"} {
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
 			EventName:        "E",
+			Project:          "tlf",
 			RegistrationURL:  bad,
 			BudgetUSD:        100,
 			StartDate:        "2099-01-01",
@@ -219,6 +220,7 @@ func TestCreateCampaign_PartialVariantFailureReported(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/kubecon",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -272,6 +274,7 @@ func TestCreateCampaign_UnknownAccountFailsClosed(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "E",
+		Project:          "tlf",
 		AdAccountID:      "000000", // not in the runtime config
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
@@ -323,6 +326,7 @@ func TestCreateCampaign_RejectsBadBudgetBeforeAnyPOST(t *testing.T) {
 	for _, b := range budgets {
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
 			EventName:        "E",
+			Project:          "tlf",
 			RegistrationURL:  "https://events.example.org/reg",
 			BudgetUSD:        b,
 			StartDate:        "2099-01-01",
@@ -350,6 +354,7 @@ func TestCreateCampaign_RejectsEmptyGeoBeforeAnyPOST(t *testing.T) {
 	geos := ResolveGeoTargets([]string{"Atlantis"})
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "E",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -409,6 +414,7 @@ func TestCreateCampaign_TrimsRegistrationURLForUTM(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "  https://events.example.org/reg  ", // surrounding whitespace
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -668,6 +674,7 @@ func TestCreateCampaign_TrimsEventNameInResourceNames(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "  KubeCon  ", // surrounding whitespace
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -694,8 +701,8 @@ func TestCreateCampaign_TrimsEventNameInResourceNames(t *testing.T) {
 		t.Errorf("campaign name has surrounding whitespace: %q", gotCampaign)
 	}
 	// The trimmed event name must be embedded exactly, with no padding around it.
-	if gotGroup != "Events | KubeCon | TLF" {
-		t.Errorf("group name = %q, want %q", gotGroup, "Events | KubeCon | TLF")
+	if gotGroup != "Events | KubeCon | tlf" {
+		t.Errorf("group name = %q, want %q", gotGroup, "Events | KubeCon | tlf")
 	}
 	if !strings.Contains(gotCampaign, "| KubeCon |") {
 		t.Errorf("campaign name must embed the trimmed event name, got %q", gotCampaign)
@@ -705,58 +712,95 @@ func TestCreateCampaign_TrimsEventNameInResourceNames(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_TrimsProjectInResourceNames verifies that Project is trimmed
-// once and used as the single source of truth: a whitespace-only Project behaves
-// exactly like an empty one (defaults to "TLF"), and a padded Project like
-// "  cncf  " is embedded trimmed in the resource names.
-func TestCreateCampaign_TrimsProjectInResourceNames(t *testing.T) {
-	cases := []struct {
-		name        string
-		project     string
-		wantProject string
-	}{
-		{"whitespace-only defaults to TLF", "   ", "TLF"},
-		{"empty defaults to TLF", "", "TLF"},
-		{"padded project trimmed", "  cncf  ", "cncf"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var mu sync.Mutex
-			var groupName, campaignName string
-			srv := captureResourceNamesServer(t, &mu, &groupName, &campaignName)
-			defer srv.Close()
-
-			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			_, err := c.CreateCampaign(context.Background(), CampaignInput{
-				EventName:        "KubeCon",
-				Project:          tc.project,
-				RegistrationURL:  "https://events.example.org/reg",
-				BudgetUSD:        100,
-				StartDate:        "2099-01-01",
-				EndDate:          "2099-02-01",
-				TargetingProfile: "cloud-native",
-				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
-				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
-			})
-			if err != nil {
-				t.Fatalf("CreateCampaign with Project=%q: %v", tc.project, err)
-			}
-
-			mu.Lock()
-			gotGroup, gotCampaign := groupName, campaignName
-			mu.Unlock()
-
-			wantGroup := "Events | KubeCon | " + tc.wantProject
-			if gotGroup != wantGroup {
-				t.Errorf("group name = %q, want %q", gotGroup, wantGroup)
-			}
-			if !strings.HasSuffix(gotCampaign, "| "+tc.wantProject+" | MoFU") {
-				t.Errorf("campaign name must use trimmed/defaulted project %q, got %q", tc.wantProject, gotCampaign)
-			}
-			if gotCampaign != strings.TrimSpace(gotCampaign) {
-				t.Errorf("campaign name has surrounding whitespace: %q", gotCampaign)
-			}
+// TestCreateCampaign_ProjectRequiredAndTrimmed verifies Project is required (no
+// silent default — a hardcoded default would mis-attribute non-TLF campaigns)
+// and, when supplied, is trimmed and embedded as the single source of truth in
+// the resource names.
+func TestCreateCampaign_ProjectRequiredAndTrimmed(t *testing.T) {
+	// Empty / whitespace-only Project must be REJECTED before any POST.
+	for _, empty := range []string{"", "   "} {
+		srv := noPOSTServer(t)
+		c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName:        "KubeCon",
+			Project:          empty,
+			RegistrationURL:  "https://events.example.org/reg",
+			BudgetUSD:        100,
+			StartDate:        "2099-01-01",
+			EndDate:          "2099-02-01",
+			TargetingProfile: "cloud-native",
+			GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+			Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
 		})
+		if err == nil || !strings.Contains(err.Error(), "project is required") {
+			t.Errorf("Project=%q: err = %v, want 'project is required'", empty, err)
+		}
+		srv.Close()
+	}
+
+	// A padded valid Project like "  cncf  " is trimmed and embedded.
+	var mu sync.Mutex
+	var groupName, campaignName string
+	srv := captureResourceNamesServer(t, &mu, &groupName, &campaignName)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "KubeCon",
+		Project:          "  cncf  ",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign with padded Project: %v", err)
+	}
+	mu.Lock()
+	gotGroup, gotCampaign := groupName, campaignName
+	mu.Unlock()
+	if gotGroup != "Events | KubeCon | cncf" {
+		t.Errorf("group name = %q, want %q", gotGroup, "Events | KubeCon | cncf")
+	}
+	if !strings.HasSuffix(gotCampaign, "| cncf | MoFU") {
+		t.Errorf("campaign name must use trimmed project, got %q", gotCampaign)
+	}
+	if gotCampaign != strings.TrimSpace(gotCampaign) {
+		t.Errorf("campaign name has surrounding whitespace: %q", gotCampaign)
+	}
+}
+
+// TestCreateCampaign_RejectsPipeInEventNameAndProject verifies "|" in EventName
+// or Project is sanitized to "-" so it can't inject extra pipe-delimited fields
+// into the campaign name.
+func TestCreateCampaign_RejectsPipeInEventNameAndProject(t *testing.T) {
+	var mu sync.Mutex
+	var groupName, campaignName string
+	srv := captureResourceNamesServer(t, &mu, &groupName, &campaignName)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:        "Kube|Con",
+		Project:          "cn|cf",
+		RegistrationURL:  "https://events.example.org/reg",
+		BudgetUSD:        100,
+		StartDate:        "2099-01-01",
+		EndDate:          "2099-02-01",
+		TargetingProfile: "cloud-native",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	mu.Lock()
+	gotGroup := groupName
+	mu.Unlock()
+	// "|" replaced with "-" so the name has exactly its schema's pipe count.
+	if gotGroup != "Events | Kube-Con | cn-cf" {
+		t.Errorf("group name = %q, want %q (pipes sanitized to dashes)", gotGroup, "Events | Kube-Con | cn-cf")
 	}
 }
 
@@ -790,6 +834,7 @@ func TestCreateCampaign_RejectsEmptyVariantContentBeforeAnyPOST(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
 				EventName:        "KubeCon",
+				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
 				BudgetUSD:        100,
 				StartDate:        "2099-01-01",
@@ -825,7 +870,7 @@ func TestCreateCampaign_RejectsBadScheduleBeforeAnyLookupEvenWhenResourcesExist(
 		// Pretend the group and campaign already exist so, absent the up-front
 		// check, the flow would short-circuit past toMs entirely.
 		if strings.Contains(r.URL.Path, "adCampaignGroups") {
-			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | TLF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:100"}],"metadata":{"nextPageToken":""}}`)
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:100"}],"metadata":{"nextPageToken":""}}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"elements":[]}`)
@@ -848,6 +893,7 @@ func TestCreateCampaign_RejectsBadScheduleBeforeAnyLookupEvenWhenResourcesExist(
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
 				EventName:        "KubeCon",
+				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
 				BudgetUSD:        100,
 				StartDate:        tc.startDate,
@@ -904,6 +950,7 @@ func TestCreateCampaign_PartialFailureReportsDarkPostWhenCreativeFails(t *testin
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/kubecon",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -959,6 +1006,7 @@ func TestCreateCampaign_RejectsSubCentBudgetBeforeAnyPOST(t *testing.T) {
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "E",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        0.001,
 		StartDate:        "2099-01-01",
@@ -1024,6 +1072,7 @@ func TestCreateCampaign_RejectsNonNumericOrgBeforeAnyPOST(t *testing.T) {
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "E",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1101,6 +1150,7 @@ func TestCreateCampaign_RejectsMalformedGeoURNBeforeAnyPOST(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1122,6 +1172,7 @@ func TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        strings.Repeat("X", 300),
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1186,6 +1237,7 @@ func TestCreateCampaign_RejectsBelowMinimumBudgetBeforeAnyPOST(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
 				EventName:        "E",
+				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
 				BudgetUSD:        tc.budget,
 				LifetimeBudget:   tc.lifetime,
@@ -1226,6 +1278,7 @@ func TestCreateCampaign_AcceptsMinimumBudget(t *testing.T) {
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
 				EventName:        "E",
+				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
 				BudgetUSD:        tc.budget,
 				LifetimeBudget:   tc.lifetime,
@@ -1264,6 +1317,7 @@ func TestCreateCampaign_BudgetMinimumChecksRoundedValue(t *testing.T) {
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
 				EventName:        "E",
+				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
 				BudgetUSD:        tc.budget,
 				LifetimeBudget:   tc.lifetime,
@@ -1294,6 +1348,7 @@ func TestCreateCampaign_BudgetMinimumChecksRoundedValue(t *testing.T) {
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
 				EventName:        "E",
+				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
 				BudgetUSD:        tc.budget,
 				LifetimeBudget:   tc.lifetime,
@@ -1323,6 +1378,7 @@ func TestCreateCampaign_RejectsMalformedImageURNBeforeAnyPOST(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1466,6 +1522,7 @@ func TestCreateCampaign_SingleScheduleComputation(t *testing.T) {
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1551,6 +1608,7 @@ func TestCreateCampaign_AcceptsEmptySkillsGroupsWhenJobFunctionsPresent(t *testi
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1605,6 +1663,7 @@ func TestValidatePrerequisites_RejectsOnlyTrulyEmptyCriteria(t *testing.T) {
 func TestCreateCampaign_CustomProfileRequiresCloudNativePresent(t *testing.T) {
 	base := CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1667,6 +1726,7 @@ func TestCreateCampaign_AcceptsBlankOnlyFacetsWhenJobFunctionsPresent(t *testing
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "E",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1742,6 +1802,7 @@ func TestCreateCampaign_SurfacesGroupWhenCampaignCreateFails(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1772,6 +1833,7 @@ func TestCreateCampaign_SurfacesGroupWhenCampaignCreateFails(t *testing.T) {
 func TestCreateCampaign_RejectsMalformedFacetBeforeAnyPOST(t *testing.T) {
 	base := CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -1965,6 +2027,7 @@ func TestCreateCampaign_404OnSearchDoesNotCreate(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -2108,10 +2171,10 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 			switch {
 			case strings.Contains(r.URL.Path, "adCampaignGroups"):
 				// Group is found (ACTIVE), so no group create POST.
-				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | TLF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
 			case strings.Contains(r.URL.Path, "adCampaigns"):
 				// An EXISTING ACTIVE campaign under the same group — found idempotently.
-				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | TLF | MoFU","status":"ACTIVE","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | tlf | MoFU","status":"ACTIVE","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
 			default:
 				_, _ = io.WriteString(w, `{"elements":[]}`)
 			}
@@ -2131,6 +2194,7 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -2175,6 +2239,7 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 func TestCreateCampaign_EmptyConfigHandledIdenticallyForCustomAndCloudNative(t *testing.T) {
 	base := CampaignInput{
 		EventName:       "KubeCon",
+		Project:         "tlf",
 		RegistrationURL: "https://events.example.org/reg",
 		BudgetUSD:       100,
 		StartDate:       "2099-01-01",
@@ -2250,6 +2315,7 @@ func TestCreateCampaign_RejectsEmptyAccessTokenBeforeAnyRequest(t *testing.T) {
 		c := NewClient(Credentials{AccessToken: tok}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
 			EventName:        "E",
+			Project:          "tlf",
 			RegistrationURL:  "https://example.com/reg",
 			BudgetUSD:        100,
 			StartDate:        "2099-01-01",
@@ -2313,9 +2379,9 @@ func TestCreateCampaign_IdlessGroupMatchIssuesNoCreate(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		// The group search returns a same-name match (group name is
-		// "Events | KubeCon | TLF") but with no usable id.
+		// "Events | KubeCon | tlf") but with no usable id.
 		if strings.Contains(r.URL.Path, "adCampaignGroups") {
-			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | TLF","status":"ACTIVE","urn":""}],"metadata":{"nextPageToken":""}}`)
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","urn":""}],"metadata":{"nextPageToken":""}}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"elements":[]}`)
@@ -2325,6 +2391,7 @@ func TestCreateCampaign_IdlessGroupMatchIssuesNoCreate(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -2354,12 +2421,12 @@ func TestFindMatch_MatchWithTrailingEmptyIDIsError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// Matching element (right name, ACTIVE) whose $URN is a trailing-empty URN:
 		// non-empty overall, but trailingID("urn:li:sponsoredCampaignGroup:") == "".
-		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Trailing | TLF","status":"ACTIVE","$URN":"urn:li:sponsoredCampaignGroup:"}],"metadata":{"nextPageToken":""}}`)
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Trailing | tlf","status":"ACTIVE","$URN":"urn:li:sponsoredCampaignGroup:"}],"metadata":{"nextPageToken":""}}`)
 	}))
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | Trailing | TLF")
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | Trailing | tlf")
 	if err == nil {
 		t.Fatalf("expected an error for a matched element with a trailing-empty id, got nil (id=%q)", id)
 	}
@@ -2389,7 +2456,7 @@ func TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "adCampaignGroups") {
-			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | TLF","status":"ACTIVE","$URN":"urn:li:sponsoredCampaignGroup:"}],"metadata":{"nextPageToken":""}}`)
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","$URN":"urn:li:sponsoredCampaignGroup:"}],"metadata":{"nextPageToken":""}}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"elements":[]}`)
@@ -2399,6 +2466,7 @@ func TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",
@@ -2480,6 +2548,7 @@ func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 func baseValidInput() CampaignInput {
 	return CampaignInput{
 		EventName:        "KubeCon",
+		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/kubecon",
 		BudgetUSD:        100,
 		StartDate:        "2099-01-01",

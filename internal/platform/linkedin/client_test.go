@@ -450,6 +450,7 @@ func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "E",
+		Project:          "tlf",
 		RegistrationURL:  "https://x.org",
 		BudgetUSD:        5000,
 		LifetimeBudget:   true,
