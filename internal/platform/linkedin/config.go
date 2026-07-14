@@ -58,6 +58,22 @@ const retryBaseDelay = 1 * time.Second
 // Retry-After value can't stall a request past the point of usefulness.
 const maxRetryWait = 60 * time.Second
 
+// startTimeBuffer is added to "now" when a campaign starts today/in the past, so
+// the campaign group and campaign runSchedule.start isn't already in the past by
+// the time LinkedIn receives the POST.
+//
+// It MUST comfortably exceed doRequest's worst-case retry budget. A single
+// find-existing lookup can span up to (retryMax+1)=4 request attempts, each
+// bounded by requestTimeout (30s), plus up to retryMax=3 Retry-After waits each
+// capped at maxRetryWait (60s) — i.e. roughly 4×30s + 3×60s ≈ 5 minutes. And the
+// campaign create runs AFTER the campaign-group lookup+create, so its start can
+// be nudged, then the group creation can consume that whole ~5-minute budget
+// before the campaign POST. A ~5-minute buffer could therefore expire mid-flow,
+// letting the campaign POST carry a start that has already slipped into the past
+// (which LinkedIn rejects, orphaning the just-created group). 10 minutes clears
+// that ~5-minute worst case with headroom for network/scheduling latency.
+const startTimeBuffer = 10 * time.Minute
+
 // jobFunctions are the default job-function facets included in targeting.
 // Mirrors JOB_FUNCTIONS.
 var jobFunctions = []string{

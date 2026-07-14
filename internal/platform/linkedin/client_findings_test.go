@@ -380,8 +380,9 @@ func TestCreateCampaign_RejectsEmptyGeoBeforeAnyPOST(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 
-	// ResolveGeoTargets drops "Atlantis" (unknown), leaving an empty slice.
-	geos := ResolveGeoTargets([]string{"Atlantis"})
+	// ResolveGeoTargets does not resolve "Atlantis" (unknown): it returns an empty
+	// resolved slice and reports "Atlantis" as unresolved.
+	geos, _ := ResolveGeoTargets([]string{"Atlantis"})
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:        "E",
 		Project:          "tlf",
@@ -802,10 +803,11 @@ func TestCreateCampaign_ProjectRequiredAndTrimmed(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_RejectsPipeInEventNameAndProject verifies "|" in EventName
+// TestCreateCampaign_SanitizesPipeInEventNameAndProject verifies "|" in EventName
 // or Project is sanitized to "-" so it can't inject extra pipe-delimited fields
-// into the campaign name.
-func TestCreateCampaign_RejectsPipeInEventNameAndProject(t *testing.T) {
+// into the campaign name. The values are accepted (not rejected) — this tests
+// SANITIZATION, not rejection.
+func TestCreateCampaign_SanitizesPipeInEventNameAndProject(t *testing.T) {
 	var mu sync.Mutex
 	var groupName, campaignName string
 	srv := captureResourceNamesServer(t, &mu, &groupName, &campaignName)
@@ -2670,5 +2672,327 @@ func TestCreateCampaign_CampaignCreateIDLessURNErrors(t *testing.T) {
 	defer mu.Unlock()
 	if postAndCreativePOSTs != 0 {
 		t.Errorf("no dark post or creative should be created after an id-less campaign create, got %d POSTs", postAndCreativePOSTs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Ninth-round review findings (David / Copilot on PR #22)
+// ---------------------------------------------------------------------------
+
+// TestValidateRegistrationURL_RejectsMalformedQuery verifies a URL whose query
+// carries invalid percent-encoding (e.g. "?ticket=%zz") is rejected up front.
+// url.Parse accepts it, but url.Query() (used by BuildUTMURL) would silently drop
+// the malformed pair, shipping the ad at a different URL. Mirrors the Reddit
+// client's malformed-query rejection (Issue A).
+func TestValidateRegistrationURL_RejectsMalformedQuery(t *testing.T) {
+	for _, bad := range []string{
+		"https://events.example.org/reg?ticket=%zz",
+		"https://events.example.org/reg?a=%",
+		"https://events.example.org/reg?%gg=1",
+	} {
+		if err := validateRegistrationURL(bad); err == nil {
+			t.Errorf("validateRegistrationURL(%q) = nil, want error (malformed query)", bad)
+		}
+	}
+	// A well-formed (properly percent-encoded) query still passes.
+	if err := validateRegistrationURL("https://events.example.org/reg?ticket=a%20b&x=1"); err != nil {
+		t.Errorf("validateRegistrationURL(well-formed query) = %v, want nil", err)
+	}
+}
+
+// TestValidateRegistrationURL_ErrorDoesNotLeakURL verifies the validator's error
+// messages NEVER echo the caller URL (which can carry secrets in its query or
+// userinfo). Every rejection path is checked against the distinctive host/secret
+// token. Mirrors the Reddit client, which never surfaces the raw URL (Issue A).
+func TestValidateRegistrationURL_ErrorDoesNotLeakURL(t *testing.T) {
+	const secret = "s3cr3t-do-not-leak"
+	host := "reg.example.org"
+	cases := []string{
+		// malformed URL (control char forces url.Parse to error)
+		"http://" + host + "/\x7f?token=" + secret,
+		// non-absolute
+		"/relative/path?token=" + secret,
+		// malformed query
+		"https://" + host + "/reg?token=" + secret + "&bad=%zz",
+		// embedded userinfo (composed at runtime so the source has no literal cred)
+		urlWithUserinfo("https", "user", secret, host+"/reg"),
+		// wrong scheme
+		"ftp://" + host + "/reg?token=" + secret,
+	}
+	for _, raw := range cases {
+		err := validateRegistrationURL(raw)
+		if err == nil {
+			t.Errorf("validateRegistrationURL(%q): want error, got nil", raw)
+			continue
+		}
+		msg := err.Error()
+		if strings.Contains(msg, secret) {
+			t.Errorf("error message leaked the secret query/userinfo: %q", msg)
+		}
+		if strings.Contains(msg, host) {
+			t.Errorf("error message leaked the URL host: %q", msg)
+		}
+	}
+}
+
+// TestAPIError_ErrorOmitsBody verifies apiError.Error() never surfaces the
+// upstream response Body (which can reflect request material), while retaining
+// the method, path, and status. Mirrors the Reddit client (Issue B).
+func TestAPIError_ErrorOmitsBody(t *testing.T) {
+	e := &apiError{StatusCode: 400, Method: "POST", Path: "adAccounts/1/adCampaigns", Body: "secret-token-in-body-abc123"}
+	msg := e.Error()
+	if strings.Contains(msg, "secret-token-in-body-abc123") {
+		t.Errorf("apiError.Error() leaked the Body: %q", msg)
+	}
+	if !strings.Contains(msg, "400") || !strings.Contains(msg, "adCampaigns") || !strings.Contains(msg, "POST") {
+		t.Errorf("apiError.Error() should carry method/path/status, got %q", msg)
+	}
+}
+
+// TestFindByName_EmptyBodySearchIsError verifies a 2xx SEARCH (GET) response with
+// an EMPTY body is treated as an error (ambiguous), NOT as a clean "not found".
+// A false not-found would let a find-or-create caller create a duplicate paid
+// resource. Mirrors Meta/Reddit treating a 2xx-with-no-usable-body as ambiguous
+// (Issue C).
+func TestFindByName_EmptyBodySearchIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Empty body: no elements, no metadata — cannot prove absence.
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | X | CNCF")
+	if err == nil {
+		t.Fatal("empty 2xx search body must be an error (ambiguous), got nil (false not-found)")
+	}
+}
+
+// TestFindByName_DecodesNonExactJSONMediaType verifies a 2xx search body with a
+// `+json` media type (e.g. application/vnd.linkedin.normalized+json) — or any
+// non-exact Content-Type — is still DECODED, so a real match is found rather than
+// mistaken for "not found". Before the fix, the decode was gated on an exact
+// "application/json" match, so such a body was left undecoded → false not-found →
+// duplicate create (Issue C).
+func TestFindByName_DecodesNonExactJSONMediaType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A LinkedIn-flavored +json media type, NOT the exact "application/json".
+		w.Header().Set("Content-Type", "application/vnd.linkedin.normalized+json")
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Plus | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:555"}],"metadata":{"nextPageToken":""}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | Plus | CNCF")
+	if err != nil {
+		t.Fatalf("findByName with +json media type: %v", err)
+	}
+	if id != "555" {
+		t.Errorf("expected match decoded from +json body (id 555), got %q", id)
+	}
+}
+
+// TestFindByName_EmptyBodyDoesNotTriggerDuplicateCreate verifies the empty-2xx-
+// search-body error propagates through the find-or-create flow so NO create POST
+// is issued — i.e. an undecodable search never causes a duplicate paid resource
+// (Issue C, end to end).
+func TestFindByName_EmptyBodyDoesNotTriggerDuplicateCreate(t *testing.T) {
+	var mu sync.Mutex
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			posts++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:1"}`)
+			return
+		}
+		// Search GET: 2xx with an empty body (ambiguous, not "absent").
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error from the ambiguous empty search body, got nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 0 {
+		t.Errorf("an undecodable search must not trigger a create POST, got %d POSTs", posts)
+	}
+}
+
+// TestCreateCampaign_AmbiguousCampaignCreateIsUnconfirmed verifies that an
+// AMBIGUOUS campaign-create failure (a 5xx — the request reached LinkedIn and may
+// have committed) yields an UNCONFIRMED outcome carrying a partial result with the
+// campaign NAME (reconcilable by name), NOT a definite failure that a retry would
+// treat as safe-to-recreate. Mirrors Meta's createOutcomeAmbiguous handling
+// (Issue D).
+func TestCreateCampaign_AmbiguousCampaignCreateIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			// 5xx: LinkedIn received the create and MAY have committed it → ambiguous.
+			http.Error(w, "upstream boom", http.StatusBadGateway)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateCampaign(context.Background(), baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error for the 5xx campaign create, got nil")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("ambiguous (5xx) campaign create should report UNCONFIRMED, got: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected a partial result carrying the campaign name, got nil")
+	}
+	if res.CampaignName == "" {
+		t.Error("partial result should carry the reconcilable campaign name")
+	}
+	foundStep := false
+	for _, s := range res.Steps {
+		if strings.Contains(s, "UNCONFIRMED") {
+			foundStep = true
+		}
+	}
+	if !foundStep {
+		t.Errorf("expected an UNCONFIRMED step in the result, got steps: %v", res.Steps)
+	}
+}
+
+// TestCreateCampaign_AmbiguousDarkPostIsUnconfirmed verifies that an AMBIGUOUS
+// dark-post failure (a 2xx malformed success with NO id — the post may exist but
+// has no reconciliation lookup) reports an UNCONFIRMED outcome rather than a
+// definite failure that a blind retry would duplicate. Mirrors Meta's ambiguous
+// ad/creative handling (Issue D).
+func TestCreateCampaign_AmbiguousDarkPostIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaign:200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			// 2xx with NO id and NO x-restli-id header: malformed success → ambiguous.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	res, err := c.CreateCampaign(context.Background(), baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error for the id-less dark post, got nil")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("ambiguous dark post (2xx no id) should report UNCONFIRMED, got: %v", err)
+	}
+	if res == nil || res.CampaignID == "" {
+		t.Fatalf("expected a partial result carrying the created campaign id, got %+v", res)
+	}
+}
+
+// TestDoRequest_RejectsOversizedResponse verifies a response body larger than
+// maxResponseBytes is REJECTED (not silently truncated and mis-parsed). Reading
+// maxResponseBytes+1 lets a body of exactly the cap be distinguished from a larger
+// truncated one. Mirrors Meta/Reddit's +1 boundary (Issue E).
+func TestDoRequest_RejectsOversizedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Write a valid-JSON prefix followed by enough padding to exceed the cap, so
+		// a naive LimitReader(cap) would truncate to still-parseable JSON and wrongly
+		// accept it. maxResponseBytes+64 guarantees we cross the +1 boundary.
+		_, _ = io.WriteString(w, `{"elements":[]}`)
+		pad := strings.Repeat(" ", maxResponseBytes+64)
+		_, _ = io.WriteString(w, pad)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"})
+	if err == nil {
+		t.Fatal("expected an error for an oversized response body, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("oversized-response error should mention the cap, got: %v", err)
+	}
+}
+
+// TestCreateCampaign_SurfacesUnresolvedGeoAsStep verifies that a GeoTarget with an
+// empty URN (an unresolved geo the caller still forwarded) is SURFACED as a Step
+// rather than silently narrowing the audience, while a valid geo still targets.
+// Mirrors how the Meta client surfaces dropped geos (Issue I).
+func TestCreateCampaign_SurfacesUnresolvedGeoAsStep(t *testing.T) {
+	srv := fullFlowServer(t)
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	in := baseValidInput()
+	// One resolvable geo (URN set) plus one unresolved geo (empty URN, name only).
+	in.GeoTargets = []GeoTarget{
+		{Label: "United States", URN: "urn:li:geo:103644278"},
+		{Label: "Atlantis", URN: ""},
+	}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	foundStep := false
+	for _, s := range res.Steps {
+		if strings.Contains(s, "not resolved") && strings.Contains(s, "Atlantis") {
+			foundStep = true
+		}
+	}
+	if !foundStep {
+		t.Errorf("expected a Step surfacing the unresolved geo 'Atlantis', got steps: %v", res.Steps)
+	}
+}
+
+// TestResolveGeoTargets_ReportsUnresolvedAndIgnoresBlank verifies ResolveGeoTargets
+// returns unresolved names (original spelling) and ignores blank/whitespace-only
+// inputs entirely (Issue I).
+func TestResolveGeoTargets_ReportsUnresolvedAndIgnoresBlank(t *testing.T) {
+	resolved, unresolved := ResolveGeoTargets([]string{"Japan", "Narnia", "  ", "", "Gondor"})
+	if len(resolved) != 1 || resolved[0].Label != "Japan" {
+		t.Errorf("expected only Japan resolved, got %+v", resolved)
+	}
+	// Blank/whitespace entries are ignored (neither resolved nor reported).
+	want := []string{"Narnia", "Gondor"}
+	if len(unresolved) != len(want) {
+		t.Fatalf("expected unresolved=%v, got %v", want, unresolved)
+	}
+	for i := range want {
+		if unresolved[i] != want[i] {
+			t.Errorf("unresolved[%d] = %q, want %q (original spelling)", i, unresolved[i], want[i])
+		}
 	}
 }

@@ -59,10 +59,10 @@ func testScheduleMs(t *testing.T, c *Client) (startMs, endMs int64) {
 // ---------------------------------------------------------------------------
 
 func TestResolveGeoTargets_KnownAndUnknown(t *testing.T) {
-	got := ResolveGeoTargets([]string{"  Japan ", "United States", "Atlantis", "GERMANY"})
+	got, unresolved := ResolveGeoTargets([]string{"  Japan ", "United States", "Atlantis", "GERMANY"})
 
 	if len(got) != 3 {
-		t.Fatalf("expected 3 resolved geos (unknown dropped), got %d: %+v", len(got), got)
+		t.Fatalf("expected 3 resolved geos (unknown reported separately), got %d: %+v", len(got), got)
 	}
 
 	want := map[string]string{
@@ -80,12 +80,21 @@ func TestResolveGeoTargets_KnownAndUnknown(t *testing.T) {
 			t.Errorf("geo %s: want URN %s, got %s", g.Label, wantURN, g.URN)
 		}
 	}
+
+	// The unknown name is REPORTED (not silently dropped), preserving its original
+	// input spelling.
+	if len(unresolved) != 1 || unresolved[0] != "Atlantis" {
+		t.Errorf("expected unresolved=[\"Atlantis\"] (original spelling), got %+v", unresolved)
+	}
 }
 
 func TestResolveGeoTargets_UsaAlias(t *testing.T) {
-	got := ResolveGeoTargets([]string{"usa"})
+	got, unresolved := ResolveGeoTargets([]string{"usa"})
 	if len(got) != 1 || got[0].URN != "urn:li:geo:103644278" {
 		t.Fatalf("usa alias should resolve to United States URN, got %+v", got)
+	}
+	if len(unresolved) != 0 {
+		t.Errorf("expected no unresolved names, got %+v", unresolved)
 	}
 }
 
@@ -485,16 +494,18 @@ func TestToMs_PastEndDateErrors(t *testing.T) {
 	}
 }
 
-func TestToMs_PastStartDateReturnsNowPlus5Min(t *testing.T) {
+func TestToMs_PastStartDateReturnsNowPlusBuffer(t *testing.T) {
 	now := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithClock(func() time.Time { return now }))
 	got, err := c.toMs("2099-01-01", false)
 	if err != nil {
 		t.Fatalf("toMs: %v", err)
 	}
-	want := now.UnixMilli() + 5*60*1000
+	// The buffer must exceed doRequest's worst-case lookup+retry budget (~5 min),
+	// so it was raised to startTimeBuffer (10 min); see Issue F.
+	want := now.UnixMilli() + startTimeBuffer.Milliseconds()
 	if got != want {
-		t.Errorf("past start date should return now+5min: want %d, got %d", want, got)
+		t.Errorf("past start date should return now+startTimeBuffer: want %d, got %d", want, got)
 	}
 }
 

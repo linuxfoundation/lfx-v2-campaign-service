@@ -113,20 +113,32 @@ func nonBlankFacets(in []string) []string {
 
 // ResolveGeoTargets resolves location names to GeoTarget URNs using the static
 // geoResolveMap. Mirrors the cached branch of resolveGeoTargets: names are
-// lowercased and trimmed before lookup. Unknown geos are skipped (omitted from
-// the result) rather than causing an error — the same graceful-degradation
-// behavior the TypeScript uses when a name is neither in the map nor resolvable
-// via the API. This Go port intentionally does not perform the network
-// fallback (see package docs / final report).
-func ResolveGeoTargets(locationNames []string) []GeoTarget {
-	resolved := make([]GeoTarget, 0, len(locationNames))
+// lowercased and trimmed before lookup. This Go port intentionally does not
+// perform the network fallback (see package docs / final report).
+//
+// A name not present in geoResolveMap is NOT silently dropped: it is returned in
+// the second result (unresolved), preserving the caller's ORIGINAL input spelling
+// (not the lowercased lookup key), so the caller can surface the narrowing of the
+// audience (e.g. as a Step) instead of quietly targeting fewer locations than
+// requested. Names that are empty or whitespace-only after trimming are ignored
+// entirely — they are not real location inputs, so they are neither resolved nor
+// reported as unresolved.
+func ResolveGeoTargets(locationNames []string) (resolved []GeoTarget, unresolved []string) {
+	resolved = make([]GeoTarget, 0, len(locationNames))
 	for _, name := range locationNames {
 		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
 		if hit, ok := geoResolveMap[key]; ok {
 			resolved = append(resolved, hit)
+			continue
 		}
+		// Report the ORIGINAL spelling so the caller's surfaced message matches what
+		// was requested.
+		unresolved = append(unresolved, name)
 	}
-	return resolved
+	return resolved, unresolved
 }
 
 // accountURN builds the sponsored-account URN. Mirrors accountUrn().

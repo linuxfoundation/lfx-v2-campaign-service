@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -232,7 +234,74 @@ type apiError struct {
 }
 
 func (e *apiError) Error() string {
-	return fmt.Sprintf("LinkedIn API %s %s -> %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
+	// Deliberately DO NOT include e.Body: the upstream response body is untrusted
+	// and can reflect request material (e.g. a destination URL's secret query, or a
+	// bearer token echoed in a proxy diagnostic). Body is retained on the struct for
+	// internal classification but is never surfaced when the error is stringified
+	// into Steps / returned to a caller / logged. Report only the method, path, and
+	// status. Mirrors the Reddit client's apiError.Error().
+	return fmt.Sprintf("LinkedIn API %s %s -> %d", e.Method, e.Path, e.StatusCode)
+}
+
+// transportError wraps a failure of the HTTP round-trip itself (httpClient.Do)
+// that happened AFTER the request was plausibly sent (mid-flight timeout,
+// unexpected EOF, connection reset), OR a failure to read/decode a 2xx response:
+// the server may or may not have processed the request, so the outcome is
+// AMBIGUOUS. This is distinct from a pre-send failure (request build, or a
+// pre-connect dial error — see isPreSendDialError), where the request never
+// reached LinkedIn and a mutation definitely did not happen. Callers use it to
+// decide whether a failed create is "may exist" (ambiguous) vs "not created".
+// Mirrors the Reddit/Meta clients.
+type transportError struct {
+	Method string
+	Path   string
+	Err    error
+}
+
+func (e *transportError) Error() string {
+	return fmt.Sprintf("linkedin %s %s: %v", e.Method, e.Path, e.Err)
+}
+func (e *transportError) Unwrap() error { return e.Err }
+
+// isPreSendDialError reports whether a httpClient.Do error clearly happened
+// BEFORE any request bytes could have reached LinkedIn (DNS resolution failure,
+// connection refused, or no route/network unreachable). Such a failure means the
+// request was NOT sent, so it must NOT be treated as an ambiguous "may exist"
+// transportError. A failure AFTER a connection is established (mid-flight
+// timeout, unexpected EOF) is genuinely ambiguous and IS wrapped as
+// transportError. Mirrors the Reddit/Meta clients.
+func isPreSendDialError(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	return errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETUNREACH)
+}
+
+// createOutcomeAmbiguous reports whether a failed mutating request MAY have been
+// applied by LinkedIn despite the error — i.e. the request plausibly reached the
+// server and its outcome is unknowable. It is the single source of truth shared
+// by the create paths so they classify identically:
+//   - transportError: the round-trip failed AFTER a connection was established
+//     (a pre-connect dial error is NOT wrapped as transportError, so it never
+//     reaches here), or a 2xx body could not be read/decoded — so the request may
+//     have been received and the mutation committed;
+//   - *apiError with a 5xx status: LinkedIn received it and may have committed the
+//     mutation before erroring.
+//
+// A definite 4xx (LinkedIn rejected it), or any pre-send failure (request build,
+// a pre-connect dial error), means NOT applied → returns false so the caller
+// reports a clean "failed" rather than "may exist". Mirrors the Reddit/Meta
+// clients' createOutcomeAmbiguous.
+func createOutcomeAmbiguous(err error) bool {
+	var te *transportError
+	if errors.As(err, &te) {
+		return true
+	}
+	var ae *apiError
+	return errors.As(err, &ae) && ae.StatusCode >= 500
 }
 
 // doRequest performs one API call. It honors ctx, sets the OAuth2 bearer and
@@ -299,7 +368,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("linkedin %s %s: %w", method, path, err)
+			// A Do error that clearly happened BEFORE the request could be sent (DNS
+			// failure, connection refused, no route) means NOT sent — return it plain
+			// so callers treat a create as "not applied". A failure after a connection
+			// was established (mid-flight timeout, EOF) is genuinely ambiguous: wrap it
+			// as transportError so callers treat a create as "may exist". Mirrors the
+			// Reddit/Meta clients.
+			if isPreSendDialError(err) {
+				return nil, fmt.Errorf("linkedin %s %s: %w", method, path, err)
+			}
+			return nil, &transportError{Method: method, Path: path, Err: err}
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax && idempotent {
@@ -321,11 +399,27 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		}
 
 		// Bound the response body read so an unexpectedly large response can't
-		// exhaust memory (10 MiB is far above any legitimate LinkedIn API response).
+		// exhaust memory. Read ONE byte past the cap so a body of exactly
+		// maxResponseBytes can be distinguished from a larger one truncated at the
+		// limit: io.LimitReader returns EOF (not an error) at the limit, so a plain
+		// LimitReader(cap) would silently accept a truncated body (or valid JSON plus
+		// excess data) as a complete response. Reject when the read EXCEEDS the cap.
+		// Mirrors the Meta/Reddit clients' maxResponseBody+1 boundary.
 		buf := new(bytes.Buffer)
-		if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes)); err != nil {
+		if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
 			_ = resp.Body.Close()
+			// A read failure on a 2xx is AMBIGUOUS: LinkedIn may have committed the
+			// mutation but we couldn't read the result — wrap it so a create is treated
+			// as "may exist". A read failure on a non-2xx isn't a committed mutation, so
+			// return it plain. Mirrors the Reddit/Meta clients.
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
+			}
 			return nil, fmt.Errorf("read response body: %w", err)
+		}
+		if int64(buf.Len()) > maxResponseBytes {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("linkedin %s %s: response exceeds %d bytes", method, path, maxResponseBytes)
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -338,11 +432,34 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		}
 
 		out := &linkedInResponse{}
-		if strings.Contains(resp.Header.Get("Content-Type"), "application/json") && buf.Len() > 0 {
+		// Decode EVERY non-empty 2xx body regardless of the exact Content-Type. Gating
+		// the decode on Content-Type == "application/json" meant a 2xx search response
+		// with a missing Content-Type, a `+json` media type (e.g.
+		// application/vnd.linkedin.normalized+json), or any non-exact match was left
+		// UNDECODED — yielding an empty linkedInResponse. findMatch then saw no
+		// elements and no cursor and reported a false "not found", triggering a
+		// DUPLICATE create POST of a paid resource. So decode the body whenever it is
+		// non-empty; a genuinely-JSON body is parsed regardless of the advertised type.
+		if buf.Len() > 0 {
 			if err := json.Unmarshal(buf.Bytes(), out); err != nil {
 				_ = resp.Body.Close()
-				return nil, fmt.Errorf("decode response: %w", err)
+				// A 2xx we can't decode is AMBIGUOUS: the server returned success but we
+				// can't read the payload (id/elements). Wrap it so a create is treated as
+				// "may exist" rather than a definite failure. Mirrors the Reddit/Meta
+				// clients wrapping a 2xx decode failure as transportError.
+				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("decode response: %w", err)}
 			}
+		} else if method == http.MethodGet {
+			// An EMPTY 2xx body on a GET is a search response with no usable payload. A
+			// search MUST return a JSON envelope (elements + metadata); an empty body
+			// carries neither, so it cannot prove absence. Treating it as an empty
+			// result set would make findMatch report a false "not found" and let the
+			// find-or-create caller create a DUPLICATE paid resource. Reject it as
+			// ambiguous rather than decode it into a misleading empty result. (POST
+			// creates are exempt: they legitimately return an empty body with the id in
+			// the x-restli-id header, handled by the header fallback below.)
+			_ = resp.Body.Close()
+			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("search response had an empty body (no elements/metadata) — cannot confirm absence")}
 		}
 
 		// Promote the resource ID header when the body carried no id. Mirrors the
@@ -637,7 +754,7 @@ func trailingID(raw string) string {
 var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 // toMs converts a YYYY-MM-DD date to epoch milliseconds. Mirrors toMs():
-//   - eod=false: start-of-day UTC; if in the past, returns now+5min.
+//   - eod=false: start-of-day UTC; if in the past, returns now+startTimeBuffer.
 //   - eod=true: end-of-day UTC (23:59:59.999); errors if in the past.
 func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 	if !dateRE.MatchString(dateStr) {
@@ -658,7 +775,12 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 	}
 	startMs := t.UnixMilli()
 	if startMs <= nowMs {
-		return nowMs + 5*60*1000, nil
+		// Nudge a today/past start forward by startTimeBuffer so it isn't already in
+		// the past by the time LinkedIn receives the (possibly retried) POST. The
+		// buffer must exceed doRequest's worst-case lookup+retry budget — see
+		// startTimeBuffer's godoc — or a long-running create flow could still POST a
+		// past start and be rejected, orphaning the campaign group.
+		return nowMs + startTimeBuffer.Milliseconds(), nil
 	}
 	return startMs, nil
 }
@@ -747,17 +869,22 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name 
 		return "", err
 	}
 	if resp.ID == "" {
-		return "", fmt.Errorf("LinkedIn API returned no ID for campaign group creation")
+		// A 2xx with no id is a malformed SUCCESS: LinkedIn may have created the group
+		// but we can't read its id. Wrap as transportError so the caller classifies it
+		// as "may exist" (createOutcomeAmbiguous → UNCONFIRMED) rather than a definite
+		// failure that a retry would treat as safe-to-recreate. Mirrors the Meta client.
+		return "", &transportError{Method: http.MethodPost, Path: groupsPath, Err: fmt.Errorf("campaign group creation returned no ID")}
 	}
 	// Validate the EXTRACTED id, not just the raw field: a create response like
 	// "urn:li:sponsoredCampaignGroup:" passes the non-empty check above yet
 	// trailingID returns "" (empty trailing segment). Proceeding would build an
 	// invalid group URN ("urn:li:sponsoredCampaignGroup:") for the campaign and
 	// lose the identifier of the group just created. The create response is
-	// malformed; abort rather than continue.
+	// malformed; abort rather than continue. Wrap as transportError (2xx malformed
+	// success → "may exist") for the same reason as the no-id case above.
 	groupID := trailingID(resp.ID.String())
 	if groupID == "" {
-		return "", fmt.Errorf("LinkedIn API returned a campaign group ID %q with an empty trailing segment", resp.ID.String())
+		return "", &transportError{Method: http.MethodPost, Path: groupsPath, Err: fmt.Errorf("campaign group creation returned an ID %q with an empty trailing segment", resp.ID.String())}
 	}
 	return groupID, nil
 }
@@ -835,17 +962,21 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		return "", err
 	}
 	if resp.ID == "" {
-		return "", fmt.Errorf("LinkedIn API returned no ID for campaign creation")
+		// A 2xx with no id is a malformed SUCCESS: the campaign may exist but its id is
+		// unreadable. Wrap as transportError so the caller classifies it as "may exist"
+		// (UNCONFIRMED) rather than a definite failure. Mirrors the Meta client.
+		return "", &transportError{Method: http.MethodPost, Path: campaignsPath, Err: fmt.Errorf("campaign creation returned no ID")}
 	}
 	// Validate the EXTRACTED id, not just the raw field: a create response like
 	// "urn:li:sponsoredCampaign:" passes the non-empty check above yet trailingID
 	// returns "" (empty trailing segment). Returning "" here would let CreateCampaign
 	// proceed to build the dark post + creative against "urn:li:sponsoredCampaign:",
 	// leaving an orphaned post. The create response is malformed; abort before any
-	// downstream resource is created.
+	// downstream resource is created. Wrap as transportError (2xx malformed success →
+	// "may exist") for the same reason as the no-id case above.
 	campaignID := trailingID(resp.ID.String())
 	if campaignID == "" {
-		return "", fmt.Errorf("LinkedIn API returned a campaign ID %q with an empty trailing segment", resp.ID.String())
+		return "", &transportError{Method: http.MethodPost, Path: campaignsPath, Err: fmt.Errorf("campaign creation returned an ID %q with an empty trailing segment", resp.ID.String())}
 	}
 	return campaignID, nil
 }
@@ -907,14 +1038,19 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 		return "", err
 	}
 	if resp.ID == "" {
-		return "", fmt.Errorf("LinkedIn API returned no ID for dark post creation")
+		// A 2xx with no id is a malformed SUCCESS: the dark post may exist but its id
+		// is unreadable. A dark post has no reconciliation lookup, so wrap as
+		// transportError → the caller reports UNCONFIRMED (may exist) rather than a
+		// definite failure a retry would duplicate. Mirrors the Meta client.
+		return "", &transportError{Method: http.MethodPost, Path: "posts", Err: fmt.Errorf("dark post creation returned no ID")}
 	}
 	// Validate the extracted trailing segment, not just the raw field: a malformed
 	// create response like "urn:li:share:" passes the non-empty check yet has no
 	// id, and would be used verbatim as the creative's share reference. Abort on a
 	// malformed response rather than continue (mirrors the group/campaign creates).
+	// Wrap as transportError (2xx malformed success → "may exist") as above.
 	if trailingID(resp.ID.String()) == "" {
-		return "", fmt.Errorf("LinkedIn API returned a dark post ID %q with an empty trailing segment", resp.ID.String())
+		return "", &transportError{Method: http.MethodPost, Path: "posts", Err: fmt.Errorf("dark post creation returned an ID %q with an empty trailing segment", resp.ID.String())}
 	}
 	return resp.ID.String(), nil
 }
@@ -941,14 +1077,20 @@ func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shar
 	if err != nil {
 		return "", err
 	}
+	creativesPath := fmt.Sprintf("adAccounts/%s/creatives", accountID)
 	if resp.ID == "" {
-		return "", fmt.Errorf("LinkedIn API returned no ID for creative creation")
+		// A 2xx with no id is a malformed SUCCESS: the creative may exist but its id is
+		// unreadable. A creative has no reconciliation lookup, so wrap as
+		// transportError → the caller reports UNCONFIRMED (may exist) rather than a
+		// definite failure a retry would duplicate. Mirrors the Meta client.
+		return "", &transportError{Method: http.MethodPost, Path: creativesPath, Err: fmt.Errorf("creative creation returned no ID")}
 	}
 	// Reject a malformed URN with an empty trailing segment (e.g.
 	// "urn:li:sponsoredCreative:") that passes the non-empty check but carries no
-	// id, mirroring the group/campaign creates.
+	// id, mirroring the group/campaign creates. Wrap as transportError (2xx malformed
+	// success → "may exist") as above.
 	if trailingID(resp.ID.String()) == "" {
-		return "", fmt.Errorf("LinkedIn API returned a creative ID %q with an empty trailing segment", resp.ID.String())
+		return "", &transportError{Method: http.MethodPost, Path: creativesPath, Err: fmt.Errorf("creative creation returned an ID %q with an empty trailing segment", resp.ID.String())}
 	}
 	return resp.ID.String(), nil
 }
@@ -1157,16 +1299,29 @@ func validateRegistrationURL(raw string) error {
 	}
 	u, err := url.Parse(trimmed)
 	if err != nil {
-		return fmt.Errorf("registration URL %q is not a valid URL: %w", raw, err)
+		// Do NOT echo the raw/trimmed URL (nor wrap the *url.Error, which embeds the
+		// full raw URL in its own message): the caller URL can carry secrets in its
+		// userinfo or query string, and this error is logged/persisted. Report a
+		// generic message. Mirrors the Reddit client (validateRegistrationURL), which
+		// never surfaces the raw URL.
+		return fmt.Errorf("registration URL is not a valid URL")
 	}
 	// Require a real host: url.Parse accepts "https://:443/path" (Host=":443")
 	// where Hostname() is empty, so check Hostname() not just Host.
 	if !u.IsAbs() || u.Hostname() == "" {
-		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
+		return fmt.Errorf("registration URL must be absolute (include scheme and host)")
+	}
+	// url.Parse does NOT validate percent-encoding in the query. A URL like
+	// ".../reg?ticket=%zz" parses fine here, but u.Query() (used by BuildUTMURL)
+	// silently DROPS the malformed pair, so the paid ad would be created with a
+	// different destination than the caller supplied. Reject a malformed query up
+	// front, before any mutating call. Mirrors the Reddit client.
+	if _, qerr := url.ParseQuery(u.RawQuery); qerr != nil {
+		return fmt.Errorf("registration URL has a malformed query string")
 	}
 	// Reject embedded userinfo (user[:password]@host): an ad destination never
-	// needs URL credentials, and buildUTMURL would otherwise forward the password
-	// to LinkedIn and echo it downstream, leaking it.
+	// needs URL credentials, and BuildUTMURL would otherwise forward the password
+	// to LinkedIn and echo it downstream, leaking it. Mirrors the Reddit client.
 	if u.User != nil {
 		return fmt.Errorf("registration URL must not contain embedded credentials (userinfo)")
 	}
@@ -1174,7 +1329,9 @@ func validateRegistrationURL(raw string) error {
 	case "http", "https":
 		return nil
 	default:
-		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", raw, u.Scheme)
+		// Do NOT echo the raw URL or the scheme value (a bespoke scheme could itself
+		// reflect caller material); report a generic message.
+		return fmt.Errorf("registration URL must use an http or https scheme")
 	}
 }
 
@@ -1188,8 +1345,11 @@ func validateRegistrationURL(raw string) error {
 // FAST, before the first mutating POST, rather than after the campaign group
 // and/or campaign (permanent, paid resources) already exist. Failing before any
 // permanent resource is created is the safer contract, so these are deliberate:
-//   - Geo resolution is a pure, cache-only function: ResolveGeoTargets drops
-//     unknown geos and performs NO network fallback (see ResolveGeoTargets).
+//   - Geo resolution is a pure, cache-only function: ResolveGeoTargets performs
+//     NO network fallback and REPORTS names it could not resolve to the caller
+//     (see ResolveGeoTargets) instead of dropping them silently; any unresolved
+//     geo the caller still forwards (an empty-URN GeoTarget) is surfaced here as
+//     a Step rather than silently narrowing the audience.
 //   - An input whose geo targets ALL resolve to nothing (empty URN set) is
 //     rejected up front. The TS source would proceed and create a campaign with
 //     empty geo targeting; here that is refused before the first create POST so
@@ -1379,13 +1539,27 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	steps := []string{}
 
 	// Build the geo URN set and refuse to create anything with no usable geo
-	// targeting BEFORE the first create POST. ResolveGeoTargets deliberately drops
-	// unknown geos, so a caller passing only unknown geos arrives here with an
-	// empty URN set. Creating the campaign group/campaign anyway (both permanent
-	// side effects) would leave an orphaned campaign with empty geo targeting.
+	// targeting BEFORE the first create POST. ResolveGeoTargets (the pure, cache-only
+	// resolver the caller runs to build in.GeoTargets) reports names it could not
+	// resolve to the caller rather than dropping them silently; an unresolved name
+	// that the caller still forwards arrives here as a GeoTarget with an EMPTY URN.
+	// Rather than silently narrow the audience, SURFACE each dropped (empty-URN) geo
+	// as a Step (mirroring how the Meta client surfaces dropped geos), so the
+	// narrowing is visible in the result. A caller passing only unresolved geos
+	// arrives with an empty URN set; creating the group/campaign anyway (both
+	// permanent side effects) would leave an orphaned campaign with empty geo
+	// targeting, so that is refused below.
 	geoURNs := make([]string, 0, len(in.GeoTargets))
+	droppedGeos := make([]string, 0, len(in.GeoTargets))
 	for _, g := range in.GeoTargets {
 		if g.URN == "" {
+			// Prefer the human-readable Label for the surfaced Step; fall back to a
+			// placeholder when even the label is blank so the count is still visible.
+			label := strings.TrimSpace(g.Label)
+			if label == "" {
+				label = "(unnamed)"
+			}
+			droppedGeos = append(droppedGeos, label)
 			continue
 		}
 		// A non-empty URN isn't necessarily valid: GeoTarget is public input, so a
@@ -1399,13 +1573,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(geoURNs) == 0 {
 		return nil, fmt.Errorf("no usable geo targets: all supplied geos resolved to nothing — refusing to create a campaign with empty geo targeting")
 	}
+	if len(droppedGeos) > 0 {
+		steps = append(steps, fmt.Sprintf("Geo targets not resolved (omitted from targeting — not in the resolver map): %s", strings.Join(droppedGeos, ", ")))
+	}
 
 	// Validate the schedule ONCE up front, before the first idempotency lookup or
 	// POST, and capture the computed epoch-millisecond start/end. These values are
 	// the single source of truth threaded into the create helpers so the campaign
 	// group and campaign share identical timestamps: toMs is non-deterministic for
-	// a today/past start (it returns a moving now+5min), so re-computing per helper
-	// could otherwise send DIFFERENT start millis than this preflight validated.
+	// a today/past start (it returns a moving now+startTimeBuffer), so re-computing
+	// per helper could otherwise send DIFFERENT start millis than this preflight
+	// validated.
 	// Enforcing here also guarantees the date contract regardless of idempotency
 	// state (the helpers only reached toMs AFTER their find-existing lookups).
 	startMs, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
@@ -1427,6 +1605,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, startMs, endMs)
 	if err != nil {
+		// An AMBIGUOUS failure (transport/timeout after send, a 5xx, or an
+		// undecodable 2xx) can occur AFTER LinkedIn committed the group create: the
+		// possibly-created ACTIVE group carries the deterministic groupName, so report
+		// an UNCONFIRMED outcome and a partial result carrying the name rather than a
+		// definite failure that could let a retry duplicate it. On retry the group is
+		// found idempotently by name (reconcile-by-name), so this is recoverable. A
+		// clearly non-ambiguous error (a 4xx rejection, or a search error before the
+		// create POST) means nothing was created — keep the plain (nil, err). Mirrors
+		// the Meta client's createOutcomeAmbiguous handling.
+		if createOutcomeAmbiguous(err) {
+			steps = append(steps, fmt.Sprintf("Campaign group creation outcome is UNCONFIRMED (timeout or server error); an ACTIVE group %q may exist — verify by name in Campaign Manager before recreating", groupName))
+			return c.buildResult(accountID, groupName, "", campaignName, "", 0, steps),
+				fmt.Errorf("campaign group creation UNCONFIRMED (an ACTIVE group %q may exist — on retry it is found idempotently by name): %w", groupName, err)
+		}
 		return nil, err
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
@@ -1441,6 +1633,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// the steps so far (campaignID is still empty), alongside the error, so no
 		// created permanent resource is silently orphaned. On the next retry the
 		// group is found idempotently by name, so surfacing it is safe.
+		//
+		// An AMBIGUOUS failure (transport/timeout after send, a 5xx, or an
+		// undecodable 2xx) can occur AFTER LinkedIn committed the campaign create: the
+		// possibly-created PAUSED campaign carries the deterministic campaignName and
+		// is found idempotently by name-in-group on retry, so report an UNCONFIRMED
+		// outcome rather than a definite failure that could let a retry duplicate it.
+		// A definite (4xx / pre-send / search) error means the campaign was not
+		// created. Mirrors the Meta client's createOutcomeAmbiguous handling.
+		if createOutcomeAmbiguous(err) {
+			steps = append(steps, fmt.Sprintf("Campaign creation outcome is UNCONFIRMED (timeout or server error); a PAUSED campaign %q may exist — verify by name before recreating", campaignName))
+			return c.buildResult(accountID, groupName, groupID, campaignName, "", 0, steps),
+				fmt.Errorf("campaign creation UNCONFIRMED for campaign group %q (%q) (a PAUSED campaign %q may exist and is found idempotently by name on retry): %w — inspect the returned partial result", groupID, groupName, campaignName, err)
+		}
 		return c.buildResult(accountID, groupName, groupID, campaignName, "", 0, steps),
 			fmt.Errorf("campaign creation failed for campaign group %q (%q) (the group was created or already existed): %w — on retry the group is found idempotently by name; inspect the returned partial result", groupID, groupName, err)
 	}
@@ -1462,6 +1667,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		destURL := BuildUTMURL(reg, in.HSToken, campaignName, i+1)
 		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, variant.ImageURN)
 		if err != nil {
+			// Dark posts have NO name-based reconciliation lookup and LinkedIn exposes
+			// no upsert, so an AMBIGUOUS failure (transport/timeout after send, a 5xx,
+			// or an undecodable 2xx) is especially dangerous: the post MAY already have
+			// been created, and a blind retry would orphan a duplicate that can't be
+			// found and cleaned up by name. Report an UNCONFIRMED outcome (verify before
+			// recreating) rather than a definite failure. A definite (4xx / pre-send)
+			// error means nothing was created. Mirrors the Meta client's ambiguous ad/
+			// creative handling.
+			if createOutcomeAmbiguous(err) {
+				steps = append(steps, fmt.Sprintf("Dark post variant-%d outcome UNCONFIRMED (timeout or server error); it may have been created — verify before recreating (a dark post has no idempotency lookup)", i+1))
+				return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
+					fmt.Errorf("variant-%d dark post UNCONFIRMED after %d of %d variant(s) created: %w — group %q and campaign %q already exist; the dark post MAY have been created and has no idempotency lookup, so do NOT blindly retry (would duplicate it); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID)
+			}
 			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
 				fmt.Errorf("variant-%d dark post failed after %d of %d variant(s) created: %w — group %q and campaign %q already exist; do NOT blindly retry (would duplicate the %d created creative(s)); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, creativeCount)
 		}
@@ -1476,6 +1694,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// dark post, which has no name-based idempotency lookup. Surfacing the
 			// shareURN keeps recovery state clear even for the first variant, where
 			// creativeCount is still 0 yet a dark post already exists upstream.
+			//
+			// Creatives ALSO have no name-based reconciliation lookup, so an AMBIGUOUS
+			// failure (transport/timeout after send, a 5xx, or an undecodable 2xx) means
+			// the creative MAY already exist: report an UNCONFIRMED outcome rather than a
+			// definite failure, since a blind retry would orphan a duplicate. A definite
+			// (4xx / pre-send) error means the creative was not created. Mirrors the Meta
+			// client's ambiguous ad/creative handling.
+			if createOutcomeAmbiguous(err) {
+				steps = append(steps, fmt.Sprintf("Creative variant-%d outcome UNCONFIRMED (timeout or server error); it may have been created — verify before recreating (orphaned dark post: %s)", i+1, shareURN))
+				return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
+					fmt.Errorf("variant-%d creative UNCONFIRMED after %d of %d variant(s) created: %w — group %q and campaign %q already exist AND this variant's dark post %q was already created; the creative MAY have been created and has no idempotency lookup, so do NOT blindly retry (would duplicate the creative and the dark post %q); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, shareURN, shareURN)
+			}
 			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
 				fmt.Errorf("variant-%d creative failed after %d of %d variant(s) created: %w — group %q and campaign %q already exist AND this variant's dark post %q was already created; do NOT blindly retry (would duplicate the %d created creative(s) and the dark post %q, which has no idempotency lookup); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, shareURN, creativeCount, shareURN)
 		}
