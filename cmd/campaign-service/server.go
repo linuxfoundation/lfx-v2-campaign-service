@@ -9,12 +9,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"sync"
 
+	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
 	svcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/server"
+	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/container"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -34,15 +37,34 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
+	// NOTE: debug.LogPayloads() is intentionally NOT applied. Every authenticated
+	// payload carries a BearerToken (a valid JWT), and the connection service's
+	// create/set-credential payloads carry plaintext provider credentials, so
+	// enabling it would leak those secrets into logs. debug.HTTP() IS still
+	// applied below, but in clue v1.2.1 it does not log headers or statuses — it
+	// only propagates the runtime /debug toggle into each request's context (so
+	// debug-level logs elsewhere activate); it decodes no payload.
 	endpoints := svc.NewEndpoints(cont.Service)
-	if cfg.Debug {
-		endpoints.Use(debug.LogPayloads())
-	}
 
-	return handleHTTPServer(ctx, cfg, endpoints, cont)
+	// The container always initializes Connections (NewContainer wires it in both
+	// the DB and no-DB paths), so construct the endpoints unconditionally. Fail
+	// loudly if it's unexpectedly nil rather than silently skipping the mount —
+	// a mis-wired container should crash at startup, not serve 404s on the
+	// connection routes.
+	if cont.Connections == nil {
+		return fmt.Errorf("container misconfigured: Connections service is nil")
+	}
+	connEndpoints := connsvc.NewEndpoints(cont.Connections)
+
+	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, cont)
 }
 
-func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, cont *container.Container) error {
+// buildMux constructs the Goa muxer and mounts BOTH the campaign service and the
+// connection service onto it. It is a seam so tests can assert that the
+// connection routes are actually reachable (the bug this fixes — routes that
+// compile but are never mounted return 404) without standing up a full server.
+// It returns an error only for a programmer-level mis-wiring (nil connEndpoints).
+func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints) (goahttp.Muxer, error) {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
@@ -69,6 +91,27 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 		koHTTPDir,
 	)
 	svcsvr.Mount(mux, server)
+
+	// Mount the connection routes unconditionally. connEndpoints is always
+	// non-nil (StartServer constructs it and fails loudly if the service is
+	// mis-wired), and the connection service is wired even without a database
+	// (with a nil repo) so its routes return the typed 503 rather than a bare
+	// 404. A nil here would be a programmer error, so fail loudly rather than
+	// silently skipping the mount and serving 404s.
+	if connEndpoints == nil {
+		return nil, fmt.Errorf("buildMux: connEndpoints is nil (connection routes would be unmounted)")
+	}
+	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	connsvcsvr.Mount(mux, connServer)
+
+	return mux, nil
+}
+
+func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, cont *container.Container) error {
+	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints)
+	if err != nil {
+		return err
+	}
 
 	var handler http.Handler = mux
 	handler = middleware.RequestIDMiddleware()(handler)
