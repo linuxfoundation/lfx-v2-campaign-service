@@ -47,6 +47,17 @@ func TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), longProject); err == nil || !strings.Contains(err.Error(), "project is too long") {
 		t.Errorf("over-long Project: err = %v, want 'project is too long'", err)
 	}
+
+	// Per-field caps PASS (EventName=120, Project=40) but the COMPOSED campaign name
+	// (Events | <120> | <region> | <objective> | Intent | Social | <40> | ToFU)
+	// exceeds redditMaxNameRunes (200) once the template + region + objective
+	// segments are added — this must be rejected before any POST.
+	longComposed := validRedditInput()
+	longComposed.EventName = strings.Repeat("E", maxEventNameRunes)
+	longComposed.Project = strings.Repeat("p", maxProjectRunes)
+	if _, err := c.CreateCampaign(context.Background(), longComposed); err == nil || !strings.Contains(err.Error(), "composed campaign name is too long") {
+		t.Errorf("over-long composed campaign name: err = %v, want 'composed campaign name is too long'", err)
+	}
 }
 
 // TestCreateCampaign_OverlongAdGroupNameFailsBeforeAnyPOST verifies that a geo
@@ -2509,6 +2520,78 @@ func TestRefreshToken_FollowerUsesLeaderResult(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
 		t.Errorf("token endpoint hit %d times, want 1 (follower must reuse the leader's refresh)", got)
+	}
+}
+
+// TestRefreshToken_LeaderCancelSurvives directly asserts the context.WithoutCancel
+// behavior: if the LEADER's caller context is cancelled while its fetch is in
+// flight, the DETACHED fetch still completes (it doesn't inherit the caller's
+// cancellation). The cancelled leader itself returns promptly with its ctx error
+// (by design — a cancelled caller shouldn't block), but the fetch survives — proven
+// by a follower on the same refresh still receiving the token and the endpoint
+// being hit exactly once.
+func TestRefreshToken_LeaderCancelSurvives(t *testing.T) {
+	var hits int32
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	var enterOnce sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		enterOnce.Do(func() { close(entered) })
+		<-release // hold the fetch in flight until AFTER the leader's ctx is cancelled
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "leader-tok", "expires_in": 3600})
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds, testAccount, WithTokenURL(srv.URL))
+
+	// Leader launches the refresh with a CANCELLABLE caller context.
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderTok := make(chan string, 1)
+	leaderErr := make(chan error, 1)
+	go func() {
+		tok, err := c.refreshToken(leaderCtx)
+		leaderTok <- tok
+		leaderErr <- err
+	}()
+
+	// Once the fetch is provably in flight, cancel the leader's caller context.
+	// Because the fetch runs on context.WithoutCancel(ctx), it must NOT be torn down.
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for the leader to enter the fetch")
+	}
+	cancelLeader()
+
+	// A follower joins the same in-flight refresh with a live context.
+	followerTok := make(chan string, 1)
+	go func() {
+		tok, _ := c.refreshToken(context.Background())
+		followerTok <- tok
+	}()
+
+	// Let the (detached) fetch complete now that the leader's ctx is cancelled.
+	close(release)
+
+	// The cancelled leader returns its ctx error promptly (by design) — drain it.
+	<-leaderTok
+	if err := <-leaderErr; err == nil {
+		t.Error("cancelled leader should return its context error promptly")
+	}
+	// The KEY assertion: the follower (live ctx) still gets the token, proving the
+	// leader's cancellation did NOT tear down the detached fetch.
+	select {
+	case tok := <-followerTok:
+		if tok != "leader-tok" {
+			t.Errorf("follower token = %q, want leader-tok (detached fetch must have completed)", tok)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("follower did not receive the token — the detached fetch was wrongly torn down by the leader's cancel")
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("token endpoint hit %d times, want 1", got)
 	}
 }
 
