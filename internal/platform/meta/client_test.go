@@ -866,49 +866,71 @@ func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 	}
 }
 
-// TestCreateCampaignExplicitOffsetBypassesPreflightValue verifies that an explicit
-// positive AccountConfig.CurrencyOffset takes precedence over the offset that would
-// be DERIVED from the preflight currency code (the explicit override wins). The
-// preflight reports USD (which would derive offset 100) but the explicit offset is
-// 1, so a ¥5000 budget must stay 5000 minor units.
-func TestCreateCampaignExplicitOffsetBypassesPreflightValue(t *testing.T) {
-	adsetCap := newBodyCapture()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet:
-			// Preflight reports USD (would derive 100), but the explicit override (1)
-			// must win.
-			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
-		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
-		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
-		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
-			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
-		case strings.HasSuffix(r.URL.Path, "/ads"):
-			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-
-	c := NewClient(Credentials{AccessToken: "t"},
-		AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 1},
-		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
-	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+// TestCreateCampaignExplicitOffsetMustMatchPreflightCurrency verifies the
+// override-consistency rule: when the preflight returns a recognized currency, an
+// explicit AccountConfig.CurrencyOffset that CONFLICTS with that currency's true
+// offset is REJECTED before any mutation (a stale override would mis-scale the
+// budget), while an override that AGREES with the preflight currency is accepted.
+func TestCreateCampaignExplicitOffsetMustMatchPreflightCurrency(t *testing.T) {
+	newSrv := func(currency string, adsetCap *bodyCapture, postCount *int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.Method == http.MethodGet:
+				_, _ = io.WriteString(w, `{"name":"x","currency":"`+currency+`"}`)
+			case strings.HasSuffix(r.URL.Path, "/campaigns"):
+				atomic.AddInt32(postCount, 1)
+				_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			case strings.HasSuffix(r.URL.Path, "/adsets"):
+				atomic.AddInt32(postCount, 1)
+				adsetCap.set(decodeBody(t, r))
+				_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+				_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+			case strings.HasSuffix(r.URL.Path, "/ads"):
+				_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+			default:
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+	}
+	input := CampaignInput{
 		EventName: "E", Project: "tlf", Objective: "traffic",
 		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
 		Budget: 5000, StartDate: "2026-08-01", EndDate: "2026-08-31",
 		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
-	}); err != nil {
-		t.Fatalf("CreateCampaign error: %v", err)
 	}
-	if got := adsetCap.get()["daily_budget"]; got != float64(5000) {
-		t.Errorf("daily_budget = %v, want 5000 (explicit offset 1 overrides preflight 100)", got)
+
+	// Conflicting override (1) vs a USD account (true offset 100): rejected before
+	// any POST.
+	var postCount int32
+	srv := newSrv("USD", newBodyCapture(), &postCount)
+	c := NewClient(Credentials{AccessToken: "t"},
+		AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 1},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), input)
+	if err == nil || !strings.Contains(err.Error(), "conflicts with the account's currency") {
+		t.Errorf("conflicting override: err = %v, want a currency-conflict rejection", err)
+	}
+	if n := atomic.LoadInt32(&postCount); n != 0 {
+		t.Errorf("conflicting override made %d POSTs, want 0 (reject before mutation)", n)
+	}
+	srv.Close()
+
+	// Agreeing override (100) vs a USD account: accepted, budget scaled ×100.
+	adsetCap := newBodyCapture()
+	var postCount2 int32
+	srv2 := newSrv("USD", adsetCap, &postCount2)
+	defer srv2.Close()
+	c2 := NewClient(Credentials{AccessToken: "t"},
+		AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL(srv2.URL), WithClock(fixedMetaClock()))
+	if _, err := c2.CreateCampaign(context.Background(), input); err != nil {
+		t.Fatalf("agreeing override: CreateCampaign error: %v", err)
+	}
+	if got := adsetCap.get()["daily_budget"]; got != float64(500000) {
+		t.Errorf("daily_budget = %v, want 500000 (5000 × offset 100)", got)
 	}
 }
 
@@ -2318,7 +2340,10 @@ func TestCreateCampaignRejectsOffsetOverflowBeforeAnyPost(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		// Preflight returns an UNRECOGNIZED currency so the override-consistency
+		// check is skipped and the explicit (absurd) offset is trusted — letting the
+		// overflow guard be the thing under test.
+		_, _ = io.WriteString(w, `{"name":"x","currency":"ZZZ"}`)
 	}))
 	defer srv.Close()
 
@@ -2599,8 +2624,12 @@ func TestCurrencyOffsetForAuthoritativeMap(t *testing.T) {
 	known := map[string]int64{
 		"USD": 100, "usd": 100, " EUR ": 100, "GBP": 100, "BRL": 100, "AED": 100,
 		// A sampling of the broader Meta-supported two-decimal set.
-		"ARS": 100, "NGN": 100, "TWD": 100, "PKR": 100, "COP": 100, "EGP": 100,
+		"ARS": 100, "NGN": 100, "PKR": 100, "EGP": 100,
+		// Zero-decimal (offset 1) per Meta's Marketing API currency table —
+		// including IDR/HUF/COP/CRC/TWD, which have minor units in general ISO
+		// usage but are billed in whole units by Meta.
 		"JPY": 1, "KRW": 1, "CLP": 1, "VND": 1, "XOF": 1,
+		"IDR": 1, "HUF": 1, "COP": 1, "CRC": 1, "TWD": 1,
 	}
 	for code, want := range known {
 		got, ok := currencyOffsetFor(code)

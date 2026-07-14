@@ -433,6 +433,14 @@ var currencyMinorUnitOffset = map[string]int64{
 	"XAF": 1, // Central African CFA Franc
 	"XOF": 1, // West African CFA Franc
 	"XPF": 1, // CFP Franc
+	// These are ALSO offset-1 for the Meta Marketing API despite having minor
+	// units in general ISO usage — Meta bills ad amounts in whole units for them.
+	// Verified against developers.facebook.com/docs/marketing-api/currencies.
+	"IDR": 1, // Indonesian Rupiah
+	"HUF": 1, // Hungarian Forint
+	"COP": 1, // Colombian Peso
+	"CRC": 1, // Costa Rican Colon
+	"TWD": 1, // New Taiwan Dollar
 
 	// Two-decimal currencies (offset 100): the common ISO 4217 codes Meta
 	// supports as ad-account currencies. A code outside this set is rejected, not
@@ -460,17 +468,13 @@ var currencyMinorUnitOffset = map[string]int64{
 	"ILS": 100, // Israeli New Shekel
 	"PHP": 100, // Philippine Peso
 	"MYR": 100, // Malaysian Ringgit
-	"IDR": 100, // Indonesian Rupiah
 	"AED": 100, // UAE Dirham
 	"SAR": 100, // Saudi Riyal
 	"CZK": 100, // Czech Koruna
 	"RON": 100, // Romanian Leu
-	"HUF": 100, // Hungarian Forint
 	"ARS": 100, // Argentine Peso
 	"BDT": 100, // Bangladeshi Taka
 	"BOB": 100, // Bolivian Boliviano
-	"COP": 100, // Colombian Peso
-	"CRC": 100, // Costa Rican Colon
 	"DZD": 100, // Algerian Dinar
 	"EGP": 100, // Egyptian Pound
 	"GTQ": 100, // Guatemalan Quetzal
@@ -482,7 +486,6 @@ var currencyMinorUnitOffset = map[string]int64{
 	"PEN": 100, // Peruvian Sol
 	"PKR": 100, // Pakistani Rupee
 	"QAR": 100, // Qatari Riyal
-	"TWD": 100, // New Taiwan Dollar
 	"UYU": 100, // Uruguayan Peso
 }
 
@@ -1401,6 +1404,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, fmt.Errorf("meta: account preflight returned an unsupported or missing currency code (got %q); it is not in the supported-currency map, so set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP) rather than assuming a default that could encode a zero-decimal budget 100x too high", acct.Currency)
 		}
 		offset = derived
+	} else if preflightErr == nil {
+		// An explicit override is set AND the preflight returned a currency. If that
+		// currency is recognized and its true offset DIFFERS from the override,
+		// reject rather than trust the override: a stale override (e.g. a persisted
+		// CurrencyOffset:100 on an account whose currency is now JPY, true offset 1)
+		// would silently encode the budget 100× wrong. The account's actual currency
+		// is authoritative; only rely on the override when the preflight can't
+		// identify the currency (unrecognized/absent code -> derived !ok).
+		if derived, ok := currencyOffsetFor(acct.Currency); ok && derived != offset {
+			return nil, fmt.Errorf("meta: AccountConfig.CurrencyOffset (%d) conflicts with the account's currency %q (correct offset %d) reported by the preflight; the account currency is authoritative — remove or correct the explicit offset to avoid encoding the budget with the wrong minor-unit scale", offset, acct.Currency, derived)
+		}
 	}
 
 	// Convert whole account-currency units to Meta minor units and reject budgets
