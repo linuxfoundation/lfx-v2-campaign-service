@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
@@ -310,7 +311,9 @@ func (r *versionGuardedJobRepo) CreateJobForApprovedBrief(_ context.Context, bri
 		}
 	}
 	if !stillApproved {
-		return nil, domain.ErrConflict
+		// Mirror the real repo: the approve→dispatch guard fires with the
+		// state-conflict sentinel (not the generic uniqueness ErrConflict).
+		return nil, domain.ErrStaleApproval
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -350,8 +353,18 @@ func TestBriefService_CreateCampaigns_TOCTOURaceFailsClosed(t *testing.T) {
 		ProjectID: "cncf", BriefID: "b1",
 		Input: &briefs.CampaignCreateInput{Platforms: []string{"google-ads"}},
 	})
-	if _, ok := err.(*briefs.ConflictError); !ok {
+	ce, ok := err.(*briefs.ConflictError)
+	if !ok {
 		t.Fatalf("expected *briefs.ConflictError (concurrent replace closed the TOCTOU race), got %T (%v)", err, err)
+	}
+	// The message must describe the version/approval conflict accurately (refresh
+	// and re-approve), NOT the misleading uniqueness "already exists" — a client
+	// needs to know to re-approve and retry.
+	if !strings.Contains(ce.Message, "no longer approved") || !strings.Contains(ce.Message, "re-approve") {
+		t.Errorf("conflict message = %q, want it to describe the stale-approval remedy (re-approve and retry)", ce.Message)
+	}
+	if strings.Contains(ce.Message, "already exists") {
+		t.Errorf("conflict message = %q, must not misdescribe a version conflict as a uniqueness one", ce.Message)
 	}
 	if len(jobs.jobs) != 0 {
 		t.Errorf("a job was created despite the brief no longer being approved: %d jobs", len(jobs.jobs))
@@ -434,5 +447,76 @@ func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	}
 	if camps.got.CampaignName != "new" || camps.got.Status != "paused" {
 		t.Errorf("name/status not applied: %q/%q", camps.got.CampaignName, camps.got.Status)
+	}
+}
+
+// getJobTestService builds a BriefService whose job repo returns the given job
+// verbatim from GetJob, for exercising the poll-response decoding path.
+func getJobTestService(job *model.CampaignJob) *BriefService {
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	jobs.jobs[job.ID] = job
+	orch := NewOrchestrator(camps, jobs, nil)
+	return NewBriefService(repo, camps, jobs, orch)
+}
+
+// GetJob must NOT silently discard a persisted result that won't decode: a
+// malformed result on a terminal succeeded/partial job would otherwise return a
+// 200 poll response with NO per-platform results, masking corruption as success.
+// It must surface a 500 InternalServerError instead.
+func TestBriefService_GetJob_MalformedResultIsInternalError(t *testing.T) {
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: []byte(`{"not":"an array"}`), // valid JSON, wrong shape → unmarshal error
+	})
+	_, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if _, ok := err.(*briefs.InternalServerError); !ok {
+		t.Fatalf("expected *briefs.InternalServerError for a malformed job result, got %T (%v)", err, err)
+	}
+}
+
+// A terminal succeeded/partial job is an aggregate over per-platform outcomes, so
+// an empty/absent result on that status means the row is corrupt. GetJob must
+// surface a 500 rather than a 200 with no results (which would misrepresent
+// corruption as a successful dispatch).
+func TestBriefService_GetJob_TerminalWithoutResultsIsInternalError(t *testing.T) {
+	for _, st := range []model.JobStatus{model.JobSucceeded, model.JobPartial} {
+		s := getJobTestService(&model.CampaignJob{ID: "j1", BriefID: "b1", Status: st, Result: nil})
+		_, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+		if _, ok := err.(*briefs.InternalServerError); !ok {
+			t.Fatalf("status %s: expected *briefs.InternalServerError for a terminal job with no results, got %T (%v)", st, err, err)
+		}
+	}
+}
+
+// A valid persisted result decodes into typed per-platform results, and a failed
+// job carrying only an error (no results — a legitimate finalize-marshal-failure
+// outcome) is NOT treated as corruption: it returns 200 with the error surfaced.
+func TestBriefService_GetJob_ValidResultsAndFailedErrorOnly(t *testing.T) {
+	// Valid result on a succeeded job round-trips into typed results.
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: []byte(`[{"platform":"google-ads","ok":true,"campaign_id":"pc-1"}]`),
+	})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob (valid result): %v", err)
+	}
+	if len(resp.Result) != 1 || resp.Result[0].Platform != "google-ads" || !resp.Result[0].OK {
+		t.Errorf("decoded result = %+v, want one ok google-ads result", resp.Result)
+	}
+
+	// A failed job with only an error message (no results) is a legitimate outcome
+	// (e.g. the finalize marshal failed), not corruption → 200 with the error.
+	s2 := getJobTestService(&model.CampaignJob{
+		ID: "j2", BriefID: "b1", Status: model.JobFailed, Result: nil, Error: "failed to serialize job result",
+	})
+	resp2, err := s2.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j2"})
+	if err != nil {
+		t.Fatalf("GetJob (failed, error-only): %v", err)
+	}
+	if resp2.Error == nil || *resp2.Error != "failed to serialize job result" {
+		t.Errorf("failed job error = %v, want the surfaced error message", resp2.Error)
 	}
 }

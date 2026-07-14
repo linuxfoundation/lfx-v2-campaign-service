@@ -87,7 +87,7 @@ type JobRepository interface {
 	// a concurrent ReplaceBrief (which resets the brief to draft and bumps version)
 	// or ArchiveBrief committing between the caller's approval read and job creation
 	// bumps the brief's version, so the guarded insert affects zero rows and returns
-	// ErrConflict instead of launching paid campaigns from a stale "approved"
+	// ErrStaleApproval instead of launching paid campaigns from a stale "approved"
 	// snapshot. It never blocks on a row lock (consistent with the lock-free claim
 	// mechanism); the version guard alone arbitrates.
 	CreateJobForApprovedBrief(ctx context.Context, briefID string, expectedVersion int64) (*model.CampaignJob, error)

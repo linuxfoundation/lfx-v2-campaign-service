@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	briefsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
@@ -125,7 +126,14 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 		return err
 	}
 
+	// Track in-flight handlers so shutdown can wait (bounded) for stragglers to
+	// return before the DB pool closes. http.Server.Close does not wait for
+	// handler goroutines, so without this a straggler could touch the pool as it
+	// closes; the tracker is waited on between the forced Close and cont.Close.
+	inflight := middleware.NewInflightTracker()
+
 	var handler http.Handler = mux
+	handler = inflight.Middleware()(handler)
 	handler = middleware.RequestIDMiddleware()(handler)
 	if cfg.Debug {
 		handler = debug.HTTP()(handler)
@@ -147,7 +155,24 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 		IdleTimeout:       constants.DefaultIdleTimeout,
 	}
 
-	return runServerWithContext(ctx, srv, cont)
+	return runServerWithContext(ctx, srv, cont, inflight)
+}
+
+// inflightWaiter is the subset of middleware.InflightTracker the shutdown path
+// needs: wait (bounded) for in-flight handlers to return.
+type inflightWaiter interface {
+	Wait(timeout time.Duration) bool
+}
+
+// httpDeadline returns the HTTP-shutdown context's deadline, or now if it has
+// none — so the caller's remaining-budget computation yields a non-positive
+// duration (an immediate, non-blocking inflight check) rather than an
+// unbounded wait when no deadline is set.
+func httpDeadline(httpCtx context.Context) time.Time {
+	if d, ok := httpCtx.Deadline(); ok {
+		return d
+	}
+	return time.Now()
 }
 
 func errorHandler(logCtx context.Context) func(context.Context, http.ResponseWriter, error) {
@@ -156,7 +181,7 @@ func errorHandler(logCtx context.Context) func(context.Context, http.ResponseWri
 	}
 }
 
-func runServerWithContext(ctx context.Context, srv *http.Server, cont *container.Container) error {
+func runServerWithContext(ctx context.Context, srv *http.Server, cont *container.Container, inflight inflightWaiter) error {
 	serverErr := make(chan error, 1)
 
 	go func() {
@@ -197,10 +222,16 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 	//      terminates all connections so no handler is still using the pool when it
 	//      closes. Force-close only after a timeout — on a clean Shutdown there are
 	//      no lingering connections and Close() is a harmless no-op.
-	//   3. THEN cont.Close(closeCtx) — drain in-flight dispatch, then close the pool.
-	// Fully coordinating handler completion (waiting out each straggler) needs
-	// cross-request tracking beyond this PR — tracked in LFXV2-2665; the srv.Close()
-	// hardening here removes the pool-use-after-close hazard in-scope.
+	//   3. wait (bounded) for any in-flight handler goroutine to actually RETURN.
+	//      srv.Close() terminates connections but does NOT wait for the handler
+	//      goroutines themselves, so a straggler could still be executing (and
+	//      touching the pool) after Close returns. The inflight tracker lets us
+	//      wait for those goroutines to finish before closing the pool; the wait
+	//      is bounded by whatever remains of the HTTP-shutdown budget so a hung
+	//      handler can never wedge shutdown past its window.
+	//   4. THEN cont.Close(closeCtx) — drain in-flight dispatch, then close the pool.
+	// A residual remains only if a handler outlasts the bounded wait; that window
+	// is tracked under LFXV2-2665.
 	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), container.HTTPShutdownTimeout)
 	defer cancelHTTP()
 	if err := srv.Shutdown(httpCtx); err != nil {
@@ -209,6 +240,16 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 		// failed). Force-close so no straggler can touch the pool as it closes.
 		if cerr := srv.Close(); cerr != nil {
 			slog.ErrorContext(ctx, "HTTP server force-close error", log.ErrKey, cerr)
+		}
+	}
+	// Wait for in-flight handler goroutines to return before closing the pool. On a
+	// clean Shutdown they are already drained and this returns immediately; on the
+	// force-close path it bounds the wait by the HTTP budget still remaining so a
+	// straggler is awaited but can never push total shutdown past its window.
+	if inflight != nil {
+		remaining := time.Until(httpDeadline(httpCtx))
+		if !inflight.Wait(remaining) {
+			slog.ErrorContext(ctx, "in-flight HTTP handlers did not return before pool close; a straggler may touch the pool (LFXV2-2665)")
 		}
 	}
 	closeCtx, cancelClose := context.WithTimeout(context.Background(), container.ContainerCloseTimeout)

@@ -189,13 +189,20 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 // would have zero budget and the pool could close while a just-cancelled
 // dispatch is still finalizing job/campaign state.
 func (c *Container) Close(ctx context.Context) error {
+	// Capture the orchestrator shutdown error but do NOT early-return on it: the
+	// pool must still be closed even if the drain timed out with dispatches still
+	// running. Returning the error (rather than swallowing it) makes a shutdown
+	// failure — dispatches still running when the pool was closed — observable to
+	// the caller's "container close error" branch and its logs.
+	var shutdownErr error
 	if c.orch != nil {
 		if err := c.orch.Shutdown(ctx, dispatchDrainTimeout); err != nil {
 			slog.Warn("timed out draining in-flight dispatch on shutdown", "error", err)
+			shutdownErr = fmt.Errorf("drain in-flight dispatch: %w", err)
 		}
 	}
 	if c.pool != nil {
 		c.pool.Close()
 	}
-	return nil
+	return shutdownErr
 }

@@ -19,6 +19,14 @@ var (
 	// 409.
 	ErrConflict = errors.New("resource already exists")
 
+	// ErrStaleApproval indicates the approve→dispatch guard fired: the brief was
+	// no longer approved at the expected version when the job was created (a
+	// concurrent replace/archive committed in the window, or it lost approval).
+	// It is distinct from ErrConflict (a uniqueness violation) because the client
+	// remedy differs — refresh and re-approve, then retry — even though both map
+	// to 409. Maps to 409.
+	ErrStaleApproval = errors.New("brief is no longer approved at the expected version")
+
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")

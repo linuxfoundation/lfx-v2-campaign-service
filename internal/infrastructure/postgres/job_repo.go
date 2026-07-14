@@ -74,9 +74,10 @@ func (r *JobRepo) CreateJobForApprovedBrief(ctx context.Context, briefID string,
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No row inserted: the brief is no longer approved at expectedVersion (a
 			// concurrent replace/archive committed in the window, or it was never
-			// approved). Treat as a conflict with the concurrent mutation so the
-			// request fails rather than dispatching from a stale snapshot.
-			return nil, domain.ErrConflict
+			// approved). Surface the state-conflict sentinel (not the generic
+			// uniqueness ErrConflict) so the service can tell the client to refresh
+			// and re-approve rather than reporting "already exists".
+			return nil, domain.ErrStaleApproval
 		}
 		return nil, fmt.Errorf("create job for approved brief: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -257,21 +258,36 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			CampaignID string `json:"campaign_id"`
 			Error      string `json:"error"`
 		}
-		if json.Unmarshal(j.Result, &stored) == nil {
-			resp.Result = make([]*briefs.PlatformResult, 0, len(stored))
-			for _, r := range stored {
-				pr := &briefs.PlatformResult{Platform: r.Platform, OK: r.OK}
-				if r.CampaignID != "" {
-					id := r.CampaignID
-					pr.CampaignID = &id
-				}
-				if r.Error != "" {
-					e := r.Error
-					pr.Error = &e
-				}
-				resp.Result = append(resp.Result, pr)
-			}
+		if err := json.Unmarshal(j.Result, &stored); err != nil {
+			// A persisted result that won't decode is corruption, not a valid empty
+			// poll response. Silently dropping it would hand back a terminal
+			// succeeded/partial job with NO per-platform results — an inaccurate
+			// response that masks the corruption as success. Surface it as a 500.
+			slog.ErrorContext(ctx, "failed to decode persisted job result", "job_id", j.ID, "error", err)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "an internal server error occurred"}
 		}
+		resp.Result = make([]*briefs.PlatformResult, 0, len(stored))
+		for _, r := range stored {
+			pr := &briefs.PlatformResult{Platform: r.Platform, OK: r.OK}
+			if r.CampaignID != "" {
+				id := r.CampaignID
+				pr.CampaignID = &id
+			}
+			if r.Error != "" {
+				e := r.Error
+				pr.Error = &e
+			}
+			resp.Result = append(resp.Result, pr)
+		}
+	} else if j.Status == model.JobSucceeded || j.Status == model.JobPartial {
+		// A succeeded/partial job is an AGGREGATE over per-platform outcomes, so it
+		// must carry those results. An empty/absent result on such a terminal status
+		// means the stored row is corrupt (results lost); returning a 200 with no
+		// results would misrepresent corruption as a successful dispatch. A 'failed'
+		// job legitimately can carry only an error (e.g. a result-marshal failure),
+		// so it is not held to this invariant.
+		slog.ErrorContext(ctx, "terminal job has no per-platform results", "job_id", j.ID, "status", j.Status)
+		return nil, &briefs.InternalServerError{Code: "500", Message: "an internal server error occurred"}
 	}
 	if j.Error != "" {
 		errMsg := j.Error // copy: don't hand out a pointer aliasing the source struct field
@@ -356,6 +372,12 @@ func mapBriefErr(err error) error {
 		return nil
 	case errors.Is(err, domain.ErrNotFound):
 		return &briefs.NotFoundError{Code: "404", Message: "the resource was not found"}
+	case errors.Is(err, domain.ErrStaleApproval):
+		// The approve→dispatch guard fired: the brief lost approval (or its version
+		// changed) between the approval read and the guarded job insert. This is a
+		// state conflict, not a uniqueness one — tell the client to refresh and
+		// re-approve, which "already exists" would misdescribe.
+		return &briefs.ConflictError{Code: "409", Message: "brief is no longer approved at the expected version; refresh and re-approve, then retry"}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):
