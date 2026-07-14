@@ -475,10 +475,15 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 
 	body, readErr := readResponseBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Do NOT echo the OAuth response body: this request carried the client
+		// id/secret and refresh token, and a token/proxy diagnostic body is
+		// untrusted and may reflect credential material. Since CreateCampaign can
+		// persist this error into Steps, expose only the status (and a body-read
+		// failure), never the body itself.
 		if readErr != nil {
-			return "", fmt.Errorf("reddit token refresh failed: %d: %s (body read error: %v)", resp.StatusCode, truncate(string(body), redditErrBodyMaxRunes), readErr)
+			return "", fmt.Errorf("reddit token refresh failed: HTTP %d (body read error: %v)", resp.StatusCode, readErr)
 		}
-		return "", fmt.Errorf("reddit token refresh failed: %d: %s", resp.StatusCode, truncate(string(body), redditErrBodyMaxRunes))
+		return "", fmt.Errorf("reddit token refresh failed: HTTP %d", resp.StatusCode)
 	}
 	if readErr != nil {
 		return "", fmt.Errorf("reddit token refresh: %w", readErr)
@@ -1024,7 +1029,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	campaignID := decodeID(campaignResp)
 	if campaignID == "" {
-		return nil, fmt.Errorf("reddit campaign creation succeeded but returned no campaign ID")
+		// A 2xx with no data.id is a malformed success: Reddit may have created a
+		// PAUSED campaign whose id we couldn't read. Return a partial result carrying
+		// the campaign NAME (and steps) alongside the error, so a caller can find and
+		// reconcile the orphan by name instead of discarding everything (mirrors the
+		// ad-group/ad malformed-success handling). CampaignID stays empty.
+		steps = append(steps, "Campaign creation returned no campaign ID (malformed response); a PAUSED campaign may exist -- verify by name in Reddit Ads Manager")
+		return &CampaignResult{
+			Platform:     "reddit-ads",
+			CampaignName: campaignName,
+			RedditURL:    redditAdsManagerURL,
+			Steps:        steps,
+		}, fmt.Errorf("reddit campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f lifetime)", campaignID, in.BudgetUSD))
 
@@ -1181,7 +1197,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				pr.AdGroupID = adGroupID
 				return pr, fmt.Errorf("ad creation aborted: %w", ctxErr)
 			}
-			adWarning = "ad creation failed; the campaign and ad group were created (PAUSED) but the promoted-post ad was not — add it manually in Reddit Ads Manager"
+			// A per-request failure here (e.g. a transport timeout or dropped
+			// response) does NOT prove Reddit failed to create the ad — the request
+			// may have reached Reddit and succeeded. Report the outcome as UNCONFIRMED
+			// and require verification before manual creation, so an operator doesn't
+			// blindly add a duplicate promoted-post ad.
+			adWarning = "promoted-post ad creation is UNCONFIRMED (the campaign and ad group were created, PAUSED); the ad request failed or was not acknowledged — verify in Reddit Ads Manager whether the ad exists BEFORE creating it manually to avoid a duplicate"
 			// Report ONLY the HTTP status in the step, never err.Error(): request()'s
 			// apiError carries the upstream response body, and a reflective Reddit
 			// validation error can echo the full click_url (which holds the caller's
@@ -1191,9 +1212,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// has no logger, so make no claim that details are logged elsewhere.
 			var adAPIErr *apiError
 			if errors.As(err, &adAPIErr) {
-				steps = append(steps, fmt.Sprintf("Ad creation failed (HTTP %d) -- add ad manually in Reddit Ads Manager", adAPIErr.StatusCode))
+				steps = append(steps, fmt.Sprintf("Ad creation UNCONFIRMED (HTTP %d) -- verify in Reddit Ads Manager before adding manually", adAPIErr.StatusCode))
 			} else {
-				steps = append(steps, "Ad creation failed -- add ad manually in Reddit Ads Manager")
+				steps = append(steps, "Ad creation UNCONFIRMED (request failed/unacknowledged) -- verify in Reddit Ads Manager before adding manually")
 			}
 		} else {
 			adID = decodeID(adResp)

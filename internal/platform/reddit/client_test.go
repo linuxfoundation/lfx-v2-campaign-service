@@ -695,6 +695,57 @@ func TestCreateCampaign_AdGroupFailureSurfacesCampaignID(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_CampaignWithoutIDReturnsPartial verifies that a campaign
+// create returning HTTP 2xx with no data.id yields a non-nil partial result
+// carrying the campaign NAME (so an orphaned PAUSED campaign is reconcilable by
+// name) alongside the error — not (nil, err) which would discard everything.
+func TestCreateCampaign_CampaignWithoutIDReturnsPartial(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/campaigns") && r.Method == http.MethodPost:
+			// 2xx but no data.id — malformed success.
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "tlf",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a campaign create with no id")
+	}
+	if res == nil {
+		t.Fatal("expected a non-nil partial result carrying the campaign name, got nil")
+	}
+	if res.CampaignName == "" {
+		t.Error("partial result must carry the campaign name for reconcile-by-name")
+	}
+	if res.CampaignID != "" {
+		t.Errorf("CampaignID = %q, want empty (no id was returned)", res.CampaignID)
+	}
+}
+
 // TestCreateCampaign_NoSubredditsNoSkipWarning verifies FINDING 3: a normal
 // keyword/geo-only campaign (no subreddits supplied) must NOT be reported as
 // having skipped communities that need manual action.
@@ -1590,12 +1641,17 @@ func TestCreateCampaign_AdCreateFailureWithLiveCtxIsWarning(t *testing.T) {
 	}
 	foundWarning := false
 	for _, s := range res.Steps {
-		if strings.Contains(s, "Ad creation failed") {
+		if strings.Contains(s, "Ad creation UNCONFIRMED") {
 			foundWarning = true
 		}
 	}
 	if !foundWarning {
-		t.Errorf("expected an 'Ad creation failed' warning step, got %v", res.Steps)
+		t.Errorf("expected an 'Ad creation UNCONFIRMED' warning step, got %v", res.Steps)
+	}
+	// The failure is a transport/HTTP error, not a proof of non-creation, so the
+	// AdWarning must flag it as unconfirmed (require verification, not blind re-add).
+	if !strings.Contains(res.AdWarning, "UNCONFIRMED") {
+		t.Errorf("AdWarning should mark the ad UNCONFIRMED, got %q", res.AdWarning)
 	}
 }
 
