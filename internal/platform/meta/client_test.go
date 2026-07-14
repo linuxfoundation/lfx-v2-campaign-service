@@ -84,13 +84,20 @@ func TestBuildPromotedObject(t *testing.T) {
 		t.Errorf("expected error for conversions without pixelID")
 	}
 
-	// pixel_id objective with pixel
-	po, err = buildPromotedObject("conversions", "PAGE1", " PIX9 ")
+	// pixel_id objective with a valid (numeric) pixel — surrounding whitespace is
+	// trimmed. Meta Pixel IDs are numeric strings.
+	po, err = buildPromotedObject("conversions", "PAGE1", " 1234567890 ")
 	if err != nil {
 		t.Fatalf("conversions: %v", err)
 	}
-	if po["pixel_id"] != "PIX9" || po["custom_event_type"] != "PURCHASE" {
+	if po["pixel_id"] != "1234567890" || po["custom_event_type"] != "PURCHASE" {
 		t.Errorf("conversions promoted_object = %v", po)
+	}
+
+	// pixel_id objective with a malformed (non-numeric) pixel -> error, so a bad
+	// pixel id fails before any campaign is created rather than at ad-set time.
+	if _, err := buildPromotedObject("conversions", "PAGE1", "PIX9"); err == nil {
+		t.Errorf("expected error for conversions with a non-numeric pixelID")
 	}
 
 	// none objective
@@ -305,7 +312,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_TEST") && strings.Contains(r.URL.RawQuery, "account_status"):
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			campaignCap.set(decodeBody(t, r))
@@ -330,7 +337,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 
 	c := NewClient(
 		Credentials{AccessToken: "tok-abc"},
-		AccountConfig{AccountID: "act_TEST", PageID: "PAGE99", Label: "LF Core", CurrencyOffset: 100},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", Label: "LF Core", CurrencyOffset: 100},
 		WithBaseURL(srv.URL),
 		WithClock(fixedMetaClock()),
 	)
@@ -383,8 +390,8 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if res.Platform != "meta-ads" {
 		t.Errorf("platform = %q", res.Platform)
 	}
-	if !strings.Contains(res.MetaURL, "act=TEST") {
-		t.Errorf("meta url = %q, want act=TEST (act_ stripped)", res.MetaURL)
+	if !strings.Contains(res.MetaURL, "act=777") {
+		t.Errorf("meta url = %q, want act=777 (act_ stripped)", res.MetaURL)
 	}
 
 	// Campaign body assertions.
@@ -413,8 +420,8 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if !ok {
 		t.Fatalf("creative object_story_spec missing or wrong type: %v", creativeBody["object_story_spec"])
 	}
-	if oss["page_id"] != "PAGE99" {
-		t.Errorf("creative object_story_spec.page_id = %v, want PAGE99", oss["page_id"])
+	if oss["page_id"] != "987654321" {
+		t.Errorf("creative object_story_spec.page_id = %v, want 987654321", oss["page_id"])
 	}
 	linkData, ok := oss["link_data"].(map[string]any)
 	if !ok {
@@ -483,7 +490,7 @@ func TestCreateCampaignNormalizesEventName(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"},
-		AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+		AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "  KubeCon EU  ", Project: "tlf", Objective: "traffic",
@@ -533,7 +540,7 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_TEST") && strings.Contains(r.URL.RawQuery, "account_status"):
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
@@ -550,7 +557,7 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 
 	c := NewClient(
 		Credentials{AccessToken: "tok-abc"},
-		AccountConfig{AccountID: "act_TEST", PageID: "PAGE99", CurrencyOffset: 100},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
 		WithBaseURL(srv.URL),
 		WithClock(fixedMetaClock()),
 	)
@@ -608,7 +615,7 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 
 	c := NewClient(
 		Credentials{AccessToken: "tok"},
-		AccountConfig{AccountID: "act_TEST", PageID: "PAGE99", CurrencyOffset: 100},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
 		WithBaseURL(srv.URL),
 		WithClock(fixedMetaClock()),
 	)
@@ -690,7 +697,7 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 		defer srv.Close()
 		c := NewClient(
 			Credentials{AccessToken: "t"},
-			AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 1},
+			AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 1},
 			WithBaseURL(srv.URL), WithClock(fixedMetaClock()),
 		)
 		if _, err := c.CreateCampaign(context.Background(), input(5000)); err != nil {
@@ -709,7 +716,7 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 		defer srv.Close()
 		c := NewClient(
 			Credentials{AccessToken: "t"},
-			AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+			AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 			WithBaseURL(srv.URL), WithClock(fixedMetaClock()),
 		)
 		if _, err := c.CreateCampaign(context.Background(), input(500)); err != nil {
@@ -729,7 +736,7 @@ func TestCreateCampaignRejectsNegativeCurrencyOffset(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"},
-		AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: -1},
+		AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: -1},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
@@ -754,14 +761,14 @@ func TestCreateCampaignRejectsUnsetOffsetWhenPreflightOmitsIt(t *testing.T) {
 
 	// CurrencyOffset omitted (0); preflight body carries no currency code.
 	c := NewClient(Credentials{AccessToken: "t"},
-		AccountConfig{AccountID: "act_1", PageID: "p"},
+		AccountConfig{AccountID: "act_1", PageID: "100"},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
 		GeoTargets: []string{"US"}, Budget: 5, StartDate: "2026-08-01", EndDate: "2026-08-31",
 		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "did not return a usable currency code") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported or missing currency code") {
 		t.Fatalf("err = %v, want it to reject an undeterminable offset before mutation", err)
 	}
 }
@@ -785,7 +792,7 @@ func TestCreateCampaignRejectsUnsetOffsetWhenPreflightFails(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"},
-		AccountConfig{AccountID: "act_1", PageID: "p"},
+		AccountConfig{AccountID: "act_1", PageID: "100"},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
@@ -842,7 +849,7 @@ func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 			// CurrencyOffset intentionally omitted (0): must be derived from the
 			// preflight currency code.
 			c := NewClient(Credentials{AccessToken: "t"},
-				AccountConfig{AccountID: "act_1", PageID: "p"},
+				AccountConfig{AccountID: "act_1", PageID: "100"},
 				WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 			if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 				EventName: "E", Project: "tlf", Objective: "traffic",
@@ -890,7 +897,7 @@ func TestCreateCampaignExplicitOffsetBypassesPreflightValue(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"},
-		AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 1},
+		AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 1},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", Objective: "traffic",
@@ -926,7 +933,7 @@ func TestCreateCampaignRejectsEmptyProjectBeforeAnyPost(t *testing.T) {
 	for _, project := range []string{"", "   "} {
 		srv := noPostServer(t)
 		c := NewClient(Credentials{AccessToken: "t"},
-			AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+			AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 			WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 		in := base()
 		in.Project = project
@@ -959,7 +966,7 @@ func TestCreateCampaignRejectsEmptyEventNameBeforeAnyPost(t *testing.T) {
 	for _, eventName := range []string{"", "   ", "\t\n"} {
 		srv := noPostServer(t)
 		c := NewClient(Credentials{AccessToken: "t"},
-			AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+			AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 			WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 		in := base()
 		in.EventName = eventName
@@ -991,7 +998,7 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1020,7 +1027,7 @@ func TestCreateCampaignAllGeosRegulated(t *testing.T) {
 		_, _ = io.WriteString(w, `{"name":"x"}`)
 	}))
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1053,7 +1060,7 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1115,7 +1122,7 @@ func TestNonGraphErrorBodySurfaces(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1180,7 +1187,7 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1245,7 +1252,7 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 	})
 	defer cancel()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(ctx, CampaignInput{
 		EventName:       "E",
@@ -1311,7 +1318,7 @@ func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
 	})
 	defer cancel()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(ctx, CampaignInput{
 		EventName:       "E",
@@ -1381,7 +1388,7 @@ func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 		}, nil
 	})
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
@@ -1437,7 +1444,7 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", Label: "LF Core", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", Label: "LF Core", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1467,7 +1474,7 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateCampaignValidation(t *testing.T) {
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL("http://unused.invalid"), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL("http://unused.invalid"), WithClock(fixedMetaClock()))
 	base := CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1524,7 +1531,7 @@ func noPostServer(t *testing.T) *httptest.Server {
 func TestCreateCampaignRejectsSubCentBudgetBeforeAnyPost(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1577,7 +1584,7 @@ func TestCreateCampaignRejectsOverLimitCopyBeforeAnyPost(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := noPostServer(t)
 			defer srv.Close()
-			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 			in := base()
 			tc.mutate(&in)
 			_, err := c.CreateCampaign(context.Background(), in)
@@ -1605,7 +1612,7 @@ func TestCreateCampaignAtLimitCopyAllowed(t *testing.T) {
 		_, _ = io.WriteString(w, `{"name":"x"}`)
 	}))
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	// Use multi-byte runes to prove the check counts runes, not bytes: a headline
 	// of maxHeadlineChars 'é' runes is 2*maxHeadlineChars bytes but still valid.
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
@@ -1634,7 +1641,7 @@ func TestCreateCampaignAllDisabledPlacementsMakesZeroPosts(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
 	f := false
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1675,7 +1682,7 @@ func TestCreateCampaignRequiresAccountIDBeforeAnyPost(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
 	// AccountID intentionally left empty; an empty ID would build "//campaigns".
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1694,7 +1701,7 @@ func TestCreateCampaignRequiresAccountIDBeforeAnyPost(t *testing.T) {
 func TestCreateCampaignImpossibleDateMakesZeroPosts(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1716,7 +1723,7 @@ func TestCreateCampaignImpossibleDateMakesZeroPosts(t *testing.T) {
 func TestCreateCampaignRejectsPortOnlyURLBeforeAnyPost(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -1753,7 +1760,7 @@ func TestCreateCampaignAdSetFailureReportsOrphanCampaignID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -2006,7 +2013,7 @@ func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -2115,7 +2122,7 @@ func TestCreateCampaignRejectsPastStartDate(t *testing.T) {
 	defer srv.Close()
 	// Pin the clock so "past" is deterministic.
 	now := func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) }
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 		WithBaseURL(srv.URL), WithClock(now))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
@@ -2133,11 +2140,13 @@ func TestCreateCampaignRejectsPastStartDate(t *testing.T) {
 }
 
 // TestCreateCampaignRejectsHugeBudget verifies an overflow-scale budget is
-// rejected before any mutating call.
+// rejected before any mutating call. There is no fixed major-unit cap anymore, so
+// the offset-aware overflow guard is the one that must catch it: at offset 100 a
+// 1e18 budget scales to 1e20, well past int64, and must be rejected.
 func TestCreateCampaignRejectsHugeBudget(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
 		Project:         "tlf",
@@ -2148,8 +2157,58 @@ func TestCreateCampaignRejectsHugeBudget(t *testing.T) {
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "budget too large") {
-		t.Fatalf("err = %v, want 'budget too large'", err)
+	if err == nil || !strings.Contains(err.Error(), "exceeds the representable minor-unit range") {
+		t.Fatalf("err = %v, want offset-aware overflow rejection", err)
+	}
+}
+
+// TestCreateCampaignAcceptsLargeLowValueCurrencyBudget verifies that removing the
+// fixed major-unit cap lets a valid budget in a low-value, zero-decimal currency
+// (VND, offset 1) through: 100,000,001 VND is only a few thousand USD-equivalent
+// but exceeded the old 100M major-unit cap. With offset 1 it stays 100,000,001
+// minor units — well inside int64 — so it must be ACCEPTED.
+func TestCreateCampaignAcceptsLargeLowValueCurrencyBudget(t *testing.T) {
+	adsetCap := newBodyCapture()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			// VND account: zero-decimal, offset 1.
+			_, _ = io.WriteString(w, `{"name":"x","currency":"VND"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			adsetCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	// CurrencyOffset omitted (0): derived from the VND preflight code (offset 1).
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		Objective:       "traffic",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          100_000_001,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("a large but sane VND budget must be accepted, got err = %v", err)
+	}
+	if got := adsetCap.get()["daily_budget"]; got != float64(100_000_001) {
+		t.Errorf("daily_budget = %v, want 100000001 (VND offset 1, no ×100)", got)
 	}
 }
 
@@ -2174,7 +2233,7 @@ func TestCreateCampaignRejectsOffsetOverflowBeforeAnyPost(t *testing.T) {
 
 	// Explicit absurd offset that overflows int64 when scaled by the budget.
 	c := NewClient(Credentials{AccessToken: "t"},
-		AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 1000000000000000000},
+		AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 1000000000000000000},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
@@ -2312,7 +2371,7 @@ func TestValidateGeoTargetsExcludesSanctioned(t *testing.T) {
 func TestCreateCampaignRejectsAllSanctionedGeos(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
@@ -2337,7 +2396,7 @@ func TestCreateCampaignRejectsAllSanctionedGeos(t *testing.T) {
 func TestCreateCampaignRejectsRussiaOnlyGeo(t *testing.T) {
 	srv := noPostServer(t)
 	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
@@ -2388,7 +2447,7 @@ func TestCreateCampaignAdFailureSurfacesOrphanCreative(t *testing.T) {
 		}, nil
 	})
 
-	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p", CurrencyOffset: 100},
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
 		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "E",
@@ -2437,6 +2496,196 @@ func TestTruncate(t *testing.T) {
 		if got := truncate(c.in, c.max); got != c.want {
 			t.Errorf("truncate(%q,%d) = %q, want %q", c.in, c.max, got, c.want)
 		}
+	}
+}
+
+// TestCurrencyOffsetForAuthoritativeMap verifies the supported-currency map is the
+// source of truth: known two-decimal and zero-decimal codes resolve to their
+// factor, while any code NOT in the map (blank, or a well-formed-but-unknown code
+// like "ZZZ"/"XYZ") returns ok=false so the caller fails closed rather than
+// guessing 100.
+func TestCurrencyOffsetForAuthoritativeMap(t *testing.T) {
+	known := map[string]int64{
+		"USD": 100, "usd": 100, " EUR ": 100, "GBP": 100, "BRL": 100, "AED": 100,
+		"JPY": 1, "KRW": 1, "CLP": 1, "VND": 1, "XOF": 1,
+	}
+	for code, want := range known {
+		got, ok := currencyOffsetFor(code)
+		if !ok || got != want {
+			t.Errorf("currencyOffsetFor(%q) = (%d,%v), want (%d,true)", code, got, ok, want)
+		}
+	}
+	for _, code := range []string{"", "   ", "ZZZ", "XYZ", "US", "US$", "123"} {
+		if got, ok := currencyOffsetFor(code); ok {
+			t.Errorf("currencyOffsetFor(%q) = (%d,true), want ok=false (not in supported-currency map)", code, got)
+		}
+	}
+}
+
+// TestCreateCampaignRejectsUnknownCurrencyBeforeAnyPost verifies that when the
+// preflight returns a well-formed but UNSUPPORTED currency code (ZZZ) and no
+// explicit CurrencyOffset override is set, CreateCampaign fails BEFORE any mutating
+// call (0 POSTs) rather than treating the unknown code as a two-decimal default and
+// risking a 100× over-encoded budget for a new/zero-decimal currency.
+func TestCreateCampaignRejectsUnknownCurrencyBeforeAnyPost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("unexpected POST to %s: an unknown currency must fail before mutation", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"name":"x","currency":"ZZZ"}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100"},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 5, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported or missing currency code") {
+		t.Fatalf("err = %v, want it to reject the unknown ZZZ currency before mutation", err)
+	}
+}
+
+// TestCreateCampaignRejectsUserinfoURLBeforeAnyPost verifies a RegistrationURL that
+// embeds userinfo (basic-auth user[:password]@host) is rejected at preflight,
+// before any mutating call — so a password can't be forwarded as the creative click
+// URL or echoed in the success step.
+func TestCreateCampaignRejectsUserinfoURLBeforeAnyPost(t *testing.T) {
+	for _, raw := range []string{
+		"https://user:pass@events.example.org/register",
+		"https://user@events.example.org/register",
+	} {
+		srv := noPostServer(t)
+		c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+			WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName: "E", Project: "tlf", RegistrationURL: raw,
+			GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+			Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		})
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "embedded credentials") {
+			t.Fatalf("url %q: err = %v, want embedded-credentials rejection", raw, err)
+		}
+	}
+}
+
+// TestValidateRegistrationURLRejectsUserinfo verifies the helper rejects userinfo
+// directly (unit-level).
+func TestValidateRegistrationURLRejectsUserinfo(t *testing.T) {
+	for _, raw := range []string{
+		"https://user:pass@events.example.org/x",
+		"https://user@events.example.org/x",
+	} {
+		if err := validateRegistrationURL(raw); err == nil || !strings.Contains(err.Error(), "embedded credentials") {
+			t.Errorf("validateRegistrationURL(%q) = %v, want embedded-credentials rejection", raw, err)
+		}
+	}
+}
+
+// TestCreateCampaignRejectsMalformedAccountIDBeforeAnyPost verifies a non-empty but
+// malformed AccountID (wrong shape, or containing path delimiters / traversal) is
+// rejected before any mutating call, so it can't redirect a Graph request.
+func TestCreateCampaignRejectsMalformedAccountIDBeforeAnyPost(t *testing.T) {
+	for _, id := range []string{"12345", "act_", "act_12/34", "act_..", "act_12?x", "act_12#y", "acct_123"} {
+		srv := noPostServer(t)
+		c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: id, PageID: "100", CurrencyOffset: 100},
+			WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+			GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+			Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		})
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "malformed") {
+			t.Fatalf("AccountID %q: err = %v, want malformed-AccountID rejection", id, err)
+		}
+	}
+}
+
+// TestCreateCampaignRejectsMalformedPageIDBeforeAnyPost verifies a non-empty but
+// non-numeric PageID is rejected before any mutating call, so a bad Page id can't
+// create a campaign+ad set that then orphans when the creative fails.
+func TestCreateCampaignRejectsMalformedPageIDBeforeAnyPost(t *testing.T) {
+	for _, id := range []string{"PAGE99", "12a", "12/34", ".."} {
+		srv := noPostServer(t)
+		c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: id, CurrencyOffset: 100},
+			WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+			GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+			Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		})
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "PageID") || !strings.Contains(err.Error(), "malformed") {
+			t.Fatalf("PageID %q: err = %v, want malformed-PageID rejection", id, err)
+		}
+	}
+}
+
+// TestCreateCampaignRejectsMalformedPixelIDBeforeAnyPost verifies a non-empty but
+// non-numeric PixelID (for a conversions objective that requires it) is rejected
+// before any mutating call, so a bad pixel id can't create a campaign that then
+// orphans when the promoted object is rejected at ad-set time.
+func TestCreateCampaignRejectsMalformedPixelIDBeforeAnyPost(t *testing.T) {
+	srv := noPostServer(t)
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "12345", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "conversions", PixelID: "PIX9",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "pixelID") || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("err = %v, want malformed-pixelID rejection before mutation", err)
+	}
+}
+
+// TestCreateCampaignPreflightErrorUnwrapsToAPIError verifies that when the account
+// preflight fails with a Graph 4xx AND CurrencyOffset is unset (so the failure is
+// fatal at offset resolution), the returned error still unwraps to *APIError via
+// errors.As — i.e. the preflight error is wrapped with %w, not flattened with %s.
+func TestCreateCampaignPreflightErrorUnwrapsToAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("unexpected POST to %s: offset resolution should fail first", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"Invalid account","type":"OAuthException","code":100,"fbtrace_id":"ABC"}}`)
+	}))
+	defer srv.Close()
+
+	// CurrencyOffset unset (0): the preflight failure becomes fatal at offset
+	// resolution, and that returned error must carry the *APIError chain.
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100"},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatalf("expected an error when the preflight fails")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v (%T), want it to unwrap to *APIError via errors.As", err, err)
+	}
+	if apiErr.StatusCode != http.StatusBadRequest {
+		t.Errorf("unwrapped APIError.StatusCode = %d, want 400", apiErr.StatusCode)
+	}
+	if apiErr.FBTraceID != "ABC" {
+		t.Errorf("unwrapped APIError.FBTraceID = %q, want ABC", apiErr.FBTraceID)
 	}
 }
 

@@ -51,9 +51,6 @@ const (
 	// far above any legitimate Graph API response, to prevent memory exhaustion
 	// while not truncating a normal success or error body.
 	maxResponseBody = 10 << 20 // 10 MiB
-	// maxBudget caps the accepted budget (in currency units) well below the
-	// int64-cents overflow threshold so the ×100 conversion can't wrap.
-	maxBudget = 100_000_000.0
 	// adSetStartBuffer is added to "now" when a campaign starts today, so the ad
 	// set start_time isn't already in the past by the time Meta receives it.
 	adSetStartBuffer = 5 * time.Minute
@@ -369,22 +366,34 @@ type accountPreflight struct {
 	Currency      string `json:"currency"`
 }
 
-// currencyMinorUnitOffset maps an ISO 4217 currency code to the factor that
-// converts a whole-currency-unit budget into the minor units Meta expects. Most
-// currencies are two-decimal (offset 100). The entries below are the zero-decimal
-// currencies (no minor unit, offset 1) — Meta bills these in whole units, so a
-// budget must NOT be multiplied by 100 for them (the JPY/KRW 100× over-spend bug).
+// currencyMinorUnitOffset is the AUTHORITATIVE map of the Meta ad-account
+// currencies this client supports, each mapped to the factor that converts a
+// whole-currency-unit budget into the minor units Meta expects. This map — NOT a
+// default — is the single source of truth: a code that is not present is treated
+// as UNSUPPORTED and fails before any mutating call (see currencyOffsetFor).
 //
-// The AdAccount node exposes only the ISO currency CODE (not a currency_offset
-// field), so the offset is derived here rather than fetched. A code absent from
-// this map is treated as the two-decimal default (100) by currencyOffsetFor's
-// caller ONLY when explicitly resolved; an unknown/blank code with no explicit
-// AccountConfig.CurrencyOffset override fails before mutation rather than guessing.
+// The AdAccount node exposes only the ISO 4217 currency CODE (not a
+// currency_offset field), so the offset is derived from this map rather than
+// fetched. Two groups of entries:
+//
+//   - offset 1: the zero-decimal (no minor unit) currencies. Meta bills these in
+//     whole units, so a budget must NOT be multiplied by 100 for them (the
+//     JPY/KRW 100× over-spend bug).
+//   - offset 100: the common two-decimal currencies Meta supports.
+//
+// A blank/absent code, or a well-formed-but-unrecognized one (e.g. a new or
+// malformed code like "ZZZ"), returns ok=false from currencyOffsetFor so the
+// caller fails BEFORE mutation instead of guessing 100 — which could silently
+// encode a zero-decimal budget 100× too high. When a genuinely-supported currency
+// is missing here, add it to this map (with the correct factor) rather than
+// relying on a fall-through default.
 //
 // Three-decimal currencies are intentionally NOT special-cased: Meta bills ads in
 // whole minor units, so two-decimal vs zero-decimal is the distinction that
-// matters for budget encoding here.
+// matters for budget encoding here — a three-decimal code is simply absent (and
+// therefore rejected) until it is added deliberately with a verified factor.
 var currencyMinorUnitOffset = map[string]int64{
+	// Zero-decimal currencies (offset 1): no minor unit, billed in whole units.
 	"BIF": 1, // Burundian Franc
 	"CLP": 1, // Chilean Peso
 	"DJF": 1, // Djiboutian Franc
@@ -402,26 +411,55 @@ var currencyMinorUnitOffset = map[string]int64{
 	"XAF": 1, // Central African CFA Franc
 	"XOF": 1, // West African CFA Franc
 	"XPF": 1, // CFP Franc
+
+	// Two-decimal currencies (offset 100): the common ISO 4217 codes Meta
+	// supports as ad-account currencies. A code outside this set is rejected, not
+	// assumed to be two-decimal.
+	"USD": 100, // US Dollar
+	"EUR": 100, // Euro
+	"GBP": 100, // Pound Sterling
+	"AUD": 100, // Australian Dollar
+	"CAD": 100, // Canadian Dollar
+	"CHF": 100, // Swiss Franc
+	"CNY": 100, // Chinese Yuan
+	"DKK": 100, // Danish Krone
+	"HKD": 100, // Hong Kong Dollar
+	"INR": 100, // Indian Rupee
+	"MXN": 100, // Mexican Peso
+	"NOK": 100, // Norwegian Krone
+	"NZD": 100, // New Zealand Dollar
+	"PLN": 100, // Polish Zloty
+	"SEK": 100, // Swedish Krona
+	"SGD": 100, // Singapore Dollar
+	"THB": 100, // Thai Baht
+	"TRY": 100, // Turkish Lira
+	"ZAR": 100, // South African Rand
+	"BRL": 100, // Brazilian Real
+	"ILS": 100, // Israeli New Shekel
+	"PHP": 100, // Philippine Peso
+	"MYR": 100, // Malaysian Ringgit
+	"IDR": 100, // Indonesian Rupiah
+	"AED": 100, // UAE Dirham
+	"SAR": 100, // Saudi Riyal
+	"CZK": 100, // Czech Koruna
+	"RON": 100, // Romanian Leu
+	"HUF": 100, // Hungarian Forint
 }
 
-// defaultCurrencyMinorUnitOffset is the minor-unit multiplier for the common
-// two-decimal currencies (USD, EUR, GBP, ...) not enumerated as zero-decimal.
-const defaultCurrencyMinorUnitOffset int64 = 100
-
 // currencyOffsetFor derives the minor-unit multiplier for an ISO 4217 currency
-// code returned by the account preflight. It returns (offset, true) for a
-// recognized code (any non-blank code maps to its zero-decimal entry or the
-// two-decimal default) and (0, false) for a blank/absent code, where the caller
-// must fail before mutation rather than guess.
+// code returned by the account preflight, using currencyMinorUnitOffset as the
+// authoritative supported-currency set. It returns (offset, true) only for a code
+// present in that map, and (0, false) for a blank/absent code OR a well-formed
+// code that is not in the map (an unknown/malformed currency such as "ZZZ"). The
+// caller must fail before mutation on a false result rather than guessing 100 —
+// which for a zero-decimal currency would over-encode the budget 100×.
 func currencyOffsetFor(currency string) (int64, bool) {
 	code := strings.ToUpper(strings.TrimSpace(currency))
 	if code == "" {
 		return 0, false
 	}
-	if off, ok := currencyMinorUnitOffset[code]; ok {
-		return off, true
-	}
-	return defaultCurrencyMinorUnitOffset, true
+	off, ok := currencyMinorUnitOffset[code]
+	return off, ok
 }
 
 // graphErrorEnvelope models the Graph API error body: {"error": {...}}.
@@ -656,6 +694,20 @@ var geoCodeRE = regexp.MustCompile(`^[A-Z]{2}$`)
 
 var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// accountIDRE matches a Meta ad-account id in its documented "act_<digits>" form.
+// AccountID is interpolated into every Graph path ("/"+accountID+"/campaigns"),
+// so a non-empty check is not enough: a value carrying '/', '?', '#', '..', or
+// whitespace could redirect a request to a different endpoint. Anchored so the
+// whole value must match. Mirrors the anchored-regex approach in
+// internal/platform/twitter/client.go (accountIDRe).
+var accountIDRE = regexp.MustCompile(`^act_[0-9]+$`)
+
+// numericIDRE matches a purely numeric Meta object id (Page id, Pixel id). Meta
+// object ids are decimal strings; validating the format up front stops a malformed
+// id (e.g. "PIX9") from creating a campaign/ad set that then fails at creative or
+// promoted-object time, leaving an orphaned paid resource.
+var numericIDRE = regexp.MustCompile(`^[0-9]+$`)
+
 func validateRegistrationURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	// Require an absolute URL with a real hostname. parsed.Host can be a
@@ -663,6 +715,13 @@ func validateRegistrationURL(raw string) error {
 	// empty Hostname()), which is not a valid destination — check Hostname().
 	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
 		return fmt.Errorf("registration URL is not a valid URL")
+	}
+	// Reject embedded userinfo (user[:password]@host): an ad destination never
+	// needs URL credentials, and buildUTMURL would otherwise forward the password
+	// to Meta as the creative click URL and echo it in the success step, leaking a
+	// basic-auth secret. Mirrors the reddit client's validateRegistrationURL.
+	if parsed.User != nil {
+		return fmt.Errorf("registration URL must not contain embedded credentials (userinfo)")
 	}
 	if parsed.Scheme != "https" {
 		return fmt.Errorf("registration URL must use HTTPS")
@@ -807,6 +866,13 @@ func buildPromotedObject(objective, pageID, pixelID string) (map[string]any, err
 		trimmed := strings.TrimSpace(pixelID)
 		if trimmed == "" {
 			return nil, fmt.Errorf("pixelID must be a non-empty string for '%s' objective", objective)
+		}
+		// An empty-only check lets a malformed pixel id (e.g. "PIX9") through; the
+		// campaign would then be created and Meta would reject the promoted object at
+		// ad-set creation, leaving an orphan. Meta Pixel ids are numeric, so validate
+		// the format here — buildPromotedObject runs before any mutating call.
+		if !numericIDRE.MatchString(trimmed) {
+			return nil, fmt.Errorf("pixelID %q is malformed for '%s' objective: Meta Pixel IDs are numeric strings", trimmed, objective)
 		}
 		return map[string]any{"pixel_id": trimmed, "custom_event_type": "PURCHASE"}, nil
 	default:
@@ -1112,14 +1178,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if math.IsNaN(in.Budget) || math.IsInf(in.Budget, 0) || in.Budget <= 0 {
 		return nil, fmt.Errorf("invalid budget: must be a positive number")
 	}
-	// Cap the budget below the int64 minor-unit overflow threshold before
-	// converting, so an absurd value can't wrap to a negative/garbage amount.
-	// maxBudget (100M currency units) is far above any real campaign budget, and
-	// even multiplied by the largest realistic currency offset stays well inside
-	// int64.
-	if in.Budget > maxBudget {
-		return nil, fmt.Errorf("budget too large: must be at most %.0f", maxBudget)
-	}
+	// NOTE: no fixed major-unit budget cap is applied here. A hardcoded ceiling (in
+	// whole currency units) wrongly rejected realistic budgets in low-value
+	// currencies — e.g. a few-thousand-USD-equivalent budget in VND (offset 1)
+	// exceeds a 100M major-unit cap while being a perfectly ordinary spend. The
+	// offset-aware overflow guard below (after the account currency offset is
+	// resolved) is the authoritative overflow check: it rejects only budgets whose
+	// SCALED minor-unit value would exceed int64, which is the value actually sent.
 	// A negative explicit offset is malformed and can be rejected here, before any
 	// network call. The unset (zero) case is resolved from the account preflight
 	// below (Step 1); the minor-unit conversion happens there, once the offset is
@@ -1159,12 +1224,27 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if strings.TrimSpace(c.account.AccountID) == "" {
 		return nil, fmt.Errorf("AccountID is required to create a Meta campaign; configure an ad account for this client")
 	}
+	// A non-empty check is not enough: AccountID is interpolated into every Graph
+	// path, so a value with delimiters ('/', '?', '#'), '..', or control chars
+	// could redirect a request to a different endpoint. Validate the documented
+	// act_<digits> format before any mutating call. Mirrors twitter/client.go's
+	// anchored accountIDRe check.
+	if !accountIDRE.MatchString(c.account.AccountID) {
+		return nil, fmt.Errorf("AccountID %q is malformed: expected the format act_<digits> (e.g. act_193556282970417)", c.account.AccountID)
+	}
 
 	// PageID is required for the creative flow (object_story_spec.page_id) and,
 	// for some objectives, the promoted_object. Fail fast before any mutating
 	// call so a missing PageID doesn't create a paid campaign that can't get ads.
 	if strings.TrimSpace(c.account.PageID) == "" {
 		return nil, fmt.Errorf("PageID is required to create Meta creatives; configure a Facebook Page for this account")
+	}
+	// A non-empty check is not enough: a malformed Page id would pass, then the
+	// campaign and ad set get created before the creative fails (non-fatally),
+	// leaving orphaned paid resources. Meta Page ids are numeric strings, so
+	// validate the format before the first POST.
+	if !numericIDRE.MatchString(c.account.PageID) {
+		return nil, fmt.Errorf("PageID %q is malformed: Meta Page IDs are numeric strings", c.account.PageID)
 	}
 
 	// Project is required: the campaign name's Project segment must be the caller-
@@ -1251,11 +1331,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	offset := c.account.CurrencyOffset
 	if offset == 0 {
 		if preflightErr != nil {
-			return nil, fmt.Errorf("meta: could not determine the account currency because the account preflight failed (%s); set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP)", truncateErr(preflightErr, 200))
+			// Wrap with %w (not %s) so the underlying error chain is preserved and a
+			// caller can errors.As it back to *APIError like other Graph failures — a
+			// %s would flatten it to a string and break that unwrap.
+			return nil, fmt.Errorf("meta: could not determine the account currency because the account preflight failed; set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP): %w", preflightErr)
 		}
 		derived, ok := currencyOffsetFor(acct.Currency)
 		if !ok {
-			return nil, fmt.Errorf("meta: account preflight did not return a usable currency code (got %q); set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP) rather than assuming a default that could encode a zero-decimal budget 100x too high", acct.Currency)
+			return nil, fmt.Errorf("meta: account preflight returned an unsupported or missing currency code (got %q); it is not in the supported-currency map, so set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP) rather than assuming a default that could encode a zero-decimal budget 100x too high", acct.Currency)
 		}
 		offset = derived
 	}
@@ -1264,14 +1347,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// that round to zero minor units — all before any mutating call, so a
 	// zero/invalid budget never creates a bad ad set.
 	//
-	// Guard against int64 overflow of the SCALED value before converting: Budget is
-	// bounded by maxBudget, but the offset is unbounded (a bogus large explicit or
-	// preflight offset could push the product past int64). Converting an
-	// out-of-range float to int64 is implementation-defined, so range-check the
-	// float product first rather than relying on the budgetMinor<1 check to catch a
-	// wrapped value. math.MaxInt64 is not exactly representable as a float64, so
-	// compare against float64(math.MaxInt64) (which rounds up); a scaled value at or
-	// above it is rejected as out of range for a currency amount.
+	// Guard against int64 overflow of the SCALED value before converting. This is
+	// the ONLY budget-magnitude ceiling (there is no fixed major-unit cap): both
+	// Budget and the offset are otherwise unbounded, so a genuinely huge budget — or
+	// a bogus large explicit/preflight offset — could push the product past int64.
+	// Converting an out-of-range float to int64 is implementation-defined, so
+	// range-check the float product first rather than relying on the budgetMinor<1
+	// check to catch a wrapped value. math.MaxInt64 is not exactly representable as a
+	// float64, so compare against float64(math.MaxInt64) (which rounds up); a scaled
+	// value at or above it (including +Inf from an absurd budget) is rejected as out
+	// of range for a currency amount.
 	scaled := math.Round(in.Budget * float64(offset))
 	if scaled >= float64(math.MaxInt64) {
 		return nil, fmt.Errorf("budget too large after applying currency offset %d: exceeds the representable minor-unit range", offset)
