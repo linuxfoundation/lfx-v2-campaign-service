@@ -61,6 +61,10 @@ const (
 	maxPrimaryTextChars = 125
 	maxHeadlineChars    = 40
 	maxDescriptionChars = 30
+	// maxCreativeNameChars is Meta's cap on an ad-creative name. The creative name
+	// is composed ("<EventName> - Variant N"), so the COMPOSED value is validated
+	// up front against this before any mutating call.
+	maxCreativeNameChars = 255
 )
 
 // ---------------------------------------------------------------------------
@@ -1254,6 +1258,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		if n := utf8.RuneCountInString(v.Description); n > maxDescriptionChars {
 			return nil, fmt.Errorf("variant %d description is %d characters; Meta allows at most %d", i+1, n, maxDescriptionChars)
+		}
+		// The ad-creative NAME is composed as "<EventName> - Variant N" and Meta caps
+		// ad-creative names at maxCreativeNameChars. Validate the COMPOSED name up
+		// front too — a long EventName would otherwise pass the copy checks, create
+		// the campaign + ad set, then fail at every creative (orphaning both).
+		creativeName := fmt.Sprintf("%s - Variant %d", in.EventName, i+1)
+		if n := utf8.RuneCountInString(creativeName); n > maxCreativeNameChars {
+			return nil, fmt.Errorf("variant %d ad-creative name is %d characters; Meta allows at most %d (shorten the event name)", i+1, n, maxCreativeNameChars)
 		}
 	}
 

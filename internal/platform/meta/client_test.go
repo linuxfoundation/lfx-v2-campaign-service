@@ -1739,6 +1739,30 @@ func TestCreateCampaignAcceptsAnyActiveAccountStatus(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignRejectsOverlongCreativeNameBeforeAnyPost verifies an
+// EventName long enough to push the composed creative name ("<EventName> -
+// Variant N") past Meta's 255-char cap is rejected before any POST — it must not
+// create the campaign + ad set and then fail at every creative.
+func TestCreateCampaignRejectsOverlongCreativeNameBeforeAnyPost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Errorf("no POST should happen for an over-long creative name: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: strings.Repeat("E", 260), Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "ad-creative name") {
+		t.Fatalf("err = %v, want ad-creative-name length rejection before mutation", err)
+	}
+}
+
 // TestValidateRegistrationURLRejectsMalformedQuery verifies a registration URL
 // whose query can't be cleanly parsed (so u.Query() would silently drop a param)
 // is rejected up front.
