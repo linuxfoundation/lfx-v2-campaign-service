@@ -1164,6 +1164,12 @@ func validateRegistrationURL(raw string) error {
 	if !u.IsAbs() || u.Hostname() == "" {
 		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
 	}
+	// Reject embedded userinfo (user[:password]@host): an ad destination never
+	// needs URL credentials, and buildUTMURL would otherwise forward the password
+	// to LinkedIn and echo it downstream, leaking it.
+	if u.User != nil {
+		return fmt.Errorf("registration URL must not contain embedded credentials (userinfo)")
+	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
 		return nil
