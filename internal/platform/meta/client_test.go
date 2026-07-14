@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -2889,6 +2891,89 @@ func TestDoRequestReadsLargeSuccessBody(t *testing.T) {
 	}
 	if out.ID != "123" {
 		t.Errorf("id = %q, want 123 (body must not be truncated before the id field)", out.ID)
+	}
+}
+
+// TestDoRequestRejectsOversizedResponse verifies the maxResponseBody memory cap:
+// a success body LARGER than maxResponseBody fails with a "response exceeds"
+// error rather than being silently truncated and mis-parsed. The body is
+// streamed from a zero reader so the test never builds >10 MiB in memory.
+func TestDoRequestRejectsOversizedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Stream just over the cap without allocating it: doRequest reads
+		// maxResponseBody+1 and rejects when len > maxResponseBody.
+		_, _ = io.CopyN(w, zeroReader{}, maxResponseBody+100)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"}, WithBaseURL(srv.URL))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodGet, "/x", nil, &out)
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
+		t.Fatalf("err = %v, want a 'response exceeds' error for an oversized body", err)
+	}
+}
+
+// zeroReader yields an endless stream of NUL bytes without allocating a buffer,
+// so oversized-body tests stay fast and low-memory.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
+}
+
+// TestCreateCampaignPreSendDialErrorReturnsNoPartial is the counterpart to
+// TestCreateCampaignAmbiguousTransportReturnsPartial: when the campaign-create
+// POST fails with a PRE-SEND dial error (connection refused / no route — the
+// request never left the client), isPreSendDialError makes doRequest return a
+// plain wrapped error, createOutcomeAmbiguous is false, and CreateCampaign
+// returns (nil, err) with NO partial/UNCONFIRMED result.
+func TestCreateCampaignPreSendDialErrorReturnsNoPartial(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/campaigns") {
+			// A connection-refused / no-route dial failure BEFORE any bytes are
+			// sent (syscall.ECONNREFUSED is what isPreSendDialError keys on).
+			return nil, &url.Error{
+				Op:  "Post",
+				URL: req.URL.String(),
+				Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			}
+		}
+		body := `{"name":"x","currency":"USD"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a pre-send dial failure on campaign create")
+	}
+	if res != nil {
+		t.Errorf("expected NO partial result for a pre-send dial error (nothing sent), got %+v", res)
+	}
+}
+
+// TestValidateGeoTargetsDeduplicates verifies validateGeoTargets collapses
+// case-insensitive duplicates in first-seen order: ["us","US","de","DE"] yields
+// ["US","DE"], not the old duplicate-preserving ["US","US","DE","DE"].
+func TestValidateGeoTargetsDeduplicates(t *testing.T) {
+	got := validateGeoTargets([]string{"us", "US", " de ", "DE", "gb"})
+	want := []string{"US", "DE", "GB"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("validateGeoTargets = %v, want %v (dedup, first-seen order)", got, want)
 	}
 }
 

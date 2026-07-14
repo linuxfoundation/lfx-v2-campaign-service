@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -572,9 +573,9 @@ func (e *APIError) Error() string {
 	// particular is essential when opening a Meta support ticket.
 	var b strings.Builder
 	if e.Message != "" {
-		fmt.Fprintf(&b, "meta API request failed (%d): %s", e.StatusCode, e.Message)
+		fmt.Fprintf(&b, "meta API %s %s failed (%d): %s", e.Method, e.Path, e.StatusCode, e.Message)
 	} else {
-		fmt.Fprintf(&b, "meta API request failed (%d) with no error details in the response body", e.StatusCode)
+		fmt.Fprintf(&b, "meta API %s %s failed (%d) with no error details in the response body", e.Method, e.Path, e.StatusCode)
 	}
 	if e.Type != "" {
 		fmt.Fprintf(&b, " (type: %s", e.Type)
@@ -927,15 +928,22 @@ func validateRegistrationURL(raw string) error {
 // ["US"] when nothing valid remains (mirrors validateGeoTargets).
 func validateGeoTargets(geoTargets []string) []string {
 	valid := make([]string, 0, len(geoTargets))
+	seen := make(map[string]struct{}, len(geoTargets))
 	for _, g := range geoTargets {
 		up := strings.ToUpper(strings.TrimSpace(g))
 		// Check shape and ISO 3166-1 alpha-2 membership (so a well-shaped but bogus
 		// code like "XX"/"ZZ" is dropped), and exclude countries Meta does not allow
 		// as ad targets (see metaIneligibleCountries) — ISO membership is not the
 		// same as Meta targeting eligibility.
-		if geoCodeRE.MatchString(up) && iso3166Alpha2[up] && !metaIneligibleCountries[up] {
-			valid = append(valid, up)
+		if _, ok := iso3166Alpha2[up]; !ok || !geoCodeRE.MatchString(up) || metaIneligibleCountries[up] {
+			continue
 		}
+		// Dedupe in first-seen order so ["us","US"] yields ["US"], not ["US","US"].
+		if _, dup := seen[up]; dup {
+			continue
+		}
+		seen[up] = struct{}{}
+		valid = append(valid, up)
 	}
 	if len(valid) == 0 {
 		return []string{"US"}
@@ -1451,14 +1459,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if !dateRE.MatchString(in.EndDate) {
 		return nil, fmt.Errorf("invalid end date format: %s — expected YYYY-MM-DD", in.EndDate)
 	}
-	// Reject impossible calendar dates (e.g. 2026-13-40) that pass the shape check.
+	// time.Parse with this layout rejects BOTH a malformed string and a
+	// well-formed-but-impossible date (e.g. 2026-13-40), so the error is about an
+	// invalid calendar VALUE, not merely a bad format.
 	startDate, err := time.Parse("2006-01-02", in.StartDate)
 	if err != nil {
-		return nil, fmt.Errorf("invalid start date format: %s — expected YYYY-MM-DD", in.StartDate)
+		return nil, fmt.Errorf("invalid start date %q — expected a real calendar date in YYYY-MM-DD format", in.StartDate)
 	}
 	endDate, err := time.Parse("2006-01-02", in.EndDate)
 	if err != nil {
-		return nil, fmt.Errorf("invalid end date format: %s — expected YYYY-MM-DD", in.EndDate)
+		return nil, fmt.Errorf("invalid end date %q — expected a real calendar date in YYYY-MM-DD format", in.EndDate)
 	}
 	// Compare the parsed time.Time values rather than the raw strings: both are
 	// already parsed here, so !endDate.After(startDate) states the intent directly
@@ -1961,7 +1971,7 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		// A 2xx with no id is AMBIGUOUS: Meta may have created the creative but we
 		// couldn't read its id. Wrap as transportError so the caller classifies it
 		// as "may exist" (createOutcomeAmbiguous) rather than a definite failure.
-		return "", "", &transportError{Method: http.MethodPost, Path: "/adcreatives", Err: fmt.Errorf("creative creation returned no ID")}
+		return "", "", &transportError{Method: http.MethodPost, Path: "/" + c.account.AccountID + "/adcreatives", Err: fmt.Errorf("creative creation returned no ID")}
 	}
 
 	var adResp createResponse
@@ -1980,13 +1990,20 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		// A 2xx with no id is AMBIGUOUS: Meta may have created the ad but we couldn't
 		// read its id. Wrap as transportError so the caller classifies it as "may
 		// exist" (createOutcomeAmbiguous) rather than a definite failure.
-		return "", creativeResp.ID, &transportError{Method: http.MethodPost, Path: "/ads", Err: fmt.Errorf("ad creation returned no ID")}
+		return "", creativeResp.ID, &transportError{Method: http.MethodPost, Path: "/" + c.account.AccountID + "/ads", Err: fmt.Errorf("ad creation returned no ID")}
 	}
 	return adResp.ID, creativeResp.ID, nil
 }
 
 func objectiveKeys() []string {
-	// The objectives CreateCampaign accepts. All five are supported; 'leads' runs
-	// as a website-leads campaign (LINK_CLICKS to the registration URL).
-	return []string{"awareness", "traffic", "engagement", "leads", "conversions"}
+	// Derive the accepted objectives from objectiveParams (the source of truth for
+	// what CreateCampaign maps) and sort for a stable error message, so this list
+	// can't drift if an objective is added/removed. 'leads' runs as a website-leads
+	// campaign (LINK_CLICKS to the registration URL).
+	keys := make([]string, 0, len(objectiveParams))
+	for k := range objectiveParams {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
