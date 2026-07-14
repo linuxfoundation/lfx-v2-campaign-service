@@ -550,6 +550,24 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("reddit API %s %s -> %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
 }
 
+// transportError wraps a failure of the HTTP round-trip itself (httpClient.Do):
+// the request was ALREADY SENT, so the server may or may not have processed it —
+// the outcome is AMBIGUOUS. This is distinct from a pre-send failure (token
+// refresh, body encode, request build) or a definite abort, where the request
+// never reached the server and a mutation definitely did not happen. Callers use
+// it to decide whether a failed create is "may exist" (ambiguous) vs "not
+// created".
+type transportError struct {
+	Method string
+	Path   string
+	Err    error
+}
+
+func (e *transportError) Error() string {
+	return fmt.Sprintf("reddit API %s %s: %v", e.Method, e.Path, e.Err)
+}
+func (e *transportError) Unwrap() error { return e.Err }
+
 // request performs an authenticated Reddit Ads API call, sanitizing the path
 // segments and honoring ctx. Mirrors redditRequest.
 //
@@ -619,7 +637,10 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			cancel()
-			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
+			// The request was sent; a Do error (transport failure/timeout) leaves the
+			// outcome ambiguous — wrap it so callers can distinguish it from a pre-send
+			// failure when deciding whether a created resource "may exist".
+			return nil, &transportError{Method: method, Path: path, Err: err}
 		}
 
 		// A 429 with retries remaining: compute the wait and back off. The body is
@@ -1036,18 +1057,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	campaignResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
 	if err != nil {
-		// A definite client error (4xx) means the campaign was NOT created — safe to
-		// return (nil, err). But a transport timeout, a read/decode failure, or an
-		// ambiguous 5xx can occur AFTER Reddit accepted the create, so the campaign
-		// may exist. In that ambiguous case return a partial result carrying the
-		// campaign NAME (reconcilable by name) with an UNCONFIRMED note, matching the
-		// ad path — so a caller doesn't blindly retry and duplicate the campaign.
+		// Only treat the failure as AMBIGUOUS ("campaign may exist") when the request
+		// actually reached Reddit and the outcome is unknowable:
+		//   - a transportError (the round-trip itself failed after the request was
+		//     sent), or
+		//   - a 5xx apiError (Reddit received it and may have created the campaign
+		//     before erroring).
+		// Everything else means the campaign was NOT created — a pre-send failure
+		// (token refresh, body encode/build), a 429 over-cap abort, a 4xx client
+		// error, or a context cancellation before send — so return (nil, err) and let
+		// a caller retry safely without duplicate risk.
+		var transportErr *transportError
 		var apiErr *apiError
-		definiteClientError := errors.As(err, &apiErr) && apiErr.StatusCode >= 400 && apiErr.StatusCode < 500
-		if definiteClientError {
+		ambiguous := errors.As(err, &transportErr) ||
+			(errors.As(err, &apiErr) && apiErr.StatusCode >= 500)
+		if !ambiguous {
 			return nil, err
 		}
-		steps = append(steps, "Campaign creation is UNCONFIRMED (the create request failed or was not acknowledged); a PAUSED campaign may exist -- verify by name in Reddit Ads Manager before retrying to avoid a duplicate")
+		steps = append(steps, "Campaign creation is UNCONFIRMED (the create request reached Reddit but the outcome is unknown); a PAUSED campaign may exist -- verify by name in Reddit Ads Manager before retrying to avoid a duplicate")
 		return &CampaignResult{
 			Platform:     "reddit-ads",
 			CampaignName: campaignName,

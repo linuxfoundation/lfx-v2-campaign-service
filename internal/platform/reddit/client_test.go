@@ -25,6 +25,22 @@ var (
 	testAccount = AccountConfig{AccountID: "t2_test", Label: "Test Account"}
 )
 
+// validRedditInput returns a CampaignInput that passes all up-front validation,
+// for tests that exercise behavior AFTER validation (e.g. create failure paths).
+func validRedditInput() CampaignInput {
+	return CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "tlf",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	}
+}
+
 // TestTokenRefresh_ReuseAndRefresh verifies the expiry-buffer logic: a token is
 // reused while valid, and refreshed once it falls within the buffer of expiry.
 func TestTokenRefresh_ReuseAndRefresh(t *testing.T) {
@@ -743,6 +759,69 @@ func TestCreateCampaign_CampaignWithoutIDReturnsPartial(t *testing.T) {
 	}
 	if res.CampaignID != "" {
 		t.Errorf("CampaignID = %q, want empty (no id was returned)", res.CampaignID)
+	}
+}
+
+// TestCreateCampaign_5xxOnCampaignIsUnconfirmed verifies a 5xx on the campaign
+// POST (Reddit received it, may have created the campaign) returns a partial
+// UNCONFIRMED result carrying the campaign name.
+func TestCreateCampaign_5xxOnCampaignIsUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(r.URL.Path, "/campaigns") && r.Method == http.MethodPost:
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(context.Background(), validRedditInput())
+	if err == nil {
+		t.Fatal("expected an error on a 5xx campaign create")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a partial UNCONFIRMED result with the campaign name, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("err = %v, want it to be UNCONFIRMED", err)
+	}
+}
+
+// TestCreateCampaign_TokenRefreshFailureNotUnconfirmed verifies a PRE-SEND failure
+// (token refresh fails, so the campaign POST never happens) returns (nil, err) —
+// NOT a partial UNCONFIRMED "may exist" result, because the campaign definitely
+// wasn't created.
+func TestCreateCampaign_TokenRefreshFailureNotUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad creds", http.StatusUnauthorized)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen when token refresh fails: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(context.Background(), validRedditInput())
+	if err == nil {
+		t.Fatal("expected an error on token refresh failure")
+	}
+	if res != nil {
+		t.Errorf("token-refresh (pre-send) failure must return nil result, got %+v", res)
+	}
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("pre-send failure must NOT be UNCONFIRMED, got %v", err)
 	}
 }
 
