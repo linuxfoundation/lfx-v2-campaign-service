@@ -422,7 +422,8 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 		t.Errorf("campaign conversion_pixel_id = %v, want pixel_abc", campaignBody["conversion_pixel_id"])
 	}
 
-	// Ad group targeting: communities resolved to subreddit IDs, geos uppercased.
+	// Ad group targeting: communities carry normalized subreddit NAMES (r/ stripped,
+	// not t5_ IDs), geos uppercased.
 	targeting, _ := adGroupBody["targeting"].(map[string]any)
 	comms, _ := targeting["communities"].([]any)
 	if len(comms) != 2 || comms[0] != "opensource" || comms[1] != "linux" {
@@ -541,6 +542,69 @@ func TestCreateCampaign_CommunityFallback(t *testing.T) {
 	// communities were skipped and need manual action.
 	if !foundSkipped {
 		t.Errorf("expected communities-skipped warning in %v", res.Steps)
+	}
+}
+
+// TestCreateCampaign_NoCommunityFallbackOn500 verifies the communities-less retry
+// is gated on an HTTP 400: a 500 whose body happens to contain "invalid
+// communities" must NOT trigger a second ad-group POST, because after an
+// ambiguous server failure the ad group may already exist and a blind retry
+// could duplicate it.
+func TestCreateCampaign_NoCommunityFallbackOn500(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var agMu sync.Mutex
+	var adGroupAttempts int
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups"):
+			agMu.Lock()
+			adGroupAttempts++
+			agMu.Unlock()
+			// 500 with the phrase in the body — must NOT be treated as the
+			// 400 validation fallback.
+			http.Error(w, "invalid communities (but a 500!)", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "tlf",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Subreddits:      []string{"golang"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 500 ad-group create")
+	}
+	agMu.Lock()
+	attempts := adGroupAttempts
+	agMu.Unlock()
+	if attempts != 1 {
+		t.Errorf("expected exactly 1 ad_group attempt (no fallback on 500), got %d", attempts)
+	}
+	// The partial result must still carry the created campaign id for reconcile.
+	if res == nil || res.CampaignID != "camp_1" {
+		t.Errorf("expected partial result with CampaignID camp_1, got %+v", res)
 	}
 }
 

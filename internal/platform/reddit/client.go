@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -528,6 +529,22 @@ type apiResponse struct {
 	Data json.RawMessage `json:"data"`
 }
 
+// apiError is returned by request() for a non-2xx Reddit Ads API response. It
+// carries the HTTP status so callers can branch on it precisely (e.g. only retry
+// an ad-group create WITHOUT communities on a 400 validation error, not on a
+// 401/500 where the mutation may have committed and a retry could duplicate it)
+// rather than string-matching the response body.
+type apiError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("reddit API %s %s -> %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
+}
+
 // request performs an authenticated Reddit Ads API call, sanitizing the path
 // segments and honoring ctx. Mirrors redditRequest.
 //
@@ -632,10 +649,11 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 		raw, readErr := readResponseBody(resp.Body)
 		_ = resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body := truncate(string(raw), redditErrBodyMaxRunes)
 			if readErr != nil {
-				return nil, fmt.Errorf("reddit API %s %s -> %d: %s (body read error: %v)", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes), readErr)
+				body = fmt.Sprintf("%s (body read error: %v)", body, readErr)
 			}
-			return nil, fmt.Errorf("reddit API %s %s -> %d: %s", method, path, resp.StatusCode, truncate(string(raw), redditErrBodyMaxRunes))
+			return nil, &apiError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: body}
 		}
 		if readErr != nil {
 			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, readErr)
@@ -1081,7 +1099,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	droppedCommunities := false
 	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(targetingWithCommunities))
 	if err != nil {
-		if suppliedCommunities && strings.Contains(err.Error(), "invalid communities") {
+		// Only fall back to a communities-less retry on a 400 (validation) response
+		// whose body names invalid communities. Restricting to 400 (and matching the
+		// phrase case-insensitively) avoids retrying after a 401/500 — an ambiguous
+		// failure where the ad group may already have been created, so a blind retry
+		// could duplicate it.
+		var apiErr *apiError
+		is400InvalidCommunities := errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusBadRequest &&
+			strings.Contains(strings.ToLower(apiErr.Body), "invalid communities")
+		if suppliedCommunities && is400InvalidCommunities {
 			steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying without communities", strings.Join(communityNames, ", ")))
 			usedCommunities = false
 			droppedCommunities = true
@@ -1156,12 +1182,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return pr, fmt.Errorf("ad creation aborted: %w", ctxErr)
 			}
 			adWarning = "ad creation failed; the campaign and ad group were created (PAUSED) but the promoted-post ad was not — add it manually in Reddit Ads Manager"
-			// Keep this step GENERIC: request() embeds the upstream response body in
-			// its error, and a reflective Reddit validation error can echo the full
-			// click_url — which carries the caller's (permitted) secret-bearing query
-			// params. Persisting err.Error() in Steps would leak those. The failure is
-			// still surfaced structurally via adWarning above.
-			steps = append(steps, "Ad creation failed (see service logs for details) -- add ad manually in Reddit Ads Manager")
+			// Report ONLY the HTTP status in the step, never err.Error(): request()'s
+			// apiError carries the upstream response body, and a reflective Reddit
+			// validation error can echo the full click_url (which holds the caller's
+			// permitted secret-bearing query params). Persisting the body in Steps
+			// would leak those. The status is enough for an operator to triage; the
+			// failure is also surfaced structurally via adWarning above. The package
+			// has no logger, so make no claim that details are logged elsewhere.
+			var adAPIErr *apiError
+			if errors.As(err, &adAPIErr) {
+				steps = append(steps, fmt.Sprintf("Ad creation failed (HTTP %d) -- add ad manually in Reddit Ads Manager", adAPIErr.StatusCode))
+			} else {
+				steps = append(steps, "Ad creation failed -- add ad manually in Reddit Ads Manager")
+			}
 		} else {
 			adID = decodeID(adResp)
 			if adID != "" {
