@@ -263,6 +263,7 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			OK         bool   `json:"ok"`
 			CampaignID string `json:"campaign_id"`
 			Error      string `json:"error"`
+			Skipped    bool   `json:"skipped"`
 		}
 		if err := json.Unmarshal(j.Result, &stored); err != nil {
 			// A persisted result that won't decode is corruption, not a valid empty
@@ -279,9 +280,19 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 				id := r.CampaignID
 				pr.CampaignID = &id
 			}
-			if r.Error != "" {
+			switch {
+			case r.Error != "":
 				e := r.Error
 				pr.Error = &e
+			case r.Skipped && !r.OK:
+				// A SKIPPED platform is OK=false but is NOT a failure — a concurrent
+				// dispatch already owns the (brief, platform) claim and is creating it.
+				// The generated PlatformResult has no dedicated "skipped" field (a Goa
+				// design change / regen, tracked in LFXV2-2665), so surface the deferral
+				// through Error with an explicit non-failure message rather than leaving
+				// an unexplained ok=false that reads as a silent failure.
+				msg := "skipped: a concurrent request already owns this platform's campaign creation (not a failure)"
+				pr.Error = &msg
 			}
 			resp.Result = append(resp.Result, pr)
 		}

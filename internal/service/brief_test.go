@@ -521,3 +521,32 @@ func TestBriefService_GetJob_ValidResultsAndFailedErrorOnly(t *testing.T) {
 		t.Errorf("failed job error = %v, want the surfaced error message", resp2.Error)
 	}
 }
+
+// TestBriefService_GetJob_SkippedSurfacesNonFailure verifies a skipped platform
+// (ok=false, skipped=true) on a succeeded job is surfaced with an explicit
+// non-failure message rather than an unexplained ok=false that reads as a failure.
+func TestBriefService_GetJob_SkippedSurfacesNonFailure(t *testing.T) {
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: []byte(`[{"platform":"google-ads","ok":true,"campaign_id":"pc-1"},{"platform":"linkedin-ads","ok":false,"skipped":true}]`),
+	})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	var li *briefs.PlatformResult
+	for _, r := range resp.Result {
+		if r.Platform == "linkedin-ads" {
+			li = r
+		}
+	}
+	if li == nil {
+		t.Fatal("linkedin-ads result missing")
+	}
+	if li.OK {
+		t.Errorf("skipped platform OK = true, want false")
+	}
+	if li.Error == nil || !strings.Contains(*li.Error, "skipped") || !strings.Contains(*li.Error, "not a failure") {
+		t.Errorf("skipped platform must surface a non-failure 'skipped' message, got %v", li.Error)
+	}
+}

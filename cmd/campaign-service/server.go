@@ -133,7 +133,6 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	inflight := middleware.NewInflightTracker()
 
 	var handler http.Handler = mux
-	handler = inflight.Middleware()(handler)
 	handler = middleware.RequestIDMiddleware()(handler)
 	if cfg.Debug {
 		handler = debug.HTTP()(handler)
@@ -146,6 +145,12 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 			return p != "/healthz" && p != "/livez" && p != "/readyz"
 		}),
 	)
+	// Wrap the inflight tracker OUTERMOST (applied last), so a request is counted
+	// from the instant it enters the handler chain — before the request-ID / debug /
+	// OTel wrappers. If it were inner, a handler that has started but not yet reached
+	// the inner wrapper would be invisible to Wait, and shutdown could observe zero,
+	// close the pool, and let that straggler touch a closing pool.
+	handler = inflight.Middleware()(handler)
 
 	srv := &http.Server{
 		Addr:              cfg.ServerAddress(),
