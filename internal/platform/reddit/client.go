@@ -435,8 +435,14 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 		// is held across the network call.
 		inflight = &tokenRefresh{done: make(chan struct{})}
 		c.inflight = inflight
+		// Detach from the caller's CANCELLATION (one caller's cancel must not tear
+		// down a refresh other waiters depend on) but PRESERVE its request-scoped
+		// VALUES via context.WithoutCancel, so an injected tracing/observability
+		// transport can still correlate the token request with the campaign
+		// operation. A fresh bounded timeout replaces the caller's deadline.
+		refreshValuesCtx := context.WithoutCancel(ctx)
 		go func() {
-			fetchCtx, cancel := context.WithTimeout(context.Background(), redditRequestTimeout)
+			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, redditRequestTimeout)
 			token, err := c.fetchToken(fetchCtx)
 			cancel()
 
@@ -1200,7 +1206,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			Steps:        steps,
 		}, fmt.Errorf("reddit campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f lifetime)", campaignID, in.BudgetUSD))
+	// Use %g (not %.2f) so a sub-cent accepted budget isn't misreported as $0.00 —
+	// the step reflects the value actually sent, preserving its precision.
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%g lifetime)", campaignID, in.BudgetUSD))
 
 	// campaignName / adGroupName were composed and length-validated up front (before
 	// the campaign POST). The ad-group name is deterministic so partialResult can
@@ -1386,11 +1394,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 					steps = append(steps, "Ad creation UNCONFIRMED (request may have reached Reddit) -- verify in Reddit Ads Manager before adding manually")
 				}
 			} else {
-				adWarning = "promoted-post ad creation FAILED (campaign and ad group created, PAUSED); Reddit rejected the ad — add it manually in Reddit Ads Manager"
+				// This definite-not-created branch covers BOTH a 4xx (Reddit received
+				// and REJECTED the ad) and a pre-send failure (token refresh, request
+				// build, or a pre-connect dial error — Reddit NEVER received it). Word
+				// each accurately rather than claiming "Reddit rejected" in both cases.
 				if gotStatus {
-					steps = append(steps, fmt.Sprintf("Ad creation failed (HTTP %d) -- add ad manually in Reddit Ads Manager", adAPIErr.StatusCode))
+					adWarning = "promoted-post ad creation FAILED (campaign and ad group created, PAUSED); Reddit rejected the ad — add it manually in Reddit Ads Manager"
+					steps = append(steps, fmt.Sprintf("Ad creation failed: Reddit rejected the ad (HTTP %d) -- add ad manually in Reddit Ads Manager", adAPIErr.StatusCode))
 				} else {
-					steps = append(steps, "Ad creation failed -- add ad manually in Reddit Ads Manager")
+					adWarning = "promoted-post ad creation FAILED before it reached Reddit (campaign and ad group created, PAUSED); the ad was not created — add it manually in Reddit Ads Manager"
+					steps = append(steps, "Ad creation failed before the request reached Reddit -- add ad manually in Reddit Ads Manager")
 				}
 			}
 		} else {
