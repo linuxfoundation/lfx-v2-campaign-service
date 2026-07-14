@@ -389,8 +389,10 @@ var inactiveAccountStatusLabels = map[int]string{
 	9:   "in grace period",
 	100: "pending closure",
 	101: "closed",
-	201: "any active review",
-	202: "any closed review",
+	// NOTE: 201 (ANY_ACTIVE) and 202 (ANY_CLOSED) are Meta AGGREGATE/filter values,
+	// not per-account statuses — a real ad-account's account_status is never 201/202.
+	// 201 in particular denotes an ACTIVE aggregate, so listing it here would reject
+	// an active account. They are intentionally omitted from this known-bad map.
 }
 
 // currencyMinorUnitOffset is the AUTHORITATIVE map of the Meta ad-account
@@ -801,6 +803,14 @@ func validateRegistrationURL(raw string) error {
 	}
 	if parsed.Scheme != "https" {
 		return fmt.Errorf("registration URL must use HTTPS")
+	}
+	// url.Parse does not validate the query. buildUTMURL rebuilds the URL via
+	// u.Query() (which SILENTLY drops a pair it can't parse — e.g. one containing an
+	// unescaped ';' or bad percent-encoding), so the ad's click URL could differ
+	// from what the caller supplied. Reject a query that ParseQuery can't cleanly
+	// parse, before any mutating call.
+	if _, qerr := url.ParseQuery(parsed.RawQuery); qerr != nil {
+		return fmt.Errorf("registration URL has a malformed query string")
 	}
 	return nil
 }

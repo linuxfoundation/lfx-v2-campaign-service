@@ -1709,6 +1709,48 @@ func TestCreateCampaignRejectsInactiveAccountBeforeAnyPost(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignAcceptsAnyActiveAccountStatus verifies account_status 201
+// (ANY_ACTIVE — a Meta aggregate, not a per-account inactive state) is NOT
+// treated as inactive, so the campaign proceeds.
+func TestCreateCampaignAcceptsAnyActiveAccountStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","account_status":201,"currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"c1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"a1"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"cr1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad1"}`)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", RegistrationURL: "https://x.example.org/e",
+		GeoTargets: []string{"US"}, Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	}); err != nil {
+		t.Errorf("account_status 201 (ANY_ACTIVE) must be accepted, got error: %v", err)
+	}
+}
+
+// TestValidateRegistrationURLRejectsMalformedQuery verifies a registration URL
+// whose query can't be cleanly parsed (so u.Query() would silently drop a param)
+// is rejected up front.
+func TestValidateRegistrationURLRejectsMalformedQuery(t *testing.T) {
+	if err := validateRegistrationURL("https://x.example.org/e?a=%zz"); err == nil {
+		t.Error("malformed-query registration URL should be rejected")
+	}
+	if err := validateRegistrationURL("https://x.example.org/e?a=b&c=d"); err != nil {
+		t.Errorf("well-formed query should pass, got %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Input validation errors
 // ---------------------------------------------------------------------------
