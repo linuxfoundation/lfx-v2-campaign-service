@@ -300,9 +300,10 @@ type versionGuardedJobRepo struct {
 }
 
 func (r *versionGuardedJobRepo) CreateJobForApprovedBrief(_ context.Context, briefID string, expectedVersion int64) (*model.CampaignJob, error) {
-	// Re-verify approval atomically with the create, mirroring the guarded
-	// INSERT ... WHERE EXISTS: any concurrent replace/archive that bumped the
-	// version or changed the status fails the guard.
+	// Re-verify approval atomically with the create, mirroring the real repo's
+	// SELECT ... FOR UPDATE re-check inside the job-insert transaction: any
+	// concurrent replace/archive that bumped the version or changed the status
+	// fails the guard.
 	var stillApproved bool
 	for _, b := range r.store.briefs {
 		if b.ID == briefID && b.Status == model.BriefApproved && b.Version == expectedVersion {

@@ -200,6 +200,24 @@ func waitForTerminal(t *testing.T, jobs *fakeJobRepo, id string) *model.Campaign
 	return nil
 }
 
+// waitForFinalized waits until the run's finalize write has landed (a non-empty
+// result recorded), regardless of whether the resulting status is terminal. A
+// job whose only outcomes are single-flight SKIPs finalizes to a non-terminal
+// 'running' status (its skipped pairs are owned by another dispatch), so such a
+// job never satisfies waitForTerminal — this helper observes its finalize instead.
+func waitForFinalized(t *testing.T, jobs *fakeJobRepo, id string) *model.CampaignJob {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		j, _ := jobs.GetJob(context.Background(), "", id)
+		if len(j.Result) > 0 {
+			return j
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("job result was never finalized")
+	return nil
+}
+
 func TestOrchestrator_AllSucceed(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{}
@@ -344,7 +362,10 @@ func TestOrchestrator_ClaimErrorIsFailure(t *testing.T) {
 }
 
 // TestOrchestrator_AlreadyClaimedPendingSkips verifies that when another worker
-// holds the pending claim (no upstream id yet), this worker does not dispatch.
+// holds the pending claim (no upstream id yet), this worker does not dispatch and
+// the skip is NOT recorded as a terminal failure: a single skipped platform must
+// leave the job non-terminal (running) so a re-poll after the owner completes
+// reflects the true outcome, rather than the old behavior of falsely failing it.
 func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 	jobs := newFakeJobRepo()
 	// Seed a pending claim (no upstream id) for the pair, so ClaimCampaignDispatch
@@ -358,9 +379,11 @@ func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
 	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
-	j := waitForTerminal(t, jobs, id)
-	// A single in-progress platform aggregates to failed (not ok), and the
-	// dispatcher must not have been called.
+	// The single skipped platform must NOT drive the job to a terminal status.
+	j := waitForFinalized(t, jobs, id)
+	if j.Status != model.JobRunning {
+		t.Errorf("status = %s, want running (a lone skipped platform must not falsely terminate the job)", j.Status)
+	}
 	disp.mu.Lock()
 	calls := disp.calls
 	disp.mu.Unlock()
@@ -369,6 +392,32 @@ func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 	}
 	if !strings.Contains(string(j.Result), "another concurrent dispatch owns") {
 		t.Errorf("result = %s, want a concurrent-owner skip message", j.Result)
+	}
+	if !strings.Contains(string(j.Result), "\"skipped\":true") {
+		t.Errorf("result = %s, want the platform marked skipped:true", j.Result)
+	}
+}
+
+// TestOrchestrator_SkipDoesNotFailAlongsideSuccess verifies that when one
+// platform succeeds and another is skipped (owned by a concurrent dispatch), the
+// job is not falsely reported failed/partial: with a real success and no real
+// failure, an outstanding skip keeps the job non-terminal (running) pending the
+// owner's outcome.
+func TestOrchestrator_SkipDoesNotFailAlongsideSuccess(t *testing.T) {
+	jobs := newFakeJobRepo()
+	// LinkedIn is already held pending by another dispatch; Google Ads is free.
+	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
+		"b1|" + string(model.ProviderLinkedInAds): {ID: "c1", Status: "pending", PlatformCampaignID: ""},
+	}}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds:   okDispatcher{},
+		model.ProviderLinkedInAds: okDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	j := waitForFinalized(t, jobs, id)
+	if j.Status != model.JobRunning {
+		t.Errorf("status = %s, want running (a skip alongside a success must not fail/partial the job)", j.Status)
 	}
 }
 
@@ -381,6 +430,13 @@ func TestAggregateStatus(t *testing.T) {
 		{"all ok", []platformResult{{OK: true}, {OK: true}}, model.JobSucceeded},
 		{"all fail", []platformResult{{OK: false}, {OK: false}}, model.JobFailed},
 		{"mixed", []platformResult{{OK: true}, {OK: false}}, model.JobPartial},
+		// A single-flight SKIP is not a failure: a lone skip stays non-terminal
+		// (running) pending the owning dispatch's outcome.
+		{"only skipped", []platformResult{{Skipped: true}}, model.JobRunning},
+		{"skip + ok", []platformResult{{OK: true}, {Skipped: true}}, model.JobRunning},
+		// A real failure still surfaces even when another platform was skipped.
+		{"skip + fail", []platformResult{{OK: false}, {Skipped: true}}, model.JobPartial},
+		{"ok + fail + skip", []platformResult{{OK: true}, {OK: false}, {Skipped: true}}, model.JobPartial},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

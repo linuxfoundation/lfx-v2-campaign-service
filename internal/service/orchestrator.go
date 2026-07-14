@@ -286,9 +286,22 @@ func (o *Orchestrator) Shutdown(ctx context.Context, drainTimeout time.Duration)
 }
 
 // platformResult is the per-platform outcome recorded in the job result.
+//
+// Skipped marks the single-flight SKIP case: another concurrent dispatch owns
+// this (brief, platform) pair, so THIS request did not create the campaign and
+// its outcome is owned by that other dispatch. A skip is neither a success nor a
+// failure for this job — recording it as a failure would falsely make the
+// aggregate job terminal-failed/partial even when the owning dispatch succeeds
+// (and GetJob only decodes the stored result; it never re-checks the campaign
+// row). aggregateStatus therefore excludes skipped platforms from the failure
+// tally, and a job with only skipped platforms stays non-terminal (running) so a
+// re-poll after the owner finishes reflects the true outcome. Full cross-request
+// reconciliation (this job actively adopting the owner's result) is tracked under
+// LFXV2-2665.
 type platformResult struct {
 	Platform   string `json:"platform"`
 	OK         bool   `json:"ok"`
+	Skipped    bool   `json:"skipped,omitempty"`
 	CampaignID string `json:"campaign_id,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
@@ -300,10 +313,10 @@ type platformResult struct {
 // creation is gated on the brief still being approved at that exact version
 // (CreateJobForApprovedBrief), closing the approve→dispatch TOCTOU race: a
 // concurrent ReplaceBrief (resets to draft) or ArchiveBrief committing between the
-// caller's approval read and this insert bumps the brief's version, so the
-// guarded insert affects zero rows and Start returns domain.ErrStaleApproval
-// (mapped to 409) rather than launching paid campaigns from a stale "approved"
-// snapshot.
+// caller's approval read and job creation bumps the brief's version; the guard
+// (a SELECT ... FOR UPDATE re-check inside the job-insert transaction) then fails
+// and Start returns domain.ErrStaleApproval (mapped to 409) rather than launching
+// paid campaigns from a stale "approved" snapshot.
 //
 // The dispatch goroutine runs under the orchestrator's root context (not the
 // request context), so it survives the request ending but can still be cancelled
@@ -484,11 +497,16 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			return res
 		}
 		// Another worker holds the pending claim: don't dispatch again (the point of
-		// the claim). This job did not create the campaign, so it's recorded as not
-		// ok (OK stays false) — which aggregates to failed/partial for THIS job —
-		// with a message making clear it's owned by a concurrent run, not a real
-		// failure. The other run will complete it; a poll of that run (or a re-poll
-		// after it finishes) reflects the true outcome.
+		// the claim). This job did not create the campaign — its outcome belongs to
+		// the owning dispatch — so record it as SKIPPED, not failed. Recording a skip
+		// as a failure would falsely drive THIS job to terminal failed/partial even
+		// when the owner succeeds (GetJob only decodes the stored result and never
+		// re-checks the campaign row, so the false failure would be permanent).
+		// aggregateStatus excludes skipped platforms from the failure tally and keeps
+		// a wholly-skipped job non-terminal (running) so a re-poll after the owner
+		// finishes reflects the true outcome. Fully adopting the owner's async result
+		// into this job is tracked under LFXV2-2665.
+		res.Skipped = true
 		res.Error = "skipped: another concurrent dispatch owns this platform"
 		return res
 	}
@@ -581,22 +599,43 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	return res
 }
 
-// aggregateStatus folds per-platform outcomes into the job's terminal status.
+// aggregateStatus folds per-platform outcomes into the job's status.
+//
+// Skipped platforms (single-flight SKIP: another dispatch owns the pair) are NOT
+// counted as failures — a skip is not this job's outcome. If any platform was
+// skipped and none of THIS job's own dispatches failed, the job is not yet done:
+// the owning dispatch is still deciding the skipped pair's fate, so the job stays
+// non-terminal (running) and a re-poll after the owner finishes reflects the true
+// outcome (rather than the old behavior, which recorded the skip as a terminal
+// failure that GetJob could never correct). Full cross-request adoption of the
+// owner's result is tracked under LFXV2-2665.
 func aggregateStatus(results []platformResult) model.JobStatus {
-	var ok, failed int
+	var ok, failed, skipped int
 	for _, r := range results {
-		if r.OK {
+		switch {
+		case r.Skipped:
+			skipped++
+		case r.OK:
 			ok++
-		} else {
+		default:
 			failed++
 		}
 	}
 	switch {
-	case failed == 0:
-		return model.JobSucceeded
-	case ok == 0:
+	case failed > 0 && ok == 0 && skipped == 0:
+		// Every platform this job actually dispatched failed.
 		return model.JobFailed
-	default:
+	case failed > 0:
+		// A real mix of success and failure (any skips remain pending but at least
+		// one platform definitively failed — surface that as partial rather than
+		// hiding it behind a still-running status).
 		return model.JobPartial
+	case skipped > 0:
+		// No failures, but at least one pair is owned by a concurrent dispatch whose
+		// outcome isn't ours to know yet. Stay non-terminal so a re-poll after the
+		// owner completes reflects the real result instead of a spurious failure.
+		return model.JobRunning
+	default:
+		return model.JobSucceeded
 	}
 }

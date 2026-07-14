@@ -48,39 +48,76 @@ func (r *JobRepo) CreateJob(ctx context.Context, briefID string) (*model.Campaig
 }
 
 // CreateJobForApprovedBrief inserts a queued job only if the brief is still
-// approved at expectedVersion, re-verifying the approval atomically in the same
-// statement. This closes the approve→dispatch TOCTOU race described on the port:
-// a concurrent ReplaceBrief (resets to 'draft', version+1) or ArchiveBrief
-// ('archived', version+1) committing in the window bumps the brief's version, so
-// the guarded INSERT ... SELECT ... WHERE EXISTS evaluates its EXISTS predicate
-// against that committed change and inserts zero rows (pgx.ErrNoRows) — surfaced
-// as domain.ErrStaleApproval (mapped to 409).
+// approved at expectedVersion, closing the approve→dispatch TOCTOU race described
+// on the port: a concurrent ReplaceBrief (resets to 'draft', version+1) or
+// ArchiveBrief ('archived', version+1) committing in the window must prevent the
+// job from being created against the now-stale approval.
 //
-// The INSERT-from-SELECT-WHERE-EXISTS is a single statement, so the approval
-// re-check and the job insert share one snapshot and cannot be split by a
-// concurrent commit (no held lock, matching the lock-free single-flight claim).
-// A replace/archive committed BEFORE this statement fails the EXISTS (→ 0 rows →
-// conflict); one committed AFTER means the job was created while the brief was
-// genuinely still approved at the read version, which is correct.
+// Isolation reasoning — why a single guarded INSERT ... WHERE EXISTS is NOT
+// enough. Under PostgreSQL's default READ COMMITTED, each statement takes a fresh
+// snapshot at command start. The EXISTS subquery of a lone INSERT reads that
+// snapshot; a concurrent ReplaceBrief/ArchiveBrief that COMMITS between the
+// snapshot and the insert's row-visibility check is not seen by the EXISTS (it
+// still sees the old approved version), so the job would be created from a
+// stale-approved brief. The single-statement atomicity only rules out a commit
+// interleaving WITHIN the statement's snapshot — it does not serialize against a
+// mutation that commits just before the statement runs but after the caller's
+// approval read.
+//
+// Fix: take a row lock on the brief inside ONE transaction BEFORE the insert.
+// SELECT ... FOR UPDATE acquires a row-level exclusive lock on the brief row and
+// re-reads its CURRENT committed state (FOR UPDATE always sees the latest
+// committed row version, waiting out any in-flight writer that holds it). Any
+// concurrent ReplaceBrief/ArchiveBrief UPDATEs campaign_briefs by id (see
+// brief_repo.go — all three bump version on the same row), so it must acquire the
+// same row lock: it either committed before our FOR UPDATE (then our re-read sees
+// the bumped version and the check fails → ErrStaleApproval) or it blocks on our
+// lock until this transaction commits the job (then it proceeds afterward, but
+// the job was created while the brief was genuinely still approved at the read
+// version, which is correct). The check-then-insert is therefore atomic with
+// respect to brief mutations. Returns domain.ErrStaleApproval when the locked row
+// fails the status/version check (mapped to 409).
 func (r *JobRepo) CreateJobForApprovedBrief(ctx context.Context, briefID string, expectedVersion int64) (*model.CampaignJob, error) {
-	q := `INSERT INTO campaign_jobs (brief_id)
-		SELECT $1
-		WHERE EXISTS (
-			SELECT 1 FROM campaign_briefs
-			WHERE id = $1 AND status = 'approved' AND version = $2
-		)
-		RETURNING ` + jobCols
-	j, err := scanJob(r.db.QueryRow(ctx, q, briefID, expectedVersion))
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// No row inserted: the brief is no longer approved at expectedVersion (a
-			// concurrent replace/archive committed in the window, or it was never
-			// approved). Surface the state-conflict sentinel (not the generic
-			// uniqueness ErrConflict) so the service can tell the client to refresh
-			// and re-approve rather than reporting "already exists".
+		return nil, fmt.Errorf("create job for approved brief: begin tx: %w", err)
+	}
+	// Roll back unless we explicitly commit. A no-op after a successful Commit
+	// (pgx returns ErrTxClosed, which we ignore) — this guards every error path.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the brief row and read its current committed status/version. FOR UPDATE
+	// serializes this against a concurrent replace/archive that touches the same
+	// row: whichever transaction acquires the lock first runs to completion before
+	// the other observes the row, so the check below cannot straddle a commit.
+	var (
+		status  string
+		version int64
+	)
+	lockQ := `SELECT status, version FROM campaign_briefs WHERE id = $1 FOR UPDATE`
+	if serr := tx.QueryRow(ctx, lockQ, briefID).Scan(&status, &version); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			// The brief does not exist at all; treat it as a stale approval (there is
+			// nothing approved at expectedVersion to dispatch from).
 			return nil, domain.ErrStaleApproval
 		}
-		return nil, fmt.Errorf("create job for approved brief: %w", err)
+		return nil, fmt.Errorf("create job for approved brief: lock brief: %w", serr)
+	}
+	if status != "approved" || version != expectedVersion {
+		// A concurrent replace/archive committed before we took the lock (or the
+		// brief was never approved at this version). Surface the state-conflict
+		// sentinel (not the generic uniqueness ErrConflict) so the service can tell
+		// the client to refresh and re-approve rather than reporting "already exists".
+		return nil, domain.ErrStaleApproval
+	}
+
+	insertQ := `INSERT INTO campaign_jobs (brief_id) VALUES ($1) RETURNING ` + jobCols
+	j, err := scanJob(tx.QueryRow(ctx, insertQ, briefID))
+	if err != nil {
+		return nil, fmt.Errorf("create job for approved brief: insert job: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("create job for approved brief: commit: %w", err)
 	}
 	return j, nil
 }

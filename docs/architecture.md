@@ -356,7 +356,7 @@ erDiagram
 
     campaign_briefs {
         UUID id PK
-        UUID project_id
+        TEXT project_id "project UUID or slug (e.g. cncf)"
         VARCHAR program_type "events/education/membership"
         VARCHAR event_slug "UNIQUE with project_id"
         TEXT url
@@ -375,7 +375,7 @@ erDiagram
 
     campaigns {
         UUID id PK
-        UUID project_id
+        TEXT project_id "project UUID or slug (e.g. cncf)"
         UUID brief_id FK "many campaigns share one brief"
         UUID job_id "soft ref to campaign_jobs; no FK (jobs are ephemeral, expire/purge)"
         VARCHAR platform "channel: google-ads/linkedin-ads/..."
@@ -470,7 +470,7 @@ Beyond paid ad platforms, the campaign service will manage connections to organi
 
 Persistence uses **strongly-typed, one-table-per-provider** schemas rather than a single generic `channel_connections` table with an untyped `metadata` blob. Credentials and configuration differ materially between providers, so folding them into untyped JSON would weaken the contract and make the API harder to develop and validate against (especially for agents). Each supported provider gets its own table with provider-specific columns.
 
-Every table that maps to an LFX platform resource type carries a `version BIGINT` iterator that powers the platform-idiomatic **ETag / `If-Match`** optimistic-concurrency controls on `PUT`s (pattern per [2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG)). `project_id` is a plain indexed `UUID` (owned by the project-service; no cross-service FK). Credentials are encrypted at the application layer (AES-256-GCM) using a key from a Kubernetes secret — not pgcrypto.
+Every table that maps to an LFX platform resource type carries a `version BIGINT` iterator that powers the platform-idiomatic **ETag / `If-Match`** optimistic-concurrency controls on `PUT`s (pattern per [2026-05-CloudNativePG](https://github.com/linuxfoundation/lfx-architecture-scratch/tree/main/2026-05-CloudNativePG)). `project_id` is a plain indexed column (owned by the project-service; no cross-service FK) typed `TEXT`, because a project is addressed by its UUID **or** its slug (e.g. `cncf`) and the API contract advertises the same — the `campaign_briefs`/`campaigns` tables use `TEXT project_id` accordingly (migration `000003`). Credentials are encrypted at the application layer (AES-256-GCM) using a key from a Kubernetes secret — not pgcrypto.
 
 The full table definitions — per-provider connection tables **plus** `campaign_briefs` and `campaigns` — live in [channel-connections-schema.md](channel-connections-schema.md) and are not duplicated here. For briefs and campaigns, attribution and revision history are served by the Query Service on each (re)index, so this service keeps no separate audit tables. Connection tables are not indexed (singleton per project; no listing consumer).
 

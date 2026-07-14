@@ -85,6 +85,12 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
+	// NOTE: brief/campaign lists and revision history are owned by the Query Service
+	// (per the api-catalog). Wiring the Query Service indexer client — so create /
+	// replace / approve / archive and the orchestrator's campaign upserts emit index
+	// events — is a deliberate follow-up (LFXV2-2665), not part of this PR. This
+	// persistence layer is the source of truth the indexer will later consume; no
+	// indexing happens here yet.
 	return briefResult(created), nil
 }
 
