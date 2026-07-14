@@ -2759,11 +2759,9 @@ func TestCreateCampaign_EmptyEventNameRejected(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_SubredditNameResolvedToID verifies subreddit NAMES are
-// resolved to Reddit Ads subreddit IDs (via the /subreddits lookup) before the
-// ad-group POST, and the POST body's `communities` carries the resolved ID, not
-// the raw name (api-catalog: "Subreddit targeting uses subreddit IDs, not
-// names").
+// TestValidateRegistrationURL_RejectsUserinfo verifies a registration URL
+// carrying embedded credentials (userinfo) is rejected before use as an ad
+// destination.
 func TestValidateRegistrationURL_RejectsUserinfo(t *testing.T) {
 	for _, raw := range []string{
 		"https://user:password@example.com/reg",
@@ -2840,10 +2838,7 @@ func TestExtractRedditPostID_RejectsUserinfo(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_SubredditLookupUsesTargetingEndpoint verifies the subreddit
-// lookup hits the v3 targeting endpoint (/targeting/subreddits) and that
-// resolution runs BEFORE the campaign POST, so a lookup failure cannot orphan a
-// PAUSED campaign.
+// TestStripSubredditPrefix verifies the case-insensitive "r/" prefix strip.
 func TestStripSubredditPrefix(t *testing.T) {
 	cases := map[string]string{
 		"r/golang": "golang",
@@ -2876,7 +2871,3 @@ func TestRedactURL(t *testing.T) {
 		}
 	}
 }
-
-// TestCreateCampaign_SubredditCasingDedup verifies the same subreddit supplied
-// with different casing/prefix is looked up ONCE (case-folded cache key) and
-// contributes a single community ID.

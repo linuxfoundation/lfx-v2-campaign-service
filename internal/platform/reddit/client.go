@@ -952,18 +952,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Compute the effective start time ONCE, before the campaign POST. When the
-	// start date is today its midnight-UTC timestamp is already in the past, so
-	// nudge it to now+buffer; otherwise use start-of-day. This adjusted value is
-	// used for both the campaign and the ad group so nothing sends a past start.
-	// redditPastStartBuffer is sized (see its definition) to cover the worst-case
-	// retry backoff of the WHOLE campaign->ad-group workflow -- request can honor a
-	// Retry-After and resend this same encoded body on a 429, and the timestamp is
-	// reused for the (possibly retried) ad-group POST -- so a single computed-once
-	// value stays in the future for every request that reuses it.
+	// Nudge the start forward whenever it does not already clear the workflow
+	// HORIZON (now + redditPastStartBuffer), not merely when it is already past: a
+	// start only a few seconds/minutes ahead could slip into the past DURING
+	// account verification, the token exchange, or a 429 retry, since this one
+	// timestamp is reused for the campaign and the (possibly retried) ad-group
+	// POST. redditPastStartBuffer is sized (see its definition) to cover that whole
+	// retryable campaign->ad-group workflow, so a start at/after now+buffer is
+	// guaranteed to still be future when every request that reuses it is accepted;
+	// anything earlier is nudged up to now+buffer.
 	campaignEndTime := toISOTimestamp(in.EndDate)
 	effectiveStart := toISOTimestamp(in.StartDate)
-	if startMs, ok := parseRedditTimestamp(effectiveStart); ok && startMs.Before(c.now()) {
-		effectiveStart = toRedditTimestamp(c.now().Add(redditPastStartBuffer))
+	horizon := c.now().Add(redditPastStartBuffer)
+	if startMs, ok := parseRedditTimestamp(effectiveStart); !ok || startMs.Before(horizon) {
+		effectiveStart = toRedditTimestamp(horizon)
 	}
 	// After nudging a past start forward, the (unchanged) end could be at/before
 	// it; reject rather than sending an invalid window.
@@ -1154,7 +1156,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return pr, fmt.Errorf("ad creation aborted: %w", ctxErr)
 			}
 			adWarning = "ad creation failed; the campaign and ad group were created (PAUSED) but the promoted-post ad was not — add it manually in Reddit Ads Manager"
-			steps = append(steps, fmt.Sprintf("Ad creation failed: %s -- add ad manually in Reddit Ads Manager", err.Error()))
+			// Keep this step GENERIC: request() embeds the upstream response body in
+			// its error, and a reflective Reddit validation error can echo the full
+			// click_url — which carries the caller's (permitted) secret-bearing query
+			// params. Persisting err.Error() in Steps would leak those. The failure is
+			// still surfaced structurally via adWarning above.
+			steps = append(steps, "Ad creation failed (see service logs for details) -- add ad manually in Reddit Ads Manager")
 		} else {
 			adID = decodeID(adResp)
 			if adID != "" {
@@ -1290,9 +1297,11 @@ func validateRegistrationURL(raw string) error {
 	}
 	u, err := url.Parse(trimmed)
 	if err != nil {
-		// Redact before echoing: a malformed value may still carry a secret in
-		// userinfo/query that would otherwise land in the error/logs.
-		return fmt.Errorf("registration URL %q is not a valid URL: %w", redactURL(raw), err)
+		// Redact before echoing, and do NOT wrap the url.Parse error: a *url.Error
+		// embeds the full raw URL in its own message, which would re-expose a secret
+		// in userinfo/query even though we redacted the %q argument. Keep only the
+		// redacted URL in the returned error.
+		return fmt.Errorf("registration URL %q is not a valid URL", redactURL(raw))
 	}
 	if !u.IsAbs() || u.Hostname() == "" {
 		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", redactURL(raw))
@@ -1311,10 +1320,12 @@ func validateRegistrationURL(raw string) error {
 	}
 }
 
-// buildRedditUTMURL mirrors buildRedditUtmUrl.
-func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
-	// TrimSpace mirrors validateRegistrationURL, which accepts padded input.
-	base := strings.TrimSpace(in.RegistrationURL)
+// redditUTMParams returns the exact set of utm_* parameters this client
+// generates for a click URL. It is the single source of truth for both the real
+// click URL (buildRedditUTMURL) and the sanitized display URL
+// (displayRedditUTMURL), so the display allowlist can never drift from what is
+// actually generated.
+func redditUTMParams(in CampaignInput, variantIndex int) map[string]string {
 	slug := in.EventSlug
 	if slug == "" {
 		slug = strings.Join(strings.Fields(strings.ToLower(in.EventName)), "-")
@@ -1324,14 +1335,20 @@ func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
 		campaign = slug
 	}
 	term := strings.ToLower(strings.Join(strings.Fields(in.EventName), "-"))
-
-	utm := map[string]string{
+	return map[string]string{
 		"utm_source":   "reddit",
 		"utm_medium":   "paid-social",
 		"utm_campaign": campaign,
 		"utm_term":     term,
 		"utm_content":  fmt.Sprintf("variant-%d", variantIndex+1),
 	}
+}
+
+// buildRedditUTMURL mirrors buildRedditUtmUrl.
+func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
+	// TrimSpace mirrors validateRegistrationURL, which accepts padded input.
+	base := strings.TrimSpace(in.RegistrationURL)
+	utm := redditUTMParams(in, variantIndex)
 
 	// Parse FIRST, then trim a trailing slash from the PATH only. Trimming the
 	// raw URL string would corrupt a value like .../reg?next=/ (dropping the
@@ -1380,25 +1397,24 @@ func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
 // query — is still sent to Reddit as the real click_url; only the display copy
 // is sanitized. variantIndex mirrors buildRedditUTMURL.
 func displayRedditUTMURL(in CampaignInput, variantIndex int) string {
-	full := buildRedditUTMURL(in, variantIndex)
-	u, err := url.Parse(full)
+	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
 	if err != nil {
-		// Fall back to a plain redaction (scheme+host+path) if the composed URL
-		// somehow won't parse — never return the raw value with its secrets.
+		// Fall back to a plain redaction (scheme+host+path) if the URL won't parse
+		// — never return the raw value with its secrets.
 		return redactURL(in.RegistrationURL)
 	}
-	u.User = nil // drop any basic-auth userinfo
-	// Keep only the utm_* params we generated; discard everything else in the
-	// original query so no pre-existing secret survives into the display URL.
-	orig := u.Query()
+	u.User = nil    // drop any basic-auth userinfo
+	u.Fragment = "" // a fragment can carry sensitive data; drop it for display
+	// Rebuild the query from ONLY the utm_* params THIS client generates (with our
+	// values), discarding the caller's entire original query. Filtering the merged
+	// query by a "utm_" prefix would be unsafe: a caller-supplied ?utm_secret=... or
+	// ?utm_source=<override> would survive. An explicit allowlist from the shared
+	// generator is the source of truth.
 	safe := url.Values{}
-	for k, vs := range orig {
-		if strings.HasPrefix(k, "utm_") {
-			safe[k] = vs
-		}
+	for k, v := range redditUTMParams(in, variantIndex) {
+		safe.Set(k, v)
 	}
 	u.RawQuery = safe.Encode()
-	u.Fragment = "" // a fragment can also carry sensitive data; drop it for display
 	return u.String()
 }
 
