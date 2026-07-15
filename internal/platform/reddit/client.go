@@ -607,13 +607,16 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("reddit API %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }
 
-// transportError wraps a failure of the HTTP round-trip itself (httpClient.Do):
-// the request was ALREADY SENT, so the server may or may not have processed it —
-// the outcome is AMBIGUOUS. This is distinct from a pre-send failure (token
-// refresh, body encode, request build) or a definite abort, where the request
-// never reached the server and a mutation definitely did not happen. Callers use
-// it to decide whether a failed create is "may exist" (ambiguous) vs "not
-// created".
+// transportError wraps a failure of the HTTP round-trip itself (httpClient.Do)
+// that is NOT PROVEN pre-send: the request MAY have been sent (e.g. a mid-flight
+// read failure, a Do-time context error, OR a TLS error, which can surface either
+// during the handshake before bytes are written or later while reading a
+// response), so the server may or may not have processed it — the outcome is
+// AMBIGUOUS. This is distinct from a proven pre-send failure (token refresh, body
+// encode, request build, or a DNS/connect-time dial error via isPreSendDialError),
+// where the request definitely never reached the server and a mutation definitely
+// did not happen. Callers use it to decide whether a failed create is "may exist"
+// (ambiguous) vs "not created".
 type transportError struct {
 	Method string
 	Path   string
@@ -1259,8 +1262,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// Classify AMBIGUITY FIRST, before the ctx check: a cancellation that
 		// interrupts the create's in-flight round-trip surfaces as a transportError,
 		// and the campaign MAY already have been committed — so it must be treated as
-		// "may exist", NOT a clean pre-POST abort. createOutcomeAmbiguous is true only
-		// when the request plausibly reached Reddit (transportError or a 5xx).
+		// "may exist", NOT a clean pre-POST abort. createOutcomeAmbiguous is true when
+		// the request plausibly reached Reddit (transportError, a 5xx, or a mutating
+		// 3xx).
 		if !createOutcomeAmbiguous(err) {
 			// Not ambiguous → the campaign was definitely NOT created: a pre-send
 			// failure (token refresh, body encode/build, a pre-connect dial error), a
@@ -1373,7 +1377,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	droppedCommunities := false
 	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(targetingWithCommunities))
 	// adGroupErr words an ad-group failure as UNCONFIRMED when the outcome is
-	// ambiguous (transportError / 5xx — the ad group MAY exist, and partialResult
+	// ambiguous (transportError / 5xx / mutating 3xx — the ad group MAY exist, and partialResult
 	// carries its deterministic name for reconciliation) vs a flat "failed" for a
 	// definite not-created error (4xx / pre-send). A caller-cancel that interrupted
 	// the in-flight POST surfaces as a transportError, so it too is UNCONFIRMED.
@@ -1448,7 +1452,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err != nil {
 			// A caller context cancellation is fatal (return an error, not just a
 			// warning). Whether the ad "may exist" depends on whether the request was
-			// in flight: an ambiguous error (transportError / 5xx — which is also how a
+			// in flight: an ambiguous error (transportError / 5xx / mutating 3xx — which is also how a
 			// cancellation that interrupted the in-flight POST surfaces) means the ad
 			// MAY exist; a clean pre-send cancel means it does not. Return a partial
 			// result carrying both IDs so the (created, PAUSED) campaign+ad group are
@@ -1464,7 +1468,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return pr, fmt.Errorf("ad creation aborted before send: %w", ctxErr)
 			}
 			// Not a caller cancel. Classify by outcome:
-			//   - ambiguous (transportError / 5xx): the ad MAY exist — UNCONFIRMED,
+			//   - ambiguous (transportError / 5xx / mutating 3xx): the ad MAY exist — UNCONFIRMED,
 			//     require verification before manual creation (avoids a duplicate);
 			//   - definite (4xx / pre-send): the ad was NOT created — report FAILED so
 			//     the operator's manual remediation isn't blocked by a misleading

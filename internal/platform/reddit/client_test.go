@@ -648,10 +648,12 @@ func TestCreateCampaign_ManualVariantsNoPostURL(t *testing.T) {
 	}
 	// The operator instruction must carry the NEW set/replace semantics explicitly:
 	// the operator SETS/REPLACES the shown utm_* params on their registration URL,
-	// keeping only its OTHER, non-utm_* query params. Assert both distinctive
-	// phrases so this operator-critical guidance can't regress to the old "append ...
-	// keeping its existing query" wording (which the summary-count check alone would
-	// still pass).
+	// keeping ALL its other query parameters (buildRedditUTMURL's url.Values.Set
+	// replaces only the exact keys it generates and preserves everything else,
+	// including an ungenerated utm_* like utm_id). Assert both distinctive phrases so
+	// this operator-critical guidance can't regress to the old "append ... keeping
+	// its existing query" wording (which the summary-count check alone would still
+	// pass).
 	for _, want := range []string{
 		"set/replace the shown utm_* params",
 		"keeping all its other query parameters",
@@ -3633,10 +3635,11 @@ func TestRedactURL(t *testing.T) {
 
 // TestBuiltinClientDoesNotFollowRedirectsOnPOST verifies the built-in
 // *http.Client disables redirect following: a mutating POST that receives a 3xx
-// must NOT be followed to the redirect target (which could be TLS-broken and let
-// isPreSendDialError misclassify a possibly-received POST as pre-send). The 3xx
-// must instead surface as a non-2xx error, and the redirect target handler must
-// never be hit.
+// must NOT be followed to the redirect target (which could be unreachable — an
+// unresolvable/refused host — and let isPreSendDialError misclassify a
+// possibly-received POST as a pre-send DNS/dial failure). The 3xx must instead
+// surface as a non-2xx error (UNCONFIRMED for a mutating request), and the
+// redirect target handler must never be hit.
 func TestBuiltinClientDoesNotFollowRedirectsOnPOST(t *testing.T) {
 	var targetHit atomic.Bool
 	// target is where the redirect would send the request if it were followed.
