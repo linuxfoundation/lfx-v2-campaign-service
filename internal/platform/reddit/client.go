@@ -801,10 +801,10 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 			cancel()
 			// A Do error that clearly happened BEFORE the request could be sent (DNS
 			// failure, connection refused, no route) means NOT sent — return it plain
-			// so callers treat the create as "not applied". A failure after a
-			// connection was established (mid-flight timeout, EOF) is genuinely
-			// ambiguous: wrap it as transportError so callers treat the create as
-			// "may exist".
+			// so callers treat the create as "not applied". Every other Do error
+			// (TLS handshake failure, mid-flight timeout, EOF) is not proven pre-send
+			// / may have been sent: wrap it as transportError so callers treat the
+			// create as "may exist".
 			if isPreSendDialError(err) {
 				return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
 			}
@@ -1260,16 +1260,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	campaignResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
 	if err != nil {
-		// A CALLER context cancellation (even one that surfaced as a transportError
-		// during an EARLIER step like account verification, then propagated here) is
-		// NOT an ambiguous create: no campaign POST completed. Honor the documented
-		// pre-POST (nil, err) contract rather than returning a misleading "may exist"
 		// Classify AMBIGUITY FIRST, before the ctx check: a cancellation that
-		// interrupts the create's in-flight round-trip surfaces as a transportError,
+		// interrupts THIS create's in-flight round-trip surfaces as a transportError,
 		// and the campaign MAY already have been committed — so it must be treated as
 		// "may exist", NOT a clean pre-POST abort. createOutcomeAmbiguous is true when
 		// the request plausibly reached Reddit (transportError, a 5xx, or a mutating
-		// 3xx).
+		// 3xx). A caller cancellation that surfaced as a transportError during an
+		// EARLIER step (e.g. account verification) and merely propagated here, with no
+		// campaign POST attempted, falls through to the non-ambiguous branch below.
 		if !createOutcomeAmbiguous(err) {
 			// Not ambiguous → the campaign was definitely NOT created: a pre-send
 			// failure (token refresh, body encode/build, a pre-connect dial error), a
