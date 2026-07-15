@@ -1528,7 +1528,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// utm_* keys it sets and PRESERVES every other query parameter (including any
 			// utm_* the tool doesn't generate, e.g. utm_id) — so the operator keeps all
 			// other params; appending instead would leave duplicate/conflicting values.
-			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping all its other query parameters):", variantCount))
+			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping all its other query parameters; drop any trailing '/' from the path so it matches the automated destination):", variantCount))
 			for i := 0; i < variantCount; i++ {
 				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, displayRedditUTMURL(in, i)))
 			}

@@ -15,10 +15,15 @@ supplied via `WithHTTPClient` (`CheckRedirect` overridden to
 `http.ErrUseLastResponse` UNCONDITIONALLY on a shallow copy, so the caller's
 client is not mutated), which keeps 3xx handling well-defined. A 3xx on a MUTATING
 request is classified UNCONFIRMED (it reached a responder and may have committed
-before redirecting); a 3xx on a GET is not a create. Context errors and
+before redirecting); a 3xx on a GET is not a create. A context error surfaced
+from an IN-FLIGHT `Do` stays UNCONFIRMED (the per-attempt ctx wraps the whole
+round trip, so it can fire after the POST reached Reddit) — but a cancellation
+returned while waiting for token refresh is a proven pre-POST failure
+(`refreshToken` returns `ctx.Err()` directly) and remains non-ambiguous.
 5xx/mid-flight transport failures also stay UNCONFIRMED. Reworded the
 manual-fallback UTM step to SET/REPLACE the utm_* params (matching
-`buildRedditUTMURL`'s `url.Values.Set`).
+`buildRedditUTMURL`'s `url.Values.Set`), keeping all other query params and
+dropping a trailing path slash.
 
 ## 2026-07-13
 
