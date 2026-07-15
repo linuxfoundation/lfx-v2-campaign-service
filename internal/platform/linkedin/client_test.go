@@ -203,8 +203,8 @@ func TestFindOrCreateCampaignGroup_Idempotent(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	startMs, endMs := testScheduleMs(t, c)
-	id, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", startMs, endMs)
+	_, endMs := testScheduleMs(t, c)
+	id, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
 	if err != nil {
 		t.Fatalf("FindOrCreateCampaignGroup: %v", err)
 	}
@@ -241,8 +241,8 @@ func TestFindOrCreateCampaignGroup_TransientSearchErrorNoCreate(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	startMs, endMs := testScheduleMs(t, c)
-	_, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", startMs, endMs)
+	_, endMs := testScheduleMs(t, c)
+	_, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
 	if err == nil {
 		t.Fatal("expected error from transient 500 during search, got nil")
 	}

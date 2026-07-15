@@ -383,8 +383,20 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			reqBody = bytes.NewReader(nil)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, u.String(), reqBody)
+		// Bound EACH attempt with a per-attempt context deadline, NOT just the
+		// http.Client.Timeout: WithHTTPClient can inject an *http.Client whose Timeout
+		// is 0 or larger than requestTimeout, and doRequest takes the caller ctx
+		// directly (which may be context.Background()), so without this a create could
+		// hang indefinitely — and the past-start buffer (startTimeBuffer) sizing assumes
+		// every attempt is capped by requestTimeout. The caller ctx is the parent, so a
+		// real caller cancel/deadline still propagates. cancel() is invoked on every
+		// exit path (return AND the 429 continue) to avoid leaking the timer. Mirrors the
+		// Reddit client's request() per-attempt context.WithTimeout.
+		attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+
+		req, err := http.NewRequestWithContext(attemptCtx, method, u.String(), reqBody)
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("new request: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
@@ -396,6 +408,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			cancel()
 			// A Do error that clearly happened BEFORE the request could be sent (DNS
 			// failure, connection refused, no route) means NOT sent — return it plain
 			// so callers treat a create as "not applied". A failure after a connection
@@ -414,6 +427,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// for the retry instead of opening a fresh one while already rate-limited.
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 			_ = resp.Body.Close()
+			cancel() // release the per-attempt deadline before backing off / retrying
 			if wait <= 0 {
 				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
 			}
@@ -436,29 +450,39 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		buf := new(bytes.Buffer)
 		if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
 			_ = resp.Body.Close()
+			cancel()
 			// A read failure on a 2xx is AMBIGUOUS: LinkedIn may have committed the
 			// mutation but we couldn't read the result — wrap it so a create is treated
-			// as "may exist". A read failure on a non-2xx isn't a committed mutation, so
-			// return it plain. Mirrors the Reddit/Meta clients.
+			// as "may exist". A read failure on a NON-2xx is not a definite abort either:
+			// on a 5xx from a mutating POST, LinkedIn may still have committed the create
+			// before erroring, so the outcome is ambiguous too. Carry the StatusCode+Method
+			// via *apiError so createOutcomeAmbiguous classifies a POST 5xx as ambiguous
+			// (UNCONFIRMED) while a GET or a definite 4xx read-failure stays non-ambiguous
+			// (a plain failure), instead of dropping the status/method into a plain error
+			// that would always read as a safe non-create. Mirrors the Reddit/Meta clients.
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
 			}
-			return nil, fmt.Errorf("read response body: %w", err)
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
 		}
 		if int64(buf.Len()) > maxResponseBytes {
 			_ = resp.Body.Close()
+			cancel()
 			// An oversized 2xx body is AMBIGUOUS just like a read/decode failure: the
 			// mutation may already be committed but we can't read the confirmation
 			// (id/elements). Wrap it as transportError so a mutating request is treated
 			// as "may exist" (createOutcomeAmbiguous → UNCONFIRMED) rather than a clean
 			// failure a blind retry would duplicate. The Method is carried so FIX 1's
-			// method gate still classifies a GET overflow as NOT-a-create. A non-2xx
-			// oversized body is not a committed mutation, so it stays a plain error.
-			// Mirrors the Reddit/Meta clients wrapping a 2xx read failure as transportError.
+			// method gate still classifies a GET overflow as NOT-a-create. An oversized
+			// NON-2xx body is ALSO not a definite non-create: an oversized 5xx to a
+			// mutating POST may follow a committed create, so carry StatusCode+Method via
+			// *apiError so createOutcomeAmbiguous classifies a POST 5xx as ambiguous while
+			// a GET / definite 4xx stays a plain failure — rather than discarding the
+			// status into a plain error. Mirrors the Reddit/Meta clients.
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 			}
-			return nil, fmt.Errorf("linkedin %s %s: response exceeds %d bytes", method, path, maxResponseBytes)
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -467,6 +491,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				text = text[:400]
 			}
 			_ = resp.Body.Close()
+			cancel()
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
 		}
 
@@ -482,6 +507,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		if buf.Len() > 0 {
 			if err := json.Unmarshal(buf.Bytes(), out); err != nil {
 				_ = resp.Body.Close()
+				cancel()
 				// A 2xx we can't decode is AMBIGUOUS: the server returned success but we
 				// can't read the payload (id/elements). Wrap it so a create is treated as
 				// "may exist" rather than a definite failure. Mirrors the Reddit/Meta
@@ -498,6 +524,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// creates are exempt: they legitimately return an empty body with the id in
 			// the x-restli-id header, handled by the header fallback below.)
 			_ = resp.Body.Close()
+			cancel()
 			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("search response had an empty body (no elements/metadata) — cannot confirm absence")}
 		}
 
@@ -514,6 +541,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		// returns an id-only body (e.g. {"id":...}) with no elements.
 		if method == http.MethodGet && out.Elements == nil {
 			_ = resp.Body.Close()
+			cancel()
 			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("search response missing elements field — cannot confirm absence")}
 		}
 
@@ -528,6 +556,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		}
 
 		_ = resp.Body.Close()
+		cancel()
 		return out, nil
 	}
 
@@ -859,14 +888,15 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 // toMs entirely and the flow would still proceed to create dark posts and
 // creatives on a broken schedule.
 //
-// The returned startMs is used for the campaign GROUP create (which runs right
-// after this preflight, so its start is still fresh). The CAMPAIGN's start is NOT
-// taken from this value: createSponsoredCampaign recomputes it (now+buffer) just
-// before its POST, because the campaign create runs after the group lookup+create
-// and the campaign lookup, by which time a once-computed today/past start could
-// have slipped into the past (see startTimeBuffer and createSponsoredCampaign).
-// endMs is a fixed calendar instant that does not drift, so it is threaded through
-// to the campaign unchanged.
+// The returned startMs is used ONLY for the up-front end<=start validation and is
+// otherwise DISCARDED by the caller: NEITHER create reuses it. Both
+// findOrCreateCampaignGroup and createSponsoredCampaign recompute their own
+// now+startTimeBuffer start immediately before their POST, because each create runs
+// after its own (worst-case ~5min) find-existing lookup, by which time a
+// once-computed today/past start could have slipped into the past (see
+// startTimeBuffer, findOrCreateCampaignGroup, and createSponsoredCampaign). endMs
+// is a fixed calendar instant that does not drift, so it IS threaded through to
+// both creates unchanged.
 func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int64, err error) {
 	startMs, err = c.toMs(startDate, false)
 	if err != nil {
@@ -904,7 +934,7 @@ func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name string, startMs, endMs int64) (string, error) {
+func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate string, endMs int64) (string, error) {
 	groupsPath := fmt.Sprintf("adAccounts/%s/adCampaignGroups", accountID)
 
 	existing, err := c.findByName(ctx, groupsPath, name)
@@ -915,10 +945,27 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name 
 		return existing, nil
 	}
 
-	// startMs/endMs are the schedule timestamps computed ONCE by validateSchedule
-	// in CreateCampaign; they are the single source of truth so the campaign group
-	// and the campaign share identical, preflight-validated values (toMs is not
-	// re-called here — that would drift for a today/past start).
+	// Re-derive the group's start JUST BEFORE this mutating POST, rather than reusing
+	// the value validateSchedule computed at the top of CreateCampaign. For a
+	// today/past start, toMs returns now+startTimeBuffer; that preflight value was
+	// computed BEFORE this group find-existing lookup (findByName above, worst-case
+	// ~5min over its retries), so by the time this POST fires a once-computed start
+	// could already be in the PAST — LinkedIn would reject the POST. Recomputing here
+	// guarantees the start is `now + startTimeBuffer` at the moment of the mutation,
+	// mirroring createSponsoredCampaign. endMs is a fixed calendar instant that does
+	// not drift, so it is threaded through from validateSchedule unchanged.
+	startMs, err := c.toMs(startDate, false)
+	if err != nil {
+		return "", err
+	}
+	// Guard the recomputed start against the (fixed) end: a start nudged forward by
+	// the buffer must still precede the end, or LinkedIn would reject the schedule.
+	// This can only trip for an end date very close to now; fail closed rather than
+	// POST an invalid schedule.
+	if endMs <= startMs {
+		return "", fmt.Errorf("campaign group start (now+%s buffer) is not before the end date — the run window is too short", startTimeBuffer)
+	}
+
 	body := map[string]any{
 		"account": accountURN(accountID),
 		"name":    name,
@@ -1661,15 +1708,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Validate the schedule ONCE up front, before the first idempotency lookup or
-	// POST, and capture the computed epoch-millisecond start/end. These values are
-	// the single source of truth threaded into the create helpers so the campaign
-	// group and campaign share identical timestamps: toMs is non-deterministic for
-	// a today/past start (it returns a moving now+startTimeBuffer), so re-computing
-	// per helper could otherwise send DIFFERENT start millis than this preflight
-	// validated.
-	// Enforcing here also guarantees the date contract regardless of idempotency
-	// state (the helpers only reached toMs AFTER their find-existing lookups).
-	startMs, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
+	// POST, so a malformed/past/reversed date fails fast regardless of idempotency
+	// state (the create helpers only reach toMs AFTER their find-existing lookups).
+	// Only endMs is threaded onward: it is a fixed calendar instant that does not
+	// drift. The START is NOT reused from this preflight — both the group create
+	// (findOrCreateCampaignGroup) and the campaign create (createSponsoredCampaign)
+	// RECOMPUTE their own now+startTimeBuffer start immediately before their POST,
+	// because toMs is non-deterministic for a today/past start (a moving
+	// now+startTimeBuffer) and the intervening find-existing lookups (each worst-case
+	// ~5min) could otherwise push a once-computed start into the past by POST time.
+	_, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, err
 	}
@@ -1686,7 +1734,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 
-	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, startMs, endMs)
+	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, endMs)
 	if err != nil {
 		// An AMBIGUOUS failure (transport/timeout after send, a 5xx, or an
 		// undecodable 2xx) can occur AFTER LinkedIn committed the group create: the
@@ -1698,16 +1746,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// create POST) means nothing was created — keep the plain (nil, err). Mirrors
 		// the Meta client's createOutcomeAmbiguous handling.
 		//
-		// A CALLER cancellation (ctx cancelled / deadline exceeded) is a deliberate
-		// abort, NOT an ambiguous server outcome: doRequest wraps context.Canceled as
-		// a transportError, so without this guard createOutcomeAmbiguous would report a
-		// misleading "UNCONFIRMED / verify before recreating" step. Abort cleanly with
-		// the cancellation error instead. Mirrors the Reddit client's ctx.Err() guard.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, fmt.Errorf("linkedin campaign creation aborted (campaign group creation): %w", ctxErr)
-		}
+		// A CALLER cancellation that interrupts the in-flight group POST is NOT a clean
+		// abort: once the request bytes reached LinkedIn, the server may commit the group
+		// AFTER Do returns context.Canceled, so the outcome is OUTCOME-AMBIGUOUS. doRequest
+		// wraps that context.Canceled as a transportError, so it flows through
+		// createOutcomeAmbiguous → UNCONFIRMED below like any other ambiguous create — we
+		// do NOT intercept it with a nil clean-abort. A cancellation BEFORE any POST
+		// surfaces as the find lookup's plain (non-ambiguous) error and falls through to
+		// the clean (nil, err). Mirrors the Reddit/Meta clients.
 		if createOutcomeAmbiguous(err) {
-			steps = append(steps, fmt.Sprintf("Campaign group creation outcome is UNCONFIRMED (timeout or server error); an ACTIVE group %q may exist — verify by name in Campaign Manager before recreating", groupName))
+			steps = append(steps, fmt.Sprintf("Campaign group creation outcome is UNCONFIRMED (timeout, server error, or an in-flight cancellation); an ACTIVE group %q may exist — verify by name in Campaign Manager before recreating", groupName))
 			return c.buildResult(accountID, groupName, "", campaignName, "", 0, steps),
 				fmt.Errorf("campaign group creation UNCONFIRMED (an ACTIVE group %q may exist — on retry it is found idempotently by name): %w", groupName, err)
 		}
@@ -1734,16 +1782,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// A definite (4xx / pre-send / search) error means the campaign was not
 		// created. Mirrors the Meta client's createOutcomeAmbiguous handling.
 		//
-		// A CALLER cancellation (ctx cancelled / deadline exceeded) is a deliberate
-		// abort, NOT an ambiguous server outcome: doRequest wraps context.Canceled as
-		// a transportError, so without this guard createOutcomeAmbiguous would report a
-		// misleading "UNCONFIRMED / verify before recreating" step. Abort cleanly with
-		// the cancellation error instead. Mirrors the Reddit client's ctx.Err() guard.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, fmt.Errorf("linkedin campaign creation aborted (campaign creation): %w", ctxErr)
-		}
+		// A CALLER cancellation that interrupts the in-flight campaign POST is NOT a
+		// clean abort: LinkedIn may commit the campaign AFTER Do returns context.Canceled,
+		// so the outcome is OUTCOME-AMBIGUOUS. Returning nil here would ALSO discard the
+		// already-created groupID (partial-result contract violation). doRequest wraps the
+		// context.Canceled as a transportError, so it flows through createOutcomeAmbiguous
+		// → UNCONFIRMED + a partial result carrying groupID below, like any other ambiguous
+		// create — we do NOT intercept it with a nil clean-abort. Mirrors Reddit/Meta.
 		if createOutcomeAmbiguous(err) {
-			steps = append(steps, fmt.Sprintf("Campaign creation outcome is UNCONFIRMED (timeout or server error); a PAUSED campaign %q may exist — verify by name before recreating", campaignName))
+			steps = append(steps, fmt.Sprintf("Campaign creation outcome is UNCONFIRMED (timeout, server error, or an in-flight cancellation); a PAUSED campaign %q may exist — verify by name before recreating", campaignName))
 			return c.buildResult(accountID, groupName, groupID, campaignName, "", 0, steps),
 				fmt.Errorf("campaign creation UNCONFIRMED for campaign group %q (%q) (a PAUSED campaign %q may exist and is found idempotently by name on retry): %w — inspect the returned partial result", groupID, groupName, campaignName, err)
 		}
@@ -1777,16 +1824,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// error means nothing was created. Mirrors the Meta client's ambiguous ad/
 			// creative handling.
 			//
-			// A CALLER cancellation (ctx cancelled / deadline exceeded) is a deliberate
-			// abort, NOT an ambiguous server outcome: doRequest wraps context.Canceled as
-			// a transportError, so without this guard createOutcomeAmbiguous would report a
-			// misleading "UNCONFIRMED / verify before recreating" step. Abort cleanly with
-			// the cancellation error instead. Mirrors the Reddit client's ctx.Err() guard.
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, fmt.Errorf("linkedin campaign creation aborted (dark post creation): %w", ctxErr)
-			}
+			// A CALLER cancellation that interrupts the in-flight dark-post POST is NOT a
+			// clean abort: LinkedIn may commit the post AFTER Do returns context.Canceled,
+			// so the outcome is OUTCOME-AMBIGUOUS. Returning nil here would discard the
+			// already-created group+campaign hierarchy AND lose the fact an orphaned dark
+			// post MAY exist (which has no name-based lookup to reconcile it), so it must
+			// instead return the partial result + an UNCONFIRMED step. doRequest wraps the
+			// context.Canceled as a transportError, so it flows through
+			// createOutcomeAmbiguous → UNCONFIRMED + partial below like any other ambiguous
+			// create — we do NOT intercept it with a nil clean-abort. Mirrors Reddit/Meta.
 			if createOutcomeAmbiguous(err) {
-				steps = append(steps, fmt.Sprintf("Dark post variant-%d outcome UNCONFIRMED (timeout or server error); it may have been created — verify before recreating (a dark post has no idempotency lookup)", i+1))
+				steps = append(steps, fmt.Sprintf("Dark post variant-%d outcome UNCONFIRMED (timeout, server error, or an in-flight cancellation); it may have been created — verify before recreating (a dark post has no idempotency lookup)", i+1))
 				return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
 					fmt.Errorf("variant-%d dark post UNCONFIRMED after %d of %d variant(s) created: %w — group %q and campaign %q already exist; the dark post MAY have been created and has no idempotency lookup, so do NOT blindly retry (would duplicate it); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID)
 			}
@@ -1812,16 +1860,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// (4xx / pre-send) error means the creative was not created. Mirrors the Meta
 			// client's ambiguous ad/creative handling.
 			//
-			// A CALLER cancellation (ctx cancelled / deadline exceeded) is a deliberate
-			// abort, NOT an ambiguous server outcome: doRequest wraps context.Canceled as
-			// a transportError, so without this guard createOutcomeAmbiguous would report a
-			// misleading "UNCONFIRMED / verify before recreating" step. Abort cleanly with
-			// the cancellation error instead. Mirrors the Reddit client's ctx.Err() guard.
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, fmt.Errorf("linkedin campaign creation aborted (creative creation): %w", ctxErr)
-			}
+			// A CALLER cancellation that interrupts the in-flight creative POST is NOT a
+			// clean abort: LinkedIn may commit the creative AFTER Do returns
+			// context.Canceled, so the outcome is OUTCOME-AMBIGUOUS. Returning nil here
+			// would discard the already-created group+campaign hierarchy AND drop this
+			// variant's share URN (the orphaned dark post already created upstream), so it
+			// must instead return the partial result + an UNCONFIRMED step carrying the
+			// shareURN. doRequest wraps the context.Canceled as a transportError, so it
+			// flows through createOutcomeAmbiguous → UNCONFIRMED + partial below like any
+			// other ambiguous create — we do NOT intercept it with a nil clean-abort.
+			// Mirrors Reddit/Meta.
 			if createOutcomeAmbiguous(err) {
-				steps = append(steps, fmt.Sprintf("Creative variant-%d outcome UNCONFIRMED (timeout or server error); it may have been created — verify before recreating (orphaned dark post: %s)", i+1, shareURN))
+				steps = append(steps, fmt.Sprintf("Creative variant-%d outcome UNCONFIRMED (timeout, server error, or an in-flight cancellation); it may have been created — verify before recreating (orphaned dark post: %s)", i+1, shareURN))
 				return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
 					fmt.Errorf("variant-%d creative UNCONFIRMED after %d of %d variant(s) created: %w — group %q and campaign %q already exist AND this variant's dark post %q was already created; the creative MAY have been created and has no idempotency lookup, so do NOT blindly retry (would duplicate the creative and the dark post %q); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, shareURN, shareURN)
 			}

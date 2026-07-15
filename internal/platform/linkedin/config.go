@@ -64,15 +64,17 @@ const maxRetryWait = 60 * time.Second
 //
 // The buffer must exceed a SINGLE lookup+create step's worst-case latency, NOT
 // the whole multi-lookup flow: the start is recomputed as (now + startTimeBuffer)
-// immediately before EACH mutation — the group start just before the group create
-// (via validateSchedule at the top of CreateCampaign, which runs right before the
-// group create) and the campaign start just before the campaign POST (recomputed
-// inside createSponsoredCampaign, NOT reused from the preflight value). A fixed
-// buffer alone could never reliably cover a variable multi-lookup flow — the
-// campaign create runs AFTER the group lookup+create AND the campaign lookup, so a
-// once-computed start could slip into the past before the campaign POST, orphaning
-// the just-created ACTIVE group. Recomputing per mutation removes that dependence
-// on total elapsed time; the buffer only has to absorb one step.
+// immediately before EACH mutation — the group start inside findOrCreateCampaignGroup
+// just before the group POST (AFTER its own find-existing lookup, NOT reused from
+// the validateSchedule preflight value) and the campaign start inside
+// createSponsoredCampaign just before the campaign POST (likewise recomputed). The
+// validateSchedule preflight only VALIDATES the dates up front; its computed start
+// is discarded. A fixed buffer alone could never reliably cover a variable
+// multi-lookup flow — the campaign create runs AFTER the group lookup+create AND the
+// campaign lookup, and even the group create runs after the group lookup, so a
+// once-computed start could slip into the past before either POST, orphaning a
+// just-created resource. Recomputing per mutation removes that dependence on total
+// elapsed time; the buffer only has to absorb one lookup+create step.
 //
 // One step's worst case: a single find-existing lookup can span up to
 // (retryMax+1)=4 request attempts, each bounded by requestTimeout (30s), plus up

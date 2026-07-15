@@ -2930,23 +2930,22 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// TestCreateCampaign_CallerCancelDuringCreateAborts verifies that a CALLER
-// context cancellation while a create POST is in flight aborts CLEANLY — the
-// returned error wraps context.Canceled and is worded as an "aborted" abort —
-// rather than being misclassified as an ambiguous server outcome. doRequest
-// wraps context.Canceled as a transportError, so createOutcomeAmbiguous would
-// otherwise report a misleading "UNCONFIRMED / verify before recreating" step;
-// the ctx.Err() guard at each create-error site must fire first. Contrast with
-// TestCreateCampaign_AmbiguousCampaignCreateIsUnconfirmed, where the ctx is NOT
-// cancelled and a genuine 5xx must still be UNCONFIRMED.
-func TestCreateCampaign_CallerCancelDuringCreateAborts(t *testing.T) {
+// TestCreateCampaign_CallerCancelDuringCampaignCreateIsUnconfirmedPartial verifies
+// the CORRECTED contract: a CALLER context cancellation while a MUTATING create POST
+// is in flight is OUTCOME-AMBIGUOUS, not a clean abort. Once the request bytes
+// reached LinkedIn, the server may commit the create AFTER Do returns
+// context.Canceled — so the cancellation MUST NOT discard already-created resources.
+// doRequest wraps the context.Canceled as a transportError, which flows through
+// createOutcomeAmbiguous → UNCONFIRMED + a PARTIAL result carrying the already-created
+// group. A nil clean-abort here would violate the partial-result recovery contract.
+// Mirrors the Reddit/Meta clients' in-flight-cancel handling.
+func TestCreateCampaign_CallerCancelDuringCampaignCreateIsUnconfirmedPartial(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Succeed for the group-create POST and all search GETs, but on the campaign
 	// create POST cancel the caller ctx and return the context.Canceled error that
-	// c.httpClient.Do surfaces mid-flight. Deterministic and non-blocking (no server
-	// goroutine to drain). A caller cancellation is a deliberate abort.
+	// c.httpClient.Do surfaces mid-flight. Deterministic and non-blocking.
 	var campaignPosts int32
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if strings.Contains(req.URL.Path, "adCampaigns") && req.Method == http.MethodPost {
@@ -2973,24 +2972,104 @@ func TestCreateCampaign_CallerCancelDuringCreateAborts(t *testing.T) {
 		t.Fatal("expected an error on caller ctx cancellation during the campaign create")
 	}
 	if !errors.Is(err, context.Canceled) {
-		t.Errorf("caller-cancel abort should wrap context.Canceled, got: %v", err)
+		t.Errorf("in-flight cancel error should wrap context.Canceled, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "aborted") {
-		t.Errorf("caller-cancel error should be worded as an abort, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("a caller cancellation must NOT be reported as an ambiguous UNCONFIRMED outcome, got: %v", err)
+	// The in-flight cancel is OUTCOME-AMBIGUOUS: it must be reported as UNCONFIRMED,
+	// NOT a clean "aborted" that discards the created group.
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an in-flight cancellation during a mutating POST must be reported UNCONFIRMED, got: %v", err)
 	}
 	if n := atomic.LoadInt32(&campaignPosts); n == 0 {
 		t.Fatal("expected the campaign-create POST to be attempted (so the cancel fires in flight)")
 	}
-	// The abort must not emit a misleading "verify before recreating" UNCONFIRMED step.
-	if res != nil {
-		for _, s := range res.Steps {
-			if strings.Contains(s, "UNCONFIRMED") || strings.Contains(s, "verify before recreating") {
-				t.Errorf("caller-cancel abort must not emit an UNCONFIRMED step, got: %q", s)
-			}
+	// CRITICAL: the result must be a NON-NIL partial carrying the already-created
+	// group, not a nil clean-abort that orphans it.
+	if res == nil {
+		t.Fatal("in-flight cancel must return a PARTIAL result carrying the created group, got nil")
+	}
+	if res.CampaignGroupID != "100" {
+		t.Errorf("partial result must carry the created group ID 100, got %q", res.CampaignGroupID)
+	}
+	if res.CampaignID != "" {
+		t.Errorf("no campaign was confirmed created, so CampaignID must be empty, got %q", res.CampaignID)
+	}
+	var sawUnconfirmed bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "UNCONFIRMED") {
+			sawUnconfirmed = true
 		}
+	}
+	if !sawUnconfirmed {
+		t.Errorf("partial result must include an UNCONFIRMED step for the in-flight campaign create, steps: %v", res.Steps)
+	}
+}
+
+// TestCreateCampaign_CallerCancelDuringDarkPostIsUnconfirmedPartial verifies
+// Copilot's 1786 concern: an in-flight cancellation during the DARK POST create
+// returns a partial carrying the already-created group+campaign hierarchy plus an
+// UNCONFIRMED dark-post step — it does NOT return nil (which would orphan the
+// dark post ID plus the known campaign/group state). A dark post has no name-based
+// idempotency lookup, so losing this recovery state is especially dangerous.
+func TestCreateCampaign_CallerCancelDuringDarkPostIsUnconfirmedPartial(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var darkPostPosts int32
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		// The dark-post create targets the "posts" endpoint.
+		if strings.Contains(req.URL.Path, "posts") && req.Method == http.MethodPost {
+			atomic.AddInt32(&darkPostPosts, 1)
+			cancel()
+			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
+		}
+		body := `{"elements":[]}`
+		if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "adCampaignGroups") {
+			body = `{"id":"urn:li:sponsoredCampaignGroup:100"}`
+		}
+		if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "adCampaigns") {
+			body = `{"id":"urn:li:sponsoredCampaign:200"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL("http://linkedin.test"),
+		WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateCampaign(ctx, baseValidInput())
+	if err == nil {
+		t.Fatal("expected an error on caller ctx cancellation during the dark-post create")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("in-flight cancel error should wrap context.Canceled, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an in-flight cancellation during the dark-post POST must be UNCONFIRMED, got: %v", err)
+	}
+	if n := atomic.LoadInt32(&darkPostPosts); n == 0 {
+		t.Fatal("expected the dark-post POST to be attempted (so the cancel fires in flight)")
+	}
+	if res == nil {
+		t.Fatal("in-flight cancel during dark-post create must return a PARTIAL result, got nil")
+	}
+	// The partial MUST carry the full already-created hierarchy: group + campaign.
+	if res.CampaignGroupID != "100" || res.CampaignID != "200" {
+		t.Errorf("partial result must carry created group=100 and campaign=200, got group=%q campaign=%q", res.CampaignGroupID, res.CampaignID)
+	}
+	if res.CreativeCount != 0 {
+		t.Errorf("no creative was created, so CreativeCount must be 0, got %d", res.CreativeCount)
+	}
+	var sawUnconfirmed bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "UNCONFIRMED") {
+			sawUnconfirmed = true
+		}
+	}
+	if !sawUnconfirmed {
+		t.Errorf("partial result must include an UNCONFIRMED step for the in-flight dark-post create, steps: %v", res.Steps)
 	}
 }
 
@@ -3018,6 +3097,83 @@ func TestDoRequest_RejectsOversizedResponse(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Errorf("oversized-response error should mention the cap, got: %v", err)
+	}
+}
+
+// TestDoRequest_PerAttemptTimeoutIndependentOfInjectedClient verifies ISSUE 2: a
+// caller can inject an *http.Client whose Timeout is 0 (unbounded) via
+// WithHTTPClient, yet doRequest still bounds EACH attempt by requestTimeout using
+// context.WithTimeout. We assert the per-attempt request context carries a deadline
+// roughly requestTimeout out — proving the bound is applied independent of the
+// injected client's own (zero) Timeout, so a background context can't hang forever.
+// Mirrors the Reddit client's per-attempt context.WithTimeout.
+func TestDoRequest_PerAttemptTimeoutIndependentOfInjectedClient(t *testing.T) {
+	var (
+		sawDeadline bool
+		remaining   time.Duration
+	)
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if dl, ok := req.Context().Deadline(); ok {
+			sawDeadline = true
+			remaining = time.Until(dl)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"elements":[]}`)),
+			Request:    req,
+		}, nil
+	})
+
+	// A ZERO-Timeout injected client: without the per-attempt WithTimeout, a
+	// context.Background() caller would leave the request unbounded.
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL("http://linkedin.test"),
+		WithHTTPClient(&http.Client{Transport: rt, Timeout: 0}), WithClock(fixedClock()))
+	if _, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil); err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	if !sawDeadline {
+		t.Fatal("per-attempt request context must carry a deadline even with a zero-Timeout injected client")
+	}
+	// The deadline must be bounded by requestTimeout (allow a small scheduling slack).
+	if remaining <= 0 || remaining > requestTimeout+time.Second {
+		t.Errorf("per-attempt deadline should be ~requestTimeout (%s) out, got remaining %s", requestTimeout, remaining)
+	}
+}
+
+// TestDoRequest_OversizedNon2xxPostIsAmbiguous verifies ISSUE 3: an oversized 5xx
+// response to a MUTATING POST is OUTCOME-AMBIGUOUS (the create MAY have committed
+// before the server erred), so doRequest carries the status+method so
+// createOutcomeAmbiguous classifies it as ambiguous — rather than dropping them into
+// a plain error that would read as a safe non-create. A GET oversized 5xx (below)
+// stays non-ambiguous.
+func TestDoRequest_OversizedNon2xxPostIsAmbiguous(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		// Oversized 5xx body.
+		_, _ = io.WriteString(w, strings.Repeat("x", maxResponseBytes+64))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	// POST → ambiguous (may have committed).
+	_, postErr := c.doRequest(context.Background(), http.MethodPost, "adAccounts/1/adCampaignGroups", map[string]any{"a": "b"}, nil)
+	if postErr == nil {
+		t.Fatal("expected an error for an oversized 5xx POST response, got nil")
+	}
+	if !createOutcomeAmbiguous(postErr) {
+		t.Errorf("an oversized 5xx response to a POST must be classified ambiguous, got: %v", postErr)
+	}
+
+	// GET → NOT ambiguous (a search that failed created nothing).
+	_, getErr := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"})
+	if getErr == nil {
+		t.Fatal("expected an error for an oversized 5xx GET response, got nil")
+	}
+	if createOutcomeAmbiguous(getErr) {
+		t.Errorf("an oversized 5xx response to a GET must NOT be classified ambiguous, got: %v", getErr)
 	}
 }
 
