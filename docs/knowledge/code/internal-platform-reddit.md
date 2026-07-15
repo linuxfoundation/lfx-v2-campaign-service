@@ -45,22 +45,23 @@ PAUSED campaign.
 Because create calls are mutating and paid, a FAILED create is classified by
 whether the request may have reached Reddit. `isPreSendDialError` reports a Do
 error as pre-send (request definitely NOT sent → clean not-created failure) ONLY
-for proofs that no bytes left the client: DNS resolution failure,
-connection-refused/no-route, and a TLS `*tls.CertificateVerificationError`
-(a handshake-time event). `tls.RecordHeaderError` is deliberately NOT treated as
-pre-send — it can surface post-negotiation while reading a response, so it does
-not prove the request was unsent and flows to the UNCONFIRMED path instead. The
-`CertificateVerificationError` branch is sound ONLY because redirect following is
-force-disabled on every client used, including one supplied via `WithHTTPClient`
-(`CheckRedirect` is overridden to `http.ErrUseLastResponse` on a shallow copy, so
-the caller's client is not mutated); otherwise a POST could be received by Reddit
-and then redirected to a TLS-broken target, whose cert error would be misread as
-pre-send and let a retry duplicate a paid resource. Everything else is treated as
-UNCONFIRMED (may have been applied): a 3xx on a MUTATING request (it reached a
-responder and may have committed before redirecting — a 3xx on a GET is not a
-create), a mid-flight/`Do`-time context error (the per-attempt timeout wraps the
-whole round trip, so it can fire after the POST reached Reddit), a read/decode
-failure on a 2xx body, and any 5xx are wrapped so callers report "may exist" and
-require verification before a manual retry.
+for proofs that no bytes left the client: DNS resolution failure, and
+connection-refused/no-route/network-unreachable dial failures. NO TLS error is
+treated as pre-send (matching the merged Meta client): a TLS error is not a
+reliable pre-send proof for an arbitrary caller-supplied transport — a custom
+transport can enable renegotiation, and a wrapping/retrying `RoundTripper` can
+surface a `*tls.CertificateVerificationError` or `tls.RecordHeaderError` while
+reading a response after forwarding the POST — so both flow to the UNCONFIRMED
+path. Redirect following is still force-disabled on every client used, including
+one supplied via `WithHTTPClient` (`CheckRedirect` overridden to
+`http.ErrUseLastResponse` unconditionally on a shallow copy, so the caller's
+client is not mutated), which keeps 3xx handling well-defined. Everything not
+proven pre-send is treated as UNCONFIRMED (may have been applied): a 3xx on a
+MUTATING request (it reached a responder and may have committed before
+redirecting — a 3xx on a GET is not a create), a mid-flight/`Do`-time context
+error (the per-attempt timeout wraps the whole round trip, so it can fire after
+the POST reached Reddit), a read/decode failure on a 2xx body, and any 5xx are
+wrapped so callers report "may exist" and require verification before a manual
+retry.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).

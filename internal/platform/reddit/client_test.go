@@ -1046,7 +1046,6 @@ func TestIsPreSendDialError(t *testing.T) {
 		&net.DNSError{Err: "no such host", Name: "x"},
 		syscall.ECONNREFUSED,
 		syscall.EHOSTUNREACH,
-		&tls.CertificateVerificationError{},
 	}
 	for _, e := range preSend {
 		if !isPreSendDialError(e) {
@@ -1056,10 +1055,12 @@ func TestIsPreSendDialError(t *testing.T) {
 	notPreSend := []error{
 		io.ErrUnexpectedEOF, // mid-flight after a connection was established
 		errors.New("some other error"),
-		// TLS record-header failure is NOT pre-send: crypto/tls can return it AFTER a
-		// version has been negotiated, when a later record has an invalid header —
-		// including while READING THE RESPONSE after the POST was sent. So it doesn't
-		// prove pre-send and must be treated as ambiguous (UNCONFIRMED).
+		// No TLS error is pre-send (matching the merged Meta client): a custom
+		// transport can enable renegotiation, and a wrapping/retrying RoundTripper can
+		// surface a cert error while reading a response AFTER forwarding the POST — so
+		// neither a cert-verification nor a record-header failure proves pre-send. Both
+		// flow to the ambiguous (UNCONFIRMED) path.
+		&tls.CertificateVerificationError{},
 		tls.RecordHeaderError{Msg: "bad record"},
 		// Context errors are NOT pre-send: the per-attempt ctx wraps the whole round
 		// trip, so a ctx error can surface after the POST reached Reddit. They must be

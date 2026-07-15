@@ -14,7 +14,6 @@ package reddit
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -265,22 +264,22 @@ type tokenRefresh struct {
 // TLS/transport error at the redirect TARGET be misclassified as pre-send by
 // isPreSendDialError, even though the original POST may already have been received
 // by Reddit — which could duplicate a paid resource on retry. Returning
-// ErrUseLastResponse stops following and hands the 3xx response back to request(),
-// where a non-2xx status is surfaced as an error (see the StatusCode check in
 // noFollow is the CheckRedirect policy for every client this package uses: it
-// stops the client from following redirects (returning the 3xx as-is). This
-// keeps isPreSendDialError's CertificateVerificationError branch sound — a cert
-// error then proves the ORIGINAL request's handshake failed pre-send, because no
-// redirect could have carried the request to a different (TLS-broken) target
-// after it was already sent. It is shared by the built-in client and the
-// caller-supplied-client enforcement in NewClient so there is a single definition.
+// returns http.ErrUseLastResponse so the client does NOT follow redirects and
+// hands the 3xx response back to request(), where a non-2xx status is surfaced as
+// an error (a 3xx on a mutating request is then classified UNCONFIRMED). Not
+// following redirects keeps the outcome classification simple: a create either
+// gets a 2xx, a definite 4xx, or an UNCONFIRMED (transport/5xx/3xx-mutating)
+// result — a redirect can't carry an already-sent POST to a different target. It
+// is shared by the built-in client and the caller-supplied-client enforcement in
+// NewClient so there is a single definition.
 func noFollow(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
 // NewClient builds a Reddit Ads client. Redirect following is force-disabled on
-// whatever *http.Client is used (see the enforcement below) so the pre-send
-// error classification stays sound.
+// whatever *http.Client is used (see the enforcement below) so 3xx responses are
+// classified by request() rather than transparently followed.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
 		creds:    creds,
@@ -694,31 +693,20 @@ func isMutatingMethod(method string) bool {
 // sent and must NOT be treated as an ambiguous "may exist" transportError. It
 // covers ONLY failures that PROVE no request body was transmitted:
 //   - DNS resolution failure (the host never resolved);
-//   - connection refused / no route / network unreachable (never connected);
-//   - TLS certificate verification failure (the secure channel was never
-//     established, so no request body was sent).
+//   - connection refused / no route / network unreachable (never connected).
 //
-// Note: tls.RecordHeaderError is deliberately NOT treated as pre-send. Unlike a
-// cert verification failure, a RecordHeaderError does not prove a handshake-time
-// failure: crypto/tls can also return it AFTER a version has been negotiated,
-// when a later record carries an invalid header/version — including while READING
-// THE RESPONSE after this POST was already sent. So even with redirects disabled,
-// a RecordHeaderError does not prove pre-send; classifying it as pre-send could
-// report a possibly-created paid resource as definitely absent, duplicating it on
-// retry. It therefore falls through to the transportError wrapping in request(),
+// No TLS error is treated as pre-send, matching the merged Meta client
+// (internal/platform/meta). A TLS error is not a reliable pre-send proof for an
+// arbitrary caller-supplied transport: a custom transport can enable TLS
+// renegotiation, and a wrapping/retrying RoundTripper can surface a
+// CertificateVerificationError (or a RecordHeaderError) while READING THE RESPONSE
+// after forwarding the POST. Treating either as pre-send could report a
+// possibly-created paid resource as definitely absent, duplicating it on retry.
+// So all TLS failures fall through to the transportError wrapping in request(),
 // which createOutcomeAmbiguous treats as ambiguous (UNCONFIRMED) — the safe
-// classification.
-//
-// The CertificateVerificationError branch is sound ONLY because the built-in
-// client disables redirect following (CheckRedirect returns
-// http.ErrUseLastResponse in NewClient) — a policy also enforced on a
-// caller-supplied client via a shallow copy in NewClient. Were redirects
-// followed, a mutating POST could be RECEIVED by Reddit, then redirected to a
-// TLS-broken target; the resulting cert error would match here and be misreported
-// as pre-send, letting a retry duplicate a paid resource. With redirects
-// disabled, a cert verification failure is a handshake-time event that can only
-// come from the ORIGINAL request's handshake, so it genuinely proves no request
-// body was sent.
+// classification. (Redirect following is still force-disabled on every client in
+// NewClient, which keeps 3xx handling well-defined; it is no longer relied on to
+// make any TLS error a pre-send proof.)
 //
 // A context cancellation/deadline is deliberately NOT treated as pre-send here:
 // the per-attempt attemptCtx wraps the ENTIRE round trip (send + response read),
@@ -739,15 +727,16 @@ func isPreSendDialError(err error) bool {
 	if errors.As(err, &dnsErr) {
 		return true
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
-		return true
-	}
-	// TLS certificate verification failure: a handshake-time event, so the secure
-	// channel was never established and no request bytes were sent. (RecordHeaderError
-	// is intentionally excluded — see the doc comment: it can surface post-negotiation
-	// while reading a response, so it does not prove pre-send.)
-	var certErr *tls.CertificateVerificationError
-	return errors.As(err, &certErr)
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH)
+	// NOTE: no TLS error is treated as pre-send, matching the merged Meta client
+	// (internal/platform/meta). A TLS error is not a reliable pre-send proof for an
+	// arbitrary caller-supplied transport: a custom transport can enable TLS
+	// renegotiation, and a wrapping/retrying RoundTripper can surface a
+	// CertificateVerificationError while reading a response AFTER forwarding the
+	// POST. So all TLS failures flow to the UNCONFIRMED (transportError) path — the
+	// safe classification, since UNCONFIRMED never lets a retry duplicate a paid
+	// resource. Only DNS resolution and connect-time dial failures (above) prove no
+	// bytes were sent.
 }
 
 // request performs an authenticated Reddit Ads API call, sanitizing the path

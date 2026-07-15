@@ -3,19 +3,22 @@
 ## 2026-07-15
 
 **Update** — Hardened the Reddit Ads client's ambiguous-outcome classification
-(PR #27): redirect following is force-disabled on every client used, including
-one supplied via `WithHTTPClient` (`CheckRedirect` is overridden to
-`http.ErrUseLastResponse` on a shallow copy, so the caller's client is not
-mutated). This makes `isPreSendDialError`'s `*tls.CertificateVerificationError`
-branch sound — a cert error then proves the ORIGINAL request's handshake failed
-pre-send, since no redirect could carry an already-sent POST to a TLS-broken
-target. `tls.RecordHeaderError` was REMOVED from `isPreSendDialError`: it can
-surface post-negotiation while reading a response, so it does not prove pre-send
-and now flows to the UNCONFIRMED path. A 3xx on a MUTATING request is classified
-UNCONFIRMED (it reached a responder and may have committed before redirecting); a
-3xx on a GET is not a create. Context errors and 5xx/mid-flight transport
-failures also stay UNCONFIRMED. Reworded the manual-fallback UTM step to
-SET/REPLACE the utm_* params (matching `buildRedditUTMURL`'s `url.Values.Set`).
+(PR #27): `isPreSendDialError` now proves pre-send ONLY for DNS resolution and
+connect-time dial failures (ECONNREFUSED/EHOSTUNREACH/ENETUNREACH). NO TLS error
+is treated as pre-send, matching the merged Meta client — a TLS error is not a
+reliable pre-send proof for an arbitrary caller-supplied transport (renegotiation,
+or a wrapping RoundTripper surfacing a cert/record error while reading a response
+after forwarding the POST), so both `*tls.CertificateVerificationError` and
+`tls.RecordHeaderError` flow to the UNCONFIRMED path — the safe classification.
+Redirect following is still force-disabled on every client used, including one
+supplied via `WithHTTPClient` (`CheckRedirect` overridden to
+`http.ErrUseLastResponse` UNCONDITIONALLY on a shallow copy, so the caller's
+client is not mutated), which keeps 3xx handling well-defined. A 3xx on a MUTATING
+request is classified UNCONFIRMED (it reached a responder and may have committed
+before redirecting); a 3xx on a GET is not a create. Context errors and
+5xx/mid-flight transport failures also stay UNCONFIRMED. Reworded the
+manual-fallback UTM step to SET/REPLACE the utm_* params (matching
+`buildRedditUTMURL`'s `url.Values.Set`).
 
 ## 2026-07-13
 
