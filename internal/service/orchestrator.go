@@ -546,7 +546,36 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			slog.ErrorContext(ctx, "platform dispatch failed before upstream create (claim released)", "platform", p, "job_id", jobID, "error", derr)
 			releaseClaim()
 		} else {
-			slog.ErrorContext(ctx, "platform dispatch failed (claim retained; outcome unknown)", "platform", p, "job_id", jobID, "error", derr)
+			// The claim is RETAINED (outcome unknown, blind retry could double-create).
+			// The platform clients' partial-result contract lets Dispatch return a
+			// non-nil campaign carrying the created upstream id ALONGSIDE the error
+			// (the campaign POST succeeded but a later step failed). If it did, stamp
+			// that upstream id onto the retained pending row so the orphaned upstream
+			// campaign is RECONCILABLE later instead of leaving an anonymous claim.
+			// Persist on a context DETACHED from the dispatch ctx (mirroring the
+			// success path) so a shutdown-cancelled dispatch ctx can't drop the record
+			// of a paid campaign that actually exists.
+			if campaign != nil && campaign.PlatformCampaignID != "" {
+				campaign.JobID = &jobID
+				campaign.BriefID = brief.ID
+				campaign.ProjectID = brief.ProjectID
+				campaign.Platform = p
+				// Keep the row 'pending' so it stays a recoverable orphan (not a
+				// completed campaign): the dispatch did not succeed, only the upstream
+				// create partially happened.
+				campaign.Status = "pending"
+				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
+				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
+					slog.ErrorContext(ctx, "failed to record partial upstream campaign id on retained pending claim",
+						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", perr)
+				} else {
+					slog.ErrorContext(ctx, "platform dispatch failed after upstream create; recorded orphaned upstream id on retained pending claim",
+						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", derr)
+				}
+				cancelPersist()
+			} else {
+				slog.ErrorContext(ctx, "platform dispatch failed (claim retained; outcome unknown)", "platform", p, "job_id", jobID, "error", derr)
+			}
 		}
 		res.Error = "platform campaign creation failed"
 		return res

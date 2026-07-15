@@ -159,6 +159,13 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) 
 	defer r.mu.Unlock()
 	c.Version = 1
 	r.upserted = append(r.upserted, c)
+	// Mirror the real ON CONFLICT (brief_id, platform) DO UPDATE: the (brief,
+	// platform) row is updated in place, so a subsequent lookup sees the new
+	// platform_campaign_id/status.
+	if r.existing == nil {
+		r.existing = map[string]*model.Campaign{}
+	}
+	r.existing[c.BriefID+"|"+string(c.Platform)] = c
 	return c, nil
 }
 func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64) (*model.Campaign, error) {
@@ -919,6 +926,54 @@ func TestOrchestrator_PreCreateErrorReleasesClaim(t *testing.T) {
 	// The pre-create error should have released the pending claim.
 	if _, ok := camps.existing["b1|"+string(model.ProviderGoogleAds)]; ok {
 		t.Error("pre-create dispatcher error should have released the pending claim")
+	}
+}
+
+// partialResultDispatcher exercises the platform clients' partial-result
+// contract: it returns a non-nil campaign carrying the created upstream id
+// ALONGSIDE a (non-pre-create) error, as reddit/twitter clients do when the
+// campaign POST succeeded but a later step failed.
+type partialResultDispatcher struct{}
+
+func (partialResultDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{PlatformCampaignID: "pc-orphan-" + string(p), Status: "active", CampaignName: "n"},
+		errors.New("ad group creation failed after campaign was created")
+}
+
+// TestOrchestrator_PartialDispatchErrorPersistsUpstreamID verifies that when
+// Dispatch returns a partial campaign (a created upstream id) together with an
+// error, the retained pending row is stamped with that upstream id so the
+// orphaned upstream campaign is reconcilable — and the claim is NOT released.
+func TestOrchestrator_PartialDispatchErrorPersistsUpstreamID(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: partialResultDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	// The claim must be RETAINED (not released) — the upstream campaign may exist.
+	row, ok := camps.existing["b1|"+string(model.ProviderGoogleAds)]
+	if !ok {
+		t.Fatal("pending claim should be retained after a partial dispatch error, not released")
+	}
+	// The retained row must now carry the orphaned upstream id (reconcilable) and
+	// remain 'pending' (a recoverable orphan, not a completed campaign).
+	if row.PlatformCampaignID != "pc-orphan-"+string(model.ProviderGoogleAds) {
+		t.Errorf("retained row PlatformCampaignID = %q, want the orphaned upstream id", row.PlatformCampaignID)
+	}
+	if row.Status != "pending" {
+		t.Errorf("retained row Status = %q, want pending (recoverable orphan)", row.Status)
+	}
+	// The partial campaign must have been persisted via UpsertCampaign.
+	if len(camps.upserted) != 1 {
+		t.Errorf("upserted %d campaigns, want 1 (partial upstream id persisted)", len(camps.upserted))
 	}
 }
 
