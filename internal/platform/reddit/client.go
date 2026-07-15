@@ -1520,10 +1520,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// ads manually, use YOUR registration URL (with its own query params intact)
 			// as the base and SET/REPLACE these utm_* parameters, so the destination
 			// matches what an automated ad would use. The automated click_url is built
-			// with url.Values.Set (see buildRedditUTMURL), which REPLACES any existing
-			// utm_* key while preserving the other (non-utm_*) query params — appending
-			// instead would leave duplicate/conflicting utm values.
-			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping only its other, non-utm_* query params):", variantCount))
+			// with url.Values.Set (see buildRedditUTMURL), which REPLACES only the exact
+			// utm_* keys it sets and PRESERVES every other query parameter (including any
+			// utm_* the tool doesn't generate, e.g. utm_id) — so the operator keeps all
+			// other params; appending instead would leave duplicate/conflicting values.
+			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping all its other query parameters):", variantCount))
 			for i := 0; i < variantCount; i++ {
 				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, displayRedditUTMURL(in, i)))
 			}
