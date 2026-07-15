@@ -60,9 +60,11 @@ prove NEITHER pre-send NOR rejection are treated as UNCONFIRMED (may have been
 applied): a 3xx on a MUTATING request (it reached a responder and may have
 committed before redirecting — a 3xx on a GET is not a create), a
 mid-flight/`Do`-time context error (the per-attempt timeout wraps the whole round
-trip, so it can fire after the POST reached Reddit), a read/decode failure on a
-2xx body, and any 5xx are wrapped so callers report "may exist" and require
-verification before a manual retry. A definite 4xx is NOT UNCONFIRMED — Reddit
+trip, so it can fire after the POST reached Reddit), and a read/decode failure on
+a 2xx body are wrapped as `transportError`; a 5xx status is returned as an
+`apiError` and classified by status. `createOutcomeAmbiguous` treats all of these
+as "may exist", so callers require verification before a manual retry. A definite
+4xx is NOT UNCONFIRMED — Reddit
 received and REJECTED the request, so nothing was created and the caller gets a
 clean failure.
 

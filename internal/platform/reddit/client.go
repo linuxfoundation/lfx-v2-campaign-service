@@ -632,11 +632,11 @@ func (e *transportError) Unwrap() error { return e.Err }
 // applied by Reddit despite the error — i.e. the request plausibly reached the
 // server and its outcome is unknowable. It is the single source of truth shared
 // by the campaign, ad-group, and ad create paths so they classify identically:
-//   - transportError: the round-trip failed AFTER a connection was established
-//     (see isPreSendDialError — only a DNS or connect-time dial failure is NOT
-//     wrapped as transportError, so it never reaches here; every TLS error IS
-//     wrapped and so is treated as ambiguous), so the request may have been
-//     received. This is ALSO the path a context
+//   - transportError: a Do failure that is NOT PROVEN pre-send (see
+//     isPreSendDialError — only a DNS or connect-time dial failure is NOT wrapped
+//     as transportError, so it never reaches here; every TLS error and any other
+//     unclassified Do error IS wrapped and so is treated as ambiguous), so the
+//     request MAY have been sent and received. This is ALSO the path a context
 //     cancellation/deadline from the in-flight Do takes: the per-attempt timeout
 //     wraps the whole round trip, so a ctx error can fire after the POST reached
 //     Reddit, and request() wraps it as transportError so it is treated as
