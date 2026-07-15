@@ -646,6 +646,20 @@ func TestCreateCampaign_ManualVariantsNoPostURL(t *testing.T) {
 	if !strings.Contains(allSteps, "2 ad variant(s) ready") {
 		t.Errorf("expected a '2 ad variant(s) ready' summary step, got:\n%s", allSteps)
 	}
+	// The operator instruction must carry the NEW set/replace semantics explicitly:
+	// the operator SETS/REPLACES the shown utm_* params on their registration URL,
+	// keeping only its OTHER, non-utm_* query params. Assert both distinctive
+	// phrases so this operator-critical guidance can't regress to the old "append ...
+	// keeping its existing query" wording (which the summary-count check alone would
+	// still pass).
+	for _, want := range []string{
+		"set/replace the shown utm_* params",
+		"keeping only its other, non-utm_* query params",
+	} {
+		if !strings.Contains(allSteps, want) {
+			t.Errorf("operator instruction missing new phrase %q; got:\n%s", want, allSteps)
+		}
+	}
 	for i, v := range in.Variants {
 		if !strings.Contains(allSteps, v.Headline) {
 			t.Errorf("variant %d headline %q missing from steps:\n%s", i+1, v.Headline, allSteps)
@@ -1033,9 +1047,6 @@ func TestIsPreSendDialError(t *testing.T) {
 		syscall.ECONNREFUSED,
 		syscall.EHOSTUNREACH,
 		&tls.CertificateVerificationError{},
-		// TLS record-header failure (e.g. talking TLS to a plaintext/misconfigured
-		// endpoint): the handshake never completed, so nothing was sent.
-		tls.RecordHeaderError{Msg: "bad record"},
 	}
 	for _, e := range preSend {
 		if !isPreSendDialError(e) {
@@ -1045,6 +1056,11 @@ func TestIsPreSendDialError(t *testing.T) {
 	notPreSend := []error{
 		io.ErrUnexpectedEOF, // mid-flight after a connection was established
 		errors.New("some other error"),
+		// TLS record-header failure is NOT pre-send: crypto/tls can return it AFTER a
+		// version has been negotiated, when a later record has an invalid header —
+		// including while READING THE RESPONSE after the POST was sent. So it doesn't
+		// prove pre-send and must be treated as ambiguous (UNCONFIRMED).
+		tls.RecordHeaderError{Msg: "bad record"},
 		// Context errors are NOT pre-send: the per-attempt ctx wraps the whole round
 		// trip, so a ctx error can surface after the POST reached Reddit. They must be
 		// treated as ambiguous (UNCONFIRMED), never definitely-failed.
@@ -3648,8 +3664,7 @@ func TestBuiltinClientDoesNotFollowRedirectsOnPOST(t *testing.T) {
 	if err == nil {
 		t.Fatal("a 3xx redirect on a POST must surface as an error, got nil")
 	}
-	// The 3xx must be reported as a non-2xx apiError, not a false success, and
-	// not as an ambiguous transportError (3xx < 500 → clean not-created failure).
+	// The 3xx must be reported as a non-2xx apiError, not a false success.
 	var ae *apiError
 	if !errors.As(err, &ae) {
 		t.Fatalf("err = %v (%T), want *apiError", err, err)
@@ -3657,8 +3672,11 @@ func TestBuiltinClientDoesNotFollowRedirectsOnPOST(t *testing.T) {
 	if ae.StatusCode != http.StatusFound {
 		t.Errorf("apiError.StatusCode = %d, want %d (302 Found)", ae.StatusCode, http.StatusFound)
 	}
-	if createOutcomeAmbiguous(err) {
-		t.Errorf("a 3xx (< 500) must NOT be classified as ambiguous, got ambiguous for %v", err)
+	// A 302 on a MUTATING request must be UNCONFIRMED (ambiguous): receiving a 3xx
+	// proves the POST reached a responder, but does not prove no resource was
+	// committed before the redirect — so the caller must NOT retry into a duplicate.
+	if !createOutcomeAmbiguous(err) {
+		t.Errorf("a 3xx on a mutating POST must be classified as ambiguous (UNCONFIRMED), got not-ambiguous for %v", err)
 	}
 	if targetHit.Load() {
 		t.Error("redirect target was hit: the built-in client followed a redirect on a mutating POST")
@@ -3675,5 +3693,67 @@ func TestBuiltinClientCheckRedirectReturnsErrUseLastResponse(t *testing.T) {
 	}
 	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
 		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse", got)
+	}
+}
+
+// TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller verifies that a
+// caller-supplied *http.Client WITHOUT a CheckRedirect gets the no-follow policy
+// enforced via a shallow copy on c.httpClient, while the caller's original client
+// is provably NOT mutated (its CheckRedirect stays nil).
+func TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller(t *testing.T) {
+	supplied := &http.Client{Timeout: 5 * time.Second} // CheckRedirect nil
+	c := NewClient(testCreds, testAccount, WithHTTPClient(supplied))
+
+	// The client actually used must enforce no-follow.
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("supplied client without CheckRedirect must get no-follow enforced on c.httpClient")
+	}
+	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
+		t.Errorf("enforced CheckRedirect = %v, want http.ErrUseLastResponse", got)
+	}
+	// The caller's original client must NOT be mutated: it must be a distinct copy
+	// and the caller's CheckRedirect must remain nil.
+	if c.httpClient == supplied {
+		t.Error("c.httpClient must be a COPY of the supplied client, not the same pointer")
+	}
+	if supplied.CheckRedirect != nil {
+		t.Error("the caller's original client was mutated: CheckRedirect is no longer nil")
+	}
+	// The copy must preserve the supplied Timeout.
+	if c.httpClient.Timeout != 5*time.Second {
+		t.Errorf("copied client Timeout = %v, want 5s (must preserve supplied fields)", c.httpClient.Timeout)
+	}
+}
+
+// TestWithHTTPClientRespectsExplicitCheckRedirect verifies that a caller-supplied
+// client that DOES set its own CheckRedirect is respected (not overridden) and
+// not copied.
+func TestWithHTTPClientRespectsExplicitCheckRedirect(t *testing.T) {
+	sentinel := errors.New("caller policy")
+	supplied := &http.Client{
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return sentinel },
+	}
+	c := NewClient(testCreds, testAccount, WithHTTPClient(supplied))
+
+	if c.httpClient != supplied {
+		t.Error("a supplied client with its own CheckRedirect must be used as-is (not copied)")
+	}
+	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, sentinel) {
+		t.Errorf("CheckRedirect = %v, want the caller's own policy (%v)", got, sentinel)
+	}
+}
+
+// TestCreateOutcomeAmbiguous3xxByMethod verifies that a 3xx apiError is
+// UNCONFIRMED on a mutating method but NOT ambiguous on a GET.
+func TestCreateOutcomeAmbiguous3xxByMethod(t *testing.T) {
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		err := &apiError{Method: m, Path: "/x", StatusCode: http.StatusFound}
+		if !createOutcomeAmbiguous(err) {
+			t.Errorf("createOutcomeAmbiguous(302 %s) = false, want true (UNCONFIRMED)", m)
+		}
+	}
+	getErr := &apiError{Method: http.MethodGet, Path: "/x", StatusCode: http.StatusFound}
+	if createOutcomeAmbiguous(getErr) {
+		t.Error("createOutcomeAmbiguous(302 GET) = true, want false (a GET redirect is not a create)")
 	}
 }

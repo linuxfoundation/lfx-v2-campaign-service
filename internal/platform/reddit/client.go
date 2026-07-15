@@ -259,6 +259,22 @@ type tokenRefresh struct {
 }
 
 // NewClient builds a Client from injected credentials and account config.
+// noFollow is the redirect policy for the Reddit Ads client: never follow
+// redirects. The Reddit Ads API returns JSON directly and never legitimately
+// 3xx-redirects these calls. Following a redirect on a mutating POST would let a
+// TLS/transport error at the redirect TARGET be misclassified as pre-send by
+// isPreSendDialError, even though the original POST may already have been received
+// by Reddit — which could duplicate a paid resource on retry. Returning
+// ErrUseLastResponse stops following and hands the 3xx response back to request(),
+// where a non-2xx status is surfaced as an error (see the StatusCode check in
+// request()). This makes isPreSendDialError's CertificateVerificationError branch
+// sound: a cert error then proves the ORIGINAL request's handshake failed
+// pre-send. It is shared by the built-in client and the caller-supplied-client
+// enforcement in NewClient so there is a single definition.
+func noFollow(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
 		creds:    creds,
@@ -266,28 +282,27 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		baseURL:  redditAdsBaseURL,
 		tokenURL: redditTokenURL,
 		httpClient: &http.Client{
-			Timeout: redditRequestTimeout,
-			// Do NOT follow redirects. The Reddit Ads API returns JSON directly and
-			// never legitimately 3xx-redirects these calls. Following a redirect on a
-			// mutating POST would let a TLS/transport error at the redirect TARGET be
-			// misclassified as pre-send by isPreSendDialError, even though the original
-			// POST may already have been received by Reddit — which could duplicate a
-			// paid resource on retry. Returning ErrUseLastResponse stops following and
-			// hands the 3xx response back to request(), where a non-2xx status is
-			// surfaced as an error (see the StatusCode check in request()). This makes
-			// isPreSendDialError's TLS branches sound: a cert/record error now proves
-			// the ORIGINAL request's transport failed pre-send. A caller that supplies
-			// its own client via WithHTTPClient is responsible for its own redirect
-			// policy; this default only applies to the built-in client.
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+			Timeout:       redditRequestTimeout,
+			CheckRedirect: noFollow,
 		},
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	// Enforce the no-follow redirect policy on whatever client ended up on
+	// c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces the
+	// default above. A supplied client that follows redirects would let the original
+	// mutating POST be committed and then a TLS failure at the redirect target be
+	// misclassified as pre-send. A supplied client that doesn't set CheckRedirect
+	// gets no-follow enforced via a SHALLOW COPY (so the caller's *http.Client is
+	// never mutated — it may be reused elsewhere); a supplied client with its own
+	// CheckRedirect is respected and left untouched.
+	if c.httpClient != nil && c.httpClient.CheckRedirect == nil {
+		hc := *c.httpClient
+		hc.CheckRedirect = noFollow
+		c.httpClient = &hc
 	}
 	return c
 }
@@ -625,19 +640,44 @@ func (e *transportError) Unwrap() error { return e.Err }
 //     ambiguous (UNCONFIRMED), never definitely-failed;
 //   - apiError with a 5xx status: Reddit received it and may have committed the
 //     mutation before erroring.
+//   - apiError with a 3xx status on a MUTATING method: redirects are disabled, so
+//     a 3xx surfaces as an apiError (see NewClient's noFollow policy). Receiving a
+//     3xx proves the mutating request REACHED a responder, but does NOT prove no
+//     resource was committed before the redirect, so it is UNCONFIRMED. A 3xx on a
+//     GET carries no create and is NOT ambiguous.
 //
-// A definite 4xx (Reddit rejected it), or any pre-send failure (token refresh,
-// body encode/build, a pre-connect dial/TLS-handshake error, or a caller-cancel
-// that surfaces raw BEFORE the POST — e.g. from refreshToken), means NOT applied
-// → returns false so the caller returns a clean (nil, err) / "failed" rather than
-// "may exist".
+// A definite 4xx (Reddit rejected it), a 3xx on a non-mutating method, or any
+// pre-send failure (token refresh, body encode/build, a pre-connect
+// dial/cert-verification error, or a caller-cancel that surfaces raw BEFORE the
+// POST — e.g. from refreshToken), means NOT applied → returns false so the caller
+// returns a clean (nil, err) / "failed" rather than "may exist".
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
 		return true
 	}
 	var ae *apiError
-	return errors.As(err, &ae) && ae.StatusCode >= 500
+	if !errors.As(err, &ae) {
+		return false
+	}
+	if ae.StatusCode >= 500 {
+		return true
+	}
+	// A 3xx on a mutating request reached a responder and may have committed a
+	// resource before redirecting — UNCONFIRMED. A 3xx on a GET is not a create.
+	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
+}
+
+// isMutatingMethod reports whether an HTTP method can create/modify a resource
+// (POST/PUT/PATCH/DELETE). Used to decide whether a 3xx response is a possible
+// (UNCONFIRMED) create vs a harmless GET redirect.
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 // isPreSendDialError reports whether a httpClient.Do error clearly happened
@@ -646,16 +686,30 @@ func createOutcomeAmbiguous(err error) bool {
 // covers ONLY failures that PROVE no request body was transmitted:
 //   - DNS resolution failure (the host never resolved);
 //   - connection refused / no route / network unreachable (never connected);
-//   - TLS handshake / certificate errors (the secure channel was never
+//   - TLS certificate verification failure (the secure channel was never
 //     established, so no request body was sent).
 //
-// The TLS branches are sound ONLY because the built-in client disables redirect
-// following (CheckRedirect returns http.ErrUseLastResponse in NewClient). Were
-// redirects followed, a mutating POST could be RECEIVED by Reddit, then
-// redirected to a TLS-broken target; the resulting cert/record error would match
-// here and be misreported as pre-send, letting a retry duplicate a paid resource.
-// With redirects disabled, a cert/record error can only come from the ORIGINAL
-// request's handshake, so it genuinely proves no request body was sent.
+// Note: tls.RecordHeaderError is deliberately NOT treated as pre-send. Unlike a
+// cert verification failure, a RecordHeaderError does not prove a handshake-time
+// failure: crypto/tls can also return it AFTER a version has been negotiated,
+// when a later record carries an invalid header/version — including while READING
+// THE RESPONSE after this POST was already sent. So even with redirects disabled,
+// a RecordHeaderError does not prove pre-send; classifying it as pre-send could
+// report a possibly-created paid resource as definitely absent, duplicating it on
+// retry. It therefore falls through to the transportError wrapping in request(),
+// which createOutcomeAmbiguous treats as ambiguous (UNCONFIRMED) — the safe
+// classification.
+//
+// The CertificateVerificationError branch is sound ONLY because the built-in
+// client disables redirect following (CheckRedirect returns
+// http.ErrUseLastResponse in NewClient) — a policy also enforced on a
+// caller-supplied client via a shallow copy in NewClient. Were redirects
+// followed, a mutating POST could be RECEIVED by Reddit, then redirected to a
+// TLS-broken target; the resulting cert error would match here and be misreported
+// as pre-send, letting a retry duplicate a paid resource. With redirects
+// disabled, a cert verification failure is a handshake-time event that can only
+// come from the ORIGINAL request's handshake, so it genuinely proves no request
+// body was sent.
 //
 // A context cancellation/deadline is deliberately NOT treated as pre-send here:
 // the per-attempt attemptCtx wraps the ENTIRE round trip (send + response read),
@@ -679,14 +733,12 @@ func isPreSendDialError(err error) bool {
 	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
 		return true
 	}
-	// TLS handshake / certificate verification failures: the secure channel was
-	// never established, so no request bytes were sent.
+	// TLS certificate verification failure: a handshake-time event, so the secure
+	// channel was never established and no request bytes were sent. (RecordHeaderError
+	// is intentionally excluded — see the doc comment: it can surface post-negotiation
+	// while reading a response, so it does not prove pre-send.)
 	var certErr *tls.CertificateVerificationError
-	if errors.As(err, &certErr) {
-		return true
-	}
-	var recordErr tls.RecordHeaderError
-	return errors.As(err, &recordErr)
+	return errors.As(err, &certErr)
 }
 
 // request performs an authenticated Reddit Ads API call, sanitizing the path
