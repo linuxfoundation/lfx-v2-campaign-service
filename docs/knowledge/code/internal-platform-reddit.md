@@ -9,7 +9,7 @@ tags:
   - reddit-ads
   - oauth2
   - go-package
-timestamp: "2026-07-13T23:55:00Z"
+timestamp: "2026-07-15T00:00:00Z"
 ---
 
 # internal/platform/reddit
@@ -41,5 +41,22 @@ directly. If the ad-group create returns a 400 "invalid communities" the client
 retries once WITHOUT communities (keyword/geo-only) and emits a
 communities-skipped warning step, so an invalid subreddit never orphans the
 PAUSED campaign.
+
+Because create calls are mutating and paid, a FAILED create is classified by
+whether the request may have reached Reddit. `isPreSendDialError` reports a Do
+error as pre-send (request definitely NOT sent → clean not-created failure) ONLY
+for proofs that no bytes left the client: DNS resolution failure,
+connection-refused/no-route, and TLS handshake/certificate errors. The TLS
+branches are sound ONLY because the built-in `*http.Client` disables redirect
+following (`CheckRedirect` returns `http.ErrUseLastResponse`); otherwise a POST
+could be received by Reddit and then redirected to a TLS-broken target, whose
+cert error would be misread as pre-send and let a retry duplicate a paid
+resource. With redirects disabled, a disallowed 3xx surfaces as a non-2xx
+`apiError` (< 500), i.e. a clean not-created failure — Reddit never legitimately
+3xx-redirects these calls. Everything else is treated as UNCONFIRMED (may have
+been applied): a mid-flight/`Do`-time context error (the per-attempt timeout
+wraps the whole round trip, so it can fire after the POST reached Reddit), a
+read/decode failure on a 2xx body, and any 5xx are wrapped so callers report
+"may exist" and require verification before a manual retry.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).

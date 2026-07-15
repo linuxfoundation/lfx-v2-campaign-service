@@ -261,11 +261,28 @@ type tokenRefresh struct {
 // NewClient builds a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:          creds,
-		account:        account,
-		baseURL:        redditAdsBaseURL,
-		tokenURL:       redditTokenURL,
-		httpClient:     &http.Client{Timeout: redditRequestTimeout},
+		creds:    creds,
+		account:  account,
+		baseURL:  redditAdsBaseURL,
+		tokenURL: redditTokenURL,
+		httpClient: &http.Client{
+			Timeout: redditRequestTimeout,
+			// Do NOT follow redirects. The Reddit Ads API returns JSON directly and
+			// never legitimately 3xx-redirects these calls. Following a redirect on a
+			// mutating POST would let a TLS/transport error at the redirect TARGET be
+			// misclassified as pre-send by isPreSendDialError, even though the original
+			// POST may already have been received by Reddit — which could duplicate a
+			// paid resource on retry. Returning ErrUseLastResponse stops following and
+			// hands the 3xx response back to request(), where a non-2xx status is
+			// surfaced as an error (see the StatusCode check in request()). This makes
+			// isPreSendDialError's TLS branches sound: a cert/record error now proves
+			// the ORIGINAL request's transport failed pre-send. A caller that supplies
+			// its own client via WithHTTPClient is responsible for its own redirect
+			// policy; this default only applies to the built-in client.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
 	}
@@ -631,6 +648,14 @@ func createOutcomeAmbiguous(err error) bool {
 //   - connection refused / no route / network unreachable (never connected);
 //   - TLS handshake / certificate errors (the secure channel was never
 //     established, so no request body was sent).
+//
+// The TLS branches are sound ONLY because the built-in client disables redirect
+// following (CheckRedirect returns http.ErrUseLastResponse in NewClient). Were
+// redirects followed, a mutating POST could be RECEIVED by Reddit, then
+// redirected to a TLS-broken target; the resulting cert/record error would match
+// here and be misreported as pre-send, letting a retry duplicate a paid resource.
+// With redirects disabled, a cert/record error can only come from the ORIGINAL
+// request's handshake, so it genuinely proves no request body was sent.
 //
 // A context cancellation/deadline is deliberately NOT treated as pre-send here:
 // the per-attempt attemptCtx wraps the ENTIRE round trip (send + response read),
@@ -1460,9 +1485,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// destination — any pre-existing query on the registration URL is omitted
 			// here to avoid persisting a secret in the returned steps. When building the
 			// ads manually, use YOUR registration URL (with its own query params intact)
-			// as the base and add these utm_* parameters, so the destination matches
-			// what an automated ad would use.
-			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (append the shown utm_* params to your registration URL, keeping its existing query):", variantCount))
+			// as the base and SET/REPLACE these utm_* parameters, so the destination
+			// matches what an automated ad would use. The automated click_url is built
+			// with url.Values.Set (see buildRedditUTMURL), which REPLACES any existing
+			// utm_* key while preserving the other (non-utm_*) query params — appending
+			// instead would leave duplicate/conflicting utm values.
+			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping only its other, non-utm_* query params):", variantCount))
 			for i := 0; i < variantCount; i++ {
 				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, displayRedditUTMURL(in, i)))
 			}

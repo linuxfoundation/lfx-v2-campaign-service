@@ -3609,3 +3609,71 @@ func TestRedactURL(t *testing.T) {
 		}
 	}
 }
+
+// TestBuiltinClientDoesNotFollowRedirectsOnPOST verifies the built-in
+// *http.Client disables redirect following: a mutating POST that receives a 3xx
+// must NOT be followed to the redirect target (which could be TLS-broken and let
+// isPreSendDialError misclassify a possibly-received POST as pre-send). The 3xx
+// must instead surface as a non-2xx error, and the redirect target handler must
+// never be hit.
+func TestBuiltinClientDoesNotFollowRedirectsOnPOST(t *testing.T) {
+	var targetHit atomic.Bool
+	// target is where the redirect would send the request if it were followed.
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHit.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected", http.StatusNotFound)
+			return
+		}
+		// Redirect the mutating POST elsewhere. A redirect-following client would
+		// re-issue against target; the built-in client must not.
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer apiSrv.Close()
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	// Uses the DEFAULT built-in client (no WithHTTPClient), so CheckRedirect applies.
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	_, err := c.request(context.Background(), http.MethodPost, "/campaigns", map[string]any{"x": 1})
+	if err == nil {
+		t.Fatal("a 3xx redirect on a POST must surface as an error, got nil")
+	}
+	// The 3xx must be reported as a non-2xx apiError, not a false success, and
+	// not as an ambiguous transportError (3xx < 500 → clean not-created failure).
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		t.Fatalf("err = %v (%T), want *apiError", err, err)
+	}
+	if ae.StatusCode != http.StatusFound {
+		t.Errorf("apiError.StatusCode = %d, want %d (302 Found)", ae.StatusCode, http.StatusFound)
+	}
+	if createOutcomeAmbiguous(err) {
+		t.Errorf("a 3xx (< 500) must NOT be classified as ambiguous, got ambiguous for %v", err)
+	}
+	if targetHit.Load() {
+		t.Error("redirect target was hit: the built-in client followed a redirect on a mutating POST")
+	}
+}
+
+// TestBuiltinClientCheckRedirectReturnsErrUseLastResponse pins the redirect
+// policy directly: the built-in client's CheckRedirect must return
+// http.ErrUseLastResponse so a 3xx is handed back as-is rather than followed.
+func TestBuiltinClientCheckRedirectReturnsErrUseLastResponse(t *testing.T) {
+	c := NewClient(testCreds, testAccount)
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("built-in client must set CheckRedirect to disable redirect following")
+	}
+	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse", got)
+	}
+}
