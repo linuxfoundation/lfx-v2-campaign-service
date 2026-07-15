@@ -657,6 +657,7 @@ func TestCreateCampaign_ManualVariantsNoPostURL(t *testing.T) {
 	for _, want := range []string{
 		"set/replace the shown utm_* params",
 		"keeping all its other query parameters",
+		"drop any trailing '/' from the path",
 	} {
 		if !strings.Contains(allSteps, want) {
 			t.Errorf("operator instruction missing new phrase %q; got:\n%s", want, allSteps)
