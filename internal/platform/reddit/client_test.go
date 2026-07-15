@@ -1049,6 +1049,7 @@ func TestIsPreSendDialError(t *testing.T) {
 		&net.DNSError{Err: "no such host", Name: "x"},
 		syscall.ECONNREFUSED,
 		syscall.EHOSTUNREACH,
+		syscall.ENETUNREACH,
 	}
 	for _, e := range preSend {
 		if !isPreSendDialError(e) {

@@ -257,23 +257,16 @@ type tokenRefresh struct {
 	err   error
 }
 
-// NewClient builds a Client from injected credentials and account config.
-// noFollow is the redirect policy for the Reddit Ads client: never follow
-// redirects. The Reddit Ads API returns JSON directly and never legitimately
-// 3xx-redirects these calls. Following a redirect on a mutating POST would take
-// the request to a different target and complicate outcome classification even
-// though the original POST may already have been received by Reddit; not
-// following keeps a 3xx a well-defined non-2xx (UNCONFIRMED for a mutating
-// request). Returning
 // noFollow is the CheckRedirect policy for every client this package uses: it
 // returns http.ErrUseLastResponse so the client does NOT follow redirects and
 // hands the 3xx response back to request(), where a non-2xx status is surfaced as
-// an error (a 3xx on a mutating request is then classified UNCONFIRMED). Not
-// following redirects keeps the outcome classification simple: a create either
-// gets a 2xx, a definite 4xx, or an UNCONFIRMED (transport/5xx/3xx-mutating)
-// result — a redirect can't carry an already-sent POST to a different target. It
-// is shared by the built-in client and the caller-supplied-client enforcement in
-// NewClient so there is a single definition.
+// an error (a 3xx on a mutating request is then classified UNCONFIRMED). The
+// Reddit Ads API returns JSON directly and never legitimately 3xx-redirects these
+// calls; not following keeps outcome classification simple — a create gets a 2xx,
+// a definite 4xx, or an UNCONFIRMED (transport/5xx/3xx-mutating) result, and a
+// redirect can't carry an already-sent POST to a different target. It is shared by
+// the built-in client and the caller-supplied-client enforcement in NewClient so
+// there is a single definition.
 func noFollow(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
@@ -654,10 +647,10 @@ func (e *transportError) Unwrap() error { return e.Err }
 //     GET carries no create and is NOT ambiguous.
 //
 // A definite 4xx (Reddit rejected it), a 3xx on a non-mutating method, or any
-// pre-send failure (token refresh, body encode/build, a pre-connect
-// dial/cert-verification error, or a caller-cancel that surfaces raw BEFORE the
-// POST — e.g. from refreshToken), means NOT applied → returns false so the caller
-// returns a clean (nil, err) / "failed" rather than "may exist".
+// pre-send failure (token refresh, body encode/build, a pre-connect DNS/dial
+// failure, or a caller-cancel that surfaces raw BEFORE the POST — e.g. from
+// refreshToken), means NOT applied → returns false so the caller returns a clean
+// (nil, err) / "failed" rather than "may exist".
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
@@ -727,15 +720,6 @@ func isPreSendDialError(err error) bool {
 		return true
 	}
 	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH)
-	// NOTE: no TLS error is treated as pre-send, matching the merged Meta client
-	// (internal/platform/meta). A TLS error is not a reliable pre-send proof for an
-	// arbitrary caller-supplied transport: a custom transport can enable TLS
-	// renegotiation, and a wrapping/retrying RoundTripper can surface a
-	// CertificateVerificationError while reading a response AFTER forwarding the
-	// POST. So all TLS failures flow to the UNCONFIRMED (transportError) path — the
-	// safe classification, since UNCONFIRMED never lets a retry duplicate a paid
-	// resource. Only DNS resolution and connect-time dial failures (above) prove no
-	// bytes were sent.
 }
 
 // request performs an authenticated Reddit Ads API call, sanitizing the path
