@@ -518,6 +518,11 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", redditUserAgent)
 
+	// c.httpClient carries the package-wide no-follow CheckRedirect policy (see
+	// noFollow's doc comment), so a redirect from the token endpoint surfaces here
+	// as a 3xx status rather than being followed transparently. Reddit's token
+	// endpoint does not redirect in practice; if a future split of the token client
+	// onto its own *http.Client is ever introduced, carry the same policy forward.
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("reddit token refresh: %w", err)
