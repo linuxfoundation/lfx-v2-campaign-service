@@ -55,13 +55,15 @@ reading a response after forwarding the POST — so both flow to the UNCONFIRMED
 path. Redirect following is still force-disabled on every client used, including
 one supplied via `WithHTTPClient` (`CheckRedirect` overridden to
 `http.ErrUseLastResponse` unconditionally on a shallow copy, so the caller's
-client is not mutated), which keeps 3xx handling well-defined. Everything not
-proven pre-send is treated as UNCONFIRMED (may have been applied): a 3xx on a
-MUTATING request (it reached a responder and may have committed before
-redirecting — a 3xx on a GET is not a create), a mid-flight/`Do`-time context
-error (the per-attempt timeout wraps the whole round trip, so it can fire after
-the POST reached Reddit), a read/decode failure on a 2xx body, and any 5xx are
-wrapped so callers report "may exist" and require verification before a manual
-retry.
+client is not mutated), which keeps 3xx handling well-defined. Failures that
+prove NEITHER pre-send NOR rejection are treated as UNCONFIRMED (may have been
+applied): a 3xx on a MUTATING request (it reached a responder and may have
+committed before redirecting — a 3xx on a GET is not a create), a
+mid-flight/`Do`-time context error (the per-attempt timeout wraps the whole round
+trip, so it can fire after the POST reached Reddit), a read/decode failure on a
+2xx body, and any 5xx are wrapped so callers report "may exist" and require
+verification before a manual retry. A definite 4xx is NOT UNCONFIRMED — Reddit
+received and REJECTED the request, so nothing was created and the caller gets a
+clean failure.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).

@@ -1030,9 +1030,12 @@ func TestCreateCampaign_ConnRefusedNotUnconfirmed(t *testing.T) {
 }
 
 // TestIsPreSendDialError classifies which Do errors PROVE the request was NOT
-// sent (so a create is NOT ambiguous): DNS, connection-refused/no-route, and TLS
-// handshake/certificate failures — in every one of these the connection or secure
-// channel was never established, so no request bytes could have reached Reddit.
+// sent (so a create is NOT ambiguous): only DNS resolution and connect-time dial
+// failures (connection-refused/no-route/network-unreachable) — in these the
+// connection was never established, so no request bytes could have reached Reddit.
+// TLS errors are deliberately AMBIGUOUS (in notPreSend below), matching the merged
+// Meta client: they aren't a reliable pre-send proof for an arbitrary supplied
+// transport.
 //
 // A context cancellation/deadline is deliberately NOT pre-send: the per-attempt
 // context wraps the whole round trip, so a ctx error from Do can fire AFTER the

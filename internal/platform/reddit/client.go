@@ -260,10 +260,11 @@ type tokenRefresh struct {
 // NewClient builds a Client from injected credentials and account config.
 // noFollow is the redirect policy for the Reddit Ads client: never follow
 // redirects. The Reddit Ads API returns JSON directly and never legitimately
-// 3xx-redirects these calls. Following a redirect on a mutating POST would let a
-// TLS/transport error at the redirect TARGET be misclassified as pre-send by
-// isPreSendDialError, even though the original POST may already have been received
-// by Reddit — which could duplicate a paid resource on retry. Returning
+// 3xx-redirects these calls. Following a redirect on a mutating POST would take
+// the request to a different target and complicate outcome classification even
+// though the original POST may already have been received by Reddit; not
+// following keeps a 3xx a well-defined non-2xx (UNCONFIRMED for a mutating
+// request). Returning
 // noFollow is the CheckRedirect policy for every client this package uses: it
 // returns http.ErrUseLastResponse so the client does NOT follow redirects and
 // hands the 3xx response back to request(), where a non-2xx status is surfaced as
@@ -298,15 +299,12 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	}
 	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
 	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces
-	// the default above. Following a redirect would let the original mutating POST be
-	// committed and then a TLS failure at the redirect target be misclassified as
-	// pre-send, so the invariant is a correctness requirement, not a default: even a
-	// caller-supplied CheckRedirect is overridden (a callback that returns nil, or
-	// follows N hops then stops, would still follow — re-opening the hole). The
-	// override is applied to a SHALLOW COPY so the caller's *http.Client is never
-	// mutated (it may be reused elsewhere). Skip the copy only if noFollow is already
-	// in force (the built-in client), which can't be detected by value, so compare by
-	// behavior: always copy unless the client is our own default.
+	// the default above. Following a redirect would carry an already-sent mutating
+	// POST to a different target and muddy outcome classification, so no-follow is a
+	// correctness requirement, not a default: even a caller-supplied CheckRedirect is
+	// overridden (a callback that returns nil, or follows N hops then stops, would
+	// still follow). The override is applied to a SHALLOW COPY so the caller's
+	// *http.Client is never mutated (it may be reused elsewhere).
 	if c.httpClient != nil {
 		hc := *c.httpClient
 		hc.CheckRedirect = noFollow
@@ -639,9 +637,10 @@ func (e *transportError) Unwrap() error { return e.Err }
 // server and its outcome is unknowable. It is the single source of truth shared
 // by the campaign, ad-group, and ad create paths so they classify identically:
 //   - transportError: the round-trip failed AFTER a connection was established
-//     (see isPreSendDialError — a DNS/dial/connection-refused/TLS-handshake
-//     failure is NOT wrapped as transportError, so it never reaches here), so the
-//     request may have been received. This is ALSO the path a context
+//     (see isPreSendDialError — only a DNS or connect-time dial failure is NOT
+//     wrapped as transportError, so it never reaches here; every TLS error IS
+//     wrapped and so is treated as ambiguous), so the request may have been
+//     received. This is ALSO the path a context
 //     cancellation/deadline from the in-flight Do takes: the per-attempt timeout
 //     wraps the whole round trip, so a ctx error can fire after the POST reached
 //     Reddit, and request() wraps it as transportError so it is treated as
