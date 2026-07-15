@@ -267,14 +267,20 @@ type tokenRefresh struct {
 // by Reddit — which could duplicate a paid resource on retry. Returning
 // ErrUseLastResponse stops following and hands the 3xx response back to request(),
 // where a non-2xx status is surfaced as an error (see the StatusCode check in
-// request()). This makes isPreSendDialError's CertificateVerificationError branch
-// sound: a cert error then proves the ORIGINAL request's handshake failed
-// pre-send. It is shared by the built-in client and the caller-supplied-client
-// enforcement in NewClient so there is a single definition.
+// noFollow is the CheckRedirect policy for every client this package uses: it
+// stops the client from following redirects (returning the 3xx as-is). This
+// keeps isPreSendDialError's CertificateVerificationError branch sound — a cert
+// error then proves the ORIGINAL request's handshake failed pre-send, because no
+// redirect could have carried the request to a different (TLS-broken) target
+// after it was already sent. It is shared by the built-in client and the
+// caller-supplied-client enforcement in NewClient so there is a single definition.
 func noFollow(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
+// NewClient builds a Reddit Ads client. Redirect following is force-disabled on
+// whatever *http.Client is used (see the enforcement below) so the pre-send
+// error classification stays sound.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
 		creds:    creds,
@@ -291,15 +297,18 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	for _, opt := range opts {
 		opt(c)
 	}
-	// Enforce the no-follow redirect policy on whatever client ended up on
-	// c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces the
-	// default above. A supplied client that follows redirects would let the original
-	// mutating POST be committed and then a TLS failure at the redirect target be
-	// misclassified as pre-send. A supplied client that doesn't set CheckRedirect
-	// gets no-follow enforced via a SHALLOW COPY (so the caller's *http.Client is
-	// never mutated — it may be reused elsewhere); a supplied client with its own
-	// CheckRedirect is respected and left untouched.
-	if c.httpClient != nil && c.httpClient.CheckRedirect == nil {
+	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
+	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces
+	// the default above. Following a redirect would let the original mutating POST be
+	// committed and then a TLS failure at the redirect target be misclassified as
+	// pre-send, so the invariant is a correctness requirement, not a default: even a
+	// caller-supplied CheckRedirect is overridden (a callback that returns nil, or
+	// follows N hops then stops, would still follow — re-opening the hole). The
+	// override is applied to a SHALLOW COPY so the caller's *http.Client is never
+	// mutated (it may be reused elsewhere). Skip the copy only if noFollow is already
+	// in force (the built-in client), which can't be detected by value, so compare by
+	// behavior: always copy unless the client is our own default.
+	if c.httpClient != nil {
 		hc := *c.httpClient
 		hc.CheckRedirect = noFollow
 		c.httpClient = &hc

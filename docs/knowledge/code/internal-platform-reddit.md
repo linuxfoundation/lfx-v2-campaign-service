@@ -46,17 +46,21 @@ Because create calls are mutating and paid, a FAILED create is classified by
 whether the request may have reached Reddit. `isPreSendDialError` reports a Do
 error as pre-send (request definitely NOT sent → clean not-created failure) ONLY
 for proofs that no bytes left the client: DNS resolution failure,
-connection-refused/no-route, and TLS handshake/certificate errors. The TLS
-branches are sound ONLY because the built-in `*http.Client` disables redirect
-following (`CheckRedirect` returns `http.ErrUseLastResponse`); otherwise a POST
-could be received by Reddit and then redirected to a TLS-broken target, whose
-cert error would be misread as pre-send and let a retry duplicate a paid
-resource. With redirects disabled, a disallowed 3xx surfaces as a non-2xx
-`apiError` (< 500), i.e. a clean not-created failure — Reddit never legitimately
-3xx-redirects these calls. Everything else is treated as UNCONFIRMED (may have
-been applied): a mid-flight/`Do`-time context error (the per-attempt timeout
-wraps the whole round trip, so it can fire after the POST reached Reddit), a
-read/decode failure on a 2xx body, and any 5xx are wrapped so callers report
-"may exist" and require verification before a manual retry.
+connection-refused/no-route, and a TLS `*tls.CertificateVerificationError`
+(a handshake-time event). `tls.RecordHeaderError` is deliberately NOT treated as
+pre-send — it can surface post-negotiation while reading a response, so it does
+not prove the request was unsent and flows to the UNCONFIRMED path instead. The
+`CertificateVerificationError` branch is sound ONLY because redirect following is
+force-disabled on every client used, including one supplied via `WithHTTPClient`
+(`CheckRedirect` is overridden to `http.ErrUseLastResponse` on a shallow copy, so
+the caller's client is not mutated); otherwise a POST could be received by Reddit
+and then redirected to a TLS-broken target, whose cert error would be misread as
+pre-send and let a retry duplicate a paid resource. Everything else is treated as
+UNCONFIRMED (may have been applied): a 3xx on a MUTATING request (it reached a
+responder and may have committed before redirecting — a 3xx on a GET is not a
+create), a mid-flight/`Do`-time context error (the per-attempt timeout wraps the
+whole round trip, so it can fire after the POST reached Reddit), a read/decode
+failure on a 2xx body, and any 5xx are wrapped so callers report "may exist" and
+require verification before a manual retry.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).

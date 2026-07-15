@@ -3,17 +3,19 @@
 ## 2026-07-15
 
 **Update** — Hardened the Reddit Ads client's ambiguous-outcome classification
-(PR #27): the built-in `*http.Client` now disables redirect following
-(`CheckRedirect` returns `http.ErrUseLastResponse`), so a TLS
-certificate/record error can only come from the ORIGINAL request's handshake.
-This makes `isPreSendDialError`'s TLS branches sound — otherwise a mutating POST
-could be received then redirected to a TLS-broken target and misclassified as
-pre-send, duplicating a paid resource on retry. A disallowed 3xx now surfaces as
-a non-2xx `apiError` (< 500), i.e. a clean not-created failure. Documented that
-`isPreSendDialError` proves pre-send only for DNS/dial/TLS-with-redirects-
-disabled, while context errors and 5xx/mid-flight transport failures stay
-UNCONFIRMED. Reworded the manual-fallback UTM step to SET/REPLACE the utm_*
-params (matching `buildRedditUTMURL`'s `url.Values.Set`).
+(PR #27): redirect following is force-disabled on every client used, including
+one supplied via `WithHTTPClient` (`CheckRedirect` is overridden to
+`http.ErrUseLastResponse` on a shallow copy, so the caller's client is not
+mutated). This makes `isPreSendDialError`'s `*tls.CertificateVerificationError`
+branch sound — a cert error then proves the ORIGINAL request's handshake failed
+pre-send, since no redirect could carry an already-sent POST to a TLS-broken
+target. `tls.RecordHeaderError` was REMOVED from `isPreSendDialError`: it can
+surface post-negotiation while reading a response, so it does not prove pre-send
+and now flows to the UNCONFIRMED path. A 3xx on a MUTATING request is classified
+UNCONFIRMED (it reached a responder and may have committed before redirecting); a
+3xx on a GET is not a create. Context errors and 5xx/mid-flight transport
+failures also stay UNCONFIRMED. Reworded the manual-fallback UTM step to
+SET/REPLACE the utm_* params (matching `buildRedditUTMURL`'s `url.Values.Set`).
 
 ## 2026-07-13
 

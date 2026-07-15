@@ -3725,21 +3725,27 @@ func TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller(t *testing.T) {
 	}
 }
 
-// TestWithHTTPClientRespectsExplicitCheckRedirect verifies that a caller-supplied
-// client that DOES set its own CheckRedirect is respected (not overridden) and
-// not copied.
-func TestWithHTTPClientRespectsExplicitCheckRedirect(t *testing.T) {
+// TestWithHTTPClientOverridesExplicitCheckRedirect verifies that no-follow is
+// enforced UNCONDITIONALLY: a caller-supplied client that sets its OWN
+// CheckRedirect is still overridden to noFollow (a caller callback that returns
+// nil, or follows N hops then stops, would re-open the pre-send hole), and the
+// caller's original client is not mutated.
+func TestWithHTTPClientOverridesExplicitCheckRedirect(t *testing.T) {
 	sentinel := errors.New("caller policy")
-	supplied := &http.Client{
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return sentinel },
-	}
+	callerPolicy := func(_ *http.Request, _ []*http.Request) error { return sentinel }
+	supplied := &http.Client{CheckRedirect: callerPolicy}
 	c := NewClient(testCreds, testAccount, WithHTTPClient(supplied))
 
-	if c.httpClient != supplied {
-		t.Error("a supplied client with its own CheckRedirect must be used as-is (not copied)")
+	// The client we USE must enforce no-follow, not the caller's follow-capable policy.
+	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse (no-follow enforced)", got)
 	}
-	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, sentinel) {
-		t.Errorf("CheckRedirect = %v, want the caller's own policy (%v)", got, sentinel)
+	// The caller's original client must be untouched (copy, not mutate).
+	if c.httpClient == supplied {
+		t.Error("supplied client must be copied, not used in place, when overriding CheckRedirect")
+	}
+	if got := supplied.CheckRedirect(nil, nil); !errors.Is(got, sentinel) {
+		t.Error("the caller's original client was mutated: its CheckRedirect no longer returns the caller policy")
 	}
 }
 
