@@ -117,7 +117,14 @@ type GeoTarget struct {
 }
 
 // geoResolveMap is the static name->URN lookup used to resolve geo targets
-// without a network round-trip. Ported verbatim from LINKEDIN_GEO_RESOLVE_MAP.
+// without a network round-trip. Ported from LINKEDIN_GEO_RESOLVE_MAP, with the
+// germany/united kingdom URNs corrected: the shared constant maps germany ->
+// urn:li:geo:101165590 (actually the United Kingdom) and united kingdom ->
+// urn:li:geo:106693272 (actually Switzerland), which would target paid campaigns
+// at the wrong country. Verified against LinkedIn's geo reference: Germany is
+// 101282230 and the United Kingdom is 101165590. The upstream shared constant
+// carries the same defect and must be fixed separately (tracked: LFXV2-2665) so
+// the two do not silently diverge.
 // Keys are lowercase, trimmed location names.
 var geoResolveMap = map[string]GeoTarget{
 	"japan":          {Label: "Japan", URN: "urn:li:geo:101355337"},
@@ -129,8 +136,8 @@ var geoResolveMap = map[string]GeoTarget{
 	"hong kong":      {Label: "Hong Kong", URN: "urn:li:geo:103291313"},
 	"united states":  {Label: "United States", URN: "urn:li:geo:103644278"},
 	"usa":            {Label: "United States", URN: "urn:li:geo:103644278"},
-	"germany":        {Label: "Germany", URN: "urn:li:geo:101165590"},
-	"united kingdom": {Label: "United Kingdom", URN: "urn:li:geo:106693272"},
+	"germany":        {Label: "Germany", URN: "urn:li:geo:101282230"},
+	"united kingdom": {Label: "United Kingdom", URN: "urn:li:geo:101165590"},
 }
 
 // Credentials carries the injected OAuth2 bearer token used for every request.

@@ -54,7 +54,9 @@ must also be mounted in `server.go`, or its routes 404 despite compiling.
 **Creation** — Added the `internal/platform/reddit` concept doc for the new
 Reddit Ads API v3 client (OAuth2 token refresh + Campaign -> Ad Group -> Ad
 creation) and listed it in the code index.
-**Creation** — Added OKF concept doc for internal/platform/linkedin (LinkedIn Marketing API client), listed in the code index.
+
+**Creation** — Added OKF concept doc for internal/platform/linkedin (LinkedIn
+Marketing API client), listed in the code index.
 
 **Update** — Dropped the Goa CLI path allowlist; twitter-api-secret FP is
 fingerprint-only in `.gitleaksignore`. Clarified `.grype.yaml` rationale

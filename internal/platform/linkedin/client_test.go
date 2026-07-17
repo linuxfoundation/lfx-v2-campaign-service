@@ -68,7 +68,7 @@ func TestResolveGeoTargets_KnownAndUnknown(t *testing.T) {
 	want := map[string]string{
 		"Japan":         "urn:li:geo:101355337",
 		"United States": "urn:li:geo:103644278",
-		"Germany":       "urn:li:geo:101165590",
+		"Germany":       "urn:li:geo:101282230",
 	}
 	for _, g := range got {
 		wantURN, ok := want[g.Label]
