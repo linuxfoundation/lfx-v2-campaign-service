@@ -2474,6 +2474,98 @@ func TestFindMatch_MatchWithTrailingEmptyIDIsError(t *testing.T) {
 	}
 }
 
+// TestFindCampaignByNameInGroup_MissingGroupIsAmbiguousError verifies that a
+// same-name campaign whose campaignGroup is MISSING (or trailing-empty) is treated
+// as AMBIGUOUS, not a clean non-match: the search found a campaign with this exact
+// name but the parent group can't be confirmed, so it cannot prove the campaign is
+// absent from the target group. findCampaignByNameInGroup must return an error
+// rather than "" (which would let the caller create a DUPLICATE).
+func TestFindCampaignByNameInGroup_MissingGroupIsAmbiguousError(t *testing.T) {
+	cases := []struct {
+		name    string
+		element string
+	}{
+		{"missing campaignGroup", `{"name":"Events | KubeCon | tlf","status":"ACTIVE","id":"urn:li:sponsoredCampaign:900"}`},
+		{"trailing-empty campaignGroup", `{"name":"Events | KubeCon | tlf","status":"ACTIVE","id":"urn:li:sponsoredCampaign:900","campaignGroup":"urn:li:sponsoredCampaignGroup:"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[`+tc.element+`],"metadata":{"nextPageToken":""}}`)
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555")
+			if err == nil {
+				t.Fatalf("expected an error for a same-name campaign with an unconfirmable group, got nil (id=%q)", id)
+			}
+			if id != "" {
+				t.Errorf("expected empty id alongside the error, got %q", id)
+			}
+			if !strings.Contains(err.Error(), "campaignGroup") {
+				t.Errorf("error should explain the missing/malformed campaignGroup, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestCreateDarkPost_InvalidPostURNIsAmbiguous verifies the FINDING 2 refinement:
+// a 2xx dark-post response whose id is NOT a full share/ugcPost URN (a bare
+// numeric id, or a wrong-type URN) must be rejected as an AMBIGUOUS (transportError
+// → "may exist") outcome, not returned verbatim — otherwise the creative that
+// references it is guaranteed to fail, orphaning the dark post.
+func TestCreateDarkPost_InvalidPostURNIsAmbiguous(t *testing.T) {
+	cases := []struct {
+		name string
+		id   string
+	}{
+		{"bare numeric id", `"300"`},
+		{"wrong URN type", `"urn:li:sponsoredCreative:300"`},
+		{"empty trailing segment", `"urn:li:share:"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":`+tc.id+`}`)
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			id, err := c.createDarkPost(context.Background(), "123456789", "Intro", "Headline", "https://events.example.org/reg", "")
+			if err == nil {
+				t.Fatalf("expected an error for an invalid post URN %s, got nil (id=%q)", tc.id, id)
+			}
+			if id != "" {
+				t.Errorf("expected empty id alongside the error, got %q", id)
+			}
+			var te *transportError
+			if !errors.As(err, &te) {
+				t.Errorf("an invalid-URN dark post must be AMBIGUOUS (transportError), got %T: %v", err, err)
+			}
+		})
+	}
+
+	// A well-formed ugcPost URN is accepted.
+	t.Run("valid ugcPost URN accepted", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"urn:li:ugcPost:987"}`)
+		}))
+		defer srv.Close()
+		c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+		got, err := c.createDarkPost(context.Background(), "123456789", "Intro", "Headline", "https://events.example.org/reg", "")
+		if err != nil {
+			t.Fatalf("a valid ugcPost URN should be accepted, got err: %v", err)
+		}
+		if got != "urn:li:ugcPost:987" {
+			t.Errorf("want urn:li:ugcPost:987, got %q", got)
+		}
+	})
+}
+
 // TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate verifies the FINDING 1
 // refinement end to end: when the campaign-group name lookup returns a MATCHING
 // element whose raw URN is trailing-empty ("urn:li:sponsoredCampaignGroup:"),

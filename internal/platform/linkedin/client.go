@@ -666,8 +666,8 @@ const maxListPages = 1000
 // (up to maxListPages); reaching the cap with a next-page token still present
 // also returns an error rather than a false no-match.
 func (c *Client) findByName(ctx context.Context, nestedPath, name string) (string, error) {
-	return c.findMatch(ctx, nestedPath, name, func(el responseElement) bool {
-		return el.Name == name
+	return c.findMatch(ctx, nestedPath, name, func(el responseElement) (bool, error) {
+		return el.Name == name, nil
 	})
 }
 
@@ -676,11 +676,26 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 // group constraint is essential: the campaign search is account-wide, so a
 // same-name campaign under a DIFFERENT (e.g. archived/replaced) group would
 // otherwise be returned as an idempotent match and the new campaign would never
-// be created under the correct group. Elements missing a campaignGroup are not
-// matched, since without it the parent cannot be confirmed.
+// be created under the correct group.
+//
+// A same-name element whose campaignGroup is MISSING or MALFORMED is ambiguous,
+// not a clean non-match: the server returned a campaign with this exact name but
+// we cannot confirm which group it belongs to, so it cannot prove the campaign is
+// absent from THIS group. Folding it into a false (non-match) boolean would let
+// findMatch exhaust the set and report absence, and the caller would POST a
+// DUPLICATE. So this case returns an error to abort, consistent with the
+// fail-closed handling for matched-but-id-less elements inside findMatch.
 func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID string) (string, error) {
-	return c.findMatch(ctx, campaignsPath, name, func(el responseElement) bool {
-		return el.Name == name && el.CampaignGroup != "" && trailingID(el.CampaignGroup) == groupID
+	return c.findMatch(ctx, campaignsPath, name, func(el responseElement) (bool, error) {
+		if el.Name != name {
+			return false, nil
+		}
+		// Same name, but no usable parent group URN → cannot confirm scope. Abort
+		// rather than treat as absent (which would allow a duplicate create).
+		if el.CampaignGroup == "" || trailingID(el.CampaignGroup) == "" {
+			return false, fmt.Errorf("campaign %q has a missing or malformed campaignGroup %q — cannot confirm group scope; aborting to avoid creating a duplicate", el.Name, el.CampaignGroup)
+		}
+		return trailingID(el.CampaignGroup) == groupID, nil
 	})
 }
 
@@ -701,7 +716,12 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 // (1000) so any account that legitimately has many same-name resources is covered
 // in as few round-trips as possible. The cursor/repeated-token/page-cap guards
 // below remain the correctness backstop.
-func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match func(responseElement) bool) (string, error) {
+// match reports whether el is the sought element. It returns (false, err) for an
+// element that is AMBIGUOUS — e.g. a same-name campaign whose parent group can't be
+// confirmed — so findMatch aborts with that error instead of treating the element
+// as a non-match and reporting a false absence (which would trigger a duplicate
+// create). A clean non-match is (false, nil); a match is (true, nil).
+func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match func(responseElement) (bool, error)) (string, error) {
 	// The LinkedIn Marketing API caps search pageSize at 1000; request the max so
 	// the (rare) case of many same-name matches resolves in the fewest pages.
 	const pageSize = 1000
@@ -752,7 +772,14 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			elements = *resp.Elements
 		}
 		for _, el := range elements {
-			if !match(el) {
+			matched, ambErr := match(el)
+			if ambErr != nil {
+				// The matcher found a same-name element it cannot classify safely (e.g.
+				// a campaign with an unconfirmable parent group). Treating it as a
+				// non-match would risk a false absence and a duplicate create, so abort.
+				return "", fmt.Errorf("search %q by name: %w", nestedPath, ambErr)
+			}
+			if !matched {
 				continue
 			}
 			if _, skip := skipStatuses[el.Status]; skip {
@@ -1174,15 +1201,28 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 		// definite failure a retry would duplicate. Mirrors the Meta client.
 		return "", &transportError{Method: http.MethodPost, Path: "posts", Err: fmt.Errorf("dark post creation returned no ID")}
 	}
-	// Validate the extracted trailing segment, not just the raw field: a malformed
-	// create response like "urn:li:share:" passes the non-empty check yet has no
-	// id, and would be used verbatim as the creative's share reference. Abort on a
-	// malformed response rather than continue (mirrors the group/campaign creates).
-	// Wrap as transportError (2xx malformed success → "may exist") as above.
-	if trailingID(resp.ID.String()) == "" {
-		return "", &transportError{Method: http.MethodPost, Path: "posts", Err: fmt.Errorf("dark post creation returned an ID %q with an empty trailing segment", resp.ID.String())}
+	// Validate the FULL returned URN shape, not just a non-empty trailing segment.
+	// createCreative uses this value verbatim as content.reference, which LinkedIn
+	// requires to be a full post URN (urn:li:share:<id> or urn:li:ugcPost:<id>). A
+	// malformed 2xx like "urn:li:share:" (empty id), a bare "300" (no prefix), or a
+	// wrong-type URN would pass a mere non-empty check, then create the dark post
+	// and GUARANTEE the downstream creative fails — leaving an orphaned post. Reject
+	// any value that isn't a well-formed share/ugcPost URN and wrap as transportError
+	// (2xx malformed success → "may exist"), consistent with the empty-id case above.
+	if !isValidPostURN(resp.ID.String()) {
+		return "", &transportError{Method: http.MethodPost, Path: "posts", Err: fmt.Errorf("dark post creation returned an ID %q that is not a valid urn:li:share/ugcPost URN", resp.ID.String())}
 	}
 	return resp.ID.String(), nil
+}
+
+// postURNRe matches a full LinkedIn post URN usable as a creative's
+// content.reference: urn:li:share:<id> or urn:li:ugcPost:<id>, where <id> is a
+// non-empty run of digits (LinkedIn post ids are numeric).
+var postURNRe = regexp.MustCompile(`^urn:li:(share|ugcPost):\d+$`)
+
+// isValidPostURN reports whether raw is a well-formed share/ugcPost post URN.
+func isValidPostURN(raw string) bool {
+	return postURNRe.MatchString(raw)
 }
 
 // createCreative creates a DRAFT creative referencing a share URN and returns

@@ -449,7 +449,9 @@ func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
 			campaignBody = body
 			_, _ = io.WriteString(w, `{"id":"200"}`)
 		case strings.Contains(r.URL.Path, "posts"):
-			_, _ = io.WriteString(w, `{"id":"300"}`)
+			// A dark post must return a full post URN (used verbatim as the creative's
+			// content.reference); a bare id like "300" is rejected by createDarkPost.
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
 		case strings.Contains(r.URL.Path, "creatives"):
 			_, _ = io.WriteString(w, `{"id":"400"}`)
 		}
