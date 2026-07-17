@@ -9,7 +9,7 @@ tags:
   - reddit-ads
   - oauth2
   - go-package
-timestamp: "2026-07-13T23:55:00Z"
+timestamp: "2026-07-15T00:00:00Z"
 ---
 
 # internal/platform/reddit
@@ -41,5 +41,31 @@ directly. If the ad-group create returns a 400 "invalid communities" the client
 retries once WITHOUT communities (keyword/geo-only) and emits a
 communities-skipped warning step, so an invalid subreddit never orphans the
 PAUSED campaign.
+
+Because create calls are mutating and paid, a FAILED create is classified by
+whether the request may have reached Reddit. `isPreSendDialError` reports a Do
+error as pre-send (request definitely NOT sent → clean not-created failure) ONLY
+for proofs that no bytes left the client: DNS resolution failure, and
+connection-refused/no-route/network-unreachable dial failures. NO TLS error is
+treated as pre-send (matching the merged Meta client): a TLS error is not a
+reliable pre-send proof for an arbitrary caller-supplied transport — a custom
+transport can enable renegotiation, and a wrapping/retrying `RoundTripper` can
+surface a `*tls.CertificateVerificationError` or `tls.RecordHeaderError` while
+reading a response after forwarding the POST — so both flow to the UNCONFIRMED
+path. Redirect following is still force-disabled on every client used, including
+one supplied via `WithHTTPClient` (`CheckRedirect` overridden to
+`http.ErrUseLastResponse` unconditionally on a shallow copy, so the caller's
+client is not mutated), which keeps 3xx handling well-defined. Failures that
+prove NEITHER pre-send NOR rejection are treated as UNCONFIRMED (may have been
+applied): a 3xx on a MUTATING request (it reached a responder and may have
+committed before redirecting — a 3xx on a GET is not a create), a
+mid-flight/`Do`-time context error (the per-attempt timeout wraps the whole round
+trip, so it can fire after the POST reached Reddit), and a read/decode failure on
+a 2xx body are wrapped as `transportError`; a 5xx status is returned as an
+`apiError` and classified by status. `createOutcomeAmbiguous` treats all of these
+as "may exist", so callers require verification before a manual retry. A definite
+4xx is NOT UNCONFIRMED — Reddit
+received and REJECTED the request, so nothing was created and the caller gets a
+clean failure.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).

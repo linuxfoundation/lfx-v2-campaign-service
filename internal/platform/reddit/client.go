@@ -257,19 +257,51 @@ type tokenRefresh struct {
 	err   error
 }
 
-// NewClient builds a Client from injected credentials and account config.
+// noFollow is the CheckRedirect policy for every client this package uses: it
+// returns http.ErrUseLastResponse so the client does NOT follow redirects and
+// hands the 3xx response back to request(), where a non-2xx status is surfaced as
+// an error (a 3xx on a mutating request is then classified UNCONFIRMED). The
+// Reddit Ads API returns JSON directly and never legitimately 3xx-redirects these
+// calls; not following keeps outcome classification simple — a create gets a 2xx,
+// a definite 4xx, or an UNCONFIRMED (transport/5xx/3xx-mutating) result, and a
+// redirect can't carry an already-sent POST to a different target. It is shared by
+// the built-in client and the caller-supplied-client enforcement in NewClient so
+// there is a single definition.
+func noFollow(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// NewClient builds a Reddit Ads client. Redirect following is force-disabled on
+// whatever *http.Client is used (see the enforcement below) so 3xx responses are
+// classified by request() rather than transparently followed.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:          creds,
-		account:        account,
-		baseURL:        redditAdsBaseURL,
-		tokenURL:       redditTokenURL,
-		httpClient:     &http.Client{Timeout: redditRequestTimeout},
+		creds:    creds,
+		account:  account,
+		baseURL:  redditAdsBaseURL,
+		tokenURL: redditTokenURL,
+		httpClient: &http.Client{
+			Timeout:       redditRequestTimeout,
+			CheckRedirect: noFollow,
+		},
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
+	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces
+	// the default above. Following a redirect would carry an already-sent mutating
+	// POST to a different target and muddy outcome classification, so no-follow is a
+	// correctness requirement, not a default: even a caller-supplied CheckRedirect is
+	// overridden (a callback that returns nil, or follows N hops then stops, would
+	// still follow). The override is applied to a SHALLOW COPY so the caller's
+	// *http.Client is never mutated (it may be reused elsewhere).
+	if c.httpClient != nil {
+		hc := *c.httpClient
+		hc.CheckRedirect = noFollow
+		c.httpClient = &hc
 	}
 	return c
 }
@@ -486,6 +518,11 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", redditUserAgent)
 
+	// c.httpClient carries the package-wide no-follow CheckRedirect policy (see
+	// noFollow's doc comment), so a redirect from the token endpoint surfaces here
+	// as a 3xx status rather than being followed transparently. Reddit's token
+	// endpoint does not redirect in practice; if a future split of the token client
+	// onto its own *http.Client is ever introduced, carry the same policy forward.
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("reddit token refresh: %w", err)
@@ -575,13 +612,16 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("reddit API %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }
 
-// transportError wraps a failure of the HTTP round-trip itself (httpClient.Do):
-// the request was ALREADY SENT, so the server may or may not have processed it —
-// the outcome is AMBIGUOUS. This is distinct from a pre-send failure (token
-// refresh, body encode, request build) or a definite abort, where the request
-// never reached the server and a mutation definitely did not happen. Callers use
-// it to decide whether a failed create is "may exist" (ambiguous) vs "not
-// created".
+// transportError wraps a failure of the HTTP round-trip itself (httpClient.Do)
+// that is NOT PROVEN pre-send: the request MAY have been sent (e.g. a mid-flight
+// read failure, a Do-time context error, OR a TLS error, which can surface either
+// during the handshake before bytes are written or later while reading a
+// response), so the server may or may not have processed it — the outcome is
+// AMBIGUOUS. This is distinct from a proven pre-send failure (token refresh, body
+// encode, request build, or a DNS/connect-time dial error via isPreSendDialError),
+// where the request definitely never reached the server and a mutation definitely
+// did not happen. Callers use it to decide whether a failed create is "may exist"
+// (ambiguous) vs "not created".
 type transportError struct {
 	Method string
 	Path   string
@@ -597,40 +637,97 @@ func (e *transportError) Unwrap() error { return e.Err }
 // applied by Reddit despite the error — i.e. the request plausibly reached the
 // server and its outcome is unknowable. It is the single source of truth shared
 // by the campaign, ad-group, and ad create paths so they classify identically:
-//   - transportError: the round-trip failed AFTER a connection was established
-//     (see isPreSendDialError — a DNS/dial/connection-refused failure is NOT
-//     wrapped as transportError, so it never reaches here), so the request may
-//     have been received;
+//   - transportError: a Do failure that is NOT PROVEN pre-send (see
+//     isPreSendDialError — only a DNS or connect-time dial failure is NOT wrapped
+//     as transportError, so it never reaches here; every TLS error and any other
+//     unclassified Do error IS wrapped and so is treated as ambiguous), so the
+//     request MAY have been sent and received. This is ALSO the path a context
+//     cancellation/deadline from the in-flight Do takes: the per-attempt timeout
+//     wraps the whole round trip, so a ctx error can fire after the POST reached
+//     Reddit, and request() wraps it as transportError so it is treated as
+//     ambiguous (UNCONFIRMED), never definitely-failed;
 //   - apiError with a 5xx status: Reddit received it and may have committed the
 //     mutation before erroring.
+//   - apiError with a 3xx status on a MUTATING method: redirects are disabled, so
+//     a 3xx surfaces as an apiError (see NewClient's noFollow policy). Receiving a
+//     3xx proves the mutating request REACHED a responder, but does NOT prove no
+//     resource was committed before the redirect, so it is UNCONFIRMED. A 3xx on a
+//     GET carries no create and is NOT ambiguous.
 //
-// A definite 4xx (Reddit rejected it), or any pre-send failure (token refresh,
-// body encode/build, a pre-connect dial error), means NOT applied → returns false
-// so the caller returns a clean (nil, err) / "failed" rather than "may exist".
+// A definite 4xx (Reddit rejected it), a 3xx on a non-mutating method, or any
+// pre-send failure (token refresh, body encode/build, a pre-connect DNS/dial
+// failure, or a caller-cancel that surfaces raw BEFORE the POST — e.g. from
+// refreshToken), means NOT applied → returns false so the caller returns a clean
+// (nil, err) / "failed" rather than "may exist".
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
 		return true
 	}
 	var ae *apiError
-	return errors.As(err, &ae) && ae.StatusCode >= 500
+	if !errors.As(err, &ae) {
+		return false
+	}
+	if ae.StatusCode >= 500 {
+		return true
+	}
+	// A 3xx on a mutating request reached a responder and may have committed a
+	// resource before redirecting — UNCONFIRMED. A 3xx on a GET is not a create.
+	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
+}
+
+// isMutatingMethod reports whether an HTTP method can create/modify a resource
+// (POST/PUT/PATCH/DELETE). Used to decide whether a 3xx response is a possible
+// (UNCONFIRMED) create vs a harmless GET redirect.
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 // isPreSendDialError reports whether a httpClient.Do error clearly happened
-// BEFORE any request bytes could have reached the server (DNS resolution failure,
-// connection refused, or no route/network unreachable). Such a failure means the
-// request was NOT sent, so it must NOT be treated as an ambiguous "may exist"
-// transportError. A failure AFTER a connection is established (mid-flight timeout,
-// unexpected EOF) is genuinely ambiguous and IS wrapped as transportError.
+// BEFORE any request bytes could have reached the server, so the request was NOT
+// sent and must NOT be treated as an ambiguous "may exist" transportError. It
+// covers ONLY failures that PROVE no request body was transmitted:
+//   - DNS resolution failure (the host never resolved);
+//   - connection refused / no route / network unreachable (never connected).
+//
+// No TLS error is treated as pre-send, matching the merged Meta client
+// (internal/platform/meta). A TLS error is not a reliable pre-send proof for an
+// arbitrary caller-supplied transport: a custom transport can enable TLS
+// renegotiation, and a wrapping/retrying RoundTripper can surface a
+// CertificateVerificationError (or a RecordHeaderError) while READING THE RESPONSE
+// after forwarding the POST. Treating either as pre-send could report a
+// possibly-created paid resource as definitely absent, duplicating it on retry.
+// So all TLS failures fall through to the transportError wrapping in request(),
+// which createOutcomeAmbiguous treats as ambiguous (UNCONFIRMED) — the safe
+// classification. (Redirect following is still force-disabled on every client in
+// NewClient, which keeps 3xx handling well-defined; it is no longer relied on to
+// make any TLS error a pre-send proof.)
+//
+// A context cancellation/deadline is deliberately NOT treated as pre-send here:
+// the per-attempt attemptCtx wraps the ENTIRE round trip (send + response read),
+// so a context.Canceled/DeadlineExceeded surfacing from Do can fire AFTER the
+// POST body already reached Reddit (Reddit may have created the resource; we
+// just never read the response). Classifying that as pre-send would let a caller
+// treat a possibly-created campaign as definitely-failed and retry, risking a
+// double-create. Such ctx errors therefore fall through to the transportError
+// wrapping in request(), which createOutcomeAmbiguous treats as ambiguous
+// (UNCONFIRMED) — never FAILED. A genuine caller-cancel before any POST is still
+// handled precisely by the ctx.Err() checks in the create path.
+//
+// A failure AFTER a connection is established and bytes were sent (mid-flight
+// timeout, unexpected EOF on the response) is genuinely ambiguous and IS wrapped
+// as transportError.
 func isPreSendDialError(err error) bool {
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		return true
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
-		return true
-	}
-	return false
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH)
 }
 
 // request performs an authenticated Reddit Ads API call, sanitizing the path
@@ -704,10 +801,10 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*a
 			cancel()
 			// A Do error that clearly happened BEFORE the request could be sent (DNS
 			// failure, connection refused, no route) means NOT sent — return it plain
-			// so callers treat the create as "not applied". A failure after a
-			// connection was established (mid-flight timeout, EOF) is genuinely
-			// ambiguous: wrap it as transportError so callers treat the create as
-			// "may exist".
+			// so callers treat the create as "not applied". Every other Do error
+			// (TLS handshake failure, mid-flight timeout, EOF) is not proven pre-send
+			// / may have been sent: wrap it as transportError so callers treat the
+			// create as "may exist".
 			if isPreSendDialError(err) {
 				return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
 			}
@@ -1163,15 +1260,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	campaignResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
 	if err != nil {
-		// A CALLER context cancellation (even one that surfaced as a transportError
-		// during an EARLIER step like account verification, then propagated here) is
-		// NOT an ambiguous create: no campaign POST completed. Honor the documented
-		// pre-POST (nil, err) contract rather than returning a misleading "may exist"
 		// Classify AMBIGUITY FIRST, before the ctx check: a cancellation that
-		// interrupts the create's in-flight round-trip surfaces as a transportError,
+		// interrupts THIS create's in-flight round-trip surfaces as a transportError,
 		// and the campaign MAY already have been committed — so it must be treated as
-		// "may exist", NOT a clean pre-POST abort. createOutcomeAmbiguous is true only
-		// when the request plausibly reached Reddit (transportError or a 5xx).
+		// "may exist", NOT a clean pre-POST abort. createOutcomeAmbiguous is true when
+		// the request plausibly reached Reddit (transportError, a 5xx, or a mutating
+		// 3xx). A caller cancellation that surfaced as a transportError during an
+		// EARLIER step (e.g. account verification) and merely propagated here, with no
+		// campaign POST attempted, falls through to the non-ambiguous branch below.
 		if !createOutcomeAmbiguous(err) {
 			// Not ambiguous → the campaign was definitely NOT created: a pre-send
 			// failure (token refresh, body encode/build, a pre-connect dial error), a
@@ -1284,7 +1380,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	droppedCommunities := false
 	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(targetingWithCommunities))
 	// adGroupErr words an ad-group failure as UNCONFIRMED when the outcome is
-	// ambiguous (transportError / 5xx — the ad group MAY exist, and partialResult
+	// ambiguous (transportError / 5xx / mutating 3xx — the ad group MAY exist, and partialResult
 	// carries its deterministic name for reconciliation) vs a flat "failed" for a
 	// definite not-created error (4xx / pre-send). A caller-cancel that interrupted
 	// the in-flight POST surfaces as a transportError, so it too is UNCONFIRMED.
@@ -1359,7 +1455,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err != nil {
 			// A caller context cancellation is fatal (return an error, not just a
 			// warning). Whether the ad "may exist" depends on whether the request was
-			// in flight: an ambiguous error (transportError / 5xx — which is also how a
+			// in flight: an ambiguous error (transportError / 5xx / mutating 3xx — which is also how a
 			// cancellation that interrupted the in-flight POST surfaces) means the ad
 			// MAY exist; a clean pre-send cancel means it does not. Return a partial
 			// result carrying both IDs so the (created, PAUSED) campaign+ad group are
@@ -1375,7 +1471,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return pr, fmt.Errorf("ad creation aborted before send: %w", ctxErr)
 			}
 			// Not a caller cancel. Classify by outcome:
-			//   - ambiguous (transportError / 5xx): the ad MAY exist — UNCONFIRMED,
+			//   - ambiguous (transportError / 5xx / mutating 3xx): the ad MAY exist — UNCONFIRMED,
 			//     require verification before manual creation (avoids a duplicate);
 			//   - definite (4xx / pre-send): the ad was NOT created — report FAILED so
 			//     the operator's manual remediation isn't blocked by a misleading
@@ -1425,10 +1521,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else {
 		variantCount := len(in.Variants)
 		if variantCount > 0 {
-			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines:", variantCount))
+			// The click URLs below show ONLY the generated utm_* parameters on the
+			// destination — any pre-existing query on the registration URL is omitted
+			// here to avoid persisting a secret in the returned steps. When building the
+			// ads manually, use YOUR registration URL (with its own query params intact)
+			// as the base and SET/REPLACE these utm_* parameters, so the destination
+			// matches what an automated ad would use. The automated click_url is built
+			// with url.Values.Set (see buildRedditUTMURL), which REPLACES only the exact
+			// utm_* keys it sets and PRESERVES every other query parameter (including any
+			// utm_* the tool doesn't generate, e.g. utm_id) — so the operator keeps all
+			// other params; appending instead would leave duplicate/conflicting values.
+			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping all its other query parameters; drop any trailing '/' from the path so it matches the automated destination):", variantCount))
 			for i := 0; i < variantCount; i++ {
-				// These are manual-action instructions returned to the caller; show the
-				// sanitized click URL (utm_* only) so no pre-existing secret leaks.
 				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, displayRedditUTMURL(in, i)))
 			}
 		} else {
