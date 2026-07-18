@@ -664,6 +664,10 @@ func isPreSendDialError(err error) bool {
 //     reaches here), so the request may have been received;
 //   - *APIError with a 5xx status: Meta received it and may have committed the
 //     mutation before erroring.
+//   - *APIError with a 3xx status: redirect following is force-disabled (see
+//     noFollow), so a 3xx is surfaced here rather than followed. A 3xx on a
+//     mutating request is NOT a definite rejection — Meta may have committed the
+//     create and then returned a redirect — so it is ambiguous like a 5xx.
 //
 // A definite 4xx (Meta rejected it), or any pre-send failure (token missing,
 // body encode/build, a pre-connect dial error), means NOT applied → returns
@@ -675,7 +679,8 @@ func createOutcomeAmbiguous(err error) bool {
 		return true
 	}
 	var ae *APIError
-	return errors.As(err, &ae) && ae.StatusCode >= 500
+	// A mutating 3xx (redirect, not followed) or 5xx may follow a committed create.
+	return errors.As(err, &ae) && ((ae.StatusCode >= 300 && ae.StatusCode < 400) || ae.StatusCode >= 500)
 }
 
 // doRequest performs a Graph API call and decodes the JSON body into out.

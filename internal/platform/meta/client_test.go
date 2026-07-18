@@ -3438,3 +3438,29 @@ func TestNoFollowRedirectPolicy(t *testing.T) {
 		t.Error("caller's *http.Client was mutated — override must use a shallow copy")
 	}
 }
+
+// TestCreateOutcomeAmbiguous_3xxIsAmbiguous verifies a mutating 3xx (now surfaced
+// as an APIError because redirect following is disabled) is classified AMBIGUOUS
+// alongside 5xx — Meta may have committed the create before returning the redirect,
+// so a caller must not treat it as a definite failure and blind-retry (duplicate).
+// A definite 4xx stays non-ambiguous.
+func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
+	cases := []struct {
+		status int
+		want   bool
+	}{
+		{http.StatusFound, true},               // 302 — redirect, not followed
+		{http.StatusTemporaryRedirect, true},   // 307
+		{http.StatusInternalServerError, true}, // 500
+		{http.StatusBadGateway, true},          // 502
+		{http.StatusBadRequest, false},         // 400 — definite rejection
+		{http.StatusNotFound, false},           // 404
+		{http.StatusTooManyRequests, false},    // 429 handled by retry, not here
+	}
+	for _, tc := range cases {
+		err := &APIError{StatusCode: tc.status, Method: http.MethodPost, Path: "/campaigns"}
+		if got := createOutcomeAmbiguous(err); got != tc.want {
+			t.Errorf("createOutcomeAmbiguous(APIError{%d}) = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+}

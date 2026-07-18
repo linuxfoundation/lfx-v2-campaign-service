@@ -89,5 +89,11 @@ past start date is refused, with a same-day ad-set `start_time` nudged to
 now+buffer. `doRequest` retries HTTP 429 and Graph rate-limit envelope codes
 (4/17/32/341/613/80004) with bounded backoff, draining the body before close, and a
 truncated response body is surfaced rather than reported as a false success.
+Redirect following is force-disabled (a shared `noFollow` `CheckRedirect` policy
+set on the default client and enforced on any `WithHTTPClient`-supplied client via
+a shallow copy), so a 3xx on a mutating POST is surfaced rather than followed to a
+different target; `createOutcomeAmbiguous` classifies a mutating 3xx (and 5xx) as
+UNCONFIRMED, so a create that may have committed before redirecting is not blind-
+retried into a duplicate.
 
 See [internal/platform/meta](../../../internal/platform/meta).
