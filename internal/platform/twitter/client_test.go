@@ -2817,6 +2817,55 @@ func TestDoRequest_Non2xxIsTypedApiErrorNoBodyLeak(t *testing.T) {
 	}
 }
 
+// TestApiError_ErrorNeverSurfacesCode is the direct regression for the no-body-
+// leak guarantee: even when the SENSITIVE text is placed in errors[].code itself
+// (the field we retain for classification), Error() must render only method/path/
+// status and never the code. Guards against re-introducing a body-controlled
+// channel into PromotedTweetWarning/Steps.
+func TestApiError_ErrorNeverSurfacesCode(t *testing.T) {
+	ae := &apiError{
+		StatusCode: http.StatusBadRequest,
+		Method:     http.MethodPost,
+		Path:       "campaigns",
+		ErrorCodes: []string{"secret-token-abc123", "DUPLICATE_PROMOTABLE_ENTITY"},
+	}
+	s := ae.Error()
+	if strings.Contains(s, "secret-token-abc123") || strings.Contains(s, "DUPLICATE_PROMOTABLE_ENTITY") {
+		t.Errorf("apiError.Error() surfaced a retained code: %q", s)
+	}
+	// The code is still usable for internal classification.
+	if !ae.hasErrorCode("DUPLICATE_PROMOTABLE_ENTITY") {
+		t.Error("hasErrorCode should still match a retained code")
+	}
+}
+
+// TestParseErrorCodes_BoundsUntrustedBody verifies that a hostile body cannot
+// inflate the internally-retained codes: over-long values are dropped and the
+// count is capped at maxRetainedErrorCodes.
+func TestParseErrorCodes_BoundsUntrustedBody(t *testing.T) {
+	// Over-long code value is dropped, valid enum code is kept.
+	long := strings.Repeat("A", maxErrorCodeCodeLength+1)
+	body := []byte(`{"errors":[{"code":"` + long + `"},{"code":"DUPLICATE_PROMOTABLE_ENTITY"}]}`)
+	codes := parseErrorCodes(body)
+	if len(codes) != 1 || codes[0] != "DUPLICATE_PROMOTABLE_ENTITY" {
+		t.Fatalf("over-long code should be dropped, got %v", codes)
+	}
+
+	// More codes than the cap are truncated.
+	var sb strings.Builder
+	sb.WriteString(`{"errors":[`)
+	for i := 0; i < maxRetainedErrorCodes+10; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(`{"code":"CODE"}`)
+	}
+	sb.WriteString(`]}`)
+	if got := len(parseErrorCodes([]byte(sb.String()))); got != maxRetainedErrorCodes {
+		t.Errorf("retained %d codes, want cap of %d", got, maxRetainedErrorCodes)
+	}
+}
+
 // TestCreateOutcomeAmbiguous_Twitter verifies a 3xx/5xx apiError and any
 // transportError are ambiguous, while a definite 4xx (and 429) are not. The
 // predicate is NOT method-gated (mirrors meta/reddit) — callers invoke it only on

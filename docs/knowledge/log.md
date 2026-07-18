@@ -85,6 +85,14 @@ ambiguous). `isDuplicatePromotedTweetErr` now matches the typed error code
 (DUPLICATE_PROMOTABLE_ENTITY) instead of the no-longer-surfaced body. Brings X to
 parity with the reddit/meta/googleads clients. Concept doc updated.
 
+**Update** — Closed a no-body-leak regression in that same X/Twitter `apiError`
+(LFXV2-2642, PR #31 review by Copilot): `Error()` was rendering the retained
+`ErrorCodes` from the untrusted response body, re-opening the leak channel into
+persisted Steps (an untrusted body can place secrets even inside `errors[].code`).
+Now `Error()` renders method/path/status only; codes are kept solely for
+`hasErrorCode` classification, and `parseErrorCodes` drops over-long values and
+caps the count. Mirrors the reddit client's Body-for-classification-only pattern.
+
 **Update** — Disabled HTTP redirect following on the Meta and X/Twitter Ads
 clients (LFXV2-2641), closing a duplicate-create gap: both built their
 `*http.Client` (and accepted `WithHTTPClient` clients) with no `CheckRedirect`, so

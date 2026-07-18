@@ -395,17 +395,26 @@ type apiError struct {
 	Path       string
 	// ErrorCodes carries X's machine-readable error codes from the response
 	// envelope (`{"errors":[{"code":"..."}]}`), e.g. DUPLICATE_PROMOTABLE_ENTITY.
-	// These are enum-like codes (NOT free-text and NOT request material), so they
-	// are safe to retain and surface for classification — callers match on a code
-	// rather than parsing the (unsurfaced) body. Empty when the body wasn't a
+	// These are retained ONLY for internal classification (hasErrorCode) and are
+	// deliberately NOT surfaced by Error(): the `code` field comes from an
+	// untrusted response and nothing guarantees X (or an intercepting proxy)
+	// confines it to a short enum token — a hostile or malformed body could place
+	// secrets or a very large payload there. Rendering them into Error() would
+	// re-open the exact body-leak channel this type exists to close, since the
+	// stringified error is persisted into a campaign's Steps. See parseErrorCodes
+	// for the bounds applied at parse time. Empty when the body wasn't a
 	// recognizable X error envelope.
 	ErrorCodes []string
 }
 
 func (e *apiError) Error() string {
-	if len(e.ErrorCodes) > 0 {
-		return fmt.Sprintf("x ads api %s %s -> %d (%s)", e.Method, e.Path, e.StatusCode, strings.Join(e.ErrorCodes, ","))
-	}
+	// Deliberately DO NOT include e.ErrorCodes (or any body-derived text): the
+	// upstream response is untrusted and can reflect request material (a signed
+	// URL, a destination's secret query) or arbitrary proxy diagnostics. Codes are
+	// retained on the struct for internal classification (hasErrorCode) but are
+	// never surfaced when the error is stringified into Steps / returned to a
+	// caller / logged. Report only method, path, and status. Mirrors the
+	// reddit/meta/googleads clients' apiError.
 	return fmt.Sprintf("x ads api %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }
 
@@ -432,8 +441,22 @@ type xErrorEnvelope struct {
 	} `json:"errors"`
 }
 
+// Bounds on the internally-retained error codes. Even though codes are never
+// surfaced by Error() (see apiError.Error), they are parsed from an untrusted
+// body — so we defensively cap how much of it we hold onto for classification. A
+// genuine X error code (e.g. DUPLICATE_PROMOTABLE_ENTITY) is a short screaming-
+// snake token well under this length; anything longer isn't an enum code and is
+// dropped rather than retained.
+const (
+	maxRetainedErrorCodes  = 16
+	maxErrorCodeCodeLength = 128
+)
+
 // parseErrorCodes extracts X's error codes from a non-2xx body, ignoring anything
 // that isn't a recognizable envelope. Returns nil on a malformed/absent body.
+// Over-long values and codes beyond maxRetainedErrorCodes are dropped: these are
+// used only for enum classification (hasErrorCode), never surfaced, so bounding
+// them prevents a hostile body from being persisted even internally.
 func parseErrorCodes(body []byte) []string {
 	if len(body) == 0 {
 		return nil
@@ -444,8 +467,12 @@ func parseErrorCodes(body []byte) []string {
 	}
 	var codes []string
 	for _, e := range env.Errors {
-		if e.Code != "" {
-			codes = append(codes, e.Code)
+		if e.Code == "" || len(e.Code) > maxErrorCodeCodeLength {
+			continue
+		}
+		codes = append(codes, e.Code)
+		if len(codes) >= maxRetainedErrorCodes {
+			break
 		}
 	}
 	return codes

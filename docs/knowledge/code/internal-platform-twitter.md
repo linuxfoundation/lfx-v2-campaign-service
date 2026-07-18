@@ -52,9 +52,15 @@ following is force-disabled (a shared `noFollow` `CheckRedirect` policy on the
 default and any `WithHTTPClient`-supplied client, via a shallow copy) so a 3xx is
 surfaced rather than followed — important with OAuth 1.0a, where a followed
 redirect would resend a request signed for the original URL to a different one.
-A non-2xx surfaces a typed `apiError` (status/method/path + X's machine-readable
-error codes, e.g. `DUPLICATE_PROMOTABLE_ENTITY` — the raw body is NOT echoed, so a
-signed URL / destination secret can't leak into a persisted Step), an ambiguous
+A non-2xx surfaces a typed `apiError`. Its `Error()` renders only method/path/
+status — the raw body is NOT echoed, and neither are X's machine-readable error
+codes, so a signed URL / destination secret (which an untrusted body could place
+even inside `errors[].code`) can't leak into a persisted Step. The codes are
+retained on the struct solely for internal classification via `hasErrorCode`
+(e.g. matching `DUPLICATE_PROMOTABLE_ENTITY`), and `parseErrorCodes` bounds what
+it keeps (drops over-long values, caps the count). This mirrors the reddit
+client, whose `apiError` likewise retains `Body` for classification but never
+surfaces it. An ambiguous
 transport/read/decode failure surfaces a `transportError`, and a pre-connect dial
 failure surfaces a plain error. `createOutcomeAmbiguous` treats a mutating 3xx/5xx
 (and transport error) as UNCONFIRMED so a create that may have committed is not
