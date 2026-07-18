@@ -723,7 +723,11 @@ const maxSearchPages = 1000
 // gigabytes), and a byte cap alone allows pathological tiny-row counts. A query
 // exceeding either aborts rather than silently truncating; callers needing more
 // should narrow the query or (GA-3+) consume via a page callback.
-const (
+//
+// Package vars (not consts) only so tests can shrink them to exercise the abort
+// branches without generating gigabytes of fixture data; production never changes
+// them.
+var (
 	maxSearchRows  = 200_000
 	maxSearchBytes = 64 << 20 // 64 MiB total across all retained pages
 )

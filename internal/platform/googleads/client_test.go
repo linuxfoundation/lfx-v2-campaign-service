@@ -486,6 +486,52 @@ func TestGAQLSearch_RepeatedPageTokenAborts(t *testing.T) {
 	}
 }
 
+// TestGAQLSearch_AggregateRowCapAborts verifies the row cap trips: with a small
+// maxSearchRows, a query that keeps paging past it aborts rather than retaining an
+// unbounded result set.
+func TestGAQLSearch_AggregateRowCapAborts(t *testing.T) {
+	orig := maxSearchRows
+	maxSearchRows = 3
+	t.Cleanup(func() { maxSearchRows = orig })
+
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// 2 rows per page + an endless cursor → exceeds 3 rows on page 2.
+		_, _ = io.WriteString(w, `{"results":[{"a":1},{"a":2}],"nextPageToken":"next"}`)
+	})
+	_, err := c.gaqlSearch(context.Background(), "SELECT campaign.id FROM campaign")
+	if err == nil {
+		t.Fatal("expected an error when the result set exceeds the row cap, got nil")
+	}
+	if !strings.Contains(err.Error(), "rows") {
+		t.Errorf("error should mention the row cap, got: %v", err)
+	}
+}
+
+// TestGAQLSearch_AggregateByteCapAborts verifies the byte cap trips on the FULL
+// page payload (so it also bounds large nextPageToken strings, not just rows).
+func TestGAQLSearch_AggregateByteCapAborts(t *testing.T) {
+	origBytes, origRows := maxSearchBytes, maxSearchRows
+	maxSearchBytes = 1 << 10  // 1 KiB
+	maxSearchRows = 1_000_000 // keep rows out of the way; byte cap should trip first
+	t.Cleanup(func() { maxSearchBytes, maxSearchRows = origBytes, origRows })
+
+	// A large nextPageToken (few rows) — the byte cap must still catch it because it
+	// counts the whole page payload.
+	bigToken := strings.Repeat("x", 4096)
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"a":1}],"nextPageToken":"`+bigToken+`"}`)
+	})
+	_, err := c.gaqlSearch(context.Background(), "SELECT campaign.id FROM campaign")
+	if err == nil {
+		t.Fatal("expected an error when the accumulated payload exceeds the byte cap, got nil")
+	}
+	if !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("error should mention the byte cap, got: %v", err)
+	}
+}
+
 func TestIsPreSendDialError(t *testing.T) {
 	// A plain error (not a dial/DNS failure) must NOT be classified pre-send.
 	if isPreSendDialError(errors.New("some mid-flight error")) {
@@ -540,6 +586,8 @@ func TestAccessToken_ConcurrentSingleFlight(t *testing.T) {
 	var tokenCalls int32
 	handlerEntered := make(chan struct{}, 1)
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRefresh := func() { releaseOnce.Do(func() { close(release) }) }
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&tokenCalls, 1)
 		select {
@@ -549,7 +597,12 @@ func TestAccessToken_ConcurrentSingleFlight(t *testing.T) {
 		<-release // block until the test releases the refresh
 		tokenHandler(w, nil)
 	}))
+	// Unblock the handler on ANY exit path (incl. a t.Fatal) BEFORE srv.Close():
+	// defers run LIFO, so this runs first. Otherwise a failing assertion would leave
+	// the handler stuck on <-release and srv.Close() would wait forever, hanging the
+	// whole suite. releaseOnce makes this safe alongside the deliberate release below.
 	defer srv.Close()
+	defer releaseRefresh()
 
 	c := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(fixedClock()))
 
@@ -608,7 +661,9 @@ func TestAccessToken_ConcurrentSingleFlight(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Now release the shared refresh; the leader and all followers get the token.
-	close(release)
+	// (releaseRefresh is idempotent via sync.Once, so the deferred safety-release
+	// on exit is a no-op after this.)
+	releaseRefresh()
 	wg.Wait()
 
 	lr := <-leaderDone
