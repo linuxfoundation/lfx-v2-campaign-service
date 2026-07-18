@@ -345,28 +345,38 @@ func isMutatingMethod(m string) bool {
 //     followed. A 3xx on a POST is NOT a definite rejection — LinkedIn may have
 //     committed the create and then returned a redirect — so it is ambiguous just
 //     like a 5xx, not a clean failure a blind retry could duplicate.
+//   - *apiError with a 429 status from a mutating method: a POST is NOT retried on
+//     429 (only GET/HEAD are, see doRequest) precisely because the create endpoints
+//     have no idempotency key and the rate-limited attempt may have already been
+//     received and committed upstream. Since the retry is suppressed for exactly
+//     that "may have succeeded" reason, the outcome is ambiguous — not a clean
+//     failure the orchestrator should report as definite (which would invite a
+//     retry that duplicates a paid resource).
 //
-// The METHOD gate is essential: a GET search that times out, returns a 5xx/3xx, or
-// yields an undecodable/oversized 2xx body ran NO POST — nothing was created — so
+// The METHOD gate is essential: a GET search that times out, returns a 5xx/3xx/429,
+// or yields an undecodable/oversized 2xx body ran NO POST — nothing was created — so
 // it must NOT read as an ambiguous create ("a campaign may exist"). A GET failure
 // surfaces to the find-or-create caller as a plain error, which correctly aborts
 // the flow before any create rather than reporting a phantom resource. Only a
 // mutating-method failure can be an ambiguous create.
 //
-// A definite 4xx (LinkedIn rejected it), any pre-send failure (request build, a
-// pre-connect dial error), or ANY non-mutating-method failure means NOT applied →
-// returns false so the caller reports a clean "failed" rather than "may exist".
-// The transportError/apiError types both carry the request Method (set at every
-// wrap site alongside Path), so the classification needs no extra plumbing.
+// A definite non-429 4xx (LinkedIn rejected it), any pre-send failure (request
+// build, a pre-connect dial error), or ANY non-mutating-method failure means NOT
+// applied → returns false so the caller reports a clean "failed" rather than "may
+// exist". The transportError/apiError types both carry the request Method (set at
+// every wrap site alongside Path), so the classification needs no extra plumbing.
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
 		return isMutatingMethod(te.Method)
 	}
 	var ae *apiError
-	// A mutating 3xx (redirect, not followed) or 5xx may follow a committed create.
+	// A mutating 3xx (redirect, not followed), 429 (POST retry suppressed because the
+	// attempt may have committed), or 5xx may follow a committed create.
 	if errors.As(err, &ae) && isMutatingMethod(ae.Method) {
-		return (ae.StatusCode >= 300 && ae.StatusCode < 400) || ae.StatusCode >= 500
+		return (ae.StatusCode >= 300 && ae.StatusCode < 400) ||
+			ae.StatusCode == http.StatusTooManyRequests ||
+			ae.StatusCode >= 500
 	}
 	return false
 }

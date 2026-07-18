@@ -3280,36 +3280,52 @@ func TestDoRequest_OversizedNon2xxPostIsAmbiguous(t *testing.T) {
 	}
 }
 
-// TestDoRequest_Mutating3xxIsAmbiguous verifies that with redirect following
-// disabled, a 3xx to a MUTATING POST is OUTCOME-AMBIGUOUS: the server may have
-// committed the create before redirecting, so createOutcomeAmbiguous must classify
-// it as "may exist" (not a clean failure a blind retry could duplicate). A 3xx to a
-// GET search created nothing, so it stays non-ambiguous. The server sets Location
-// but the client does not follow it (CheckRedirect = noFollow).
-func TestDoRequest_Mutating3xxIsAmbiguous(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/elsewhere", http.StatusFound)
-	}))
-	defer srv.Close()
-
-	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-
-	// POST → ambiguous (a 3xx may follow a committed create).
-	_, postErr := c.doRequest(context.Background(), http.MethodPost, "adAccounts/1/adCampaignGroups", map[string]any{"a": "b"}, nil)
-	if postErr == nil {
-		t.Fatal("expected an error for a 3xx POST response, got nil")
+// TestDoRequest_MutatingRetrySuppressedStatusesAreAmbiguous verifies that a
+// mutating POST getting a 3xx (redirect, not followed) or a 429 (POST retry
+// suppressed because the attempt may have committed) is OUTCOME-AMBIGUOUS: the
+// server may have committed the create, so createOutcomeAmbiguous must classify it
+// as "may exist" (not a clean failure a blind retry could duplicate). The same
+// status to a GET search created nothing, so it stays non-ambiguous.
+func TestDoRequest_MutatingRetrySuppressedStatusesAreAmbiguous(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"3xx redirect", http.StatusFound},
+		{"429 rate limited", http.StatusTooManyRequests},
 	}
-	if !createOutcomeAmbiguous(postErr) {
-		t.Errorf("a 3xx response to a POST must be classified ambiguous, got: %v", postErr)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.status == http.StatusFound {
+					http.Redirect(w, r, "/elsewhere", http.StatusFound)
+					return
+				}
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
 
-	// GET → NOT ambiguous (a search that got a 3xx created nothing).
-	_, getErr := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"})
-	if getErr == nil {
-		t.Fatal("expected an error for a 3xx GET response, got nil")
-	}
-	if createOutcomeAmbiguous(getErr) {
-		t.Errorf("a 3xx response to a GET must NOT be classified ambiguous, got: %v", getErr)
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
+				WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+
+			// POST → ambiguous (the create may have committed).
+			_, postErr := c.doRequest(context.Background(), http.MethodPost, "adAccounts/1/adCampaignGroups", map[string]any{"a": "b"}, nil)
+			if postErr == nil {
+				t.Fatalf("expected an error for a %s POST response, got nil", tc.name)
+			}
+			if !createOutcomeAmbiguous(postErr) {
+				t.Errorf("a %s response to a POST must be classified ambiguous, got: %v", tc.name, postErr)
+			}
+
+			// GET → NOT ambiguous (a search that got this status created nothing).
+			_, getErr := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"})
+			if getErr == nil {
+				t.Fatalf("expected an error for a %s GET response, got nil", tc.name)
+			}
+			if createOutcomeAmbiguous(getErr) {
+				t.Errorf("a %s response to a GET must NOT be classified ambiguous, got: %v", tc.name, getErr)
+			}
+		})
 	}
 }
 
