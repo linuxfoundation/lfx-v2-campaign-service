@@ -73,6 +73,18 @@ caller client carrying a SENTINEL `CheckRedirect` and assert the client the code
 uses returns `http.ErrUseLastResponse` despite it, while the caller's original
 still returns the sentinel (shallow copy, not mutation). (PR #30 review by Copilot.)
 
+**Update** — Typed the X/Twitter Ads client's errors and added outcome
+classification (LFXV2-2642). doRequest previously returned a bare fmt.Errorf for
+every non-2xx AND echoed the response body into the error string (which can carry
+signed URLs / destination secrets and gets persisted into Steps). Added a typed
+`apiError` (status/method/path + X's machine-readable error codes, NO body),
+`transportError` (ambiguous), `isPreSendDialError`, and `createOutcomeAmbiguous`
+(a 5xx apiError or a transportError → UNCONFIRMED regardless of method; a 3xx →
+UNCONFIRMED only on a mutating method; a definite 4xx or pre-send error → not
+ambiguous). `isDuplicatePromotedTweetErr` now matches the typed error code
+(DUPLICATE_PROMOTABLE_ENTITY) instead of the no-longer-surfaced body. Brings X to
+parity with the reddit/meta/googleads clients. Concept doc updated.
+
 **Update** — Disabled HTTP redirect following on the Meta and X/Twitter Ads
 clients (LFXV2-2641), closing a duplicate-create gap: both built their
 `*http.Client` (and accepted `WithHTTPClient` clients) with no `CheckRedirect`, so

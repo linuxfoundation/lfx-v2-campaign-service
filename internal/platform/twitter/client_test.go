@@ -10,8 +10,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -586,14 +589,15 @@ func TestRetryExhausted(t *testing.T) {
 	if got := atomic.LoadInt32(&calls); got != retryMax+1 {
 		t.Errorf("expected %d calls, got %d", retryMax+1, got)
 	}
-	// A persistent 429 across every attempt must surface the intended
-	// exhausted-rate-limit error, not the generic non-2xx path. The message
-	// must name the exhausted retries and their count.
-	if !strings.Contains(err.Error(), "exhausted") {
-		t.Errorf("expected exhausted-rate-limit error, got: %v", err)
+	// A persistent 429 across every attempt surfaces a TYPED apiError carrying the
+	// 429 status (not a free-text string), so a caller can classify the rate-limit
+	// cause; the retry count itself is asserted by the calls==retryMax+1 check above.
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected a typed *apiError, got %T: %v", err, err)
 	}
-	if !strings.Contains(err.Error(), strconv.Itoa(retryMax)) {
-		t.Errorf("expected error to name %d retries, got: %v", retryMax, err)
+	if ae.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("expected a 429 apiError, got status %d", ae.StatusCode)
 	}
 }
 
@@ -2775,5 +2779,146 @@ func TestNoFollowRedirectPolicy(t *testing.T) {
 	}
 	if err := caller.CheckRedirect(nil, nil); err != sentinel {
 		t.Errorf("caller's CheckRedirect was mutated: got %v, want the untouched sentinel", err)
+	}
+}
+
+// TestDoRequest_Non2xxIsTypedApiErrorNoBodyLeak verifies a non-2xx surfaces a
+// typed apiError with the status + X's machine-readable codes, and does NOT echo
+// the raw body (which can carry request material / signed URLs).
+func TestDoRequest_Non2xxIsTypedApiErrorNoBodyLeak(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		// A body carrying a code AND a sensitive-looking message.
+		_, _ = w.Write([]byte(`{"errors":[{"code":"INVALID_PARAMETER","message":"secret-token-abc123 in url"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL))
+	_, err := c.request(context.Background(), http.MethodGet, "campaigns")
+	if err == nil {
+		t.Fatal("expected an error on a 400, got nil")
+	}
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apiError, got %T: %v", err, err)
+	}
+	if ae.StatusCode != http.StatusBadRequest {
+		t.Errorf("StatusCode = %d, want 400", ae.StatusCode)
+	}
+	if !ae.hasErrorCode("INVALID_PARAMETER") {
+		t.Errorf("apiError should carry the INVALID_PARAMETER code, got %v", ae.ErrorCodes)
+	}
+	// The raw body / message must NOT leak into the error string.
+	if strings.Contains(ae.Error(), "secret-token-abc123") {
+		t.Errorf("apiError.Error() leaked the body: %q", ae.Error())
+	}
+}
+
+// TestCreateOutcomeAmbiguous_Twitter verifies a 3xx/5xx apiError and any
+// transportError are ambiguous, while a definite 4xx (and 429) are not. The
+// predicate is NOT method-gated (mirrors meta/reddit) — callers invoke it only on
+// mutating failures, so it is deliberately status/type-based.
+func TestCreateOutcomeAmbiguous_Twitter(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"302", &apiError{StatusCode: http.StatusFound, Method: http.MethodPost, Path: "campaigns"}, true},
+		{"500", &apiError{StatusCode: http.StatusInternalServerError, Method: http.MethodPost, Path: "campaigns"}, true},
+		{"429", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodPost, Path: "campaigns"}, false}, // handled by retry, not ambiguity
+		{"400", &apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPost, Path: "campaigns"}, false},
+		{"transport", &transportError{Method: http.MethodPost, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
+		{"5xx-not-method-gated", &apiError{StatusCode: http.StatusBadGateway, Method: http.MethodGet, Path: "campaigns"}, true},
+		{"transport-not-method-gated", &transportError{Method: http.MethodGet, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
+		{"plain error", errors.New("boom"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		if got := createOutcomeAmbiguous(tc.err); got != tc.want {
+			t.Errorf("%s: createOutcomeAmbiguous = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestCreateCampaign_AmbiguousPromotedTweetIsUnconfirmed verifies the classifier
+// is WIRED into the create path: a 5xx on the (non-idempotent) promoted_tweets
+// POST yields an UNCONFIRMED warning (may-exist), distinct from a definite 4xx
+// which reads as a clean "failed — add manually".
+func TestCreateCampaign_AmbiguousPromotedTweetIsUnconfirmed(t *testing.T) {
+	cases := []struct {
+		name          string
+		promotedTweet func(w http.ResponseWriter)
+		wantSubstr    string
+	}{
+		{"5xx is unconfirmed", func(w http.ResponseWriter) { w.WriteHeader(http.StatusBadGateway) }, "UNCONFIRMED"},
+		{"4xx is definite failure", func(w http.ResponseWriter) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"INVALID_PARAMETER"}]}`))
+		}, "POST failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "promoted_tweets") && r.Method == http.MethodPost:
+					tc.promotedTweet(w)
+				case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "campaigns"):
+					_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+				case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "line_items"):
+					_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+				default:
+					// GET list lookups (find-by-name) → no match → empty page.
+					_, _ = w.Write([]byte(`{"data":[],"next_cursor":""}`))
+				}
+			}))
+			defer srv.Close()
+
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+				WithBaseURL(srv.URL), WithWriteDelay(0))
+			res, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName: "KubeCon", Project: "tlf", BudgetUsd: 500,
+				StartDate: "2099-01-01", EndDate: "2099-02-01",
+				TweetID: "1234567890", RegistrationURL: "https://events.example.org/reg",
+			})
+			// The campaign + line item succeeded, so the overall call is non-fatal;
+			// the promoted-tweet outcome shows up as a warning on the result.
+			if err != nil {
+				t.Fatalf("CreateCampaign returned a fatal error: %v", err)
+			}
+			if !strings.Contains(res.PromotedTweetWarning, tc.wantSubstr) {
+				t.Errorf("PromotedTweetWarning = %q, want it to contain %q", res.PromotedTweetWarning, tc.wantSubstr)
+			}
+			// The two paths must be DISTINCT: only the ambiguous (5xx) case is UNCONFIRMED.
+			isUnconfirmed := strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED")
+			if (tc.wantSubstr == "UNCONFIRMED") != isUnconfirmed {
+				t.Errorf("UNCONFIRMED distinction wrong for %s: warning=%q", tc.name, res.PromotedTweetWarning)
+			}
+		})
+	}
+}
+
+// TestIsPreSendDialError_Twitter verifies the pre-send classification.
+func TestIsPreSendDialError_Twitter(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"dns", &net.DNSError{Err: "nx", Name: "x"}, true},
+		{"dial refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, true},
+		{"wrapped dns", fmt.Errorf("do: %w", &net.DNSError{Err: "nx", Name: "x"}), true},
+		{"mid-flight eof", io.ErrUnexpectedEOF, false},
+		{"read op", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, false},
+	}
+	for _, tc := range cases {
+		if got := isPreSendDialError(tc.err); got != tc.want {
+			t.Errorf("%s: isPreSendDialError = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
