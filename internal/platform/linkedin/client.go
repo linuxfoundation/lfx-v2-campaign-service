@@ -340,8 +340,13 @@ func isMutatingMethod(m string) bool {
 //     read/decoded — so the mutation may have been received and committed;
 //   - *apiError with a 5xx status from a mutating method: LinkedIn received it and
 //     may have committed the mutation before erroring.
+//   - *apiError with a 3xx status from a mutating method: redirect following is
+//     force-disabled (see noFollow), so a 3xx is surfaced here rather than
+//     followed. A 3xx on a POST is NOT a definite rejection — LinkedIn may have
+//     committed the create and then returned a redirect — so it is ambiguous just
+//     like a 5xx, not a clean failure a blind retry could duplicate.
 //
-// The METHOD gate is essential: a GET search that times out, returns a 5xx, or
+// The METHOD gate is essential: a GET search that times out, returns a 5xx/3xx, or
 // yields an undecodable/oversized 2xx body ran NO POST — nothing was created — so
 // it must NOT read as an ambiguous create ("a campaign may exist"). A GET failure
 // surfaces to the find-or-create caller as a plain error, which correctly aborts
@@ -359,7 +364,11 @@ func createOutcomeAmbiguous(err error) bool {
 		return isMutatingMethod(te.Method)
 	}
 	var ae *apiError
-	return errors.As(err, &ae) && ae.StatusCode >= 500 && isMutatingMethod(ae.Method)
+	// A mutating 3xx (redirect, not followed) or 5xx may follow a committed create.
+	if errors.As(err, &ae) && isMutatingMethod(ae.Method) {
+		return (ae.StatusCode >= 300 && ae.StatusCode < 400) || ae.StatusCode >= 500
+	}
+	return false
 }
 
 // doRequest performs one API call. It honors ctx, sets the OAuth2 bearer and

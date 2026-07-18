@@ -3280,6 +3280,39 @@ func TestDoRequest_OversizedNon2xxPostIsAmbiguous(t *testing.T) {
 	}
 }
 
+// TestDoRequest_Mutating3xxIsAmbiguous verifies that with redirect following
+// disabled, a 3xx to a MUTATING POST is OUTCOME-AMBIGUOUS: the server may have
+// committed the create before redirecting, so createOutcomeAmbiguous must classify
+// it as "may exist" (not a clean failure a blind retry could duplicate). A 3xx to a
+// GET search created nothing, so it stays non-ambiguous. The server sets Location
+// but the client does not follow it (CheckRedirect = noFollow).
+func TestDoRequest_Mutating3xxIsAmbiguous(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	// POST → ambiguous (a 3xx may follow a committed create).
+	_, postErr := c.doRequest(context.Background(), http.MethodPost, "adAccounts/1/adCampaignGroups", map[string]any{"a": "b"}, nil)
+	if postErr == nil {
+		t.Fatal("expected an error for a 3xx POST response, got nil")
+	}
+	if !createOutcomeAmbiguous(postErr) {
+		t.Errorf("a 3xx response to a POST must be classified ambiguous, got: %v", postErr)
+	}
+
+	// GET → NOT ambiguous (a search that got a 3xx created nothing).
+	_, getErr := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"})
+	if getErr == nil {
+		t.Fatal("expected an error for a 3xx GET response, got nil")
+	}
+	if createOutcomeAmbiguous(getErr) {
+		t.Errorf("a 3xx response to a GET must NOT be classified ambiguous, got: %v", getErr)
+	}
+}
+
 // TestCreateCampaign_SurfacesUnresolvedGeoAsStep verifies that a GeoTarget with an
 // empty URN (an unresolved geo the caller still forwarded) is SURFACED as a Step
 // rather than silently narrowing the audience, while a valid geo still targets.
