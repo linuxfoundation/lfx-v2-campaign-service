@@ -25,12 +25,16 @@ var accountIDRE = regexp.MustCompile(`^[0-9]+$`)
 // caller-supplied GeoTarget with a malformed URN before any campaign is created.
 var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
 
-// imageURNRE matches a LinkedIn digital-asset URN as accepted by createDarkPost,
-// which sends a variant's ImageURN verbatim as the article thumbnail. LinkedIn
-// image assets are addressed as either urn:li:image:<id> or
-// urn:li:digitalmediaAsset:<id>. ImageURN is optional (an empty value is
-// allowed), but a non-empty malformed value is rejected up front — otherwise it
-// reaches LinkedIn only AFTER the campaign group and campaign already exist.
+// imageURNRE matches a LinkedIn image-asset URN as accepted by createDarkPost,
+// which sends a variant's ImageURN verbatim as the article thumbnail. At
+// LinkedIn-Version 202602 the Posts API article thumbnail field requires an
+// Images-API urn:li:image:<id> (per LinkedIn's Posts API docs, article thumbnails
+// must reference an Images-API image URN); the legacy urn:li:digitalmediaAsset:<id>
+// form belonged to the deprecated ugcPosts/shares APIs and is no longer accepted,
+// so admitting it here would let a value through that fails ONLY after the campaign
+// group and campaign already exist, orphaning them. ImageURN is optional (an empty
+// value is allowed), but a non-empty value that isn't a well-formed image URN is
+// rejected up front.
 //
 // The id portion is constrained to LinkedIn's realistic asset-id charset —
 // alphanumerics plus '-'/'_' (e.g. "C4E10AQabc_1-2") — rather than a loose ".+".
@@ -38,7 +42,7 @@ var geoURNRE = regexp.MustCompile(`^urn:li:geo:[0-9]+$`)
 // "urn:li:image: " (a trailing space) or a value carrying URL delimiters like
 // "urn:li:image:a/b"; the tightened class rejects both while still matching every
 // legitimate asset id.
-var imageURNRE = regexp.MustCompile(`^urn:li:(image|digitalmediaAsset):[A-Za-z0-9_-]+$`)
+var imageURNRE = regexp.MustCompile(`^urn:li:image:[A-Za-z0-9_-]+$`)
 
 // facetURNRE matches a LinkedIn facet member id after its namespace prefix.
 // Skills, groups, and organizations are addressed by NUMERIC LinkedIn entity

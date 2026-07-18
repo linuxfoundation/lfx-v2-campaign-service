@@ -1407,22 +1407,31 @@ func TestCreateCampaign_BudgetMinimumChecksRoundedValue(t *testing.T) {
 // before any POST — an empty ImageURN stays allowed, but a bad digital-asset URN
 // must not reach LinkedIn only after the campaign group and campaign exist.
 func TestCreateCampaign_RejectsMalformedImageURNBeforeAnyPOST(t *testing.T) {
-	srv := noPOSTServer(t)
-	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	_, err := c.CreateCampaign(context.Background(), CampaignInput{
-		EventName:        "KubeCon",
-		Project:          "tlf",
-		RegistrationURL:  "https://events.example.org/reg",
-		BudgetUSD:        100,
-		StartDate:        "2099-01-01",
-		EndDate:          "2099-01-31",
-		GeoTargets:       []GeoTarget{{URN: "urn:li:geo:103644278"}},
-		TargetingProfile: "cloud-native",
-		Variants:         []CreativeVariant{{IntroText: "hi", Headline: "h", ImageURN: "not-a-urn"}},
-	})
-	if err == nil || !strings.Contains(err.Error(), "image URN") {
-		t.Fatalf("err = %v, want malformed image URN rejection", err)
+	// A legacy urn:li:digitalmediaAsset URN is included: the Posts API at version
+	// 202602 only accepts an Images-API urn:li:image:<id> as an article thumbnail,
+	// so it must be rejected up front rather than fail after the campaign group and
+	// campaign (permanent resources) already exist.
+	badURNs := []string{"not-a-urn", "urn:li:digitalmediaAsset:C4E10AQabc_1-2"}
+	for _, bad := range badURNs {
+		t.Run(bad, func(t *testing.T) {
+			srv := noPOSTServer(t)
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:        "KubeCon",
+				Project:          "tlf",
+				RegistrationURL:  "https://events.example.org/reg",
+				BudgetUSD:        100,
+				StartDate:        "2099-01-01",
+				EndDate:          "2099-01-31",
+				GeoTargets:       []GeoTarget{{URN: "urn:li:geo:103644278"}},
+				TargetingProfile: "cloud-native",
+				Variants:         []CreativeVariant{{IntroText: "hi", Headline: "h", ImageURN: bad}},
+			})
+			if err == nil || !strings.Contains(err.Error(), "image URN") {
+				t.Fatalf("err = %v, want malformed image URN rejection", err)
+			}
+		})
 	}
 }
 
@@ -1600,21 +1609,23 @@ func TestCreateCampaign_SingleScheduleComputation(t *testing.T) {
 	}
 }
 
-// TestImageURNRE_TightId verifies the tightened image-URN regex rejects a
-// trailing space and URL-delimiter values while still accepting a normal
-// LinkedIn asset id (alphanumeric plus '-'/'_').
+// TestImageURNRE_TightId verifies the image-URN regex accepts an Images-API
+// urn:li:image:<id> (alphanumeric plus '-'/'_') and rejects a trailing space,
+// URL-delimiter values, an empty id, AND the legacy urn:li:digitalmediaAsset form
+// — which the Posts API no longer accepts as an article thumbnail (admitting it
+// would fail only after the campaign group/campaign already exist).
 func TestImageURNRE_TightId(t *testing.T) {
 	cases := []struct {
 		urn  string
 		want bool
 	}{
 		{"urn:li:image:C4E10AQabc_1-2", true},
-		{"urn:li:digitalmediaAsset:C4E10AQabc_1-2", true},
-		{"urn:li:image: ", false},     // trailing space
-		{"urn:li:image:a/b", false},   // URL path delimiter
-		{"urn:li:image:a b", false},   // embedded space
-		{"urn:li:image:a?b=c", false}, // query delimiters
-		{"urn:li:image:", false},      // empty id
+		{"urn:li:digitalmediaAsset:C4E10AQabc_1-2", false}, // legacy form, rejected
+		{"urn:li:image: ", false},                          // trailing space
+		{"urn:li:image:a/b", false},                        // URL path delimiter
+		{"urn:li:image:a b", false},                        // embedded space
+		{"urn:li:image:a?b=c", false},                      // query delimiters
+		{"urn:li:image:", false},                           // empty id
 		{"not-a-urn", false},
 	}
 	for _, tc := range cases {

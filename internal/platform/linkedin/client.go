@@ -1691,7 +1691,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// campaign (permanent resources) already exist. An empty ImageURN stays
 		// allowed.
 		if variant.ImageURN != "" && !imageURNRE.MatchString(variant.ImageURN) {
-			return nil, fmt.Errorf("variant-%d image URN %q is malformed: expected urn:li:image:<id> or urn:li:digitalmediaAsset:<id>", i+1, variant.ImageURN)
+			return nil, fmt.Errorf("variant-%d image URN %q is malformed: expected an Images-API urn:li:image:<id> (the legacy urn:li:digitalmediaAsset form is not accepted by the Posts API)", i+1, variant.ImageURN)
 		}
 	}
 
