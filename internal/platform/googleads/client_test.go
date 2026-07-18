@@ -399,6 +399,40 @@ func TestDoRequest_Idempotent429ExhaustsRetries(t *testing.T) {
 	}
 }
 
+// TestDoRequest_OverCapRetryAfterAborts verifies that a 429 whose Retry-After
+// exceeds maxRetryWait ABORTS immediately (mirroring meta/reddit/twitter) rather
+// than clamping and burning retries while the account is still throttled. The
+// error reports the raw over-cap header.
+func TestDoRequest_OverCapRetryAfterAborts(t *testing.T) {
+	var calls int32
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Retry-After", "600") // 10 min, well over maxRetryWait (60s)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1/googleAds:search", searchRequest{Query: "x"}, true)
+	if err == nil {
+		t.Fatal("expected an over-cap Retry-After to abort, got nil")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("over-cap 429 should abort after one call, server saw %d", got)
+	}
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("want a 429 apiError, got %T: %v", err, err)
+	}
+	if !strings.Contains(ae.Body, "600") {
+		t.Errorf("abort error should report the raw Retry-After (600), got: %q", ae.Body)
+	}
+}
+
 func TestGAQLSearch_PaginatesToExhaustion(t *testing.T) {
 	var page int32
 	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {

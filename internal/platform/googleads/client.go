@@ -570,15 +570,23 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		// Retry a 429 only for idempotent calls with attempts remaining.
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax && idempotent {
 			wait := c.parseRetryAfter(resp)
+			rawRetryAfter := strings.TrimSpace(resp.Header.Get("Retry-After"))
 			// Drain (bounded) before closing so net/http can reuse the connection.
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 			_ = resp.Body.Close()
 			cancel()
+			// If the server DECLARED a reset longer than maxRetryWait, ABORT rather
+			// than clamp-and-retry: a capped sleep can't clear the window, so retrying
+			// would just 429 again and stall the caller (mirrors the meta/reddit/
+			// twitter clients). Report the RAW header as authoritative.
+			if wait >= overCapRetryAfter {
+				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path, Body: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait)}
+			}
 			if wait <= 0 {
 				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
-			}
-			if wait > maxRetryWait {
-				wait = maxRetryWait
+				if wait > maxRetryWait {
+					wait = maxRetryWait
+				}
 			}
 			if err := sleepCtx(ctx, wait); err != nil {
 				return nil, err
@@ -623,10 +631,20 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 	return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path, Body: "rate limited: exhausted retries"}
 }
 
-// parseRetryAfter returns the delay a 429's Retry-After header requests, clamped
-// to maxRetryWait. It accepts both the numeric (delta-seconds) and HTTP-date
-// forms. A missing/malformed/non-positive value returns 0 (caller falls back to
-// exponential backoff). Mirrors the linkedin/meta clients.
+// overCapRetryAfter is a sentinel (> maxRetryWait) that parseRetryAfter returns
+// when the server-declared reset exceeds maxRetryWait. doRequest checks for it and
+// ABORTS the 429 rather than clamping-and-retrying: sleeping only maxRetryWait
+// cannot clear a longer window, so a retry would just 429 again and burn attempts
+// while holding the caller. Mirrors the meta/reddit/twitter clients (which abort
+// on an over-cap reset). The RAW Retry-After header — not this sentinel — is
+// reported in the abort error, so a huge reset isn't misprinted as "1m1s".
+const overCapRetryAfter = maxRetryWait + time.Second
+
+// parseRetryAfter returns the delay a 429's Retry-After header requests. It
+// accepts both the numeric (delta-seconds) and HTTP-date forms. A missing,
+// malformed, or non-positive value returns 0 (caller falls back to exponential
+// backoff). A value EXCEEDING maxRetryWait returns the overCapRetryAfter sentinel
+// so the caller can abort. Mirrors the sibling clients.
 func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
 	if v == "" {
@@ -635,17 +653,16 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		// A numeric value that overflows int64 is still numeric (not an HTTP-date):
-		// positive overflow → clamp to the ceiling; negative → no wait.
+		// positive overflow is an over-cap reset → sentinel; negative → no wait.
 		if errors.Is(err, strconv.ErrRange) {
 			if n == math.MaxInt64 {
-				return maxRetryWait
+				return overCapRetryAfter
 			}
 			return 0
 		}
 	} else if n > 0 {
-		// Clamp seconds before converting so a huge value can't overflow Duration.
 		if n > int64(maxRetryWait/time.Second) {
-			return maxRetryWait
+			return overCapRetryAfter
 		}
 		return time.Duration(n) * time.Second
 	} else {
@@ -654,7 +671,7 @@ func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
 	if t, err := http.ParseTime(v); err == nil {
 		if d := t.Sub(c.now()); d > 0 {
 			if d > maxRetryWait {
-				return maxRetryWait
+				return overCapRetryAfter
 			}
 			return d
 		}
@@ -698,13 +715,18 @@ type searchResponse struct {
 // before this.
 const maxSearchPages = 1000
 
-// maxSearchRows caps the total rows retained across all pages. The per-response
-// maxResponseBytes cap only bounds ONE page; without an aggregate cap, a query
-// that pages many times could retain enough rows to OOM the service. This bounds
-// the accumulated result set; a query that exceeds it aborts with an error rather
-// than silently truncating. Callers needing more should narrow the query or
-// (GA-3+) consume via a page callback.
-const maxSearchRows = 200_000
+// maxSearchRows and maxSearchBytes cap the accumulated result set across all
+// pages. The per-response maxResponseBytes cap only bounds ONE page, so without an
+// aggregate cap a query that pages many times could retain enough to OOM the
+// service. BOTH caps are needed: a row cap alone doesn't bound memory (one page's
+// worth of rows can be near maxResponseBytes each, so 200k rows could still be
+// gigabytes), and a byte cap alone allows pathological tiny-row counts. A query
+// exceeding either aborts rather than silently truncating; callers needing more
+// should narrow the query or (GA-3+) consume via a page callback.
+const (
+	maxSearchRows  = 200_000
+	maxSearchBytes = 64 << 20 // 64 MiB total across all retained pages
+)
 
 // gaqlSearch runs a GAQL query against this account and returns every result row
 // (following cursor pagination to exhaustion). Each row is a raw JSON object the
@@ -718,6 +740,7 @@ const maxSearchRows = 200_000
 func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessage, error) {
 	path := c.customerPath("googleAds:search")
 	var out []json.RawMessage
+	var totalBytes int
 	pageToken := ""
 	seen := map[string]struct{}{}
 
@@ -738,8 +761,14 @@ func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessag
 			return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode search response: %w", err)}
 		}
 		out = append(out, sr.Results...)
+		for _, r := range sr.Results {
+			totalBytes += len(r)
+		}
 		if len(out) > maxSearchRows {
 			return nil, fmt.Errorf("gaql search %q: result set exceeds %d rows — narrow the query", path, maxSearchRows)
+		}
+		if totalBytes > maxSearchBytes {
+			return nil, fmt.Errorf("gaql search %q: result set exceeds %d bytes — narrow the query", path, maxSearchBytes)
 		}
 
 		if sr.NextPageToken == "" {
