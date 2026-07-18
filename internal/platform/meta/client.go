@@ -298,7 +298,21 @@ type Client struct {
 // Option customizes a Client.
 type Option func(*Client)
 
-// WithHTTPClient overrides the HTTP client (useful for tests / timeouts).
+// noFollow is the CheckRedirect policy for every client this package uses: it
+// returns http.ErrUseLastResponse so the client does NOT follow redirects and
+// hands the 3xx response back to the request layer, where a non-2xx status is
+// surfaced as an error. The Graph API returns JSON directly and never legitimately
+// 3xx-redirects these calls; not following keeps outcome classification sound — a
+// redirect can't carry an already-sent mutating POST to a different target and be
+// misclassified. It is shared by the built-in client and the caller-supplied-
+// client enforcement in NewClient. Mirrors the reddit/linkedin/googleads clients.
+func noFollow(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// WithHTTPClient overrides the HTTP client (useful for tests / timeouts). Redirect
+// following is force-disabled on whatever client ends up in use (see NewClient),
+// so an injected client cannot reintroduce redirect following.
 func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) {
 		// Ignore a nil client so the safe default installed by NewClient isn't
@@ -355,7 +369,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	c := &Client{
 		creds:          creds,
 		account:        account,
-		httpClient:     &http.Client{Timeout: DefaultRequestTimeout},
+		httpClient:     &http.Client{Timeout: DefaultRequestTimeout, CheckRedirect: noFollow},
 		baseURL:        DefaultBaseURL,
 		adsManagerURL:  DefaultAdsManagerURL,
 		timeNow:        time.Now,
@@ -363,6 +377,18 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
+	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces
+	// the default above. Following a redirect would carry an already-sent mutating
+	// POST to a different target and muddy outcome classification, so no-follow is a
+	// correctness requirement, not a default. Applied to a SHALLOW COPY so the
+	// caller's *http.Client is never mutated (it may be reused elsewhere). Mirrors
+	// the reddit client's NewClient enforcement.
+	if c.httpClient != nil {
+		hc := *c.httpClient
+		hc.CheckRedirect = noFollow
+		c.httpClient = &hc
 	}
 	return c
 }

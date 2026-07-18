@@ -2736,3 +2736,30 @@ func stepsContain(steps []string, substr string) bool {
 	}
 	return false
 }
+
+// TestNoFollowRedirectPolicy verifies the client force-disables redirect
+// following: the default client gets CheckRedirect=noFollow, and a WithHTTPClient-
+// supplied client is also overridden — on a copy, so the caller's client is not
+// mutated. With OAuth 1.0a a followed redirect would also resend a request signed
+// for the original URL to a different one.
+func TestNoFollowRedirectPolicy(t *testing.T) {
+	creds := Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"}
+	acct := AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"}
+
+	c := NewClient(creds, acct)
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("default client has no CheckRedirect — redirects would be followed")
+	}
+	if err := c.httpClient.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse (no-follow)", err)
+	}
+
+	caller := &http.Client{}
+	c2 := NewClient(creds, acct, WithHTTPClient(caller))
+	if c2.httpClient.CheckRedirect == nil {
+		t.Error("injected client's CheckRedirect was not overridden")
+	}
+	if caller.CheckRedirect != nil {
+		t.Error("caller's *http.Client was mutated — override must use a shallow copy")
+	}
+}

@@ -3410,3 +3410,31 @@ func TestBuildPlacementTargetingRejectsMessengerInbox(t *testing.T) {
 		t.Errorf("error = %v, want it to name messengerInbox", err)
 	}
 }
+
+// TestNoFollowRedirectPolicy verifies the client force-disables redirect
+// following: the default client gets CheckRedirect=noFollow, and a WithHTTPClient-
+// supplied client is also overridden — on a copy, so the caller's client is not
+// mutated. Following a 3xx on a mutating POST could carry an already-sent create
+// to a different target and be misclassified.
+func TestNoFollowRedirectPolicy(t *testing.T) {
+	// Default client.
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p1"})
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("default client has no CheckRedirect — redirects would be followed")
+	}
+	if err := c.httpClient.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse (no-follow)", err)
+	}
+
+	// Injected client with nil CheckRedirect (would follow) must be overridden,
+	// without mutating the caller's client.
+	caller := &http.Client{}
+	c2 := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p1"},
+		WithHTTPClient(caller))
+	if c2.httpClient.CheckRedirect == nil {
+		t.Error("injected client's CheckRedirect was not overridden")
+	}
+	if caller.CheckRedirect != nil {
+		t.Error("caller's *http.Client was mutated — override must use a shallow copy")
+	}
+}

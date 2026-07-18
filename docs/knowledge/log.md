@@ -13,6 +13,16 @@ campaign.start_date_time/end_date_time. Concept doc + code index updated. Campai
 creation (:mutate), metrics/keywords/audience, and keyword actions follow in
 GA-2..GA-5.
 
+**Update** — Disabled HTTP redirect following on the Meta and X/Twitter Ads
+clients (LFXV2-2641), closing a duplicate-create gap: both built their
+`*http.Client` (and accepted `WithHTTPClient` clients) with no `CheckRedirect`, so
+the stdlib could follow a 3xx on a mutating POST after the create was committed and
+muddy outcome classification (for X, a followed redirect also resends an OAuth-1.0a
+request signed for the original URL). Added a shared `noFollow`
+(`http.ErrUseLastResponse`) policy set on the default client and enforced
+unconditionally after options via a shallow copy (so a caller's client isn't
+mutated) — matching the reddit/linkedin/googleads clients. Regression tests added.
+
 ## 2026-07-15
 
 **Update** — Hardened the Reddit Ads client's ambiguous-outcome classification
