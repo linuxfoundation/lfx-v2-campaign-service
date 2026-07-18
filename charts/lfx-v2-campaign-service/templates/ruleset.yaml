@@ -46,18 +46,33 @@ spec:
     # When OpenFGA is disabled (local dev only) all requests are allowed, matching
     # the reference-service pattern.
 
-    # Connections — singleton per provider per project (POST/GET/PUT/DELETE on the
-    # base path, plus /test and /set-credential). The provider is part of the path
-    # token; the :projectId capture is what authorization is scoped to.
-    - id: "rule:lfx:lfx-v2-campaign-service:connections"
+    # Every project-nested campaign path routed through the heimdall middleware in
+    # httproute.yaml is gated on the project `campaign_manager` relation. This is a
+    # SINGLE rule covering every routed family — connections, briefs, campaigns
+    # (under a brief), jobs, per-provider metrics, google-ads keywords/audience, and
+    # hubspot UTM — because they share the exact same authorization (D2:
+    # campaign_manager on project:{projectId}, reads AND writes). Keeping them in one
+    # rule preserves the chart↔route parity invariant (every heimdall-routed path has
+    # a matching rule) without duplicating the execute block per family.
+    #
+    # anonymous_authenticator is paired with openfga_check on purpose (per the
+    # LFXV2-2558 design / committee-service pattern): oidc alone would reject a
+    # request lacking OIDC credentials BEFORE OpenFGA can evaluate it, and it is
+    # openfga_check that actually rejects the anonymous subject. The pairing also
+    # lets the openfga.enabled=false branch fall back to allow_all for local dev.
+    - id: "rule:lfx:lfx-v2-campaign-service:project-api"
       allow_encoded_slashes: 'off'
       match:
         methods:
           - GET
           - POST
           - PUT
+          - PATCH
           - DELETE
         routes:
+          # Connections — singleton per provider per project (base + /test +
+          # /set-credential). The provider is part of the path token; the :projectId
+          # capture is what authorization is scoped to.
           - path: /projects/:projectId/connection-google-ads
           - path: /projects/:projectId/connection-google-ads/test
           - path: /projects/:projectId/connection-google-ads/set-credential
@@ -79,8 +94,27 @@ spec:
           - path: /projects/:projectId/connection-hubspot
           - path: /projects/:projectId/connection-hubspot/test
           - path: /projects/:projectId/connection-hubspot/set-credential
+          # Briefs (+ nested campaigns) and jobs.
+          - path: /projects/:projectId/briefs
+          - path: /projects/:projectId/briefs/:rest
+          - path: /projects/:projectId/jobs
+          - path: /projects/:projectId/jobs/:rest
+          # Per-provider metrics (providers per the api-catalog: google/linkedin/
+          # meta/reddit/twitter — microsoft-ads is not yet a metrics provider).
+          - path: /projects/:projectId/google-ads/metrics
+          - path: /projects/:projectId/linkedin-ads/metrics
+          - path: /projects/:projectId/meta-ads/metrics
+          - path: /projects/:projectId/reddit-ads/metrics
+          - path: /projects/:projectId/twitter-ads/metrics
+          # Google-Ads-only reads.
+          - path: /projects/:projectId/google-ads/keywords
+          - path: /projects/:projectId/google-ads/audience
+          # HubSpot UTM (LF-global; projectId only gates permission).
+          - path: /projects/:projectId/hubspot
+          - path: /projects/:projectId/hubspot/:rest
       execute:
         - authenticator: oidc
+        - authenticator: anonymous_authenticator
         {{- if .Values.app.use_oidc_contextualizer }}
         - contextualizer: oidc_contextualizer
         {{- end }}
@@ -93,6 +127,37 @@ spec:
         {{- else }}
         - authorizer: allow_all
         {{- end }}
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience }}
+
+    # Reserved /campaigns and /_campaigns/ placeholder paths are also routed through
+    # the heimdall middleware (see httproute.yaml), so parity requires a matching
+    # rule. These are not real endpoints yet: fail closed with deny_all (a valid
+    # token is required — no anonymous_authenticator — then every request is
+    # rejected). The /_campaigns/openapi.* docs are handled by the openapi rule
+    # above; this covers bare /campaigns, /campaigns/*, and non-openapi /_campaigns/*.
+    - id: "rule:lfx:lfx-v2-campaign-service:campaigns-placeholder:deny"
+      allow_encoded_slashes: 'off'
+      match:
+        methods:
+          - GET
+          - HEAD
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        routes:
+          - path: /campaigns
+          - path: /campaigns/:rest
+          - path: /_campaigns/:rest
+      execute:
+        - authenticator: oidc
+        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        - authorizer: deny_all
         - finalizer: create_jwt
           config:
             values:

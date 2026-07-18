@@ -13,6 +13,23 @@ campaign.start_date_time/end_date_time. Concept doc + code index updated. Campai
 creation (:mutate), metrics/keywords/audience, and keyword actions follow in
 GA-2..GA-5.
 
+**Update** — Routed the project-nested campaign API through the gateway and gave it
+real authz (PR #28, LFXV2-2558). The chart previously routed only `/campaigns`, so
+the actual contract paths (`/projects/{projectId}/…`) were unreachable. httproute
+now uses a `RegularExpression` match selecting this service's project-nested
+subpaths (`connection-*`, `briefs`, `jobs`, `{provider}/metrics`,
+`google-ads/keywords|audience`, `hubspot`), leaving `project-service`'s `/projects/`
+routes untouched. ruleset replaces the `/campaigns` `deny_all` placeholders with a
+single `project-api` rule gating every routed family on the project
+`campaign_manager` relation (`openfga_check` scoped to `project:{projectId}`, D2),
+with `oidc` + `anonymous_authenticator` paired (openfga_check is what rejects the
+anonymous subject) and an `allow_all` fallback when OpenFGA is disabled (local dev).
+A separate `campaigns-placeholder` rule keeps the still-routed `/campaigns` /
+`/_campaigns/*` prefixes fail-closed (`deny_all`), preserving the chart↔route parity
+invariant (every heimdall-routed path has a matching rule). deployment readiness
+`failureThreshold` relaxed 1→3 for CloudNativePG cold start. Concepts updated:
+`httproute`, `ruleset`.
+
 ## 2026-07-15
 
 **Update** — Hardened the Reddit Ads client's ambiguous-outcome classification
