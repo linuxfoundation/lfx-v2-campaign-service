@@ -94,11 +94,17 @@ spec:
           - path: /projects/:projectId/connection-hubspot
           - path: /projects/:projectId/connection-hubspot/test
           - path: /projects/:projectId/connection-hubspot/set-credential
-          # Briefs (+ nested campaigns) and jobs.
+          # Briefs (+ nested campaigns) and jobs. A single-segment capture (:rest)
+          # would only match /briefs/{id}; the routed contract has DEEPER paths —
+          # /briefs/{id}/refresh, /approve, and /briefs/{id}/campaigns/{cid}/status —
+          # so use the ** free wildcard, which matches ALL descendants (any number of
+          # segments incl. slashes). The bare base paths (POST /briefs, GET /jobs) are
+          # kept as their own entries so they're matched regardless of whether **
+          # matches zero segments.
           - path: /projects/:projectId/briefs
-          - path: /projects/:projectId/briefs/:rest
+          - path: /projects/:projectId/briefs/**
           - path: /projects/:projectId/jobs
-          - path: /projects/:projectId/jobs/:rest
+          - path: /projects/:projectId/jobs/**
           # Per-provider metrics (providers per the api-catalog: google/linkedin/
           # meta/reddit/twitter — microsoft-ads is not yet a metrics provider).
           - path: /projects/:projectId/google-ads/metrics
@@ -109,9 +115,10 @@ spec:
           # Google-Ads-only reads.
           - path: /projects/:projectId/google-ads/keywords
           - path: /projects/:projectId/google-ads/audience
-          # HubSpot UTM (LF-global; projectId only gates permission).
+          # HubSpot UTM (LF-global; projectId only gates permission). ** covers
+          # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.
           - path: /projects/:projectId/hubspot
-          - path: /projects/:projectId/hubspot/:rest
+          - path: /projects/:projectId/hubspot/**
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator
@@ -150,8 +157,8 @@ spec:
           - DELETE
         routes:
           - path: /campaigns
-          - path: /campaigns/:rest
-          - path: /_campaigns/:rest
+          - path: /campaigns/**
+          - path: /_campaigns/**
       execute:
         - authenticator: oidc
         {{- if .Values.app.use_oidc_contextualizer }}
