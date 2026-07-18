@@ -3702,3 +3702,70 @@ func TestCreateCampaign_CampaignStartRecomputedBeforePOST(t *testing.T) {
 		t.Errorf("campaign start = %d, want now+buffer at POST time = %d", campaignStart, wantCampaignStart)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Redirect-following (Cursor bugbot finding): the client must NOT follow
+// redirects, so a 3xx on a mutating call can't carry an already-committed POST to
+// a different target and be misread as a safe outcome.
+// ---------------------------------------------------------------------------
+
+// TestClient_DoesNotFollowRedirects verifies the default client hands a 3xx back
+// to doRequest (surfaced as a non-2xx apiError) instead of transparently
+// following it. A redirect target that returns 200 would mask the redirect; the
+// test fails the redirect target on hit to prove it was NOT followed.
+func TestClient_DoesNotFollowRedirects(t *testing.T) {
+	var followed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect-target" {
+			followed = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		http.Redirect(w, r, "/redirect-target", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "whatever")
+	if err == nil {
+		t.Fatal("expected a 3xx to surface as an error, got nil")
+	}
+	if followed {
+		t.Error("client followed the redirect — it must hand the 3xx back to doRequest instead")
+	}
+}
+
+// TestClient_OverridesInjectedCheckRedirectWithoutMutatingCaller verifies that an
+// *http.Client supplied via WithHTTPClient has its CheckRedirect force-overridden
+// to no-follow, and that the override is applied to a copy so the CALLER's client
+// is not mutated (its CheckRedirect stays nil / whatever it was).
+func TestClient_OverridesInjectedCheckRedirectWithoutMutatingCaller(t *testing.T) {
+	var followed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect-target" {
+			followed = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		http.Redirect(w, r, "/redirect-target", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	// A caller-supplied client that WOULD follow redirects (CheckRedirect nil).
+	caller := &http.Client{Timeout: requestTimeout}
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
+		WithBaseURL(srv.URL), WithClock(fixedClock()), WithHTTPClient(caller))
+
+	if _, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "whatever"); err == nil {
+		t.Fatal("expected a 3xx to surface as an error with the injected client, got nil")
+	}
+	if followed {
+		t.Error("injected client followed the redirect — NewClient must override CheckRedirect to no-follow")
+	}
+	// The caller's own client must be untouched (override applied to a copy).
+	if caller.CheckRedirect != nil {
+		t.Error("caller's *http.Client CheckRedirect was mutated — the override must use a shallow copy")
+	}
+}
