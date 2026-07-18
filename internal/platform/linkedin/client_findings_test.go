@@ -2522,6 +2522,35 @@ func TestFindCampaignByNameInGroup_MissingGroupIsAmbiguousError(t *testing.T) {
 	}
 }
 
+// TestFindCampaignByNameInGroup_SkippedStatusNotAmbiguous verifies that a
+// terminal-status (ARCHIVED/DELETED) same-name campaign with a MISSING campaignGroup
+// is SKIPPED, not treated as an ambiguity error. skipStatuses is checked before the
+// matcher, so an archived leftover cannot raise findCampaignByNameInGroup's
+// missing-group abort and permanently block creating/reconciling the live campaign.
+// With only a skipped element present, the lookup reports absence ("" , nil) so the
+// caller can proceed to create.
+func TestFindCampaignByNameInGroup_SkippedStatusNotAmbiguous(t *testing.T) {
+	for _, status := range []string{"ARCHIVED", "DELETED"} {
+		t.Run(status, func(t *testing.T) {
+			el := `{"name":"Events | KubeCon | tlf","status":"` + status + `","id":"urn:li:sponsoredCampaign:900"}`
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[`+el+`],"metadata":{"nextPageToken":""}}`)
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555")
+			if err != nil {
+				t.Fatalf("a %s same-name campaign with a missing group must be SKIPPED, not raise an error, got: %v", status, err)
+			}
+			if id != "" {
+				t.Errorf("expected absence (empty id) for a skipped-status-only result, got %q", id)
+			}
+		})
+	}
+}
+
 // TestCreateDarkPost_InvalidPostURNIsAmbiguous verifies the FINDING 2 refinement:
 // a 2xx dark-post response whose id is NOT a full share/ugcPost URN (a bare
 // numeric id, or a wrong-type URN) must be rejected as an AMBIGUOUS (transportError

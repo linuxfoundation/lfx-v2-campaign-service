@@ -821,17 +821,23 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			elements = *resp.Elements
 		}
 		for _, el := range elements {
+			// Skip terminal-status elements (ARCHIVED/DELETED) BEFORE invoking the
+			// matcher: such a resource is explicitly ignored for idempotency, so it must
+			// neither count as a match NOR raise the matcher's ambiguity error. Checking
+			// skipStatuses after the matcher let an ARCHIVED/DELETED same-name campaign
+			// with an omitted campaignGroup trigger findCampaignByNameInGroup's ambiguity
+			// abort, which could permanently block creating/reconciling the LIVE campaign.
+			if _, skip := skipStatuses[el.Status]; skip {
+				continue
+			}
 			matched, ambErr := match(el)
 			if ambErr != nil {
-				// The matcher found a same-name element it cannot classify safely (e.g.
-				// a campaign with an unconfirmable parent group). Treating it as a
-				// non-match would risk a false absence and a duplicate create, so abort.
+				// The matcher found a same-name (non-skipped) element it cannot classify
+				// safely (e.g. a campaign with an unconfirmable parent group). Treating it
+				// as a non-match would risk a false absence and a duplicate create, so abort.
 				return "", fmt.Errorf("search %q by name: %w", nestedPath, ambErr)
 			}
 			if !matched {
-				continue
-			}
-			if _, skip := skipStatuses[el.Status]; skip {
 				continue
 			}
 			raw := el.ID.String()
