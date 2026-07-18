@@ -31,9 +31,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -77,6 +79,17 @@ const (
 	// for internal classification. The body is never surfaced by Error(); the cap
 	// only keeps the retained value from bloating on a large error page.
 	maxErrorBodyChars = 400
+
+	// retryMax is the number of times an HTTP 429 (rate-limited) IDEMPOTENT
+	// request is retried before giving up. Mirrors the meta/reddit/linkedin
+	// clients.
+	retryMax = 3
+	// retryBaseDelay is the base for exponential backoff when a 429 carries no
+	// usable Retry-After header (1s, 2s, 4s, …). Mirrors the sibling clients.
+	retryBaseDelay = 1 * time.Second
+	// maxRetryWait caps a single 429 backoff so an outsized server-declared reset
+	// can't stall a request indefinitely.
+	maxRetryWait = 60 * time.Second
 )
 
 // ---------------------------------------------------------------------------
@@ -127,6 +140,11 @@ type Client struct {
 
 	httpClient *http.Client
 	now        func() time.Time
+
+	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
+	// retryBaseDelay const; tests shrink it (via withRetryBaseDelay) to keep runs
+	// fast.
+	retryBaseDelay time.Duration
 
 	// tokenMu guards the cached access token AND the inflight single-flight
 	// pointer. It is held only for the brief cache read/write and to publish or
@@ -216,19 +234,30 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+// withRetryBaseDelay overrides the exponential-backoff base for 429 retries.
+// Unexported: only tests use it, to keep retry runs fast.
+func withRetryBaseDelay(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.retryBaseDelay = d
+		}
+	}
+}
+
 // NewClient builds a Google Ads client from injected credentials and account
 // config. Redirect following is force-disabled on whatever *http.Client is used,
 // including one supplied via WithHTTPClient (applied to a shallow copy so the
 // caller's client is not mutated). Mirrors the reddit/linkedin clients.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:      creds,
-		account:    account,
-		baseURL:    googleAdsBaseURL,
-		apiVersion: googleAdsAPIVersion,
-		tokenURL:   googleOAuthTokenURL,
-		httpClient: &http.Client{Timeout: googleAdsRequestTimeout, CheckRedirect: noFollow},
-		now:        time.Now,
+		creds:          creds,
+		account:        account,
+		baseURL:        googleAdsBaseURL,
+		apiVersion:     googleAdsAPIVersion,
+		tokenURL:       googleOAuthTokenURL,
+		httpClient:     &http.Client{Timeout: googleAdsRequestTimeout, CheckRedirect: noFollow},
+		now:            time.Now,
+		retryBaseDelay: retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -449,73 +478,171 @@ func (c *Client) customerPath(action string) string {
 // token, and (when set) login-customer-id headers. body is JSON-encoded when
 // non-nil. It returns the raw 2xx body bytes; non-2xx and transport failures are
 // classified per the ambiguity contract.
-func (c *Client) doRequest(ctx context.Context, method, path string, body any) ([]byte, error) {
+//
+// idempotent gates 429 retry behavior. Google Ads throttles under normal use, so
+// a rate-limited IDEMPOTENT call (a GAQL :search read) is retried up to retryMax
+// times with a bounded backoff honoring Retry-After. A NON-idempotent call (a
+// :mutate that creates a paid resource) is NOT retried: the create endpoints have
+// no idempotency key, so a 429 whose first attempt may already have committed
+// upstream would double-create on retry. For those the 429 is returned as an
+// apiError immediately (and createOutcomeAmbiguous, GA-2+, treats a mutating 429
+// as "may exist"). Note: GAQL :search is POST-but-read-only, so the caller passes
+// idempotent explicitly rather than inferring it from the HTTP method.
+func (c *Client) doRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
 	token, err := c.accessTokenValue(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	var reqBody io.Reader
+	var encoded []byte
 	if body != nil {
 		b, mErr := json.Marshal(body)
 		if mErr != nil {
 			return nil, fmt.Errorf("marshal request body: %w", mErr)
 		}
-		reqBody = bytes.NewReader(b)
+		encoded = b
 	}
 
 	u := c.baseURL + "/" + c.apiVersion + "/" + strings.TrimPrefix(path, "/")
 
-	reqCtx, cancel := context.WithTimeout(ctx, googleAdsRequestTimeout)
-	defer cancel()
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		var reqBody io.Reader
+		if encoded != nil {
+			reqBody = bytes.NewReader(encoded)
+		}
 
-	req, err := http.NewRequestWithContext(reqCtx, method, u, reqBody)
+		// Bound EACH attempt with its own deadline (the caller ctx is the parent so
+		// a real cancel/deadline still propagates). cancel() runs on every exit path.
+		attemptCtx, cancel := context.WithTimeout(ctx, googleAdsRequestTimeout)
+
+		req, err := http.NewRequestWithContext(attemptCtx, method, u, reqBody)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("developer-token", c.creds.DeveloperToken)
+		if c.account.LoginCustomerID != "" {
+			req.Header.Set("login-customer-id", c.account.LoginCustomerID)
+		}
+		if encoded != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			cancel()
+			if isPreSendDialError(err) {
+				return nil, fmt.Errorf("google-ads %s %s: %w", method, path, err)
+			}
+			return nil, &transportError{Method: method, Path: path, Err: err}
+		}
+
+		// Retry a 429 only for idempotent calls with attempts remaining.
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < retryMax && idempotent {
+			wait := c.parseRetryAfter(resp)
+			// Drain (bounded) before closing so net/http can reuse the connection.
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+			_ = resp.Body.Close()
+			cancel()
+			if wait <= 0 {
+				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
+			}
+			if wait > maxRetryWait {
+				wait = maxRetryWait
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		buf := new(bytes.Buffer)
+		if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
+			_ = resp.Body.Close()
+			cancel()
+			// A read failure on a 2xx is ambiguous (the mutation may have committed but
+			// we can't read the result); a non-2xx read failure carries the status.
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
+			}
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
+		}
+		_ = resp.Body.Close()
+		cancel()
+
+		if int64(buf.Len()) > maxResponseBytes {
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+			}
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			text := buf.String()
+			if len(text) > maxErrorBodyChars {
+				text = text[:maxErrorBodyChars]
+			}
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
+		}
+
+		return buf.Bytes(), nil
+	}
+
+	// Exhausted retryMax retries, all 429 (idempotent path). Surface as a 429
+	// apiError so the caller sees the rate-limit cause.
+	return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path, Body: "rate limited: exhausted retries"}
+}
+
+// parseRetryAfter returns the delay a 429's Retry-After header requests, clamped
+// to maxRetryWait. It accepts both the numeric (delta-seconds) and HTTP-date
+// forms. A missing/malformed/non-positive value returns 0 (caller falls back to
+// exponential backoff). Mirrors the linkedin/meta clients.
+func (c *Client) parseRetryAfter(resp *http.Response) time.Duration {
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("developer-token", c.creds.DeveloperToken)
-	if c.account.LoginCustomerID != "" {
-		req.Header.Set("login-customer-id", c.account.LoginCustomerID)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		if isPreSendDialError(err) {
-			return nil, fmt.Errorf("google-ads %s %s: %w", method, path, err)
+		// A numeric value that overflows int64 is still numeric (not an HTTP-date):
+		// positive overflow → clamp to the ceiling; negative → no wait.
+		if errors.Is(err, strconv.ErrRange) {
+			if n == math.MaxInt64 {
+				return maxRetryWait
+			}
+			return 0
 		}
-		return nil, &transportError{Method: method, Path: path, Err: err}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	buf := new(bytes.Buffer)
-	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
-		// A read failure on a 2xx is ambiguous (the mutation may have committed but
-		// we can't read the result); a non-2xx read failure carries the status.
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
+	} else if n > 0 {
+		// Clamp seconds before converting so a huge value can't overflow Duration.
+		if n > int64(maxRetryWait/time.Second) {
+			return maxRetryWait
 		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
+		return time.Duration(n) * time.Second
+	} else {
+		return 0
 	}
-	if int64(buf.Len()) > maxResponseBytes {
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(c.now()); d > 0 {
+			if d > maxRetryWait {
+				return maxRetryWait
+			}
+			return d
 		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
 	}
+	return 0
+}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		text := buf.String()
-		if len(text) > maxErrorBodyChars {
-			text = text[:maxErrorBodyChars]
-		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
+// sleepCtx waits for d, returning early with the context error if ctx is done.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
-
-	return buf.Bytes(), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -555,7 +682,8 @@ func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessag
 	seen := map[string]struct{}{}
 
 	for page := 0; page < maxSearchPages; page++ {
-		raw, err := c.doRequest(ctx, http.MethodPost, path, searchRequest{Query: query, PageToken: pageToken})
+		// GAQL search is read-only (idempotent), so a 429 is safe to retry.
+		raw, err := c.doRequest(ctx, http.MethodPost, path, searchRequest{Query: query, PageToken: pageToken}, true /* idempotent */)
 		if err != nil {
 			return nil, fmt.Errorf("gaql search: %w", err)
 		}

@@ -141,7 +141,7 @@ func TestDoRequest_SendsAuthAndDeveloperTokenHeaders(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
-	if _, err := c.doRequest(context.Background(), http.MethodGet, "customers/1234567890/x", nil); err != nil {
+	if _, err := c.doRequest(context.Background(), http.MethodGet, "customers/1234567890/x", nil, false); err != nil {
 		t.Fatalf("doRequest: %v", err)
 	}
 	if gotAuth != "Bearer at-123" {
@@ -170,7 +170,7 @@ func TestDoRequest_SendsLoginCustomerIDWhenSet(t *testing.T) {
 	acct := testAccount()
 	acct.LoginCustomerID = "9999999999"
 	c := NewClient(testCreds(), acct, WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
-	if _, err := c.doRequest(context.Background(), http.MethodGet, "customers/1234567890/x", nil); err != nil {
+	if _, err := c.doRequest(context.Background(), http.MethodGet, "customers/1234567890/x", nil, false); err != nil {
 		t.Fatalf("doRequest: %v", err)
 	}
 	if gotLogin != "9999999999" {
@@ -183,7 +183,7 @@ func TestDoRequest_Non2xxIsAPIError(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"error":{"message":"bad"}}`)
 	})
-	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "SELECT campaign.id FROM campaign"})
+	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "SELECT campaign.id FROM campaign"}, false)
 	if err == nil {
 		t.Fatal("expected an error on a 400 response, got nil")
 	}
@@ -222,7 +222,7 @@ func TestDoRequest_MidflightFailureIsAmbiguous(t *testing.T) {
 	defer apiSrv.Close()
 
 	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
-	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "x"})
+	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "x"}, false)
 	if err == nil {
 		t.Fatal("expected an error on a truncated 2xx, got nil")
 	}
@@ -243,7 +243,7 @@ func TestClient_DoesNotFollowRedirects(t *testing.T) {
 		}
 		http.Redirect(w, r, "/redirect-target", http.StatusFound)
 	})
-	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "x"})
+	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "x"}, false)
 	if err == nil {
 		t.Fatal("expected a 3xx to surface as an error, got nil")
 	}
@@ -277,7 +277,7 @@ func TestClient_OverridesInjectedCheckRedirectWithoutMutatingCaller(t *testing.T
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
 		WithHTTPClient(caller))
 
-	if _, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "x"}); err == nil {
+	if _, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "x"}, false); err == nil {
 		t.Fatal("expected a 3xx to surface as an error with the injected client, got nil")
 	}
 	if followed {
@@ -304,11 +304,95 @@ func TestWithAPIVersion_ReachesPath(t *testing.T) {
 	c := NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
 		WithAPIVersion("v99"))
-	if _, err := c.doRequest(context.Background(), http.MethodGet, "customers/1/x", nil); err != nil {
+	if _, err := c.doRequest(context.Background(), http.MethodGet, "customers/1/x", nil, false); err != nil {
 		t.Fatalf("doRequest: %v", err)
 	}
 	if !strings.HasPrefix(gotPath, "/v99/") {
 		t.Errorf("request path = %q, want /v99/ prefix", gotPath)
+	}
+}
+
+// TestDoRequest_IdempotentRetriesOn429 verifies a rate-limited idempotent call
+// (e.g. a GAQL :search read) is retried and eventually succeeds, honoring
+// Retry-After.
+func TestDoRequest_IdempotentRetriesOn429(t *testing.T) {
+	var calls int32
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) <= 2 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	if _, err := c.doRequest(context.Background(), http.MethodPost, "customers/1/googleAds:search", searchRequest{Query: "x"}, true); err != nil {
+		t.Fatalf("idempotent 429 should retry and succeed, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Errorf("server saw %d calls, want 3 (two 429s then success)", got)
+	}
+}
+
+// TestDoRequest_NonIdempotentDoesNotRetryOn429 verifies a rate-limited
+// NON-idempotent call (a :mutate create) is NOT retried — a 429 whose first
+// attempt may have committed must not be blind-resent.
+func TestDoRequest_NonIdempotentDoesNotRetryOn429(t *testing.T) {
+	var calls int32
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1/campaigns:mutate", map[string]any{"x": 1}, false)
+	if err == nil {
+		t.Fatal("expected a 429 error for a non-idempotent call, got nil")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("non-idempotent call retried: server saw %d calls, want 1", got)
+	}
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("want a 429 apiError, got %T: %v", err, err)
+	}
+}
+
+// TestDoRequest_Idempotent429ExhaustsRetries verifies an idempotent call that is
+// rate-limited on every attempt gives up after retryMax and surfaces a 429.
+func TestDoRequest_Idempotent429ExhaustsRetries(t *testing.T) {
+	var calls int32
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1/googleAds:search", searchRequest{Query: "x"}, true)
+	if err == nil {
+		t.Fatal("expected a 429 error after exhausting retries, got nil")
+	}
+	// retryMax retries + the initial attempt = retryMax+1 total.
+	if got := atomic.LoadInt32(&calls); got != int32(retryMax+1) {
+		t.Errorf("server saw %d calls, want %d (initial + retryMax)", got, retryMax+1)
 	}
 }
 
