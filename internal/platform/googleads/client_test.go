@@ -9,10 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -456,5 +459,121 @@ func TestIsPreSendDialError(t *testing.T) {
 	}
 	if isPreSendDialError(fmt.Errorf("wrapped: %w", io.ErrUnexpectedEOF)) {
 		t.Error("unexpected EOF (mid-flight) must not be pre-send")
+	}
+}
+
+// TestDoRequest_RejectsMalformedCustomerID verifies a non-digits customer id
+// (dashed, padded, or containing path-altering characters) is rejected before any
+// request is built, rather than concatenated into the URL.
+func TestDoRequest_RejectsMalformedCustomerID(t *testing.T) {
+	cases := []string{"123-456-7890", " 123 ", "123/456", "123.456", "abc", ""}
+	for _, cid := range cases {
+		t.Run(cid, func(t *testing.T) {
+			acct := testAccount()
+			acct.CustomerID = cid
+			// No servers needed — validation happens before any network call.
+			c := NewClient(testCreds(), acct, WithClock(fixedClock()))
+			_, err := c.doRequest(context.Background(), http.MethodGet, "customers/x/y", nil, false)
+			if err == nil {
+				t.Fatalf("expected a validation error for customer id %q, got nil", cid)
+			}
+			if !strings.Contains(err.Error(), "customer id") {
+				t.Errorf("error should name the invalid customer id, got: %v", err)
+			}
+		})
+	}
+
+	// A malformed LoginCustomerID is also rejected.
+	acct := testAccount()
+	acct.LoginCustomerID = "999-888-777"
+	c := NewClient(testCreds(), acct, WithClock(fixedClock()))
+	if _, err := c.doRequest(context.Background(), http.MethodGet, "customers/x/y", nil, false); err == nil {
+		t.Fatal("expected a validation error for a dashed login-customer-id, got nil")
+	}
+}
+
+// TestAccessToken_ConcurrentSingleFlight verifies the token single-flight: with
+// the token endpoint blocked, N concurrent callers trigger exactly ONE refresh, a
+// cancelled waiter returns promptly (without cancelling the shared refresh), and
+// the remaining callers still receive the token. Run under -race.
+func TestAccessToken_ConcurrentSingleFlight(t *testing.T) {
+	var tokenCalls int32
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&tokenCalls, 1)
+		<-release // block until the test releases the refresh
+		tokenHandler(w, nil)
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(fixedClock()))
+
+	const waiters = 8
+	var wg sync.WaitGroup
+	errs := make([]error, waiters)
+	toks := make([]string, waiters)
+
+	// One waiter uses a context we cancel early; it must return promptly.
+	cancelCtx, cancel := context.WithCancel(context.Background())
+
+	for i := 0; i < waiters; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			ctx := context.Background()
+			if idx == 0 {
+				ctx = cancelCtx
+			}
+			toks[idx], errs[idx] = c.accessTokenValue(ctx)
+		}(i)
+	}
+
+	// Give the goroutines a moment to register on the single-flight, then cancel
+	// the first waiter and release the shared refresh.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	close(release)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&tokenCalls); got != 1 {
+		t.Errorf("token endpoint hit %d times, want exactly 1 (single-flight)", got)
+	}
+	// The cancelled waiter (idx 0) returns a context error; the rest get the token.
+	if errs[0] == nil {
+		t.Error("cancelled waiter should have returned a context error")
+	}
+	for i := 1; i < waiters; i++ {
+		if errs[i] != nil {
+			t.Errorf("waiter %d errored: %v", i, errs[i])
+		}
+		if toks[i] != "at-123" {
+			t.Errorf("waiter %d token = %q, want at-123", i, toks[i])
+		}
+	}
+}
+
+// TestIsPreSendDialError_PositiveCases verifies the pre-send classification's TRUE
+// branch: a DNS failure and a connect-time dial failure (refused / no route /
+// net unreachable) are pre-send; a dial error with a different syscall is not.
+func TestIsPreSendDialError_PositiveCases(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"dns error", &net.DNSError{Err: "no such host", Name: "x"}, true},
+		{"dial refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, true},
+		{"dial host unreachable", &net.OpError{Op: "dial", Err: syscall.EHOSTUNREACH}, true},
+		{"dial net unreachable", &net.OpError{Op: "dial", Err: syscall.ENETUNREACH}, true},
+		{"wrapped dns error", fmt.Errorf("do: %w", &net.DNSError{Err: "nx", Name: "x"}), true},
+		{"read op (not dial)", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, false},
+		{"dial with other syscall", &net.OpError{Op: "dial", Err: syscall.EPIPE}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isPreSendDialError(tc.err); got != tc.want {
+				t.Errorf("isPreSendDialError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

@@ -35,6 +35,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -465,10 +466,30 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // Request layer
 // ---------------------------------------------------------------------------
 
+// customerIDRE matches a Google Ads customer id: digits only, no dashes. The
+// connection's account_id is user-supplied and its Goa design only checks
+// presence, so it must be validated here before being concatenated into a URL —
+// a padded/dashed id yields an invalid request, and slash/dot input could alter
+// the resource path.
+var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
+
+// validateAccountIDs rejects a CustomerID (and, when set, LoginCustomerID) that
+// isn't a digits-only id, before any request is built.
+func (c *Client) validateAccountIDs() error {
+	if !customerIDRE.MatchString(c.account.CustomerID) {
+		return fmt.Errorf("invalid Google Ads customer id %q: must be digits only (no dashes)", c.account.CustomerID)
+	}
+	if c.account.LoginCustomerID != "" && !customerIDRE.MatchString(c.account.LoginCustomerID) {
+		return fmt.Errorf("invalid Google Ads login-customer-id %q: must be digits only (no dashes)", c.account.LoginCustomerID)
+	}
+	return nil
+}
+
 // customerPath builds a Google Ads REST resource path scoped to this account's
 // customer id, e.g. customerPath("googleAds:search") ->
 // "customers/1234567890/googleAds:search". Centralizes the customer-id segment so
-// the search and (GA-2+) :mutate paths don't re-concatenate it.
+// the search and (GA-2+) :mutate paths don't re-concatenate it. Callers must have
+// validated the customer id (see validateAccountIDs / doRequest).
 func (c *Client) customerPath(action string) string {
 	return "customers/" + c.account.CustomerID + "/" + action
 }
@@ -489,8 +510,7 @@ func (c *Client) customerPath(action string) string {
 // as "may exist"). Note: GAQL :search is POST-but-read-only, so the caller passes
 // idempotent explicitly rather than inferring it from the HTTP method.
 func (c *Client) doRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
-	token, err := c.accessTokenValue(ctx)
-	if err != nil {
+	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
 
@@ -509,6 +529,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		var reqBody io.Reader
 		if encoded != nil {
 			reqBody = bytes.NewReader(encoded)
+		}
+
+		// Fetch the token INSIDE the loop: after a 429 backoff (up to maxRetryWait
+		// per attempt) the token cached before the loop could have expired, so a
+		// resumed retry would 401. accessTokenValue returns the cached token on the
+		// fast path, so this is cheap when no refresh is due.
+		token, err := c.accessTokenValue(ctx)
+		if err != nil {
+			return nil, err
 		}
 
 		// Bound EACH attempt with its own deadline (the caller ctx is the parent so
@@ -669,12 +698,23 @@ type searchResponse struct {
 // before this.
 const maxSearchPages = 1000
 
+// maxSearchRows caps the total rows retained across all pages. The per-response
+// maxResponseBytes cap only bounds ONE page; without an aggregate cap, a query
+// that pages many times could retain enough rows to OOM the service. This bounds
+// the accumulated result set; a query that exceeds it aborts with an error rather
+// than silently truncating. Callers needing more should narrow the query or
+// (GA-3+) consume via a page callback.
+const maxSearchRows = 200_000
+
 // gaqlSearch runs a GAQL query against this account and returns every result row
 // (following cursor pagination to exhaustion). Each row is a raw JSON object the
 // caller decodes according to its SELECT clause.
 //
-// NOTE: do NOT SELECT campaign.start_date or campaign.end_date — the Google Ads
-// API rejects them ("Unrecognized fields"). Use a date-range window instead.
+// NOTE: in Google Ads API v23, campaign.start_date / campaign.end_date were
+// REPLACED by campaign.start_date_time / campaign.end_date_time — the old fields
+// are rejected as unrecognized. Select the *_date_time fields for campaign
+// schedule; a reporting date-range window (segments.date, or the query's
+// DURING clause) is a separate concern and not a substitute for them.
 func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessage, error) {
 	path := c.customerPath("googleAds:search")
 	var out []json.RawMessage
@@ -698,6 +738,9 @@ func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessag
 			return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode search response: %w", err)}
 		}
 		out = append(out, sr.Results...)
+		if len(out) > maxSearchRows {
+			return nil, fmt.Errorf("gaql search %q: result set exceeds %d rows — narrow the query", path, maxSearchRows)
+		}
 
 		if sr.NextPageToken == "" {
 			return out, nil
