@@ -528,13 +528,24 @@ func TestDoRequest_RejectsMalformedCustomerID(t *testing.T) {
 
 // TestAccessToken_ConcurrentSingleFlight verifies the token single-flight: with
 // the token endpoint blocked, N concurrent callers trigger exactly ONE refresh, a
-// cancelled waiter returns promptly (without cancelling the shared refresh), and
-// the remaining callers still receive the token. Run under -race.
+// cancelled waiter returns WHILE the shared refresh is STILL BLOCKED (proving it
+// honors its own ctx and doesn't wait for the token), the shared refresh is NOT
+// torn down by that cancellation, and the remaining callers still receive the
+// token once it's released. Run under -race.
+//
+// The cancelled waiter's completion is asserted BEFORE `release` is closed — a
+// waiter that (incorrectly) ignored cancellation and blocked on the token would
+// still be running at that point and fail the assertion.
 func TestAccessToken_ConcurrentSingleFlight(t *testing.T) {
 	var tokenCalls int32
+	handlerEntered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&tokenCalls, 1)
+		select {
+		case handlerEntered <- struct{}{}:
+		default:
+		}
 		<-release // block until the test releases the refresh
 		tokenHandler(w, nil)
 	}))
@@ -542,48 +553,81 @@ func TestAccessToken_ConcurrentSingleFlight(t *testing.T) {
 
 	c := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(fixedClock()))
 
-	const waiters = 8
-	var wg sync.WaitGroup
-	errs := make([]error, waiters)
-	toks := make([]string, waiters)
+	// Leader: a normal caller that will become the single-flight leader and block
+	// in the handler.
+	leaderDone := make(chan result, 1)
+	go func() {
+		tok, err := c.accessTokenValue(context.Background())
+		leaderDone <- result{tok, err}
+	}()
 
-	// One waiter uses a context we cancel early; it must return promptly.
+	// Wait until the handler is actually blocked (the refresh is in flight) before
+	// launching the cancelled waiter — so the waiter genuinely joins the in-flight
+	// refresh rather than starting its own.
+	select {
+	case <-handlerEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("token handler never entered — leader didn't start the refresh")
+	}
+
+	// Cancelled waiter: joins the in-flight refresh, then is cancelled. It must
+	// return BEFORE we release the refresh.
 	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancelledDone := make(chan error, 1)
+	go func() {
+		_, err := c.accessTokenValue(cancelCtx)
+		cancelledDone <- err
+	}()
+	// Give the waiter a moment to register on the shared refresh, then cancel it.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
 
-	for i := 0; i < waiters; i++ {
+	// The cancelled waiter must complete NOW — while the refresh is still blocked.
+	select {
+	case err := <-cancelledDone:
+		if err == nil {
+			t.Error("cancelled waiter returned nil error; want its context error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled waiter did not return while the refresh was still blocked — it ignored cancellation")
+	}
+
+	// The refresh must still be alive (not torn down by the cancellation): more
+	// followers can still join and succeed.
+	const followers = 6
+	var wg sync.WaitGroup
+	toks := make([]string, followers)
+	errs := make([]error, followers)
+	for i := 0; i < followers; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			ctx := context.Background()
-			if idx == 0 {
-				ctx = cancelCtx
-			}
-			toks[idx], errs[idx] = c.accessTokenValue(ctx)
+			toks[idx], errs[idx] = c.accessTokenValue(context.Background())
 		}(i)
 	}
-
-	// Give the goroutines a moment to register on the single-flight, then cancel
-	// the first waiter and release the shared refresh.
 	time.Sleep(20 * time.Millisecond)
-	cancel()
+
+	// Now release the shared refresh; the leader and all followers get the token.
 	close(release)
 	wg.Wait()
 
+	lr := <-leaderDone
+	if lr.err != nil || lr.token != "at-123" {
+		t.Errorf("leader: token=%q err=%v, want at-123/nil", lr.token, lr.err)
+	}
+	for i := 0; i < followers; i++ {
+		if errs[i] != nil || toks[i] != "at-123" {
+			t.Errorf("follower %d: token=%q err=%v, want at-123/nil", i, toks[i], errs[i])
+		}
+	}
 	if got := atomic.LoadInt32(&tokenCalls); got != 1 {
 		t.Errorf("token endpoint hit %d times, want exactly 1 (single-flight)", got)
 	}
-	// The cancelled waiter (idx 0) returns a context error; the rest get the token.
-	if errs[0] == nil {
-		t.Error("cancelled waiter should have returned a context error")
-	}
-	for i := 1; i < waiters; i++ {
-		if errs[i] != nil {
-			t.Errorf("waiter %d errored: %v", i, errs[i])
-		}
-		if toks[i] != "at-123" {
-			t.Errorf("waiter %d token = %q, want at-123", i, toks[i])
-		}
-	}
+}
+
+type result struct {
+	token string
+	err   error
 }
 
 // TestIsPreSendDialError_PositiveCases verifies the pre-send classification's TRUE

@@ -761,14 +761,17 @@ func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessag
 			return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode search response: %w", err)}
 		}
 		out = append(out, sr.Results...)
-		for _, r := range sr.Results {
-			totalBytes += len(r)
-		}
+		// Count the WHOLE page payload (raw response bytes), not just result rows,
+		// toward the byte cap. This covers everything the loop accumulates across
+		// pages — including the nextPageToken strings retained in `seen` — so a
+		// malformed server that returns many large tokens (or otherwise-bloated
+		// pages) with few/no rows still trips the OOM guard.
+		totalBytes += len(raw)
 		if len(out) > maxSearchRows {
 			return nil, fmt.Errorf("gaql search %q: result set exceeds %d rows — narrow the query", path, maxSearchRows)
 		}
 		if totalBytes > maxSearchBytes {
-			return nil, fmt.Errorf("gaql search %q: result set exceeds %d bytes — narrow the query", path, maxSearchBytes)
+			return nil, fmt.Errorf("gaql search %q: accumulated response exceeds %d bytes — narrow the query", path, maxSearchBytes)
 		}
 
 		if sr.NextPageToken == "" {

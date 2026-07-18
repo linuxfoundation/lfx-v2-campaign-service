@@ -52,8 +52,9 @@ POST-but-read-only — a `:mutate` create must NOT be retried (double-create ris
 
 `gaqlSearch` runs a cursor-paginated GAQL query (POST) with a repeated-token guard,
 a page cap, and BOTH an aggregate-row cap and an aggregate-byte cap so a many-page
-result can't OOM the service (a row cap alone doesn't bound memory — each row can
-approach the per-page byte cap — so the byte cap is the real memory bound).
+result can't OOM the service. The byte cap counts each page's FULL raw payload
+(not just result rows), so it also bounds the retained nextPageToken strings — a
+row cap alone doesn't bound memory, so the byte cap is the real memory guard.
 
 **GAQL gotcha:** in API v23, `campaign.start_date` / `campaign.end_date` were
 replaced by `campaign.start_date_time` / `campaign.end_date_time` — the old fields
