@@ -9,6 +9,7 @@ import (
 	"crypto/sha1" //nolint:gosec // OAuth 1.0a mandates HMAC-SHA1; test mirrors production signing.
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -2735,4 +2736,44 @@ func stepsContain(steps []string, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestNoFollowRedirectPolicy verifies the client force-disables redirect
+// following: the default client gets CheckRedirect=noFollow, and a WithHTTPClient-
+// supplied client is also overridden — on a copy, so the caller's client is not
+// mutated. With OAuth 1.0a a followed redirect would also resend a request signed
+// for the original URL to a different one.
+func TestNoFollowRedirectPolicy(t *testing.T) {
+	creds := Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"}
+	acct := AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"}
+
+	c := NewClient(creds, acct)
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("default client has no CheckRedirect — redirects would be followed")
+	}
+	if err := c.httpClient.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse (no-follow)", err)
+	}
+
+	// Inject a client that ALREADY carries a caller-supplied redirect policy (a
+	// sentinel). This distinguishes an unconditional override from a "fill only nil
+	// callbacks" implementation: the latter would preserve the sentinel and silently
+	// re-enable redirect following. We assert (a) the client the code actually uses
+	// force-returns http.ErrUseLastResponse despite the sentinel, and (b) the
+	// caller's original client is untouched (shallow copy, not mutation).
+	sentinel := errors.New("caller-sentinel-redirect-policy")
+	caller := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return sentinel }}
+	c2 := NewClient(creds, acct, WithHTTPClient(caller))
+	if c2.httpClient.CheckRedirect == nil {
+		t.Fatal("injected client's CheckRedirect was not overridden")
+	}
+	if err := c2.httpClient.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Errorf("injected client's CheckRedirect = %v, want http.ErrUseLastResponse (unconditional override)", err)
+	}
+	if caller.CheckRedirect == nil {
+		t.Fatal("caller's *http.Client was mutated — override must use a shallow copy")
+	}
+	if err := caller.CheckRedirect(nil, nil); err != sentinel {
+		t.Errorf("caller's CheckRedirect was mutated: got %v, want the untouched sentinel", err)
+	}
 }

@@ -89,6 +89,7 @@ read as a definite "ad set creation failed" — risking a duplicate ad set on re
 It now routes through `createOutcomeAmbiguous`: ambiguous → UNCONFIRMED (verify
 before retrying), definite 4xx → "failed". Tests added for both. (3) The same
 status-stripping existed in the OVERSIZED-body branch (>1 MiB), which returned a
+status-stripping existed in the OVERSIZED-body branch (> maxResponseBody, 10 MiB), which returned a
 plain error before recording the status — a mutating 3xx/5xx over the cap was still
 mis-classified as a definite failure. Now the oversized-body branch preserves the
 status the same way (2xx → transportError, non-2xx → *APIError), with a regression
@@ -148,6 +149,22 @@ A separate `campaigns-placeholder` rule keeps the still-routed `/campaigns` /
 invariant (every heimdall-routed path has a matching rule). deployment readiness
 `failureThreshold` relaxed 1→3 for CloudNativePG cold start. Concepts updated:
 `httproute`, `ruleset`.
+**Update** — Also strengthened the no-follow regression tests (meta + twitter):
+they injected a nil-`CheckRedirect` client, which couldn't prove the override is
+UNCONDITIONAL (a "fill only nil callbacks" impl would pass). Now they inject a
+caller client carrying a SENTINEL `CheckRedirect` and assert the client the code
+uses returns `http.ErrUseLastResponse` despite it, while the caller's original
+still returns the sentinel (shallow copy, not mutation). (PR #30 review by Copilot.)
+
+**Update** — Disabled HTTP redirect following on the Meta and X/Twitter Ads
+clients (LFXV2-2641), closing a duplicate-create gap: both built their
+`*http.Client` (and accepted `WithHTTPClient` clients) with no `CheckRedirect`, so
+the stdlib could follow a 3xx on a mutating POST after the create was committed and
+muddy outcome classification (for X, a followed redirect also resends an OAuth-1.0a
+request signed for the original URL). Added a shared `noFollow`
+(`http.ErrUseLastResponse`) policy set on the default client and enforced
+unconditionally after options via a shallow copy (so a caller's client isn't
+mutated) — matching the reddit/linkedin/googleads clients. Regression tests added.
 
 ## 2026-07-15
 

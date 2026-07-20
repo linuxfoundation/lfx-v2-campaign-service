@@ -89,5 +89,16 @@ past start date is refused, with a same-day ad-set `start_time` nudged to
 now+buffer. `doRequest` retries HTTP 429 and Graph rate-limit envelope codes
 (4/17/32/341/613/80004) with bounded backoff, draining the body before close, and a
 truncated response body is surfaced rather than reported as a false success.
+Redirect following is force-disabled (a shared `noFollow` `CheckRedirect` policy).
+For a `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
+carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
+`CheckRedirect: noFollow`, rather than value-copying the caller's client (an
+`http.Client` must not be copied after first use — a copy duplicates its internal
+mutex while sharing the request-cancellation map). So a 3xx on a mutating POST is
+surfaced rather than followed to a different target; `createOutcomeAmbiguous`
+classifies a mutating 3xx (gated on the method) and any 5xx/transport failure as
+UNCONFIRMED, so a create that may have committed is not blind-retried into a
+duplicate. The status is preserved even when the response body is unreadable or
+oversized, so an ambiguous outcome is never downgraded to a definite failure.
 
 See [internal/platform/meta](../../../internal/platform/meta).
