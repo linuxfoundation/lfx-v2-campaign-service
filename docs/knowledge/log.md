@@ -52,6 +52,17 @@ follow-up to apply the same URL-suppression there. (2) Corrected the stale
 method" after the 3xx gate was re-added. (3) Documented CreateCampaign's
 non-standard `(non-nil result, non-nil error)` contract so callers inspect the
 result on error (for reconcile) instead of discarding it.
+**Creation** — Added the `internal/platform/hubspot` Go package (email-channel
+scaffold, LFXV2-2778 under epic LFXV2-2770). HubSpot's auth is the simplest of any
+client — a STATIC private-app bearer token (no OAuth token-exchange flow), attached
+directly by `doRequest`. The request layer mirrors the googleads/reddit/meta/twitter
+discipline: no-follow redirects (fresh-client rebuild so a `WithHTTPClient` caller
+isn't mutated), bounded 10 MiB reads, typed `apiError` (method/path/status only,
+body never surfaced) + `transportError` (URL-free via `safeCause`, cause retained
+via Unwrap), `isPreSendDialError` pre-send classification, and 429 retry gated on an
+explicit `idempotent` flag (a non-idempotent create is never retried — no idempotency
+key → double-create risk). Concept doc + code index added. Next: marketing-email ops
+(LFXV2-2779) and CRM-lists/event-defs ops (LFXV2-2780) build on `doRequest`.
 
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
