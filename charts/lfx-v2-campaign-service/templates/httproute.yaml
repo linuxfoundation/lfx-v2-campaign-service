@@ -26,10 +26,18 @@ spec:
     # select exactly this service's project-nested subpaths; project-service's
     # /projects/ routes are unaffected (Traefik resolves overlap by match
     # specificity — the regex only matches campaign subpaths).
+    #
+    # The trailing wildcard is per-family and MUST mirror the RuleSet
+    # (ruleset.yaml `project-api`) exactly, or the route would forward sub-paths
+    # Heimdall has no rule for (a route/rule parity violation — an unruled path is
+    # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
+    # only they get the free `(/.*)?` tail here. The connection-* family is ruled
+    # for exactly the base, /test, and /set-credential sub-paths; per-provider
+    # /metrics and google-ads/keywords|audience are ruled at the base path only.
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads|microsoft-ads|hubspot)|briefs|jobs|hubspot|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))(/.*)?$
+          value: ^/projects/[^/]+/(connection-(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads|microsoft-ads|hubspot)(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef
