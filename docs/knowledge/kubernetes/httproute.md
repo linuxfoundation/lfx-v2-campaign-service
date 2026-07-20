@@ -19,10 +19,17 @@ every endpoint is nested under a project and gated on that project's
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
 `jobs`, the `{provider}/metrics` segment, `google-ads/keywords|audience`, `hubspot`)
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
-reach past. The route therefore uses a **`RegularExpression` path match** (Traefik
-Gateway API "custom" conformance) selecting exactly this service's project-nested
-subpaths; `project-service`'s `/projects/` routes are unaffected because Traefik
-resolves overlap by match specificity.
+reach past. The route therefore uses a **`RegularExpression` path match** selecting
+exactly this service's project-nested subpaths; `project-service`'s `/projects/`
+routes are unaffected because Traefik resolves overlap by match specificity.
+
+`RegularExpression` path matches require **Traefik >= v3.1.0**: its Gateway API
+provider translates them into a native `PathRegexp(...)` rule (RE2/Go-regexp flavor)
+— verified in Traefik's `buildPathRule` source for every v3.1.0+ tag. On v3.0.x the
+match is rejected as "unsupported path match", and the feature is not listed in
+Traefik's Gateway API conformance report even though the code implements it. So the
+route works on the platform gateway (v3.1.0+), but the render alone doesn't prove it:
+after deploy, verify the HTTPRoute's `Accepted` status condition is `True`.
 
 A second rule routes the reserved `/campaigns`, `/campaigns/`, and `/_campaigns/`
 placeholder prefixes (OpenAPI docs + not-yet-built endpoints).

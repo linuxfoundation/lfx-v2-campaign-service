@@ -22,10 +22,18 @@ spec:
     # prefix. The distinguishing token (connection-*, briefs, jobs, the metrics
     # provider segment, hubspot) sits AFTER the variable {projectId}, which a
     # PathPrefix/Exact match cannot reach past. We therefore use a
-    # RegularExpression path match (Traefik Gateway API "custom" conformance) to
-    # select exactly this service's project-nested subpaths; project-service's
-    # /projects/ routes are unaffected (Traefik resolves overlap by match
-    # specificity — the regex only matches campaign subpaths).
+    # RegularExpression path match to select exactly this service's project-nested
+    # subpaths; project-service's /projects/ routes are unaffected (Traefik resolves
+    # overlap by match specificity — the regex only matches campaign subpaths).
+    #
+    # REQUIRES Traefik >= v3.1.0 (the platform gateway): its Gateway API provider
+    # translates a `RegularExpression` HTTPRoute path match into a native
+    # `PathRegexp(...)` router rule (RE2 / Go regexp flavor) — verified in Traefik's
+    # source (buildPathRule) for every v3.1.0+ tag. NOTE: v3.0.x does NOT support it
+    # (it returns "unsupported path match"), and the feature is not listed in
+    # Traefik's Gateway API conformance report even though the code implements it —
+    # so after deploy, confirm this HTTPRoute's `Accepted` status condition is True
+    # rather than assuming the render alone means it routes.
     #
     # The trailing wildcard is per-family and MUST mirror the RuleSet
     # (ruleset.yaml `project-api`) exactly, or the route would forward sub-paths

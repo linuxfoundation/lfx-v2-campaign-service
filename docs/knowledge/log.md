@@ -2,6 +2,22 @@
 
 ## 2026-07-20
 
+**Update** — Documented the Traefik `RegularExpression` HTTPRoute version requirement
+(PR #28 review, copilot). Copilot claimed Traefik's Gateway API provider doesn't
+support `RegularExpression` path matches (only Exact/PathPrefix) → the project-nested
+route would be silently unrouted. VERIFIED WRONG against Traefik's source
+(`buildPathRule`, every v3.1.0+ tag): a `RegularExpression` match is translated to a
+native `PathRegexp(...)` rule (RE2/Go-regexp), GA, not gated. BUT two real nuances:
+(1) **v3.0.x does NOT support it** (returns "unsupported path match"), so it requires
+Traefik >= v3.1.0 — now stated in the template comment + concept doc; (2) the feature
+is NOT in Traefik's Gateway API conformance report even though the code implements
+it, so the render alone doesn't prove routing — added a note to verify the deployed
+HTTPRoute's `Accepted` status condition is True. Replaced the vague "custom
+conformance" wording. No route change (works on the platform's v3.1.0+ gateway).
+NOTE: no other LFX service uses RegularExpression HTTPRoute (query-service uses
+PathPrefix/Exact) because they route on their own top-level prefix; campaign-service
+can't (project-service owns /projects/), hence the regex.
+
 **Update** — Corrected the "re-run after a partial migration is harmless" doc claim
 (PR #28 review, copilot). The container concept doc and the `Migrate` doc comment
 said migrations are idempotent so a re-run after a partial is harmless — but that's
