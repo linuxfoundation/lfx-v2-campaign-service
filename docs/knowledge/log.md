@@ -2,6 +2,21 @@
 
 ## 2026-07-20
 
+**Update** — Fixed "briefs stay broken after a cold-start DB retry" (PR #28 review,
+cursor High, surfaced after #11 merged into #28). After #11 added the brief service +
+orchestrator to the container, the 503-mode background retry only late-bound the
+CONNECTION service + readiness — it never re-wired the BRIEF service, so brief/job
+routes returned 503 for the whole pod lifetime while `/readyz` flipped to healthy
+(readiness OK but routes 503 — worse than "unavailable"). Fixed: (1) gave
+`BriefService` a `SetBackend(briefs, campaigns, jobs, orch)` late-binding setter
+guarded by an RWMutex, with handlers now snapshotting collaborators via `ready()`
+(so a mid-request swap can't race); (2) the retry goroutine now fully re-wires — brief
+`SetBackend` + orchestrator + `FailStuckJobs` + `StartRecoverySweeper` — and flips
+readiness LAST so `/readyz` never reports OK while brief routes still 503; (3) 503-mode
+boot now wires a nil-repo brief service (routes mounted → typed 503, not a nil panic).
+Added `TestBriefService_SetBackend_LateBinding` + a container 503-mode assertion.
+Race-clean.
+
 **Update** — Documented the Traefik `RegularExpression` HTTPRoute version requirement
 (PR #28 review, copilot). Copilot claimed Traefik's Gateway API provider doesn't
 support `RegularExpression` path matches (only Exact/PathPrefix) → the project-nested

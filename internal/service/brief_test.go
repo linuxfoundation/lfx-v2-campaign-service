@@ -98,6 +98,40 @@ func TestBriefService_NilRepo_ReturnsServiceUnavailable(t *testing.T) {
 	}
 }
 
+// TestBriefService_SetBackend_LateBinding verifies the container can inject the
+// repos + orchestrator after construction (the DB cold-start retry path): a service
+// booted with nil repos returns 503, and once SetBackend injects live collaborators
+// the same call succeeds — without rebuilding the service (its routes are already
+// mounted). This is the fix for "briefs stay broken after DB retry".
+func TestBriefService_SetBackend_LateBinding(t *testing.T) {
+	s := NewBriefService(nil, nil, nil, nil)
+	ctx := context.Background()
+
+	// Before the pool is ready: brief + job routes return 503.
+	if _, err := s.GetBrief(ctx, &briefs.GetBriefPayload{ProjectID: "cncf", BriefID: "b1"}); !isBriefUnavailable(err) {
+		t.Fatalf("expected 503 before backend is set, got %T (%v)", err, err)
+	}
+	if _, err := s.GetJob(ctx, &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"}); !isBriefUnavailable(err) {
+		t.Fatalf("GetJob: expected 503 before backend is set, got %T (%v)", err, err)
+	}
+
+	// Inject live collaborators (as the background DB-init goroutine does).
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, nil)
+	s.SetBackend(repo, camps, jobs, orch)
+
+	// After the swap: the repo is consulted; a missing brief is NotFound, NOT 503 —
+	// proving the backend went live without a pod restart.
+	if _, err := s.GetBrief(ctx, &briefs.GetBriefPayload{ProjectID: "cncf", BriefID: "missing"}); isBriefUnavailable(err) {
+		t.Fatalf("expected the live repo to be consulted after SetBackend, still got 503")
+	}
+	if _, err := s.GetJob(ctx, &briefs.GetJobPayload{ProjectID: "cncf", JobID: "missing"}); isBriefUnavailable(err) {
+		t.Fatalf("GetJob: expected the live repo after SetBackend, still got 503")
+	}
+}
+
 // A missing bearer token is a client-side problem and must map to 400, not 500
 // (a 500 misrepresents it as a server fault and can trigger ops alerting).
 func TestBriefService_JWTAuth_EmptyTokenIsBadRequest(t *testing.T) {

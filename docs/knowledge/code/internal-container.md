@@ -34,11 +34,16 @@ stops looping) refuse to 503-loop on it. But a *transient* failure (DB unreachab
 503 mode instead of returning an error: the health dependency is a `notReady`
 placeholder (a non-nil always-false checker — NOT nil, since a nil dep is treated
 as ready, so `/readyz` reports 503, distinct from the no-database mode which
-reports ready) and the connection service starts with a nil repo. A background
-goroutine then retries on `dbRetryInterval`, and once the pool opens it swaps the
-live pool/repo into both services (`SetReadinessDep` / `SetBackend`, guarded by a
-mutex against concurrent request reads), flipping `/readyz` to healthy and the
-connection endpoints live.
+reports ready), and the connection AND brief services start with nil repos (their
+routes stay mounted and return the typed 503). A background goroutine then retries
+on `dbRetryInterval`, and once the pool opens it LATE-BINDS the live pool/repos into
+ALL the mounted services — the connection service (`SetBackend`), the brief service
++ orchestrator (`BriefService.SetBackend`, guarded by an RWMutex; handlers snapshot
+their collaborators via `ready()` so a swap can't race a request), and health
+readiness (`SetReadinessDep`) — and runs the same stuck-job recovery + starts the
+periodic sweeper the fast path does. Readiness is flipped LAST, so `/readyz` never
+reports OK while brief/job routes still 503. So after a cold-start retry succeeds,
+the connection AND brief/job endpoints go live WITHOUT a pod restart.
 
 `initDatabase` opens the pool FIRST (`NewPool` does a context-bounded `Ping`) and
 runs `Migrate` only after a reachable ping. This is deliberate: golang-migrate's

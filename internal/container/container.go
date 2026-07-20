@@ -40,6 +40,14 @@ type backendSetter interface {
 	SetBackend(domain.ConnectionRepository, domain.Encryptor)
 }
 
+// briefBackendSetter is the interface the container needs to late-bind the brief
+// service's repos + orchestrator after a cold-start retry opens the pool. *BriefService
+// implements it. Kept separate from backendSetter (whose SetBackend has a different
+// signature) so the retry path can wire both.
+type briefBackendSetter interface {
+	SetBackend(domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *service.Orchestrator)
+}
+
 // notReady is a ReadinessChecker that always reports not-ready. It is wired as
 // the health dependency during a cold start so /readyz returns 503 (not OK)
 // until the real pool is swapped in — distinct from the no-database mode, where
@@ -198,20 +206,20 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	// Transient failure: boot in 503 mode. Wire the health dependency to notReady
 	// (so /readyz reports 503, unlike the no-database mode), the connection service
 	// with a nil repo, and the brief service with nil repos (its routes stay mounted
-	// and return the typed 503). The background goroutine swaps the live pool/repo
-	// into the connection service + health readiness once it opens; the brief service
-	// (whose repos/orchestrator have no late-binding setter) stays in 503 mode until
-	// the next pod restart picks up the now-ready DB — acceptable for a cold start.
+	// and return the typed 503). The background goroutine late-binds the live
+	// pool/repos into ALL THREE (connection, brief, health readiness) once it opens,
+	// so brief + job routes go live without a pod restart.
 	campaign := service.NewCampaignService(notReady{})
 	connections := service.NewConnectionService(nil, enc)
+	briefs := service.NewBriefService(nil, nil, nil, nil)
 	c.Service = campaign
 	c.Connections = connections
-	c.Briefs = service.NewBriefService(nil, nil, nil, nil)
+	c.Briefs = briefs
 
 	initCtx, cancel := context.WithCancel(context.Background())
 	c.cancelInit = cancel
 	c.initDone = make(chan struct{})
-	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections)
+	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections, briefs)
 
 	return c, nil
 }
@@ -265,21 +273,52 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 }
 
 // retryDatabaseInit keeps attempting migration+pool-open until it succeeds or the
-// context is cancelled (shutdown). On success it swaps the live pool into both
-// services so /readyz flips to healthy and the connection endpoints go live.
-func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter) {
+// context is cancelled (shutdown). On success it late-binds the live pool into ALL
+// the mounted services — connection, brief (repos + orchestrator), and health
+// readiness — and runs the same stuck-job recovery + periodic sweeper the fast path
+// does, so /readyz flips to healthy AND the connection + brief/job routes go live
+// without a pod restart.
+func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter, bb briefBackendSetter) {
 	defer close(c.initDone)
 
 	for attempt := 1; ; attempt++ {
 		pool, err := initDatabase(ctx, cfg.DatabaseURL)
 		if err == nil {
 			c.setPool(pool)
+			// Late-bind the connection service.
 			b.SetBackend(postgres.NewConnectionRepo(pool), enc)
+			// Late-bind the brief service (repos + orchestrator) so brief/job routes go
+			// live, and run the stuck-job recovery + start the periodic sweeper — the
+			// same work wireLiveBackends does on the fast path.
+			briefRepo := postgres.NewBriefRepo(pool)
+			campaignRepo := postgres.NewCampaignRepo(pool)
+			jobRepo := postgres.NewJobRepo(pool)
+			dispatchers := map[model.Provider]service.PlatformDispatcher{}
+			if len(dispatchers) == 0 {
+				slog.Warn("no platform dispatchers registered; campaign creation will record jobs but perform no upstream dispatch")
+			}
+			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
+			// Safe without a lock: Close() waits on <-c.initDone (closed when this
+			// goroutine returns) before it reads c.orch, so this write happens-before
+			// that read.
+			c.orch = orch
+			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
+			recoverCtx, cancelRecover := context.WithTimeout(context.Background(), startupDBTimeout)
+			if n, rerr := jobRepo.FailStuckJobs(recoverCtx, "job did not complete before a service restart"); rerr != nil {
+				slog.Warn("failed to recover stuck jobs on startup", "error", rerr)
+			} else if n > 0 {
+				slog.Info("recovered stuck jobs on startup", "count", n)
+			}
+			cancelRecover()
+			orch.StartRecoverySweeper()
+			// Flip readiness LAST, so /readyz only reports healthy after the brief
+			// service is fully wired (avoids a window where /readyz is OK but brief
+			// routes still 503).
 			r.SetReadinessDep(pool)
 			if host := cfg.RedactedDatabaseHost(); host != "" {
-				slog.Info("database now ready; connection endpoints live", "database", host, "attempts", attempt)
+				slog.Info("database now ready; connection + brief endpoints live", "database", host, "attempts", attempt)
 			} else {
-				slog.Info("database now ready; connection endpoints live", "attempts", attempt)
+				slog.Info("database now ready; connection + brief endpoints live", "attempts", attempt)
 			}
 			return
 		}

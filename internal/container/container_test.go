@@ -217,6 +217,7 @@ func TestNewContainer_UnreachableDBBootsIn503Mode(t *testing.T) {
 	require.NotNil(t, cont)
 	assert.NotNil(t, cont.Service, "campaign service must be wired (reports not-ready)")
 	assert.NotNil(t, cont.Connections, "connection service must be wired (returns 503)")
+	assert.NotNil(t, cont.Briefs, "brief service must be wired in 503 mode (its routes return 503, not a nil panic)")
 	// The health service must report NOT ready while the pool is still coming up
 	// (distinct from no-DB mode, which reports ready).
 	assert.False(t, cont.Service.(interface{ ServiceReady() bool }).ServiceReady(),
