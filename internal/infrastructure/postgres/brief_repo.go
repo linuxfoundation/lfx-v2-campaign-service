@@ -67,42 +67,74 @@ func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief) (*m
 
 // ReplaceBrief replaces mutable fields, gating on expectedVersion.
 func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64) (*model.CampaignBrief, error) {
+	// Replacing brief content invalidates any prior approval: reset the brief to
+	// 'draft' and clear the approver so a modified brief cannot silently retain
+	// status='approved' (which would let changed ad inputs be treated as approved
+	// and dispatched without re-review). event_slug is included so a slug change
+	// is actually persisted (it is subject to the partial-unique index, which
+	// surfaces a conflict if the new slug collides with a live brief).
 	q := `UPDATE campaign_briefs SET
-		program_type=$1, url=$2, platforms=$3, event_details=$4, copy=$5, keywords=$6, targeting=$7,
+		program_type=$1, event_slug=$2, url=$3, platforms=$4, event_details=$5, copy=$6, keywords=$7, targeting=$8,
+		status='draft', approved_by=NULL, approved_at=NULL,
 		version=version+1, updated_at=now()
-		WHERE id=$8 AND project_id=$9 AND version=$10 AND status <> 'archived'`
+		WHERE id=$9 AND project_id=$10 AND version=$11 AND status <> 'archived'`
 	tag, err := r.db.Exec(ctx, q,
-		string(b.ProgramType), nullStr(b.URL), nullJSON(b.Platforms), nullJSON(b.EventDetails),
+		string(b.ProgramType), b.EventSlug, nullStr(b.URL), nullJSON(b.Platforms), nullJSON(b.EventDetails),
 		nullJSON(b.Copy), nullJSON(b.Keywords), nullJSON(b.Targeting),
 		b.ID, b.ProjectID, expectedVersion,
 	)
 	if err != nil {
+		// A slug change that collides with another live brief trips the partial
+		// unique index; surface it as a conflict (409) rather than a 500.
+		if isUniqueViolation(err) {
+			return nil, domain.ErrConflict
+		}
 		return nil, fmt.Errorf("replace brief: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		if _, gerr := r.GetBrief(ctx, b.ProjectID, b.ID); errors.Is(gerr, domain.ErrNotFound) {
+		// Distinguish missing from stale version. Surface a transient re-fetch
+		// error rather than masking it as a precondition failure (which would make
+		// the caller retry with a fresh ETag instead of backing off on a server
+		// error), consistent with ConnectionRepo.Update.
+		_, gerr := r.GetBrief(ctx, b.ProjectID, b.ID)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
 			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
 		}
-		return nil, domain.ErrPreconditionFailed
 	}
 	return r.GetBrief(ctx, b.ProjectID, b.ID)
 }
 
 // Approve marks a brief approved, recording the actor.
-func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model.Actor) (*model.CampaignBrief, error) {
+func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64) (*model.CampaignBrief, error) {
 	approvedBy, err := marshalActor(by)
 	if err != nil {
 		return nil, err
 	}
+	// Gate on version so a brief that was replaced (bumping its version) since the
+	// approver fetched it cannot be approved on stale content.
 	q := `UPDATE campaign_briefs SET status='approved', approved_by=$1, approved_at=now(),
 		version=version+1, updated_at=now()
-		WHERE id=$2 AND project_id=$3 AND status <> 'archived'`
-	tag, err := r.db.Exec(ctx, q, approvedBy, id, projectID)
+		WHERE id=$2 AND project_id=$3 AND version=$4 AND status <> 'archived'`
+	tag, err := r.db.Exec(ctx, q, approvedBy, id, projectID, expectedVersion)
 	if err != nil {
 		return nil, fmt.Errorf("approve brief: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return nil, domain.ErrNotFound
+		// Distinguish missing from stale version, mirroring ReplaceBrief.
+		_, gerr := r.GetBrief(ctx, projectID, id)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
+			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
+		}
 	}
 	return r.GetBrief(ctx, projectID, id)
 }

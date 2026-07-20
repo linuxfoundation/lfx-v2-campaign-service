@@ -10,10 +10,14 @@ resource: "internal/container"
 Package container provides dependency injection for the application.
 
 When a database URL is configured it validates settings, runs migrations,
-opens an instrumented `postgres.Pool`, and passes the pool to
-`NewCampaignService` so `/readyz` reflects DB connectivity. Without a
-database URL the health service still starts and connection routes return
-typed `503` responses.
+opens an instrumented `postgres.Pool`, and wires the services against it: the
+connection service (with its repo and the AES-GCM credential encryptor), the
+brief service and its async orchestrator (brief/campaign/job repos), and the
+campaign/health service so `/readyz` reflects DB connectivity. No platform
+dispatchers are registered yet, so campaign creation records jobs but performs
+no upstream dispatch (a startup warning notes this). Without a database URL the
+health service still starts and the connection and brief routes return typed
+`503` responses rather than unmounted `404`s.
 
 A database that is unreachable at boot does NOT crash the process. Config
 errors that a retry cannot fix fail fast (the process exits): invalid database
