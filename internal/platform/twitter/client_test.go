@@ -1757,6 +1757,72 @@ func TestPromotedTweetDuplicateSurfacesWarning(t *testing.T) {
 	}
 }
 
+// TestPromotedTweetDuplicateCodeOn5xxIsUnconfirmed is the regression for the
+// classification-ordering bug: the duplicate branch runs BEFORE
+// createOutcomeAmbiguous, and isDuplicatePromotedTweetErr must NOT claim
+// "duplicate" for a 3xx/5xx response that happens to carry
+// DUPLICATE_PROMOTABLE_ENTITY — on a 5xx the create MAY have committed, so the
+// outcome must stay UNCONFIRMED. Without the 4xx gate on the duplicate predicate,
+// this response would be mislabeled a known duplicate and the ambiguity lost.
+func TestPromotedTweetDuplicateCodeOn5xxIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			// A 5xx that (anomalously) carries the duplicate code — must NOT be
+			// treated as a known duplicate; the create may have committed.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"DUPLICATE_PROMOTABLE_ENTITY"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign should not be fatal on a 5xx promoted-tweet: %v", err)
+	}
+	if res.PromotedTweetWarning == "" {
+		t.Fatal("expected a PromotedTweetWarning for the 5xx promoted-tweet response")
+	}
+	// Must be UNCONFIRMED, NOT the duplicate/known-existing wording.
+	if !strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED") {
+		t.Errorf("5xx-with-duplicate-code must be UNCONFIRMED, got: %q", res.PromotedTweetWarning)
+	}
+	if strings.Contains(res.PromotedTweetWarning, "already exist") ||
+		strings.Contains(res.PromotedTweetWarning, "DUPLICATE_PROMOTABLE_ENTITY") {
+		t.Errorf("5xx must not be classified as a known duplicate: %q", res.PromotedTweetWarning)
+	}
+}
+
 // TestCreateCampaignLookupErrorAborts verifies that a transient 500 during the
 // campaign name lookup aborts the flow with an error and does NOT proceed to a
 // create POST — so a failed lookup is never treated as "not found" (which would

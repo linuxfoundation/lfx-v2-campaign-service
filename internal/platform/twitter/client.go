@@ -1400,7 +1400,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// could duplicate it — surface it as UNCONFIRMED ("may exist") so the
 			// caller reconciles rather than re-creating. Mirrors the meta/reddit
 			// clients' ambiguous-create handling.
-			promotedTweetWarning = fmt.Sprintf("promoted-tweet association for tweet %s is UNCONFIRMED: the create request reached X but its outcome is unknown (%s) — it MAY have been created; verify in X Ads Manager before retrying to avoid a duplicate", tweetID, err.Error())
+			promotedTweetWarning = fmt.Sprintf("promoted-tweet association for tweet %s is UNCONFIRMED: the create request may have reached X but its outcome is unknown (%s) — it MAY have been created; verify in X Ads Manager before retrying to avoid a duplicate", tweetID, err.Error())
 			steps = append(steps, fmt.Sprintf("Promoted tweet creation UNCONFIRMED for tweet %s (%s) — verify in X Ads Manager before retrying", tweetID, err.Error()))
 		case err != nil:
 			// A DEFINITE failure (a 4xx rejection or a pre-send error): the
@@ -1487,9 +1487,20 @@ func extractID(resp *apiResponse) string {
 // idempotent success — callers surface it as a warning to verify manually rather
 // than as an unqualified success. NOTE: true cross-call idempotency (idempotency
 // keys sent to X) is tracked in LFXV2-2665.
+//
+// The match is gated to a DEFINITE 4xx status: X documents this code as a 400
+// validation rejection, and the CreateCampaign switch evaluates this branch BEFORE
+// createOutcomeAmbiguous. Without the gate, a mutating 3xx/5xx response that
+// happened to carry this code (e.g. an intercepting proxy) would be reported as a
+// known duplicate instead of the required UNCONFIRMED outcome — silently dropping
+// the ambiguity for exactly the case that must stay ambiguous. On a 3xx/5xx the
+// create may have committed, so we must NOT assert "duplicate"; let it fall through
+// to createOutcomeAmbiguous.
 func isDuplicatePromotedTweetErr(err error) bool {
 	var ae *apiError
-	return errors.As(err, &ae) && ae.hasErrorCode(errCodeDuplicatePromotableEntity)
+	return errors.As(err, &ae) &&
+		ae.StatusCode >= 400 && ae.StatusCode < 500 &&
+		ae.hasErrorCode(errCodeDuplicatePromotableEntity)
 }
 
 // extractPromotedTweetID reads the promoted tweet id, which the X Ads API

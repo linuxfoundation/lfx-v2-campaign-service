@@ -82,8 +82,8 @@ signed URLs / destination secrets and gets persisted into Steps). Added a typed
 (a 5xx apiError or a transportError → UNCONFIRMED regardless of method; a 3xx →
 UNCONFIRMED only on a mutating method; a definite 4xx or pre-send error → not
 ambiguous). `isDuplicatePromotedTweetErr` now matches the typed error code
-(DUPLICATE_PROMOTABLE_ENTITY) instead of the no-longer-surfaced body. Brings X to
-parity with the reddit/meta/googleads clients. Concept doc updated.
+(DUPLICATE_PROMOTABLE_ENTITY, gated to a 4xx) instead of the no-longer-surfaced
+body. Brings X to parity with the reddit/meta/googleads clients. Concept doc updated.
 
 **Update** — Closed a no-body-leak regression in that same X/Twitter `apiError`
 (LFXV2-2642, PR #31 review by Copilot): `Error()` was rendering the retained
