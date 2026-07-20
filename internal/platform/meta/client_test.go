@@ -3505,9 +3505,10 @@ func TestBuildPlacementTargetingRejectsMessengerInbox(t *testing.T) {
 
 // TestNoFollowRedirectPolicy verifies the client force-disables redirect
 // following: the default client gets CheckRedirect=noFollow, and a WithHTTPClient-
-// supplied client is also overridden — on a copy, so the caller's client is not
-// mutated. Following a 3xx on a mutating POST could carry an already-sent create
-// to a different target and be misclassified.
+// supplied client's policy is overridden by building a FRESH client (an
+// http.Client must not be copied after first use), preserving the caller's
+// reusable Transport/Timeout without mutating the caller's client. Following a 3xx
+// on a mutating POST could carry an already-sent create to a different target.
 func TestNoFollowRedirectPolicy(t *testing.T) {
 	// Default client.
 	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p1"})
@@ -3519,24 +3520,36 @@ func TestNoFollowRedirectPolicy(t *testing.T) {
 	}
 
 	// Inject a client that ALREADY carries a caller-supplied redirect policy (a
-	// sentinel). This distinguishes an unconditional override from a "fill only nil
-	// callbacks" implementation: the latter would preserve the sentinel and silently
-	// re-enable redirect following. We assert (a) the client the code actually uses
-	// force-returns http.ErrUseLastResponse despite the sentinel, and (b) the
-	// caller's original client is untouched (shallow copy, not mutation).
+	// sentinel) plus a distinctive Transport and Timeout. This proves (a) the
+	// override is unconditional (a "fill only nil callbacks" impl would preserve the
+	// sentinel and re-enable following), (b) the reusable Transport/Timeout are
+	// carried onto the fresh client, and (c) the caller's client is not mutated and
+	// is NOT the same pointer (no value-copy of an http.Client after first use).
 	sentinel := errors.New("caller-sentinel-redirect-policy")
-	caller := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return sentinel }}
+	callerTransport := &http.Transport{}
+	caller := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return sentinel },
+		Transport:     callerTransport,
+		Timeout:       17 * time.Second,
+	}
 	c2 := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p1"},
 		WithHTTPClient(caller))
+	if c2.httpClient == caller {
+		t.Fatal("client reused the caller's *http.Client — must build a fresh one (no copy-after-use)")
+	}
 	if c2.httpClient.CheckRedirect == nil {
 		t.Fatal("injected client's CheckRedirect was not overridden")
 	}
 	if err := c2.httpClient.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
 		t.Errorf("injected client's CheckRedirect = %v, want http.ErrUseLastResponse (unconditional override)", err)
 	}
-	if caller.CheckRedirect == nil {
-		t.Fatal("caller's *http.Client was mutated — override must use a shallow copy")
+	if c2.httpClient.Transport != callerTransport {
+		t.Error("fresh client did not preserve the caller's Transport")
 	}
+	if c2.httpClient.Timeout != 17*time.Second {
+		t.Errorf("fresh client Timeout = %v, want the caller's 17s", c2.httpClient.Timeout)
+	}
+	// The caller's client is untouched.
 	if err := caller.CheckRedirect(nil, nil); err != sentinel {
 		t.Errorf("caller's CheckRedirect was mutated: got %v, want the untouched sentinel", err)
 	}

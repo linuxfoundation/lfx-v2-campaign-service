@@ -2,6 +2,20 @@
 
 ## 2026-07-19
 
+**Update** — Fixed an http.Client copy-after-use in the Meta client's no-follow
+enforcement (LFXV2-2641, PR #30 review by Copilot). `NewClient` value-copied a
+`WithHTTPClient`-supplied client (`hc := *c.httpClient`) to override CheckRedirect
+— but an `http.Client` must not be copied after first use (the copy duplicates its
+internal mutex while sharing the request-cancellation map, so concurrent use of
+the caller's client and the copy can race). Now builds a FRESH `*http.Client`
+carrying only the exported reusable fields (Transport, Jar, Timeout) with
+`CheckRedirect: noFollow`. The no-follow test asserts Transport/Timeout are
+preserved and the fresh client is a distinct pointer. Also made the campaign
+UNCONFIRMED step reason-neutral ("ambiguous response — timeout, server error, or
+an unfollowed redirect") since a 3xx now routes there too. NOTE: the reddit client
+(merged) has the same value-copy pattern — follow-up tracked to apply the same
+fresh-client fix there. The twitter client gets the same fix on PR #31.
+
 **Update** — Closed two more Meta ambiguity gaps (LFXV2-2641, PR #30 review by
 Copilot). (1) `doRequest` returned a plain error when a NON-2xx response body
 failed to read, stripping the HTTP status — so a mutating 3xx/5xx with an

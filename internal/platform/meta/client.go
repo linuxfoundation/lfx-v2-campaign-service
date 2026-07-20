@@ -382,13 +382,22 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces
 	// the default above. Following a redirect would carry an already-sent mutating
 	// POST to a different target and muddy outcome classification, so no-follow is a
-	// correctness requirement, not a default. Applied to a SHALLOW COPY so the
-	// caller's *http.Client is never mutated (it may be reused elsewhere). Mirrors
-	// the reddit client's NewClient enforcement.
+	// correctness requirement, not a default.
+	//
+	// Build a FRESH *http.Client rather than value-copying the caller's: an
+	// http.Client must not be copied after first use (a value copy duplicates its
+	// internal mutex while sharing the request-cancellation map, so concurrent use
+	// of the caller's client and our copy can race). We carry over only the exported,
+	// reusable fields (Transport, Jar, Timeout) — the shareable connection pool /
+	// cookie jar / deadline — and set our own CheckRedirect. The caller's client is
+	// never mutated and is safe to keep using elsewhere.
 	if c.httpClient != nil {
-		hc := *c.httpClient
-		hc.CheckRedirect = noFollow
-		c.httpClient = &hc
+		c.httpClient = &http.Client{
+			Transport:     c.httpClient.Transport,
+			CheckRedirect: noFollow,
+			Jar:           c.httpClient.Jar,
+			Timeout:       c.httpClient.Timeout,
+		}
 	}
 	return c
 }
@@ -1836,7 +1845,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// (retry-safe idempotency is tracked in LFXV2-2665). Mirrors the reddit
 		// client's createOutcomeAmbiguous handling.
 		if createOutcomeAmbiguous(err) {
-			steps = append(steps, "Campaign creation outcome is UNCONFIRMED (timeout or server error); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
+			steps = append(steps, "Campaign creation outcome is UNCONFIRMED (ambiguous response — timeout, server error, or an unfollowed redirect); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
 			return &CampaignResult{
 				Platform:     "meta-ads",
 				CampaignName: campaignName,
