@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -25,11 +26,13 @@ import (
 // (any non-404 status, e.g. 401/503, proves it is mounted).
 func TestConnectionRoutesAreMounted(t *testing.T) {
 	endpoints := svc.NewEndpoints(service.NewCampaignService(nil))
-	// The no-DB connection service is a real Service whose routes return a typed
-	// 503 rather than 404 — perfect for proving the route is mounted.
+	// The no-DB connection and brief services are real Services whose routes
+	// return a typed 503 rather than 404 — perfect for proving the route is
+	// mounted.
 	connEndpoints := connsvc.NewEndpoints(service.NewConnectionService(nil, nil))
+	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
 
-	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints)
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}
@@ -41,6 +44,7 @@ func TestConnectionRoutesAreMounted(t *testing.T) {
 		path   string
 	}{
 		{"connection google-ads create", http.MethodPost, "/projects/proj-123/connection-google-ads"},
+		{"brief create", http.MethodPost, "/projects/proj-123/briefs"},
 		{"campaign health livez", http.MethodGet, "/livez"},
 	}
 	for _, tc := range cases {
@@ -56,12 +60,18 @@ func TestConnectionRoutesAreMounted(t *testing.T) {
 	}
 }
 
-// TestBuildMuxNilConnEndpointsFailsLoud verifies the fail-loud guard: a nil
-// connEndpoints (a programmer-level mis-wiring) returns an error rather than
-// silently building a mux with the connection routes unmounted.
-func TestBuildMuxNilConnEndpointsFailsLoud(t *testing.T) {
+// TestBuildMuxNilEndpointsFailsLoud verifies the fail-loud guard: a nil
+// connEndpoints or briefEndpoints (a programmer-level mis-wiring) returns an
+// error rather than silently building a mux with those routes unmounted.
+func TestBuildMuxNilEndpointsFailsLoud(t *testing.T) {
 	endpoints := svc.NewEndpoints(service.NewCampaignService(nil))
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, nil); err == nil {
-		t.Fatal("expected buildMux to fail loudly when connEndpoints is nil, got nil error")
+	connEndpoints := connsvc.NewEndpoints(service.NewConnectionService(nil, nil))
+	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
+
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, nil, briefEndpoints); err == nil {
+		t.Error("expected buildMux to fail loudly when connEndpoints is nil, got nil error")
+	}
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, nil); err == nil {
+		t.Error("expected buildMux to fail loudly when briefEndpoints is nil, got nil error")
 	}
 }

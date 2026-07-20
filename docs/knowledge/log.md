@@ -2,6 +2,31 @@
 
 ## 2026-07-20
 
+**Update** — Idempotency-lookup errors no longer silently fall through to dispatch
+(PR #11 review, cursor Medium). In `dispatchPlatform`, the fast path treated ANY
+non-nil error from `GetCampaignByPlatform` like "no row" and fell through to
+claim/dispatch — so a transient/real DB failure that hid an existing campaign could
+trigger a duplicate upstream create, with no log/signal. Now the outcomes are
+distinguished: existing-with-upstream-id → reuse; `ErrNotFound` → fall through to the
+claim; any OTHER error → surface as a platform failure (logged ERROR), not a blind
+dispatch. Corrected the concept doc, which had documented the old swallow-the-error
+behavior as intentional. Test added (`TestOrchestrator_IdempotencyLookupErrorIsFailure`).
+
+**Update** — Addressed dealako's 4 [minor] review items on PR #11 (LFXV2-2626).
+(1) `GetCampaignByPlatform` was the one campaign_repo method not scoped by
+project_id — added a `projectID` param + `AND project_id=$3` (matching
+GetCampaign/ClaimCampaignDispatch) for tenant-isolation defense-in-depth; updated
+the domain interface + the orchestrator call site. (2) The rare double-fault in
+`ClaimCampaignDispatch` (post-insert read AND rollback both fail) orphans a
+`status='pending'` row that permanently blocks the (brief,platform) pair — now
+logs at ERROR with project_id/brief_id/platform/job_id for alerting/manual
+reconcile. (3) Added `TestClaimCampaignDispatch_ConcurrentSingleWinner` — N
+goroutines racing the claim path, asserting exactly one wins and losers cleanly
+no-op (the prior claim tests were single-threaded). (4) `design/brief.go`: `Brief`
+now `Reference()`s `BriefInput` for the 8 shared attributes instead of
+duplicating them — this also fixed a latent drift the manual copy had already
+caused (Brief's `program_type` was missing BriefInput's Enum, so the generated
+OpenAPI had no enum + gibberish examples on the Brief response; regenerated).
 **Update** — Closed the second half of the X/Twitter URL leak (PR #31 review,
 copilot). The transportError fix covered the AMBIGUOUS branch, but the PRE-SEND
 branch (`isPreSendDialError` → DNS/connect-refused) still did a raw
@@ -242,6 +267,49 @@ must also be mounted in `server.go`, or its routes 404 despite compiling.
 **Creation** — Added the `internal/platform/reddit` concept doc for the new
 Reddit Ads API v3 client (OAuth2 token refresh + Campaign -> Ad Group -> Ad
 creation) and listed it in the code index.
+**Update** — Hardened claim-based dispatch: resolve the dispatcher and reuse an
+already-completed campaign BEFORE claiming (so a no-dispatcher platform never
+leaves a permanent pending claim), release the pending claim if dispatch fails
+before the upstream campaign is created, and bound concurrent provider calls with
+a process-wide semaphore (previously the per-job errgroup limit let N concurrent
+jobs each get maxParallelDispatch slots). Shutdown cancels in-flight runs on
+drain timeout.
+
+**Update** — Reworked LFXV2-2665 single-flight from a held-connection advisory
+lock to an atomic claim row (INSERT ON CONFLICT DO NOTHING of a `pending`
+campaign), removing the pool-exhaustion/blocking hazards of holding a connection
+across the HTTP dispatch. The pending row is also the recovery signal for an
+upstream-create-then-crash. Recovery scan uses a staleness cutoff so a rolling
+deploy can't fail a job the old replica is still dispatching.
+
+**Update** — Durable campaign dispatch (LFXV2-2665): per-platform single-flight
+via an atomic claim row (ClaimCampaignDispatch — INSERT ON CONFLICT DO NOTHING of
+a 'pending' campaign; see the later hardening entries above for the final shape,
+which superseded an initial advisory-lock attempt), so concurrent
+create-campaigns can't double-create upstream; the orchestrator drains in-flight
+runs on graceful shutdown before the pool closes; and startup fails-forward jobs
+left non-terminal by a restart. Added CampaignRepository.ClaimCampaignDispatch /
+DeleteDispatchClaim and JobRepository.FailStuckJobs.
+
+**Update** — PR #11 review round 3: validate brief_id/campaign_id/job_id path
+params as UUIDs (400 instead of a PostgreSQL cast 500); make brief approval
+version-gated via If-Match (rejects approving stale content, 412/428); type the
+job-poll result (PlatformResult array, replacing Any); and stop applying
+debug.LogPayloads to the connection/brief/health endpoints so DEBUG can't leak
+BearerTokens or plaintext provider credentials into logs (debug.HTTP header/status
+logging is retained). Reconciled api-catalog (PlatformResult; CampaignCreateResult
+marked as the future richer shape).
+
+**Update** — Brief + campaign API and async orchestrator (LFXV2-2626):
+updated `design`, `internal/service`, and `internal/container` concepts for
+the Project → Brief → Campaigns hierarchy, async job dispatch, and idempotent
+per-platform creation. Behavior hardened per review: brief content replace
+resets status to `draft` and persists `event_slug`; duplicate platform sets are
+rejected; dispatch reuses an existing upstream campaign instead of re-creating;
+brief responses carry `event_details`/`copy`/`keywords`/`targeting`; the
+`(project_id, event_slug)` archived-aware partial unique index moved to a new
+migration `000003` (never edit an applied migration in place); `platforms` is
+enum-constrained and every brief method declares `BadRequest` (JWTAuth can 400).
 
 **Creation** — Added OKF concept doc for internal/platform/linkedin (LinkedIn
 Marketing API client), listed in the code index.

@@ -163,7 +163,7 @@ Beyond connections, the service persists briefs and campaigns. Both carry the `v
 ```sql
 CREATE TABLE campaign_briefs (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id    UUID        NOT NULL,
+    project_id    TEXT        NOT NULL,                 -- project UUID or slug (migration 000003)
     program_type  TEXT        NOT NULL                 -- funnel context
                   CHECK (program_type IN ('events','education','membership')),
     event_slug    TEXT        NOT NULL,                -- UNIQUE with project_id
@@ -179,9 +179,13 @@ CREATE TABLE campaign_briefs (
     approved_by   JSONB,                               -- {name,email,username} or null
     approved_at   TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (project_id, event_slug)
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- (project_id, event_slug) uniqueness is a PARTIAL unique index excluding
+-- archived briefs (migration 000003), so archiving a brief frees the slot for a
+-- new brief with the same slug:
+CREATE UNIQUE INDEX uq_campaign_briefs_project_event
+    ON campaign_briefs (project_id, event_slug) WHERE status <> 'archived';
 CREATE INDEX idx_campaign_briefs_project_id ON campaign_briefs (project_id);
 ```
 
@@ -190,7 +194,7 @@ CREATE INDEX idx_campaign_briefs_project_id ON campaign_briefs (project_id);
 ```sql
 CREATE TABLE campaigns (
     id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id           UUID        NOT NULL,
+    project_id           TEXT        NOT NULL,          -- project UUID or slug (migration 000003)
     brief_id             UUID        NOT NULL REFERENCES campaign_briefs(id),  -- many campaigns per brief
     job_id               UUID,                          -- creation job that produced this row
     platform             TEXT        NOT NULL,          -- channel: google-ads / linkedin-ads / ...

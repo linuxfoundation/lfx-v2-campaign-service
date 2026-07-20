@@ -32,7 +32,7 @@ A brief is the funnel unit: it carries the **program** (`program_type` = events 
 | GET | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Get a brief (full copy, keywords, targeting); returns ETag. |
 | PUT | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Replace a brief (requires `If-Match`). |
 | POST | `/projects/{projectId}/briefs/{id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
-| POST | `/projects/{projectId}/briefs/{id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation. |
+| POST | `/projects/{projectId}/briefs/{id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation (requires `If-Match`; approval is version-gated so a brief replaced since it was fetched cannot be approved on stale content). |
 | DELETE | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Archive a brief (soft delete). |
 
 > Listing briefs and viewing a brief's version history are served by the Query Service, not by dedicated endpoints here.
@@ -276,13 +276,31 @@ platforms: CampaignPlatform[]   — Platforms this job will create on (echoed fr
 jobId: string
 status: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
                                 — 'partial' = some platforms succeeded, some failed
-results: CampaignCreateResult[] — Per-platform results, populated as each platform completes
-errors: string[]                — Platform-specific errors if any
-startedAt: string               — ISO timestamp
-finishedAt?: string             — ISO timestamp, present once terminal
+result?: PlatformResult[]       — Per-platform results, written once when the job
+                                  reaches a terminal state (absent while queued/running)
+error?: string                  — Terminal error, if the job failed as a whole
 ```
 
-### CampaignCreateResult (per-platform result, embedded in JobPollResponse.results)
+### PlatformResult (per-platform outcome, embedded in JobPollResponse.result)
+
+```
+platform: string        — Platform this result is for
+ok: boolean             — Whether the campaign was created (or reused) successfully
+campaignId?: string     — Upstream platform campaign id (present when ok)
+error?: string          — Failure reason (present when not ok)
+```
+
+Per-platform errors are carried inside each `result` entry rather than in a
+separate top-level array; the job's own start/finish times are available from
+the job record's timestamps and are not echoed in the poll payload.
+
+### CampaignCreateResult (future, richer per-platform result)
+
+> Not yet emitted. Today the job result carries the minimal `PlatformResult`
+> shape above (`platform`/`ok`/`campaignId`/`error`). Once the per-provider
+> dispatchers land, each result is expected to grow into the richer shape below
+> (counts, creation log, direct UI URL); this section documents that intended
+> end-state, not the current payload.
 
 ```
 platform: CampaignPlatform

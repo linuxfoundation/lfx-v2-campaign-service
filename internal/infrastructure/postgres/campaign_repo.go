@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -19,10 +21,75 @@ type CampaignRepo struct {
 	db *Pool
 }
 
+// claimRollbackTimeout bounds the best-effort rollback of a just-inserted pending
+// claim when the follow-up read fails; it runs on a context detached from the
+// (possibly-cancelled) request context.
+const claimRollbackTimeout = 5 * time.Second
+
 // NewCampaignRepo returns a CampaignRepo backed by pool.
 func NewCampaignRepo(pool *Pool) *CampaignRepo { return &CampaignRepo{db: pool} }
 
 var _ domain.CampaignRepository = (*CampaignRepo)(nil)
+
+// ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
+// by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
+// unique index makes the claim single-winner across all replicas without holding
+// a connection or a blocking lock: INSERT ... ON CONFLICT DO NOTHING inserts a
+// row (claimed) or does nothing (already claimed/completed). No RETURNING is used
+// because ON CONFLICT DO NOTHING returns no row on conflict, so we detect the
+// winner via RowsAffected and then read the current row to return it.
+func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
+	q := `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
+		VALUES ($1, $2, $3, $4, '', 'pending')
+		ON CONFLICT (brief_id, platform) DO NOTHING`
+	tag, err := r.db.Exec(ctx, q, projectID, briefID, jobID, string(platform))
+	if err != nil {
+		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
+	}
+	claimed := tag.RowsAffected() == 1
+
+	row, gerr := r.GetCampaignByPlatform(ctx, projectID, briefID, platform)
+	if gerr != nil {
+		// The row must exist now (we or someone else just wrote it); a read failure
+		// here is a genuine error. If WE just inserted the pending row, roll it back
+		// (best effort) so a failed claim doesn't leave a pending row that blocks the
+		// pair forever; report claimed=false so the caller treats it as a clean
+		// failure with nothing to release.
+		if claimed {
+			// Roll back on a context detached from ctx: the read likely failed
+			// BECAUSE ctx was cancelled, and reusing it for the DELETE would fail
+			// too, leaking the just-committed placeholder.
+			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
+			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform); derr != nil {
+				cancel()
+				// Double failure: both the post-insert read AND the rollback delete
+				// failed, so a 'pending' placeholder is orphaned and will block every
+				// future claim for this (brief, platform) — no sweeper reaps pending
+				// campaigns rows. This is a rare double-fault, but its blast radius is
+				// total for the pair, so log at ERROR with enough context to alert and
+				// reconcile manually (delete the stuck row) rather than swallowing it.
+				slog.ErrorContext(ctx, "orphaned pending campaign claim: read-after-claim AND rollback both failed; manual cleanup required",
+					"project_id", projectID, "brief_id", briefID, "platform", string(platform), "job_id", jobID,
+					"read_err", gerr.Error(), "rollback_err", derr.Error())
+				return false, nil, fmt.Errorf("read campaign after claim: %w (and failed to roll back pending claim: %v)", gerr, derr)
+			}
+			cancel()
+		}
+		return false, nil, fmt.Errorf("read campaign after claim: %w", gerr)
+	}
+	return claimed, row, nil
+}
+
+// DeleteDispatchClaim removes a still-'pending' claim row so a failed dispatch
+// doesn't permanently block the (brief, platform) pair. The status guard means
+// it can only ever delete a placeholder claim, never a created campaign.
+func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider) error {
+	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND status='pending'`
+	if _, err := r.db.Exec(ctx, q, briefID, string(platform)); err != nil {
+		return fmt.Errorf("delete dispatch claim: %w", err)
+	}
+	return nil
+}
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
@@ -37,6 +104,24 @@ func (r *CampaignRepo) GetCampaign(ctx context.Context, projectID, briefID, id s
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("get campaign: %w", err)
+	}
+	return c, nil
+}
+
+// GetCampaignByPlatform returns the campaign for a (brief, platform) pair. The
+// (brief_id, platform) pair is unique, so at most one row matches. It is scoped by
+// project_id for tenant isolation (defense-in-depth), matching GetCampaign and
+// ClaimCampaignDispatch — brief_id is a globally-unique UUID, so this guards a
+// future direct caller from reading across tenants with an attacker-influenced
+// briefID.
+func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider) (*model.Campaign, error) {
+	q := `SELECT ` + campaignCols + ` FROM campaigns WHERE brief_id=$1 AND platform=$2 AND project_id=$3`
+	c, err := scanCampaign(r.db.QueryRow(ctx, q, briefID, string(platform), projectID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get campaign by platform: %w", err)
 	}
 	return c, nil
 }
@@ -82,10 +167,17 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		if _, gerr := r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID); errors.Is(gerr, domain.ErrNotFound) {
+		// Surface a transient re-fetch error rather than masking it as a
+		// precondition failure, consistent with ConnectionRepo.Update.
+		_, gerr := r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
 			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
 		}
-		return nil, domain.ErrPreconditionFailed
 	}
 	return r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID)
 }
