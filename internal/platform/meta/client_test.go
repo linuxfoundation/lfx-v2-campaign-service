@@ -3474,4 +3474,25 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 			t.Errorf("createOutcomeAmbiguous(APIError{%d}) = %v, want %v", tc.status, got, tc.want)
 		}
 	}
+
+	// The 3xx-ambiguity is gated on a MUTATING method: a GET redirect is not a
+	// create, so it must NOT be UNCONFIRMED. A 5xx stays ambiguous regardless of
+	// method (the server may have committed before erroring). Matches the reddit
+	// client's contract.
+	methodCases := []struct {
+		method string
+		status int
+		want   bool
+	}{
+		{http.MethodGet, http.StatusFound, false},                 // GET 302 — not a create
+		{http.MethodGet, http.StatusInternalServerError, true},    // GET 500 — still ambiguous
+		{http.MethodPost, http.StatusFound, true},                 // POST 302 — mutating redirect
+		{http.MethodDelete, http.StatusTemporaryRedirect, true},   // DELETE 307 — mutating
+	}
+	for _, tc := range methodCases {
+		err := &APIError{StatusCode: tc.status, Method: tc.method, Path: "/campaigns"}
+		if got := createOutcomeAmbiguous(err); got != tc.want {
+			t.Errorf("createOutcomeAmbiguous(APIError{%s %d}) = %v, want %v", tc.method, tc.status, got, tc.want)
+		}
+	}
 }

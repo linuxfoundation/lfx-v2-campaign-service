@@ -1,5 +1,17 @@
 # Log
 
+## 2026-07-19
+
+**Update** — Gated the Meta client's 3xx create-outcome ambiguity on a mutating
+method (LFXV2-2641, PR #30 review by Cursor Bugbot). `createOutcomeAmbiguous`
+treated EVERY 3xx as UNCONFIRMED without checking the method, diverging from the
+reddit client (which gates 3xx on `isMutatingMethod`) despite claiming to mirror
+it. All call sites pass POST today so behavior was unchanged, but the helper's
+contract was wrong for any future GET caller — a GET redirect is not a create.
+Added `isMutatingMethod` to the meta client and gated the 3xx branch (5xx and
+transport errors stay ambiguous regardless of method); extended the ambiguity test
+with GET/POST/DELETE method cases. Now genuinely identical to reddit.
+
 ## 2026-07-18
 
 **Creation** — Added the `internal/platform/googleads` Go package (GA-1 scaffold,
@@ -12,6 +24,13 @@ GAQL gotcha documented: v23 replaced campaign.start_date/end_date with
 campaign.start_date_time/end_date_time. Concept doc + code index updated. Campaign
 creation (:mutate), metrics/keywords/audience, and keyword actions follow in
 GA-2..GA-5.
+
+**Update** — Also strengthened the no-follow regression tests (meta + twitter):
+they injected a nil-`CheckRedirect` client, which couldn't prove the override is
+UNCONDITIONAL (a "fill only nil callbacks" impl would pass). Now they inject a
+caller client carrying a SENTINEL `CheckRedirect` and assert the client the code
+uses returns `http.ErrUseLastResponse` despite it, while the caller's original
+still returns the sentinel (shallow copy, not mutation). (PR #30 review by Copilot.)
 
 **Update** — Disabled HTTP redirect following on the Meta and X/Twitter Ads
 clients (LFXV2-2641), closing a duplicate-create gap: both built their
