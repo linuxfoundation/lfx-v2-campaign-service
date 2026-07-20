@@ -367,6 +367,14 @@ cases now set Project+EventName so they exercise the budget checks, not the new
 attribution checks that run first) + added tests for the 128-overflow, pipe-strip,
 malformed-resourceName, and firstResourceName cases. Concept doc updated.
 
+**Update** — GA-2 PR #33 follow-up (cursor Bugbot): the both-fields-required check
+validated the RAW input (`strings.TrimSpace`), but composeName only includes a
+segment when its `sanitizeNamePart` is non-empty — so a delimiter-only value like
+`"|||"` passed validation yet sanitized to nothing, dropping the Project segment
+while still creating a paid budget/campaign. Fixed by validating the SANITIZED
+value (`sanitizeNamePart(in.Project/EventName) == ""`) so validation and
+composition stay consistent; added pipe-only test cases.
+
 **Creation** — Added Google Ads campaign creation (GA-2, LFXV2-2637) in
 `internal/platform/googleads/campaign.go`: `CreateCampaign` creates a PAUSED SEARCH
 campaign as two sequential `:mutate` calls — a non-shared STANDARD `campaignBudget`

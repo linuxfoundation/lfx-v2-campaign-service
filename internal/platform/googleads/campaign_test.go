@@ -266,6 +266,14 @@ func TestCreateCampaign_RejectsBadInput(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", BudgetUSD: 50}); err == nil {
 		t.Error("a campaign with no EventName should be rejected")
 	}
+	// A delimiter-only value ("|||") is non-empty raw but sanitizes to "", which would
+	// drop the segment from the composed name — must be rejected like an empty field.
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "|||", EventName: "E", BudgetUSD: 50}); err == nil {
+		t.Error("a pipe-only Project (sanitizes to empty) should be rejected")
+	}
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", EventName: " | ", BudgetUSD: 50}); err == nil {
+		t.Error("a pipe-only EventName (sanitizes to empty) should be rejected")
+	}
 }
 
 // --- unit tests for the pure helpers ---

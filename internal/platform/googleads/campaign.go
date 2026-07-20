@@ -309,10 +309,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// require Project and EventName independently). Project is the canonical
 	// attribution key the data pipeline parses out of the campaign name, so a campaign
 	// with no Project segment is mis-attributed even if EventName is present.
-	if strings.TrimSpace(in.Project) == "" {
+	//
+	// Validate the SANITIZED values, not the raw input: composeName only includes a
+	// segment when its sanitizeNamePart is non-empty, so a delimiter-only value like
+	// "|||" passes a raw TrimSpace check yet sanitizes to nothing — which would drop
+	// the Project segment while still creating a paid budget/campaign. Checking the
+	// sanitized value here keeps validation and composition consistent.
+	if sanitizeNamePart(in.Project) == "" {
 		return nil, fmt.Errorf("google-ads campaign requires a non-empty Project")
 	}
-	if strings.TrimSpace(in.EventName) == "" {
+	if sanitizeNamePart(in.EventName) == "" {
 		return nil, fmt.Errorf("google-ads campaign requires a non-empty EventName")
 	}
 	// Validate the budget and compute amountMicros ONCE. Reject NaN/Inf explicitly
