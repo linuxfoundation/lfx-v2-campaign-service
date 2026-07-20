@@ -206,7 +206,6 @@ func anyRuleMatches(matchers []*regexp.Regexp, path string) bool {
 	return false
 }
 
-// TestRouteRuleSetParity asserts every path the HTTPRoute regex forwards is also
 // TestProjectAPIRuleEnforcesCampaignManager asserts the project-api rule enforces the
 // exact security invariant the parity tests assume: an openfga_check on relation
 // campaign_manager, object project:{projectId}. Named separately so a downgrade of
@@ -216,6 +215,7 @@ func TestProjectAPIRuleEnforcesCampaignManager(t *testing.T) {
 	assertProjectAPIAuthz(t, helmTemplate(t, "templates/ruleset.yaml"))
 }
 
+// TestRouteRuleSetParity asserts every path the HTTPRoute regex forwards is also
 // authorized by a RuleSet entry, and vice versa — the chart↔route parity invariant.
 // A drift here is a security bug: a forwarded-but-unruled path skips the FGA check.
 func TestRouteRuleSetParity(t *testing.T) {
