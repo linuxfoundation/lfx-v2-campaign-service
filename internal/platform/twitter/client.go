@@ -1413,11 +1413,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if promotedTweetID != "" {
 				steps = append(steps, fmt.Sprintf("Promoted tweet created: %s (tweet: %s; created ACTIVE by the API but held from serving by the PAUSED line item)", promotedTweetID, tweetID))
 			} else {
-				// A 2xx response missing data.id is a malformed success: don't
-				// silently treat it as done. Surface a warning (step + result field)
-				// so the gap is visible without making the whole flow fatal.
-				promotedTweetWarning = fmt.Sprintf("promoted-tweet POST returned no ID (malformed response) for tweet %s", tweetID)
-				steps = append(steps, fmt.Sprintf("Promoted tweet creation returned no promoted-tweet ID (malformed response, tweet: %s) — add it manually in X Ads Manager", tweetID))
+				// A 2xx response missing data.id is a malformed SUCCESS: the POST
+				// reached X and returned 2xx, so the association MAY have been created —
+				// X just didn't return a usable id. This is UNCONFIRMED, NOT a clean
+				// failure: telling the operator to "add it manually" would invite the
+				// duplicate this classification exists to prevent (a manual re-add on top
+				// of an association X already made). Surface it with the same verify-
+				// before-retry wording as the ambiguous-error branch so it is reconciled,
+				// not blindly re-created. Non-fatal: the campaign + line item still return.
+				promotedTweetWarning = fmt.Sprintf("promoted-tweet association for tweet %s is UNCONFIRMED: X returned a 2xx with no promoted-tweet ID (malformed response) — it MAY have been created; verify in X Ads Manager before retrying to avoid a duplicate", tweetID)
+				steps = append(steps, fmt.Sprintf("Promoted tweet creation UNCONFIRMED for tweet %s (2xx with no ID, malformed response) — verify in X Ads Manager before retrying", tweetID))
 			}
 		}
 	} else {

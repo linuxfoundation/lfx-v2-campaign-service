@@ -1606,17 +1606,28 @@ func TestPromotedTweetMissingIDWarns(t *testing.T) {
 		t.Errorf("expected empty PromotedTweetID, got %q", res.PromotedTweetID)
 	}
 	if res.PromotedTweetWarning == "" {
-		t.Errorf("expected PromotedTweetWarning to be set for malformed promoted-tweet response")
+		t.Fatalf("expected PromotedTweetWarning to be set for malformed promoted-tweet response")
+	}
+	// A 2xx with no id means the POST SUCCEEDED — X may have created the
+	// association. It must be classified UNCONFIRMED (verify before retrying), NOT
+	// as a clean failure that tells the operator to "add it manually" (which would
+	// invite a duplicate on top of an association X already made).
+	if !strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED") {
+		t.Errorf("2xx-with-no-id must be UNCONFIRMED, got: %q", res.PromotedTweetWarning)
+	}
+	if strings.Contains(res.PromotedTweetWarning, "add it manually") ||
+		strings.Contains(res.PromotedTweetWarning, "add manually") {
+		t.Errorf("2xx-with-no-id must NOT tell the operator to add manually (duplicate risk): %q", res.PromotedTweetWarning)
 	}
 	var found bool
 	for _, s := range res.Steps {
-		if strings.Contains(s, "no promoted-tweet ID") {
+		if strings.Contains(s, "UNCONFIRMED") && strings.Contains(s, "verify") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected a warning step for missing promoted-tweet id, steps: %v", res.Steps)
+		t.Errorf("expected an UNCONFIRMED/verify warning step for the 2xx-with-no-id response, steps: %v", res.Steps)
 	}
 }
 

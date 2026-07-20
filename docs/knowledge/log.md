@@ -85,6 +85,24 @@ ambiguous). `isDuplicatePromotedTweetErr` now matches the typed error code
 (DUPLICATE_PROMOTABLE_ENTITY, gated to a 4xx) instead of the no-longer-surfaced
 body. Brings X to parity with the reddit/meta/googleads clients. Concept doc updated.
 
+**Update** — Extended the X/Twitter create-outcome classification to the 2xx
+edge (LFXV2-2642, PR #31 review by Copilot): a promoted_tweets POST returning a
+2xx with no `data.id` was warning "add it manually" — but a 2xx means the POST
+succeeded and X MAY have created the association, so a manual re-add risks the
+duplicate the classifier prevents. Now that case is surfaced as UNCONFIRMED
+(verify before retrying), same wording as the ambiguous-error branch;
+`TestPromotedTweetMissingIDWarns` updated to assert the distinction.
+
+**Update** — Gated the X/Twitter duplicate classification to a 4xx (LFXV2-2642,
+PR #31 review): `isDuplicatePromotedTweetErr` matched `DUPLICATE_PROMOTABLE_ENTITY`
+on any status and ran before `createOutcomeAmbiguous`, so a mutating 3xx/5xx
+carrying that code was reported as a known duplicate instead of UNCONFIRMED (the
+create may have committed on a 5xx). Now requires a definite 4xx; 3xx/5xx falls
+through to ambiguous. Also reworded an UNCONFIRMED warning from "reached X" to
+"may have reached X" (a transportError is only plausibly sent), and corrected the
+`createOutcomeAmbiguous` log description (status/type-based + caller-scoped, NOT
+"any GET failure → clean").
+
 **Update** — Closed a no-body-leak regression in that same X/Twitter `apiError`
 (LFXV2-2642, PR #31 review by Copilot): `Error()` was rendering the retained
 `ErrorCodes` from the untrusted response body, re-opening the leak channel into
