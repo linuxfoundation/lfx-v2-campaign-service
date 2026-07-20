@@ -96,16 +96,23 @@ and BOTH Project AND EventName must be non-empty (independently — mirrors the
 meta/twitter/reddit clients). Project is the canonical attribution key the data
 pipeline parses out of the campaign name, so a campaign with only one segment is
 mis-attributed, not just "less descriptive". Caller-supplied name segments are
-sanitized (`sanitizeNamePart`) to strip the `|` delimiter before composing, so a
-raw `|` in Project/EventName/NameSuffix can't inject extra pipe-fields and break
-the name-based attribution/reconciliation that splits on `|`.
+sanitized (`sanitizeNamePart`) to strip the `|` delimiter AND any control character
+(incl. NUL — v23 forbids NUL/LF/CR in `Campaign.name`; `strings.Fields` only folds
+whitespace control chars, so NUL is mapped to a space explicitly) before composing,
+so a raw `|` can't inject extra pipe-fields (breaking name-based
+attribution/reconciliation that splits on `|`) and a control char can't reach a paid
+`:mutate` as a guaranteed-invalid name.
 
-The composed name is length-validated against **per-entity** limits, not a single
-shared limit: Google Ads v23 permits `CampaignBudget.name` up to 255 chars but
-`Campaign.name` only 128. Collapsing them (validating the campaign name against
-255) would let a 129–255-char campaign name pass preflight and then be rejected by
-the paid `campaigns:mutate` call AFTER the budget was already created — an
-avoidable orphan. Both names are validated before either `:mutate`.
+The composed name is length-validated against **per-entity** limits IN THEIR OWN
+UNITS, not a single shared number (verified against the v23 System Limits table +
+RPC field references): `CampaignBudget.name` is 1..255 UTF-8 BYTES (`len`), and
+`Campaign.name` is up to 256 CHARACTERS (`utf8.RuneCountInString`,
+`StringLengthError.TOO_LONG`). The unit difference is load-bearing — a multibyte name
+hits the budget's byte ceiling sooner than 256 characters — so `validateEntityName`
+is told the measured length and unit per name. Both are validated before either
+`:mutate`; the budget name is composed+checked first, so its 255-byte cap is the
+binding preflight guard for an ASCII name, and an oversized name never wastes a paid
+call or orphans a budget.
 
 Because `:mutate` has NO idempotency key, a blind retry double-creates. So every
 create outcome is classified: an ambiguous failure (a mutating 3xx/5xx `apiError`,

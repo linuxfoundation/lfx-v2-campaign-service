@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // newCampaignClient wires a token server + an API server whose budget/campaign
@@ -456,11 +457,13 @@ func TestSanitizeNamePart(t *testing.T) {
 	}
 }
 
-// Google Ads permits Campaign.name up to 128 chars but CampaignBudget.name up to
-// 255. A composed campaign name between those bounds must be rejected as a
-// campaign name (and BEFORE any :mutate call), even though it is a valid budget
-// name. Guards against collapsing the two limits back into one.
-func TestCreateCampaign_CampaignNameOverflowRejectedPreflight(t *testing.T) {
+// An over-length composed name must be rejected BEFORE any :mutate call. Google Ads
+// v23 limits CampaignBudget.name to 255 UTF-8 bytes and Campaign.name to 256
+// characters; the budget name is composed+validated first, so for an ASCII name its
+// 255-byte cap is the binding preflight guard. This asserts an oversized name never
+// reaches a paid mutate (which would otherwise create nothing but waste a call, or —
+// if only one side were checked — orphan a budget).
+func TestCreateCampaign_OversizedNameRejectedPreflight(t *testing.T) {
 	c := newCampaignClient(t,
 		func(w http.ResponseWriter, _ *http.Request) {
 			t.Error("budget must not be attempted")
@@ -471,13 +474,34 @@ func TestCreateCampaign_CampaignNameOverflowRejectedPreflight(t *testing.T) {
 			okCampaign(w, nil)
 		},
 	)
-	// composeName adds "LFX | Search Campaign | <Project> | <EventName> | " scaffolding
-	// (~30 chars). An EventName in the 150s pushes the campaign name over 128 while the
-	// budget name (limit 255) stays valid.
-	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 150), Budget: 50}
+	// A ~300-char ASCII EventName makes both composed names exceed their caps; the
+	// budget's 255-byte limit is checked first.
+	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 300), Budget: 50}
 	_, err := c.CreateCampaign(context.Background(), in)
-	if err == nil || !strings.Contains(err.Error(), "campaign name exceeds 128") {
-		t.Errorf("over-128 campaign name must be rejected preflight, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "name exceeds") {
+		t.Errorf("oversized name must be rejected preflight, got: %v", err)
+	}
+}
+
+// validateEntityName must measure in the UNIT it is told to: the budget in UTF-8
+// bytes and the campaign in characters. A multibyte name is the discriminator — e.g.
+// 200 two-byte runes is 400 bytes (over the 255-byte budget cap) but only 200
+// characters (under the 256-char campaign cap). Guards against measuring the budget
+// in characters (which would let a multibyte name slip past the API's byte ceiling).
+func TestValidateEntityName_UnitsBytesVsRunes(t *testing.T) {
+	multibyte := strings.Repeat("é", 200) // 200 runes, 400 UTF-8 bytes
+	// Budget: measured in bytes -> 400 > 255 -> rejected.
+	if err := validateEntityName("budget", multibyte, len(multibyte), maxBudgetNameBytes, "UTF-8 bytes"); err == nil {
+		t.Error("a 400-byte budget name must be rejected (byte-measured)")
+	}
+	// Campaign: measured in runes -> 200 <= 256 -> accepted.
+	if err := validateEntityName("campaign", multibyte, utf8.RuneCountInString(multibyte), maxCampaignNameRunes, "characters"); err != nil {
+		t.Errorf("a 200-rune campaign name must be accepted (rune-measured), got: %v", err)
+	}
+	// A 257-rune campaign name is over the 256-char cap.
+	over := strings.Repeat("a", 257)
+	if err := validateEntityName("campaign", over, utf8.RuneCountInString(over), maxCampaignNameRunes, "characters"); err == nil {
+		t.Error("a 257-char campaign name must be rejected")
 	}
 }
 

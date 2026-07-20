@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,15 +33,20 @@ const (
 	// campaignBudgetError, which surfaces as a definite failure.
 	maxBudget = 1_000_000_000.0
 
-	// maxBudgetNameLen / maxCampaignNameLen bound the composed names. Google Ads v23
-	// applies DIFFERENT limits: CampaignBudget.name permits 255 chars, Campaign.name
-	// only 128. Using one 255 limit would let a 129–255 char campaign name pass, the
-	// budget create succeed, and the campaign mutate then fail — orphaning the budget.
-	// So each name is validated against its own limit before any create call. (Names
-	// must also be unique per account, and an unbounded caller-supplied EventName
-	// could produce an oversized payload — both reasons to cap.)
-	maxBudgetNameLen   = 255
-	maxCampaignNameLen = 128
+	// maxBudgetNameBytes / maxCampaignNameRunes bound the composed names. Google Ads
+	// v23 applies DIFFERENT limits in DIFFERENT UNITS (verified against the v23 System
+	// Limits table + the RPC field references):
+	//   - CampaignBudget.name: 1..255 inclusive, in UTF-8 BYTES (trimmed).
+	//   - Campaign.name:        up to 256 CHARACTERS (StringLengthError.TOO_LONG).
+	// The unit difference matters: a multibyte name hits the budget's byte ceiling
+	// sooner than 255 characters, while the campaign limit is counted in characters.
+	// Each name is validated against its own limit+unit before any create call, so an
+	// over-limit name is rejected up front rather than creating the budget and then
+	// failing the campaign mutate (which would orphan the budget). (Names must also be
+	// unique per account, and an unbounded caller EventName could produce an oversized
+	// payload — both reasons to cap.)
+	maxBudgetNameBytes   = 255
+	maxCampaignNameRunes = 256
 
 	// advertisingChannelSearch is the only channel type this client creates today.
 	advertisingChannelSearch = "SEARCH"
@@ -356,10 +362,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	budgetName := composeName("Budget", in)
 	campaignName := composeName("Search Campaign", in)
-	if err := validateEntityName("budget", budgetName, maxBudgetNameLen); err != nil {
+	// Budget name is limited in UTF-8 BYTES (len is the byte count); campaign name in
+	// CHARACTERS (utf8.RuneCountInString). See maxBudgetNameBytes/maxCampaignNameRunes.
+	if err := validateEntityName("budget", budgetName, len(budgetName), maxBudgetNameBytes, "UTF-8 bytes"); err != nil {
 		return nil, err
 	}
-	if err := validateEntityName("campaign", campaignName, maxCampaignNameLen); err != nil {
+	if err := validateEntityName("campaign", campaignName, utf8.RuneCountInString(campaignName), maxCampaignNameRunes, "characters"); err != nil {
 		return nil, err
 	}
 
@@ -521,13 +529,16 @@ func sanitizeNamePart(s string) string {
 }
 
 // validateEntityName rejects an empty or over-length composed name before any
-// create call (Google enforces a name length limit and rejects duplicates).
-func validateEntityName(kind, name string, maxLen int) error {
+// create call. Google enforces DIFFERENT length units per resource (Campaign.name in
+// characters, CampaignBudget.name in UTF-8 bytes), so the caller passes the measured
+// length and the unit label; measuring in the wrong unit would let a multibyte name
+// slip past the budget's byte ceiling (or reject a valid campaign name early).
+func validateEntityName(kind, name string, measuredLen, maxLen int, unit string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("google-ads %s name is empty", kind)
 	}
-	if len(name) > maxLen {
-		return fmt.Errorf("google-ads %s name exceeds %d chars (%d): shorten EventName/Project/NameSuffix", kind, maxLen, len(name))
+	if measuredLen > maxLen {
+		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project/NameSuffix", kind, maxLen, unit, measuredLen)
 	}
 	return nil
 }

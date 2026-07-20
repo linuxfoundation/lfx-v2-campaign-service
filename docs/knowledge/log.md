@@ -349,6 +349,40 @@ injection-safety, fail-closed, and key parsing. **DEPENDENCY:** adds
 `github.com/snowflakedb/gosnowflake` v1.19.1 (the only official Go Snowflake driver;
 no shared Go Snowflake service exists — the LFX One UI's Snowflake service is
 TypeScript). Concept doc + code index added; `go mod tidy` run.
+**Update** — Corrected the GA-2 name-length limits after re-verifying the v23 docs
+(PR #33 review round 3, copilot — TWO contradictory claims: one said 255, one said
+128; BOTH wrong for Campaign). Authoritative from the v23 System Limits table + RPC
+field refs: `Campaign.name` = up to **256 CHARACTERS** (`StringLengthError.TOO_LONG`);
+`CampaignBudget.name` = **1..255 UTF-8 BYTES** (trimmed). Different number AND unit.
+My earlier "128 chars" campaign cap was simply wrong (over-strict, rejecting valid
+names). Fixed: `maxCampaignNameRunes=256` (validated via `utf8.RuneCountInString`),
+`maxBudgetNameBytes=255` (validated via `len`); `validateEntityName` now takes the
+measured length + unit label so each name is measured in its correct unit (a
+multibyte name would otherwise slip past the budget's byte ceiling). Also confirmed
+v23 forbids NUL/LF/CR in `Campaign.name` — already handled by the control-char
+stripping in `sanitizeNamePart`. Replaced the 128-overflow test with a byte-limit
+preflight test + a units (bytes-vs-runes) test. LESSON: when two AI reviewers give
+contradictory numbers, verify against the primary source before implementing either.
+
+**Update** — Fixed several GA-2 correctness bugs from PR #33 review (copilot +
+cursor), verified against the v23 docs: (1) campaign create now sets the REQUIRED
+`containsEuPoliticalAdvertising: DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING` —
+omitting it fails every create with FieldError.REQUIRED (and since 2026-04-01 an
+undeclared account has ALL mutates rejected), which would have orphaned the budget.
+(2) The campaign duplicate check used `DUPLICATE_NAME` (the BUDGET code); campaigns
+use `CampaignError.DUPLICATE_CAMPAIGN_NAME` — split into isDuplicateBudgetNameErr /
+isDuplicateCampaignNameErr so the campaign branch actually fires. (3) A mutating
+429 is now UNCONFIRMED (doRequest suppresses its retry precisely because it may
+have committed — was mis-classified as a clean failure → double-create risk). (4)
+Error codes are now parsed from the FULL body in doRequest and retained on
+`apiError.ErrorCodes`; hasErrorCode reads that field instead of re-parsing the
+truncated `Body` (a real error JSON exceeds maxErrorBodyChars, so the old on-demand
+parse of the truncated snapshot silently dropped codes, breaking all duplicate
+detection). (5) A ctx check between the budget and campaign mutates skips the
+campaign create on a done context, returning the budget as a reconcilable partial.
+(6) Clarified docs: a campaign-create 4xx doesn't mean nothing was created (the
+budget exists); the non-shared-budget name-reuse-on-retry corollary is undocumented
+so retry-safety relies on a stable NameSuffix. Concept doc + index updated (GA-1→GA-2).
 
 **Update** — Second GA-2 review round on PR #33 (5 fixes): (1) split the name-length
 limit into `maxBudgetNameLen=255` / `maxCampaignNameLen=128` and validate each name
