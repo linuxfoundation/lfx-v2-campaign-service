@@ -3078,7 +3078,10 @@ func TestValidateGeoTargetsDeduplicates(t *testing.T) {
 // an oversized-body branch that stripped the status would mis-classify a mutating
 // 3xx/5xx (create may have committed) as a definite failure.
 func TestDoRequestOversizedNon2xxPreservesStatus(t *testing.T) {
-	pad := strings.Repeat("x", (1<<20)+1024) // > maxResponseBody (1 MiB)
+	// Build the payload from maxResponseBody so it actually crosses the configured
+	// cap (10 MiB today) and exercises the oversized-body branch — a fixed ~1 MiB
+	// pad would take the ordinary path and pass even if that branch were broken.
+	pad := strings.Repeat("x", maxResponseBody+1024)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError) // 5xx — create may have committed
