@@ -53,9 +53,12 @@ transport can enable renegotiation, and a wrapping/retrying `RoundTripper` can
 surface a `*tls.CertificateVerificationError` or `tls.RecordHeaderError` while
 reading a response after forwarding the POST — so both flow to the UNCONFIRMED
 path. Redirect following is still force-disabled on every client used, including
-one supplied via `WithHTTPClient` (`CheckRedirect` overridden to
-`http.ErrUseLastResponse` unconditionally on a shallow copy, so the caller's
-client is not mutated), which keeps 3xx handling well-defined. Failures that
+one supplied via `WithHTTPClient`: `NewClient` builds a fresh `*http.Client`
+carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
+`CheckRedirect: noFollow`, rather than mutating the caller's client. The rebuild
+depends only on `http.Client`'s documented exported fields (layout-independent) and
+never mutates the caller's client, so the override is unconditional — which keeps
+3xx handling well-defined. Failures that
 prove NEITHER pre-send NOR rejection are treated as UNCONFIRMED (may have been
 applied): a 3xx on a MUTATING request (it reached a responder and may have
 committed before redirecting — a 3xx on a GET is not a create), a

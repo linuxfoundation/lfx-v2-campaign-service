@@ -273,7 +273,9 @@ func noFollow(_ *http.Request, _ []*http.Request) error {
 
 // NewClient builds a Reddit Ads client. Redirect following is force-disabled on
 // whatever *http.Client is used (see the enforcement below) so 3xx responses are
-// classified by request() rather than transparently followed.
+// classified by request() rather than transparently followed. A caller-supplied
+// client (WithHTTPClient) is rebuilt as a fresh *http.Client to apply the policy
+// without copying it after first use.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
 		creds:    creds,
@@ -296,12 +298,32 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	// POST to a different target and muddy outcome classification, so no-follow is a
 	// correctness requirement, not a default: even a caller-supplied CheckRedirect is
 	// overridden (a callback that returns nil, or follows N hops then stops, would
-	// still follow). The override is applied to a SHALLOW COPY so the caller's
-	// *http.Client is never mutated (it may be reused elsewhere).
+	// still follow).
+	//
+	// Apply no-follow by building a FRESH *http.Client that carries over only the
+	// caller's exported, reusable fields (Transport, Jar, Timeout) and sets our own
+	// CheckRedirect, rather than mutating the caller's client or value-copying it.
+	// This is layout-independent: it depends only on http.Client's documented
+	// exported fields, not on the struct's internal shape. (A plain value copy would
+	// also be correct on the current http.Client, whose struct is just these four
+	// exported fields with no internal synchronization state — but the explicit
+	// rebuild keeps the intent obvious and won't silently carry over any future
+	// unexported field.) Either way the caller's client is never mutated and is safe
+	// to keep using elsewhere.
+	//
+	// The nil check only guards against a nil dereference; it does NOT enforce the
+	// policy when the client is nil (that path would skip no-follow entirely). It
+	// relies on the invariant that c.httpClient is never nil here: NewClient always
+	// seeds a non-nil default above and WithHTTPClient ignores a nil argument. If a
+	// future option could legitimately nil the client, no-follow enforcement would
+	// need to be reconsidered rather than silently skipped.
 	if c.httpClient != nil {
-		hc := *c.httpClient
-		hc.CheckRedirect = noFollow
-		c.httpClient = &hc
+		c.httpClient = &http.Client{
+			Transport:     c.httpClient.Transport,
+			CheckRedirect: noFollow,
+			Jar:           c.httpClient.Jar,
+			Timeout:       c.httpClient.Timeout,
+		}
 	}
 	return c
 }
