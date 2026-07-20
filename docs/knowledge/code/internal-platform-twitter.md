@@ -48,10 +48,13 @@ across concurrent dispatches or replicas (that needs cross-replica coordination,
 tracked in LFXV2-2665), so operators must not rely on this stateless client for
 cross-dispatch rate limiting. When the account limit is hit anyway, 429s are
 retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. Redirect
-following is force-disabled (a shared `noFollow` `CheckRedirect` policy on the
-default and any `WithHTTPClient`-supplied client, via a shallow copy) so a 3xx is
-surfaced rather than followed — important with OAuth 1.0a, where a followed
-redirect would resend a request signed for the original URL to a different one.
+following is force-disabled (a shared `noFollow` `CheckRedirect` policy). For a
+`WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
+carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
+`CheckRedirect: noFollow`, rather than value-copying the caller's client (an
+`http.Client` must not be copied after first use). So a 3xx is surfaced rather than
+followed — important with OAuth 1.0a, where a followed redirect would resend a
+request signed for the original URL to a different one.
 A non-2xx surfaces a typed `apiError`. Its `Error()` renders only method/path/
 status — the raw body is NOT echoed, and neither are X's machine-readable error
 codes, so a signed URL / destination secret (which an untrusted body could place

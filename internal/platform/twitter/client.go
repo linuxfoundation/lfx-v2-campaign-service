@@ -1074,7 +1074,15 @@ type CampaignResult struct {
 	// not be confirmed (POST failed, or returned a malformed/empty response). The
 	// campaign and line item may still have been created, so the overall call is
 	// not fatal, but consumers MUST NOT treat a result with this set as an
-	// unqualified success — the promoted tweet may need to be added manually.
+	// unqualified success. The warning distinguishes two cases the consumer MUST
+	// respect: a DEFINITE failure (a 4xx rejection / pre-send error — the message
+	// says the promoted tweet must be "added manually", safe to do) versus an
+	// UNCONFIRMED outcome (an ambiguous 3xx/5xx/transport failure, or a 2xx with no
+	// id — the message says "verify ... before retrying"). For an UNCONFIRMED
+	// result the association MAY already exist, so the consumer must VERIFY in X Ads
+	// Manager before adding or retrying — adding manually then would create the
+	// duplicate this signal exists to prevent. Read the warning text; do not assume
+	// manual addition is always safe.
 	PromotedTweetWarning string
 	TwitterURL           string
 	Steps                []string
@@ -1377,11 +1385,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		resp, err := c.createRequest(ctx, "line_items", lineItemParams)
 		if err != nil {
+			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
+			// committed line-item create — word it UNCONFIRMED so a caller reconciling
+			// the returned partial result verifies before retrying rather than blind-
+			// creating a duplicate. A definite 4xx/pre-send error stays a plain failure.
+			// Mirrors the campaign/promoted-tweet paths and the meta ad-set handling.
+			if createOutcomeAmbiguous(err) {
+				return partialResult(), fmt.Errorf("x line item creation UNCONFIRMED (%s; a line item may exist — verify in X Ads Manager before retrying): %w", campaignStatus(), err)
+			}
 			return partialResult(), fmt.Errorf("x line item creation failed (%s): %w", campaignStatus(), err)
 		}
 		lineItemID = extractID(resp)
 		if lineItemID == "" {
-			return partialResult(), fmt.Errorf("x line item creation succeeded but returned no line item ID (%s)", campaignStatus())
+			// A 2xx with no id is a malformed SUCCESS: X may have created the line item
+			// but didn't return a usable id. UNCONFIRMED (verify before retrying), not a
+			// clean failure — mirrors the promoted-tweet and meta campaign/ad-set no-id
+			// handling.
+			return partialResult(), fmt.Errorf("x line item creation UNCONFIRMED (%s; X returned a 2xx with no line item ID — it may exist; verify in X Ads Manager before retrying)", campaignStatus())
 		}
 		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
 	}

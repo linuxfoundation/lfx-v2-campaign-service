@@ -10,6 +10,19 @@ and twitter no-id paths. Now surfaces UNCONFIRMED (verify before retrying). Test
 added. Also fixed a CI `check-fmt` failure (gofmt comment alignment in the meta
 test).
 
+**Update** — Extended the X/Twitter create-outcome ambiguity to the LINE-ITEM
+create (LFXV2-2642, PR #31 review by Cursor). The line-item POST always returned a
+definite "line item creation failed" (even on a 5xx/mutating-3xx/transport error
+where X may have committed it) and a definite "returned no line item ID" on a
+2xx-no-id — the same blind-retry/duplicate risk already fixed for the campaign,
+promoted-tweet, and meta ad-set paths. Both now surface UNCONFIRMED (verify before
+retrying) when ambiguous; a definite 4xx/pre-send error still reads "failed".
+Also updated the `PromotedTweetWarning` field contract (it told consumers the
+promoted tweet "may need to be added manually", which for an UNCONFIRMED outcome is
+the duplicate risk this exists to prevent — now it requires verifying before adding
+or retrying) and corrected the twitter concept doc's "shallow copy" wording to the
+fresh-client construction.
+
 ## 2026-07-19
 
 **Update** — Fixed an http.Client copy-after-use in the Meta client's no-follow

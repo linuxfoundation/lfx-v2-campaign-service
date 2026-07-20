@@ -2605,6 +2605,92 @@ func TestPartialResultAfterCampaignCreated(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignLineItemAmbiguousIsUnconfirmed verifies that an AMBIGUOUS
+// line-item failure (a 5xx — X may have committed the line item) is worded
+// UNCONFIRMED (verify before retrying), NOT a definite "failed", so a caller
+// reconciling the partial result does not blind-retry into a duplicate line item.
+func TestCreateCampaignLineItemAmbiguousIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusServiceUnavailable) // 5xx — line item may have committed
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 5xx line-item create")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("ambiguous line-item 5xx must be UNCONFIRMED, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "line item creation failed") {
+		t.Errorf("ambiguous line-item 5xx must not read as a definite failure: %v", err)
+	}
+}
+
+// TestCreateCampaignLineItemNoIDIsUnconfirmed verifies that a 2xx line-item create
+// with no id is UNCONFIRMED (X may have created it), not a definite "returned no
+// line item ID" — same duplicate-avoidance as the promoted-tweet/ad-set no-id paths.
+func TestCreateCampaignLineItemNoIDIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{}}`)) // 2xx, no id
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 2xx line-item create with no id")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx line-item with no id must be UNCONFIRMED, got: %v", err)
+	}
+}
+
 // TestNormalizeSigningURL is a direct unit test of the RFC 5849 §3.4.1.2 signing
 // URL normalization: scheme + host are lowercased, a port equal to the scheme's
 // default (http:80 / https:443) is dropped, a non-default port is preserved, and
