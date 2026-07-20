@@ -68,6 +68,11 @@ budget, `amountMicros` = budget × 1,000,000) then `campaigns:mutate` (status
 `PAUSED`, `advertisingChannelType` `SEARCH`, referencing the budget's
 `resourceName`, with a dependency-free `manualCpc {}` bidding strategy — a broker
 can't assume conversion tracking, which `maximizeConversions` requires). The
+`CampaignInput.Budget` field is denominated in the ad ACCOUNT's currency, NOT USD —
+Google interprets the resulting `amountMicros` in the account's own currency and
+the client does no FX conversion, so a value of 50 is 50 of whatever the account is
+denominated in. (The field was renamed from `BudgetUSD`, which implied a conversion
+this client does not perform; mirrors the meta client's `Budget`.) The
 campaign create also sets `containsEuPoliticalAdvertising:
 DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING` — v23 REQUIRES this on every create
 (omitting it fails with `FieldError.REQUIRED`, and since 2026-04-01 an account with

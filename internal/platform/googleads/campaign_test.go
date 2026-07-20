@@ -56,7 +56,7 @@ func gaqlError(status int, category, code string) http.HandlerFunc {
 }
 
 func sampleInput() CampaignInput {
-	return CampaignInput{EventName: "KubeCon", Project: "CNCF", BudgetUSD: 50, NameSuffix: "brief-1"}
+	return CampaignInput{EventName: "KubeCon", Project: "CNCF", Budget: 50, NameSuffix: "brief-1"}
 }
 
 func TestCreateCampaign_HappyPath(t *testing.T) {
@@ -252,26 +252,26 @@ func TestCreateCampaign_RejectsBadInput(t *testing.T) {
 	// rounds to 0 amountMicros. All must be rejected BEFORE any :mutate call.
 	// (Project+EventName are set so we exercise the budget checks, not the
 	// attribution checks that run first.)
-	for _, b := range []float64{0, -5, maxBudgetUSD + 1, math.NaN(), math.Inf(1), math.Inf(-1), 0.0000001} {
-		if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", EventName: "E", BudgetUSD: b}); err == nil {
+	for _, b := range []float64{0, -5, maxBudget + 1, math.NaN(), math.Inf(1), math.Inf(-1), 0.0000001} {
+		if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", EventName: "E", Budget: b}); err == nil {
 			t.Errorf("budget %v should be rejected before any call", b)
 		}
 	}
 	// Both attribution fields are required INDEPENDENTLY: a missing Project OR a
 	// missing EventName must be rejected before any :mutate call (a campaign with
 	// only one segment is mis-attributed by the name-parsing data pipeline).
-	if _, err := c.CreateCampaign(context.Background(), CampaignInput{EventName: "E", BudgetUSD: 50}); err == nil {
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{EventName: "E", Budget: 50}); err == nil {
 		t.Error("a campaign with no Project should be rejected")
 	}
-	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", BudgetUSD: 50}); err == nil {
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", Budget: 50}); err == nil {
 		t.Error("a campaign with no EventName should be rejected")
 	}
 	// A delimiter-only value ("|||") is non-empty raw but sanitizes to "", which would
 	// drop the segment from the composed name — must be rejected like an empty field.
-	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "|||", EventName: "E", BudgetUSD: 50}); err == nil {
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "|||", EventName: "E", Budget: 50}); err == nil {
 		t.Error("a pipe-only Project (sanitizes to empty) should be rejected")
 	}
-	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", EventName: " | ", BudgetUSD: 50}); err == nil {
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", EventName: " | ", Budget: 50}); err == nil {
 		t.Error("a pipe-only EventName (sanitizes to empty) should be rejected")
 	}
 }
@@ -457,7 +457,7 @@ func TestCreateCampaign_CampaignNameOverflowRejectedPreflight(t *testing.T) {
 	// composeName adds "LFX | Search Campaign | <Project> | <EventName> | " scaffolding
 	// (~30 chars). An EventName in the 150s pushes the campaign name over 128 while the
 	// budget name (limit 255) stays valid.
-	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 150), BudgetUSD: 50}
+	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 150), Budget: 50}
 	_, err := c.CreateCampaign(context.Background(), in)
 	if err == nil || !strings.Contains(err.Error(), "campaign name exceeds 128") {
 		t.Errorf("over-128 campaign name must be rejected preflight, got: %v", err)

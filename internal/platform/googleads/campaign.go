@@ -23,13 +23,13 @@ const (
 	// currency.
 	microsPerUnit = 1_000_000
 
-	// maxBudgetUSD caps the budget well below the int64 micros-overflow threshold
+	// maxBudget caps the budget well below the int64 micros-overflow threshold
 	// (math.MaxInt64 / 1e6 ≈ 9.2e12) so the *microsPerUnit conversion can never wrap
 	// to a negative value. Mirrors the reddit/twitter clients' budget cap. This is a
 	// sanity bound on caller input, NOT the account's minimum — Google enforces a
 	// currency-dependent minimum server-side and rejects a too-low budget with a
 	// campaignBudgetError, which surfaces as a definite failure.
-	maxBudgetUSD = 1_000_000_000.0
+	maxBudget = 1_000_000_000.0
 
 	// maxBudgetNameLen / maxCampaignNameLen bound the composed names. Google Ads v23
 	// applies DIFFERENT limits: CampaignBudget.name permits 255 chars, Campaign.name
@@ -72,10 +72,15 @@ type CampaignInput struct {
 	EventName string
 	// Project is folded into the composed name alongside EventName.
 	Project string
-	// BudgetUSD is the campaign budget in the account's currency (labeled USD by
-	// convention; Google interprets amountMicros in the account currency). Converted
-	// to micros. Must be > 0 and <= maxBudgetUSD.
-	BudgetUSD float64
+	// Budget is the campaign daily budget in whole units of the ad ACCOUNT's
+	// currency. IMPORTANT: this is NOT a USD amount and the client performs NO
+	// foreign-exchange conversion — Google interprets the resulting amountMicros in
+	// the account's own currency, so a value of 50 becomes 50 of whatever the account
+	// is denominated in (USD, EUR, JPY, …). The caller must supply an amount already
+	// denominated in the account currency. Converted to micros (×1,000,000); must be
+	// > 0 and <= maxBudget. (Renamed from BudgetUSD, which implied an FX conversion
+	// this client does not do — mirrors the meta client's Budget field.)
+	Budget float64
 	// NameSuffix, when non-empty, is appended to the composed budget/campaign names
 	// to make them unique+deterministic per logical campaign. A caller that wants
 	// at-most-once retry semantics passes a stable value (e.g. the brief id): a
@@ -323,17 +328,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	// Validate the budget and compute amountMicros ONCE. Reject NaN/Inf explicitly
 	// (NaN passes every ordered comparison, so `> 0`/`<= max` alone would let it
-	// through and create a $0 budget), and reject anything that rounds to <= 0 micros
+	// through and create a 0 budget), and reject anything that rounds to <= 0 micros
 	// (a sub-micro budget like 0.0000001 is > 0 but converts to 0 amountMicros).
-	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) {
-		return nil, fmt.Errorf("google-ads campaign budget must be a finite number, got %v", in.BudgetUSD)
+	if math.IsNaN(in.Budget) || math.IsInf(in.Budget, 0) {
+		return nil, fmt.Errorf("google-ads campaign budget must be a finite number, got %v", in.Budget)
 	}
-	if in.BudgetUSD > maxBudgetUSD {
-		return nil, fmt.Errorf("google-ads campaign budget %.2f exceeds the maximum %.0f", in.BudgetUSD, maxBudgetUSD)
+	if in.Budget > maxBudget {
+		return nil, fmt.Errorf("google-ads campaign budget %.2f exceeds the maximum %.0f", in.Budget, maxBudget)
 	}
-	amountMicros := int64(in.BudgetUSD * microsPerUnit)
+	amountMicros := int64(in.Budget * microsPerUnit)
 	if amountMicros <= 0 {
-		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.BudgetUSD)
+		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.Budget)
 	}
 
 	budgetName := composeName("Budget", in)
@@ -390,7 +395,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// have been created. UNCONFIRMED, not a clean failure.
 		return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign budget created: %s ($%.2f/day, STANDARD delivery, non-shared)", budgetID, in.BudgetUSD))
+	steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency, STANDARD delivery, non-shared)", budgetID, in.Budget))
 
 	// budgetPartial carries the created budget id (plus the campaign name) so an
 	// ambiguous/failed CAMPAIGN create leaves the budget reconcilable, not orphaned

@@ -367,6 +367,14 @@ cases now set Project+EventName so they exercise the budget checks, not the new
 attribution checks that run first) + added tests for the 128-overflow, pipe-strip,
 malformed-resourceName, and firstResourceName cases. Concept doc updated.
 
+**Update** — GA-2 PR #33 follow-up (copilot): renamed `CampaignInput.BudgetUSD` →
+`Budget` (and `maxBudgetUSD` → `maxBudget`). Google applies `amountMicros` in the ad
+account's OWN currency and this client does no FX conversion, so the `USD` suffix
+was a false promise — 50 on a EUR account is 50 EUR/day, not ~54. Field comment now
+states it's account-currency (NOT USD), and the budget-created step no longer
+hardcodes a `$` sign. Mirrors the meta client, which renamed the same field for the
+same reason. No behavior change (the value was already sent as-is).
+
 **Update** — GA-2 PR #33 follow-up (cursor Bugbot): the both-fields-required check
 validated the RAW input (`strings.TrimSpace`), but composeName only includes a
 segment when its `sanitizeNamePart` is non-empty — so a delimiter-only value like
