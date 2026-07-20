@@ -36,12 +36,30 @@ type Pool struct {
 	*pgxpool.Pool
 }
 
+// dsnParseError is a DSN-free wrapper for a pgx ParseConfig failure. pgx's
+// ParseConfigError DOES redact the password before rendering (verified), but that
+// redaction is a best-effort dependency detail we don't want a credential-bearing
+// DATABASE_URL to rely on: NewContainer propagates this error and main logs it, so a
+// regression in pgx's redaction (or an exotic DSN shape it doesn't cover) would leak
+// the secret into logs. Error() therefore renders only a STATIC message; the original
+// parser error is retained via Unwrap for errors.Is/As, not for display.
+type dsnParseError struct {
+	context string
+	err     error
+}
+
+func (e *dsnParseError) Error() string {
+	// Deliberately does NOT include e.err (which quotes the DSN) or the DSN itself.
+	return e.context + ": invalid DATABASE_URL (redacted; check host/port/params)"
+}
+func (e *dsnParseError) Unwrap() error { return e.err }
+
 // NewPool opens an instrumented pgx connection pool for the given DSN and
 // verifies connectivity with a ping.
 func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("parse database config: %w", err)
+		return nil, &dsnParseError{context: "parse database config", err: err}
 	}
 	cfg.ConnConfig.Tracer = otelpgx.NewTracer()
 
@@ -129,7 +147,9 @@ func ValidateMigrationDSN(dsn string) error {
 	// parse check to those — a "pgx5://" DSN passed the prefix check above.
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 		if _, err := pgxpool.ParseConfig(dsn); err != nil {
-			return fmt.Errorf("DATABASE_URL is not a parseable postgres URL: %w", err)
+			// DSN-free wrapper: this message is surfaced to callers/logs, and the DSN
+			// carries the DB password. See dsnParseError.
+			return &dsnParseError{context: "DATABASE_URL is not a parseable postgres URL", err: err}
 		}
 	}
 	return nil

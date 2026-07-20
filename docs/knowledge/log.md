@@ -2,6 +2,19 @@
 
 ## 2026-07-20
 
+**Update** — Made the pgx DSN-parse errors DSN-free (PR #28 review, copilot). Both
+`NewPool` and `ValidateMigrationDSN` wrapped `pgxpool.ParseConfig`'s error with `%w`;
+NewContainer propagates it and main logs it, so a malformed credential-bearing
+DATABASE_URL risked logging the connection string. VERIFIED that pgx's
+`ParseConfigError` already redacts the password (`redactPW`) across every malformed
+DSN shape I probed (bad port, space-in-host→url.Parse-fails-falls-to-keyword-regex,
+bad connect_timeout/sslmode, keyword form) — so the finding's literal "leaks the
+password" claim is not currently true. BUT we shouldn't depend on a dependency's
+best-effort redaction for a secret, so wrapped both sites in a `dsnParseError` whose
+Error() renders a STATIC DSN-free message and whose Unwrap() keeps the pgx cause for
+errors.Is/As + diagnostics. Test asserts a password/DSN never reaches Error() while
+the cause stays unwrappable.
+
 **Update** — Added the route/rule PARITY test (PR #28 review, copilot). The PR
 described an RE2 route/RuleSet parity regression guard, but none was committed — the
 HTTPRoute regex and the Heimdall RuleSet path list are two hand-maintained matchers

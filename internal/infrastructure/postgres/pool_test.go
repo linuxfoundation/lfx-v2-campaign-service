@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,6 +57,28 @@ func TestValidateMigrationDSN(t *testing.T) {
 		if err := ValidateMigrationDSN(bad); err == nil {
 			t.Errorf("ValidateMigrationDSN(%q) = nil, want an error", bad)
 		}
+	}
+}
+
+// A malformed credential-bearing DATABASE_URL must NOT surface the password (or the
+// raw DSN) in the returned error — NewContainer propagates it and main logs it. pgx's
+// own ParseConfigError redacts the password, but we don't depend on that: the error
+// message is DSN-free (dsnParseError), while the parse cause stays reachable via
+// errors.Unwrap for diagnostics.
+func TestValidateMigrationDSN_ErrorDoesNotLeakSecret(t *testing.T) {
+	const secret = "SUPERSECRETpw"
+	// A URL-form DSN that carries a password but fails to parse (bad port).
+	dsn := "postgres://user:" + secret + "@host:notaport/db"
+	err := ValidateMigrationDSN(dsn)
+	if err == nil {
+		t.Fatal("expected an error for a malformed DSN")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "notaport") || strings.Contains(err.Error(), "user:") {
+		t.Errorf("error message leaked DSN material: %q", err.Error())
+	}
+	// The underlying pgx parse error must still be reachable for diagnostics.
+	if errors.Unwrap(err) == nil {
+		t.Error("the parse cause should remain reachable via errors.Unwrap")
 	}
 }
 
