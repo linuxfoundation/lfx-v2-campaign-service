@@ -119,7 +119,9 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	}
 
 	// Fast path: one synchronous attempt. On success, wire the live pool now.
-	if pool, initErr := initDatabase(context.Background(), cfg.DatabaseURL); initErr == nil {
+	pool, initErr := initDatabase(context.Background(), cfg.DatabaseURL)
+	switch {
+	case initErr == nil:
 		c.setPool(pool)
 		repo := postgres.NewConnectionRepo(pool)
 		c.Connections = service.NewConnectionService(repo, enc)
@@ -130,7 +132,13 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 			slog.Info("dependency container initialized")
 		}
 		return c, nil
-	} else {
+	case postgres.IsPermanentMigrationErr(initErr):
+		// A dirty schema (or other permanent migration state) can NEVER be cleared by
+		// retrying — it needs an operator to inspect and force the version. Fail fast
+		// so the failure is loud (pod crash) rather than a silent 503 loop that burns
+		// the startup-probe budget and then restarts to the same broken state.
+		return nil, fmt.Errorf("database migration is in a permanent-failure state (needs manual recovery): %w", initErr)
+	default:
 		slog.Warn("database not ready at startup; booting in 503 mode and retrying in the background",
 			"error", initErr.Error())
 	}
@@ -169,6 +177,15 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			} else {
 				slog.Info("database now ready; connection endpoints live", "attempts", attempt)
 			}
+			return
+		}
+		// A permanent migration state (dirty schema) will never clear by retrying, so
+		// stop the loop and surface it loudly. /readyz stays at 503 with no live pool,
+		// but the ERROR log makes the reason unambiguous instead of an endless silent
+		// "will retry" stream — an operator must force the migration version.
+		if postgres.IsPermanentMigrationErr(err) {
+			slog.Error("background database initialization hit a permanent migration failure (needs manual recovery); stopping retries",
+				"attempt", attempt, "error", err.Error())
 			return
 		}
 		slog.Warn("background database initialization attempt failed; will retry",

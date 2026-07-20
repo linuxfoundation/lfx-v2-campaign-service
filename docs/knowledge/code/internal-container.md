@@ -17,10 +17,15 @@ typed `503` responses.
 
 A database that is unreachable at boot does NOT crash the process. Config
 errors that a retry cannot fix fail fast (the process exits): invalid database
-settings, a bad credential-encryption key, AND a malformed `DATABASE_URL` (a
+settings, a bad credential-encryption key, a malformed `DATABASE_URL` (a
 keyword DSN migrations can't consume — checked via `postgres.ValidateMigrationDSN`
-before the retry path, so a deterministic config error never 503-loops forever).
-But a *transient* failure (DB unreachable / migration deadline within
+before the retry path, so a deterministic config error never 503-loops forever),
+AND a **permanent migration failure** — a dirty schema (`migrate.ErrDirty`, set when
+a prior migration failed partway). A dirty schema can never clear by re-running
+Migrate (it needs an operator to inspect and `force` the version), so
+`postgres.IsPermanentMigrationErr` classifies it and BOTH the synchronous fast path
+(returns an error → process exits) and the background retry loop (logs ERROR and
+stops looping) refuse to 503-loop on it. But a *transient* failure (DB unreachable / migration deadline within
 `startupDBTimeout`, 15s per attempt) makes `NewContainer` boot the services in
 503 mode instead of returning an error: the health dependency is a `notReady`
 placeholder (a non-nil always-false checker — NOT nil, since a nil dep is treated

@@ -2,6 +2,18 @@
 
 ## 2026-07-20
 
+**Update** — Fail fast on a PERMANENT migration failure instead of 503-looping
+forever (PR #28 review, copilot + cursor). The 503-mode retry loop retried
+`initDatabase` on ANY error — so a dirty schema (`migrate.ErrDirty`, set when a prior
+migration failed partway) would loop forever behind a 503, with no fail-fast signal.
+A dirty schema can't clear by re-running Migrate; it needs an operator to force the
+version. Added `postgres.IsPermanentMigrationErr` (classifies a wrapped
+`migrate.ErrDirty`); the synchronous fast path now returns an error (process exits
+loud) and the background retry loop logs ERROR + stops looping on it. Connectivity /
+lock / deadline failures are deliberately still transient (they retry). Note: the
+overlapping-migration half of these findings was already fixed earlier (migrateMu +
+pool-first-then-Migrate); these older bot comments predate that. Test added.
+
 **Update** — Made the pgx DSN-parse errors DSN-free (PR #28 review, copilot). Both
 `NewPool` and `ValidateMigrationDSN` wrapped `pgxpool.ParseConfig`'s error with `%w`;
 NewContainer propagates it and main logs it, so a malformed credential-bearing

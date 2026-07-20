@@ -7,6 +7,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -127,6 +128,19 @@ func Migrate(dsn string) error {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
+}
+
+// IsPermanentMigrationErr reports whether a Migrate error is a PERMANENT state that
+// retrying can never clear on its own — today, a dirty schema (migrate.ErrDirty),
+// which golang-migrate sets when a prior migration failed partway and leaves the
+// schema_migrations row marked dirty. It requires an operator to inspect and `force`
+// the version; a boot loop that just re-runs Migrate will hit ErrDirty forever. The
+// caller uses this to fail fast (surface the error) instead of 503-looping silently.
+// A connectivity/lock/deadline failure is NOT permanent and is deliberately excluded
+// so it still retries.
+func IsPermanentMigrationErr(err error) bool {
+	var dirty migrate.ErrDirty
+	return errors.As(err, &dirty)
 }
 
 // ValidateMigrationDSN reports whether dsn is in the URL form migrations require,

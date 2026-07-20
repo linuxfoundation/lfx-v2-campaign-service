@@ -6,9 +6,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -79,6 +81,25 @@ func TestValidateMigrationDSN_ErrorDoesNotLeakSecret(t *testing.T) {
 	// The underlying pgx parse error must still be reachable for diagnostics.
 	if errors.Unwrap(err) == nil {
 		t.Error("the parse cause should remain reachable via errors.Unwrap")
+	}
+}
+
+func TestIsPermanentMigrationErr(t *testing.T) {
+	// A dirty schema is permanent — retrying can never clear it (needs a manual force).
+	dirty := fmt.Errorf("apply migrations: %w", migrate.ErrDirty{Version: 3})
+	if !IsPermanentMigrationErr(dirty) {
+		t.Error("a wrapped migrate.ErrDirty must be classified permanent")
+	}
+	// Connectivity / deadline / generic errors are NOT permanent (they should retry).
+	for _, transient := range []error{
+		errors.New("dial tcp: connection refused"),
+		context.DeadlineExceeded,
+		fmt.Errorf("open database pool: %w", errors.New("ping database: timeout")),
+		nil,
+	} {
+		if IsPermanentMigrationErr(transient) {
+			t.Errorf("a non-dirty error must NOT be permanent: %v", transient)
+		}
 	}
 }
 
