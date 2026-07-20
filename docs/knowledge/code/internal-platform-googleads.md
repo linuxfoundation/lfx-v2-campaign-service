@@ -60,8 +60,35 @@ row cap alone doesn't bound memory, so the byte cap is the real memory guard.
 replaced by `campaign.start_date_time` / `campaign.end_date_time` — the old fields
 are rejected as unrecognized.
 
+## Campaign creation (GA-2)
+
+`CreateCampaign` (in `campaign.go`) creates a PAUSED search campaign as two
+sequential `:mutate` calls: `campaignBudgets:mutate` (a non-shared `STANDARD`
+budget, `amountMicros` = budget × 1,000,000) then `campaigns:mutate` (status
+`PAUSED`, `advertisingChannelType` `SEARCH`, referencing the budget's
+`resourceName`, with a dependency-free `manualCpc {}` bidding strategy — a broker
+can't assume conversion tracking, which `maximizeConversions` requires). Both
+resource ids are surfaced (`campaignBudgetId` + `campaignId`) via `resourceID`,
+which takes the trailing segment of the `results[0].resourceName`.
+
+Because `:mutate` has NO idempotency key, a blind retry double-creates. So every
+create outcome is classified: an ambiguous failure (a mutating 3xx/5xx `apiError`
+or a `transportError`, or a 2xx with no `resourceName`) is reported UNCONFIRMED
+(verify before retrying) with a partial result carrying whatever exists (the
+campaign name, and the budget id once created) so an orphan is reconcilable; a
+definite 4xx is a clean failure (Google rejected it — nothing created).
+`createOutcomeAmbiguous` (5xx/transport always; 3xx only on a mutating method) and
+`isDuplicateNameErr` (a 4xx `DUPLICATE_NAME` — a retry with a stable `NameSuffix`
+collided with a prior attempt's name, so the resource likely exists) drive this.
+Error codes are parsed from `error.details[GoogleAdsFailure].errors[].errorCode`
+(a single-key category→enum object) for internal classification only — the raw body
+is never surfaced by `apiError.Error()`, and the retained codes are length/count
+bounded. Composed budget/campaign names are deterministic (`LFX | <kind> | Project
+| Event | NameSuffix`) so a retry with the same `NameSuffix` collides on
+`DUPLICATE_NAME` rather than silently double-creating.
+
 ## Scope
 
-GA-1 is the scaffold (auth + request layer + GAQL search). Campaign creation
-(`:mutate` flows), metrics/keywords/audience reads, keyword actions, and the
-orchestrator dispatcher follow in GA-2..GA-5.
+GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
+creation (`:mutate`). Metrics/keywords/audience reads, keyword actions, and the
+orchestrator dispatcher follow in GA-3..GA-5.

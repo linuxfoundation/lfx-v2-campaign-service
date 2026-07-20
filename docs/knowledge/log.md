@@ -440,6 +440,19 @@ only on a mutating method (a GET redirect is not a create), while 5xx and
 transport errors stay ambiguous regardless of method. Added `isMutatingMethod`
 and GET/POST/DELETE test cases. All three clients (reddit/meta/twitter) now share
 an identical method-gated contract.
+**Creation** — Added Google Ads campaign creation (GA-2, LFXV2-2637) in
+`internal/platform/googleads/campaign.go`: `CreateCampaign` creates a PAUSED SEARCH
+campaign as two sequential `:mutate` calls — a non-shared STANDARD `campaignBudget`
+(amountMicros = budget×1e6) then a `campaign` referencing it with a `manualCpc {}`
+bidding strategy. Both resource ids surfaced. Because `:mutate` has no idempotency
+key, added `createOutcomeAmbiguous` (5xx/transport ambiguous always; 3xx only on a
+mutating method) + `isDuplicateNameErr` (4xx DUPLICATE_NAME → already-exists) +
+machine-readable error-code parsing (`error.details[GoogleAdsFailure].errors[].errorCode`,
+body never surfaced, codes bounded): an ambiguous or 2xx-no-resourceName outcome →
+UNCONFIRMED + reconcilable partial (carries the budget id once created); a definite
+4xx → clean failure. Deterministic composed names so a retry collides on
+DUPLICATE_NAME rather than double-creating. Table-driven httptest coverage for
+every branch. Concept doc updated.
 
 ## 2026-07-18
 
