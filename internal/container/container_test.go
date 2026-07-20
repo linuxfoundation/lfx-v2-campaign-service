@@ -127,6 +127,25 @@ func TestNewContainer_BadEncryptionKeyFailsFast(t *testing.T) {
 	assert.Contains(t, err.Error(), "credential encryptor")
 }
 
+// TestNewContainer_MalformedDSNFailsFast verifies a keyword-form DATABASE_URL (a
+// deterministic config error no retry can fix) fails fast rather than entering the
+// 503-mode retry loop — distinct from a transient unreachable DB, which boots 503.
+func TestNewContainer_MalformedDSNFailsFast(t *testing.T) {
+	shrinkDBTimers(t)
+	cfg := &config.Config{
+		Host: "*",
+		Port: "8080",
+		// A keyword DSN migrations can't consume — deterministic, not transient.
+		DatabaseURL:             "host=127.0.0.1 user=app dbname=campaign",
+		CredentialEncryptionKey: validEncryptionKey(),
+	}
+
+	cont, err := NewContainer(cfg)
+	assert.Nil(t, cont, "a malformed DSN must fail fast, not boot in 503 mode")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database configuration")
+}
+
 // TestNotReady verifies the cold-start health placeholder always reports
 // not-ready (so /readyz stays 503 until the real pool is swapped in).
 func TestNotReady(t *testing.T) {

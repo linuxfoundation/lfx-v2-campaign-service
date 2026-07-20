@@ -2,6 +2,20 @@
 
 ## 2026-07-20
 
+**Update** — Hardened the #28 503-mode cold-start fix after review (cursor HIGH +
+copilot). (1) `initDatabase` started `postgres.Migrate` (uncancellable Up()) in a
+goroutine and returned on the 15s deadline WITHOUT waiting — so the retry loop
+launched another migration while the previous was still blocked, leaking goroutines
+and racing concurrent migrations. Reworked to open the pool FIRST (NewPool does a
+context-bounded Ping) and run Migrate only after a reachable ping, so Migrate never
+blocks against a down DB and retries never overlap. (2) A malformed DATABASE_URL
+(keyword DSN) is deterministic, so `NewContainer` now fails fast via
+`postgres.ValidateMigrationDSN` instead of 503-looping forever. (3) Corrected the
+service.go comments/doc that claimed a NIL readiness dep makes /readyz not-ready —
+a nil dep is treated as READY (no-DB mode); cold-start uses the non-nil notReady{}
+checker. (4) The connection 503 message "not configured" → "unavailable" (during
+cold start the DB is configured, just unavailable). Tests + concept doc updated.
+
 **Update** — Made the DB cold-start startupProbe budget real (PR #28 review,
 LFXV2-2558). `NewContainer` capped migration+pool init at 15s and `main` exited
 on failure, so an unreachable DB at boot crash-looped the pod and the ~90s

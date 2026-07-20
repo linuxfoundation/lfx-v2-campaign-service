@@ -113,6 +113,15 @@ func Migrate(dsn string) error {
 
 // pgxURL converts a URL-scheme DSN to the "pgx5://" scheme golang-migrate's
 // driver expects. A "postgres://" / "postgresql://" DSN is rewritten; an
+// ValidateMigrationDSN reports whether dsn is in the URL form migrations require,
+// WITHOUT connecting. A keyword DSN ("host=… user=…") is a deterministic config
+// error that no retry can fix, so callers use this to fail fast up front rather
+// than entering a retry loop that can never succeed.
+func ValidateMigrationDSN(dsn string) error {
+	_, err := pgxURL(dsn)
+	return err
+}
+
 // already-"pgx5://" DSN is passed through. A keyword DSN ("host=… user=…") has
 // no URL scheme golang-migrate can parse and is rejected with a clear error.
 func pgxURL(dsn string) (string, error) {

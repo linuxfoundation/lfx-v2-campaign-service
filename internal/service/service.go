@@ -31,14 +31,17 @@ type campaignService struct {
 	// tests.
 	ready bool
 
-	// mu guards dep, which can be swapped in after construction: when the
-	// database is still coming up (cold start), the service boots with a nil dep
-	// (so /readyz reports not-ready) and the container injects the live pool via
-	// SetReadinessDep once migrations succeed. The swap happens on a background
-	// goroutine while probe requests read dep concurrently, so access is guarded.
+	// mu guards dep, which can be swapped in after construction: during a cold
+	// start the container boots the service with a dep that reports NOT-ready (the
+	// notReady{} checker — NOT nil, since a nil dep is treated as ready), then
+	// injects the live pool via SetReadinessDep once migrations succeed. The swap
+	// happens on a background goroutine while probe requests read dep concurrently,
+	// so access is guarded.
 	mu sync.RWMutex
-	// dep is an optional backing dependency whose health is AND-ed into
-	// readiness (nil when no database is wired OR not yet ready).
+	// dep is an optional backing dependency whose health is AND-ed into readiness.
+	// A NIL dep means no readiness dependency, so /readyz is ready (this is the
+	// no-database mode). To hold readiness DOWN until the DB is up, a non-nil
+	// always-false checker (notReady{}) must be wired — not nil.
 	dep ReadinessChecker
 }
 
@@ -48,8 +51,10 @@ type CampaignService = campaignService
 // Ensure CampaignService satisfies the generated service interface.
 var _ campaignsvc.Service = (*CampaignService)(nil)
 
-// NewCampaignService constructs a CampaignService. dep may be nil (no database
-// wired, or not yet ready); when non-nil, its health is required for readiness.
+// NewCampaignService constructs a CampaignService. A NIL dep means no readiness
+// dependency and /readyz reports ready (the no-database mode). To keep /readyz
+// NOT-ready during a cold start until the DB is up, the caller must pass a non-nil
+// checker that returns false (e.g. notReady{}), NOT nil — Readyz skips a nil dep.
 func NewCampaignService(dep ReadinessChecker) *CampaignService {
 	return &CampaignService{ready: true, dep: dep}
 }

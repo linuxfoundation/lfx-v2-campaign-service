@@ -110,6 +110,14 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		return nil, fmt.Errorf("init credential encryptor: %w", err)
 	}
 
+	// A malformed DATABASE_URL (e.g. a keyword DSN migrations can't consume) is a
+	// deterministic config error that NO retry can fix — fail fast rather than
+	// entering the background retry loop and 503-looping forever. (Transient
+	// DB-unavailability, by contrast, IS handled by the retry path below.)
+	if err := postgres.ValidateMigrationDSN(cfg.DatabaseURL); err != nil {
+		return nil, fmt.Errorf("database configuration: %w", err)
+	}
+
 	// Fast path: one synchronous attempt. On success, wire the live pool now.
 	if pool, initErr := initDatabase(context.Background(), cfg.DatabaseURL); initErr == nil {
 		c.setPool(pool)
@@ -189,20 +197,22 @@ func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
 	ctx, cancel := context.WithTimeout(parent, startupDBTimeout)
 	defer cancel()
 
-	migrateErr := make(chan error, 1)
-	go func() { migrateErr <- postgres.Migrate(dsn) }()
-	select {
-	case err := <-migrateErr:
-		if err != nil {
-			return nil, fmt.Errorf("run migrations: %w", err)
-		}
-	case <-ctx.Done():
-		return nil, fmt.Errorf("run migrations: %w", ctx.Err())
-	}
-
+	// Open the pool FIRST: NewPool does a context-bounded Ping (pool.go), so when the
+	// database is unreachable this fails fast within the deadline. golang-migrate's
+	// Up() takes no context and blocks until the DB responds, so running it against a
+	// down database would hang past the deadline — and because the caller retries,
+	// each hung attempt would leak another migration goroutine and race concurrent
+	// migrations. Gating Migrate behind a successful (reachable) Ping ensures Migrate
+	// only runs when the DB is actually up, where it connects immediately, so no
+	// migration goroutine is ever left blocked and retries never overlap.
 	pool, err := postgres.NewPool(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database pool: %w", err)
+	}
+
+	if mErr := postgres.Migrate(dsn); mErr != nil {
+		pool.Close()
+		return nil, fmt.Errorf("run migrations: %w", mErr)
 	}
 	return pool, nil
 }

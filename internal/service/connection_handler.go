@@ -134,7 +134,7 @@ func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encry
 func (s *ConnectionService) resolveBackend() (domain.ConnectionRepository, domain.Encryptor, error) {
 	repo, enc := s.backend()
 	if repo == nil {
-		return nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is not configured"}
+		return nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is unavailable"}
 	}
 	return repo, enc, nil
 }
