@@ -36,9 +36,20 @@ runs `Migrate` only after a reachable ping. This is deliberate: golang-migrate's
 `Up()` takes no context and blocks until the DB responds, so running it against a
 DOWN database would hang past the 15s deadline — and because the caller retries,
 each hung attempt would leak another migration goroutine and race concurrent
-migrations. Gating `Migrate` behind a reachable ping ensures it only runs when the
-DB is up (where it connects immediately), so no migration goroutine is ever left
-blocked and retries never overlap.
+migrations. Gating `Migrate` behind a reachable ping means it only runs when the DB
+is up, where it connects immediately.
+
+A migration on a *reachable* DB can still run long (a large or lock-blocked
+migration). For that case `Migrate` runs in a goroutine bounded by the startup
+deadline: `initDatabase` returns on the deadline, but the migration goroutine may
+still be running afterward. Two things keep this safe rather than a leak-and-race:
+(1) a package-level `migrateMu` serializes migration runs, so a retry BLOCKS on the
+mutex until the prior (deadline-abandoned) migration finishes instead of starting a
+second concurrent one; and (2) migrations are idempotent (already-applied steps are
+skipped), so a re-run after a partial is harmless. So there is at most one migration
+in flight at a time, never overlapping/racing — though a genuinely stuck migration
+can still delay readiness (surfaced as `/readyz` 503 during the cold-start window,
+which is the intended behavior, not a hang of the whole process).
 
 This is what makes the Deployment's ~90s `startupProbe` budget real: the pod is
 kept alive and `/readyz` stays 503 across a DB cold start, rather than the process
