@@ -1,5 +1,18 @@
 # Log
 
+## 2026-07-18
+
+**Creation** — Added the `internal/platform/googleads` Go package (GA-1 scaffold,
+LFXV2-2636): a Google Ads REST client (not gRPC) with OAuth2 refresh-token auth
+(single-flight leader/follower, secret-safe errors), a request layer (no-follow
+redirects, bounded reads, pre-send/ambiguous/definite classification, 429 retry
+gated on an explicit idempotent flag since GAQL search is POST-but-read-only), and
+cursor-paginated GAQL search with page/row caps. customer_id validated digits-only.
+GAQL gotcha documented: v23 replaced campaign.start_date/end_date with
+campaign.start_date_time/end_date_time. Concept doc + code index updated. Campaign
+creation (:mutate), metrics/keywords/audience, and keyword actions follow in
+GA-2..GA-5.
+
 ## 2026-07-15
 
 **Update** — Hardened the Reddit Ads client's ambiguous-outcome classification
