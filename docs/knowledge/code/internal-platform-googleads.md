@@ -127,10 +127,18 @@ create outcome is classified: an ambiguous failure (a mutating 3xx/5xx `apiError
 a mutating **429** — `doRequest` deliberately does NOT retry a non-idempotent 429
 because the throttled request may already have committed — a `transportError`, or a
 2xx with no `resourceName`) is reported UNCONFIRMED (verify before retrying) with a
-partial result carrying whatever exists so an orphan is reconcilable. A definite
-4xx means only THAT `:mutate` was rejected — for a campaign-create 4xx the budget
-from the first mutate still exists, so the partial carries `campaignBudgetId` for
-reconcile/cleanup (it is NOT "nothing was created" overall).
+partial result carrying whatever exists so an orphan is reconcilable. The partial
+carries BOTH deterministic names (`CampaignName` and `CampaignBudgetName`) alongside
+any known ids — and the two names DIFFER (`LFX | Budget | …` vs `LFX | Search
+Campaign | …`), so a caller reconciling a possibly-orphaned BUDGET before an id is
+known must use `CampaignBudgetName`; carrying only the campaign name would leave that
+budget unfindable. A definite 4xx means only THAT `:mutate` was rejected — for a
+campaign-create 4xx the budget from the first mutate still exists, so the partial
+carries `campaignBudgetId` for reconcile/cleanup (it is NOT "nothing was created"
+overall). Before the FIRST mutate, an already-cancelled context is caught explicitly
+(`ctx.Err()`) and returns a clean `(nil, err)` — otherwise, with a cached OAuth token
+the cancellation would only surface inside `httpClient.Do` as a `transportError` and
+be mis-reported as UNCONFIRMED, implying a budget might exist when nothing was sent.
 `createOutcomeAmbiguous` (5xx/429/transport always; 3xx only on a mutating method),
 `isDuplicateBudgetNameErr` (a 4xx `CampaignBudgetError.DUPLICATE_NAME`), and
 `isDuplicateCampaignNameErr` (a 4xx `CampaignError.DUPLICATE_CAMPAIGN_NAME` — a

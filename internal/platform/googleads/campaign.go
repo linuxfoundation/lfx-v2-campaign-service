@@ -97,15 +97,20 @@ type CampaignInput struct {
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
-// campaignBudget -> campaign, so both IDs are surfaced for reconcile/cleanup.
+// campaignBudget -> campaign, so both names and both IDs are surfaced for
+// reconcile/cleanup. The NAMES matter on an ambiguous/duplicate failure BEFORE an id
+// is known: the budget and campaign have DIFFERENT deterministic names (LFX | Budget
+// | … vs LFX | Search Campaign | …), so a caller reconciling a possibly-orphaned
+// budget must look it up by CampaignBudgetName — CampaignName would not find it.
 type CampaignResult struct {
-	Platform         string   `json:"platform"`
-	AccountLabel     string   `json:"accountLabel,omitempty"`
-	CampaignName     string   `json:"campaignName"`
-	CampaignID       string   `json:"campaignId"`
-	CampaignBudgetID string   `json:"campaignBudgetId"`
-	GoogleAdsURL     string   `json:"googleAdsUrl"`
-	Steps            []string `json:"steps"`
+	Platform           string   `json:"platform"`
+	AccountLabel       string   `json:"accountLabel,omitempty"`
+	CampaignName       string   `json:"campaignName"`
+	CampaignBudgetName string   `json:"campaignBudgetName"`
+	CampaignID         string   `json:"campaignId"`
+	CampaignBudgetID   string   `json:"campaignBudgetId"`
+	GoogleAdsURL       string   `json:"googleAdsUrl"`
+	Steps              []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -393,17 +398,32 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var steps []string
 	googleAdsURL := "https://ads.google.com/aw/campaigns?ocid=" + c.account.CustomerID
 
-	// campaignNamePartial carries the deterministic campaign NAME (no ids yet) so an
+	// campaignNamePartial carries BOTH deterministic names (no ids yet) so an
 	// ambiguous/duplicate budget or campaign create is reconcilable by name rather
-	// than discarded. Mirrors the meta/twitter name-only partials.
+	// than discarded. Both names are needed because they DIFFER: a possibly-orphaned
+	// budget is looked up by CampaignBudgetName, a campaign by CampaignName — carrying
+	// only the campaign name would leave a created-but-unconfirmed budget
+	// unreconcilable. Mirrors the meta/twitter name-only partials.
 	campaignNamePartial := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:     "google-ads",
-			AccountLabel: c.account.Label,
-			CampaignName: campaignName,
-			GoogleAdsURL: googleAdsURL,
-			Steps:        steps,
+			Platform:           "google-ads",
+			AccountLabel:       c.account.Label,
+			CampaignName:       campaignName,
+			CampaignBudgetName: budgetName,
+			GoogleAdsURL:       googleAdsURL,
+			Steps:              steps,
 		}
+	}
+
+	// If the caller's context is ALREADY cancelled/expired before the first mutate,
+	// nothing has been sent — return a clean (nil, err) rather than firing the request.
+	// doRequest would otherwise fail inside httpClient.Do and classify it as an
+	// ambiguous transportError → UNCONFIRMED, wrongly implying the budget MIGHT exist.
+	// (This is only observable when the OAuth token is already cached: with no cached
+	// token the token fetch surfaces the ctx error pre-send anyway, but the cached-token
+	// path reaches httpClient.Do directly, so guard it explicitly here.)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (context already done): %w", ctxErr)
 	}
 
 	// Step 1: create the campaign budget.

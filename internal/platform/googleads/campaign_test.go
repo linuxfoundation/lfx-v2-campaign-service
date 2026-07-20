@@ -165,8 +165,50 @@ func TestCreateCampaign_BudgetAmbiguous5xxIsUnconfirmed(t *testing.T) {
 	if res == nil || res.CampaignName == "" {
 		t.Fatalf("expected a name-carrying partial, got %+v", res)
 	}
+	// The possibly-orphaned resource is a BUDGET, so the partial must carry the budget
+	// NAME (not just the campaign name) — that's how a caller reconciles it (no id yet).
+	if res.CampaignBudgetName == "" {
+		t.Error("budget-ambiguous partial must carry CampaignBudgetName for reconcile")
+	}
 	if res.CampaignBudgetID != "" {
 		t.Errorf("budget id must be empty (never confirmed), got %q", res.CampaignBudgetID)
+	}
+}
+
+// A context ALREADY cancelled before the first mutate — with the OAuth token already
+// cached, so the cancellation isn't caught during a token fetch — must return a clean
+// (nil, err), NOT an UNCONFIRMED partial: nothing was sent, so the budget can't exist.
+func TestCreateCampaign_PreSendCancelledWithCachedTokenIsCleanFailure(t *testing.T) {
+	// `armed` flips true after the warm-up create; while armed, NEITHER mutate handler
+	// may be hit (the cancelled call must reach no endpoint).
+	var armed atomic.Bool
+	guard := func(next http.HandlerFunc, name string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if armed.Load() {
+				t.Errorf("%s must not be attempted on an already-cancelled context", name)
+			}
+			next(w, r)
+		}
+	}
+	c := newCampaignClient(t, guard(okBudget, "budget mutate"), guard(okCampaign, "campaign mutate"))
+	// Warm the token cache with one successful create, so the cancelled call below
+	// reaches httpClient.Do directly (no token fetch to catch the ctx error first).
+	if _, err := c.CreateCampaign(context.Background(), sampleInput()); err != nil {
+		t.Fatalf("warm-up create failed: %v", err)
+	}
+	armed.Store(true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled BEFORE the call — nothing can be sent
+	res, err := c.CreateCampaign(ctx, sampleInput())
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("a pre-send cancelled context must return a context.Canceled error, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a pre-send failure must NOT be UNCONFIRMED (nothing was sent): %v", err)
+	}
+	if res != nil {
+		t.Errorf("a clean pre-send failure returns nil result, got %+v", res)
 	}
 }
 

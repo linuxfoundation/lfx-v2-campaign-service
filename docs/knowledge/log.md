@@ -349,6 +349,18 @@ injection-safety, fail-closed, and key parsing. **DEPENDENCY:** adds
 `github.com/snowflakedb/gosnowflake` v1.19.1 (the only official Go Snowflake driver;
 no shared Go Snowflake service exists — the LFX One UI's Snowflake service is
 TypeScript). Concept doc + code index added; `go mod tidy` run.
+**Update** — Two more GA-2 partial/pre-send fixes (PR #33 review, copilot). (1) The
+ambiguous/duplicate BUDGET partial exposed only `CampaignName`, but the resource that
+may exist is a budget created under a DIFFERENT name (`LFX | Budget | …`) — with no id
+yet, a caller couldn't reconcile it. Added `CampaignBudgetName` to `CampaignResult`
+and populated it in every partial. (2) A pre-send contract hole: with a CACHED OAuth
+token, an already-cancelled context reached `httpClient.Do`, got wrapped as a
+`transportError`, and was reported UNCONFIRMED — but nothing was sent, so it's a clean
+failure. Added an explicit `ctx.Err()` check immediately before the first mutate →
+`(nil, err)`. (Without a cached token the token fetch surfaced the ctx error pre-send
+anyway; the cached-token path reaches Do directly, hence the explicit guard.) Tests
+added for both (the pre-send test warms the token cache first).
+
 **Update** — Added `networkSettings` to the GA-2 SEARCH campaign create (PR #33
 review, copilot — verified against v23 docs before applying). A SEARCH campaign that
 targets NO network is rejected with
