@@ -250,14 +250,21 @@ func TestCreateCampaign_RejectsBadInput(t *testing.T) {
 	)
 	// Bad budgets: zero, negative, over-max, NaN, ±Inf, and a sub-micro value that
 	// rounds to 0 amountMicros. All must be rejected BEFORE any :mutate call.
+	// (Project+EventName are set so we exercise the budget checks, not the
+	// attribution checks that run first.)
 	for _, b := range []float64{0, -5, maxBudgetUSD + 1, math.NaN(), math.Inf(1), math.Inf(-1), 0.0000001} {
-		if _, err := c.CreateCampaign(context.Background(), CampaignInput{EventName: "E", BudgetUSD: b}); err == nil {
+		if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", EventName: "E", BudgetUSD: b}); err == nil {
 			t.Errorf("budget %v should be rejected before any call", b)
 		}
 	}
-	// Missing attribution (no Project AND no EventName) must be rejected.
-	if _, err := c.CreateCampaign(context.Background(), CampaignInput{BudgetUSD: 50, NameSuffix: "x"}); err == nil {
-		t.Error("a campaign with no Project and no EventName should be rejected")
+	// Both attribution fields are required INDEPENDENTLY: a missing Project OR a
+	// missing EventName must be rejected before any :mutate call (a campaign with
+	// only one segment is mis-attributed by the name-parsing data pipeline).
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{EventName: "E", BudgetUSD: 50}); err == nil {
+		t.Error("a campaign with no Project should be rejected")
+	}
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{Project: "P", BudgetUSD: 50}); err == nil {
+		t.Error("a campaign with no EventName should be rejected")
 	}
 }
 
@@ -360,6 +367,114 @@ func TestComposeName_DeterministicAndBounded(t *testing.T) {
 	// Stable across calls (deterministic → retry collides on DUPLICATE_NAME).
 	if composeName("Budget", in) != got {
 		t.Error("composeName must be deterministic")
+	}
+}
+
+// A raw "|" in a caller-supplied segment must be stripped, not passed through:
+// otherwise it injects extra pipe-delimited fields into the composed name and
+// breaks the name-based attribution / reconciliation that splits on "|".
+func TestComposeName_StripsPipeInjection(t *testing.T) {
+	in := CampaignInput{Project: "A | B", EventName: "C||D", NameSuffix: "e"}
+	got := composeName("Budget", in)
+	if got != "LFX | Budget | A B | C D | e" {
+		t.Errorf("composeName must strip injected pipes, got %q", got)
+	}
+}
+
+func TestSanitizeNamePart(t *testing.T) {
+	cases := map[string]string{
+		"  hello  ": "hello",
+		"a | b":     "a b",
+		"a||b":      "a b",
+		"a  b\tc":   "a b c",
+		"|leading":  "leading",
+		"trailing|": "trailing",
+		"":          "",
+		"   ":       "",
+	}
+	for in, want := range cases {
+		if got := sanitizeNamePart(in); got != want {
+			t.Errorf("sanitizeNamePart(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Google Ads permits Campaign.name up to 128 chars but CampaignBudget.name up to
+// 255. A composed campaign name between those bounds must be rejected as a
+// campaign name (and BEFORE any :mutate call), even though it is a valid budget
+// name. Guards against collapsing the two limits back into one.
+func TestCreateCampaign_CampaignNameOverflowRejectedPreflight(t *testing.T) {
+	c := newCampaignClient(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("budget must not be attempted")
+			okBudget(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("campaign must not be attempted")
+			okCampaign(w, nil)
+		},
+	)
+	// composeName adds "LFX | Search Campaign | <Project> | <EventName> | " scaffolding
+	// (~30 chars). An EventName in the 150s pushes the campaign name over 128 while the
+	// budget name (limit 255) stays valid.
+	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 150), BudgetUSD: 50}
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "campaign name exceeds 128") {
+		t.Errorf("over-128 campaign name must be rejected preflight, got: %v", err)
+	}
+}
+
+// A 2xx whose resourceName is present but MALFORMED (no trailing id segment)
+// yields no reconcilable id, so it must be treated as UNCONFIRMED, not a
+// confirmed create — at both the budget and campaign steps.
+func TestCreateCampaign_MalformedBudgetResourceNameIsUnconfirmed(t *testing.T) {
+	c := newCampaignClient(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			// resourceName with an empty id segment → resourceID() returns "".
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/"}]}`)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("campaign must not be attempted")
+			okCampaign(w, nil)
+		},
+	)
+	_, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("malformed budget resourceName must be UNCONFIRMED, got: %v", err)
+	}
+}
+
+func TestCreateCampaign_MalformedCampaignResourceNameIsUnconfirmed(t *testing.T) {
+	c := newCampaignClient(t, okBudget,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"noslash"}]}`)
+		},
+	)
+	res, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("malformed campaign resourceName must be UNCONFIRMED, got: %v", err)
+	}
+	// Budget succeeded, so it must remain reconcilable in the partial.
+	if res == nil || res.CampaignBudgetID != "111" {
+		t.Fatalf("partial must carry the created budget id 111, got %+v", res)
+	}
+}
+
+func TestFirstResourceName(t *testing.T) {
+	rn, id, err := firstResourceName([]byte(`{"results":[{"resourceName":"customers/1/campaigns/222"}]}`))
+	if err != nil || rn != "customers/1/campaigns/222" || id != "222" {
+		t.Fatalf("valid: got (%q,%q,%v)", rn, id, err)
+	}
+	for _, body := range []string{
+		`{`,                                 // malformed JSON
+		`{"results":[]}`,                    // no results
+		`{"results":[{"resourceName":""}]}`, // empty resourceName
+		`{"results":[{"resourceName":"noslash"}]}`,                // no id segment
+		`{"results":[{"resourceName":"customers/1/campaigns/"}]}`, // empty id segment
+	} {
+		if _, _, err := firstResourceName([]byte(body)); err == nil {
+			t.Errorf("firstResourceName(%s) must error", body)
+		}
 	}
 }
 

@@ -350,6 +350,36 @@ injection-safety, fail-closed, and key parsing. **DEPENDENCY:** adds
 no shared Go Snowflake service exists — the LFX One UI's Snowflake service is
 TypeScript). Concept doc + code index added; `go mod tidy` run.
 
+**Update** — Second GA-2 review round on PR #33 (5 fixes): (1) split the name-length
+limit into `maxBudgetNameLen=255` / `maxCampaignNameLen=128` and validate each name
+against its own limit — v23 permits a 255-char budget name but only 128 for a
+campaign, so the collapsed single limit let a 129–255-char campaign name pass
+preflight and get rejected by the paid campaigns:mutate AFTER the budget was
+created (avoidable orphan). (2) Require BOTH Project AND EventName independently (was
+either-or): Project is the attribution key the pipeline parses from the name, so a
+one-segment name is mis-attributed. (3) Added `sanitizeNamePart` to strip the `|`
+delimiter from caller segments before composing — a raw `|` would inject extra
+pipe-fields and break name-based reconciliation/attribution. (4) `firstResourceName`
+now returns (resourceName, id) and errors on a present-but-MALFORMED resourceName
+(no id segment, e.g. `customers/1/campaigns/`) → UNCONFIRMED, instead of continuing
+with an empty unreconcilable id. (5) Fixed the RejectsBadInput test (its budget
+cases now set Project+EventName so they exercise the budget checks, not the new
+attribution checks that run first) + added tests for the 128-overflow, pipe-strip,
+malformed-resourceName, and firstResourceName cases. Concept doc updated.
+
+**Creation** — Added Google Ads campaign creation (GA-2, LFXV2-2637) in
+`internal/platform/googleads/campaign.go`: `CreateCampaign` creates a PAUSED SEARCH
+campaign as two sequential `:mutate` calls — a non-shared STANDARD `campaignBudget`
+(amountMicros = budget×1e6) then a `campaign` referencing it with a `manualCpc {}`
+bidding strategy. Both resource ids surfaced. Because `:mutate` has no idempotency
+key, added `createOutcomeAmbiguous` (5xx/transport ambiguous always; 3xx only on a
+mutating method) + `isDuplicateNameErr` (4xx DUPLICATE_NAME → already-exists) +
+machine-readable error-code parsing (`error.details[GoogleAdsFailure].errors[].errorCode`,
+body never surfaced, codes bounded): an ambiguous or 2xx-no-resourceName outcome →
+UNCONFIRMED + reconcilable partial (carries the budget id once created); a definite
+4xx → clean failure. Deterministic composed names so a retry collides on
+DUPLICATE_NAME rather than double-creating. Table-driven httptest coverage for
+every branch. Concept doc updated.
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
 `createOutcomeAmbiguous`, but a 2xx response with an empty `id` fell through to a

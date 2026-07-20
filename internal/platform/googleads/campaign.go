@@ -31,11 +31,15 @@ const (
 	// campaignBudgetError, which surfaces as a definite failure.
 	maxBudgetUSD = 1_000_000_000.0
 
-	// maxEntityNameLen bounds the composed budget / campaign name. Names must be
-	// unique per account (Google rejects a duplicate non-shared budget/campaign name
-	// with DUPLICATE_NAME), and an unbounded caller-supplied EventName could produce
-	// an oversized payload, so the composed name is length-capped before the call.
-	maxEntityNameLen = 255
+	// maxBudgetNameLen / maxCampaignNameLen bound the composed names. Google Ads v23
+	// applies DIFFERENT limits: CampaignBudget.name permits 255 chars, Campaign.name
+	// only 128. Using one 255 limit would let a 129–255 char campaign name pass, the
+	// budget create succeed, and the campaign mutate then fail — orphaning the budget.
+	// So each name is validated against its own limit before any create call. (Names
+	// must also be unique per account, and an unbounded caller-supplied EventName
+	// could produce an oversized payload — both reasons to cap.)
+	maxBudgetNameLen   = 255
+	maxCampaignNameLen = 128
 
 	// advertisingChannelSearch is the only channel type this client creates today.
 	advertisingChannelSearch = "SEARCH"
@@ -301,10 +305,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
-	// Require at least one attribution field so a paid campaign is never created
-	// under a nameless "LFX | <kind>" — a mis-attributed spend is hard to trace.
-	if strings.TrimSpace(in.Project) == "" && strings.TrimSpace(in.EventName) == "" {
-		return nil, fmt.Errorf("google-ads campaign requires a non-empty Project or EventName")
+	// Require BOTH attribution fields (mirrors the meta/twitter/reddit clients, which
+	// require Project and EventName independently). Project is the canonical
+	// attribution key the data pipeline parses out of the campaign name, so a campaign
+	// with no Project segment is mis-attributed even if EventName is present.
+	if strings.TrimSpace(in.Project) == "" {
+		return nil, fmt.Errorf("google-ads campaign requires a non-empty Project")
+	}
+	if strings.TrimSpace(in.EventName) == "" {
+		return nil, fmt.Errorf("google-ads campaign requires a non-empty EventName")
 	}
 	// Validate the budget and compute amountMicros ONCE. Reject NaN/Inf explicitly
 	// (NaN passes every ordered comparison, so `> 0`/`<= max` alone would let it
@@ -323,10 +332,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	budgetName := composeName("Budget", in)
 	campaignName := composeName("Search Campaign", in)
-	if err := validateEntityName("budget", budgetName); err != nil {
+	if err := validateEntityName("budget", budgetName, maxBudgetNameLen); err != nil {
 		return nil, err
 	}
-	if err := validateEntityName("campaign", campaignName); err != nil {
+	if err := validateEntityName("campaign", campaignName, maxCampaignNameLen); err != nil {
 		return nil, err
 	}
 
@@ -369,13 +378,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, fmt.Errorf("google-ads campaign budget creation failed: %w", err)
 		}
 	}
-	budgetResource, err := firstResourceName(budgetResp)
+	budgetResource, budgetID, err := firstResourceName(budgetResp)
 	if err != nil {
-		// A 2xx with no resourceName is a malformed success: the budget MAY have been
-		// created. UNCONFIRMED, not a clean failure.
-		return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (2xx with no resource name; %q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+		// A 2xx with no/malformed resourceName is a malformed success: the budget MAY
+		// have been created. UNCONFIRMED, not a clean failure.
+		return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
 	}
-	budgetID := resourceID(budgetResource)
 	steps = append(steps, fmt.Sprintf("Campaign budget created: %s ($%.2f/day, STANDARD delivery, non-shared)", budgetID, in.BudgetUSD))
 
 	// budgetPartial carries the created budget id (plus the campaign name) so an
@@ -416,11 +424,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return budgetPartial(), fmt.Errorf("google-ads campaign creation failed (budget %s created): %w", budgetID, err)
 		}
 	}
-	campaignResource, err := firstResourceName(campaignResp)
+	_, campaignID, err := firstResourceName(campaignResp)
 	if err != nil {
-		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; 2xx with no resource name — a campaign may exist; verify in Google Ads before retrying): %w", budgetID, err)
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — a campaign may exist; verify in Google Ads before retrying): %w", budgetID, err)
 	}
-	campaignID := resourceID(campaignResource)
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC)", campaignID))
 
 	res := budgetPartial()
@@ -429,18 +436,26 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	return res, nil
 }
 
-// firstResourceName decodes a :mutate response and returns results[0].resourceName,
-// erroring if the body is malformed or carries no result/resourceName (a 2xx that
-// the caller must treat as UNCONFIRMED rather than a confirmed create).
-func firstResourceName(body []byte) (string, error) {
+// firstResourceName decodes a :mutate response and returns
+// (results[0].resourceName, its trailing id). It errors if the body is malformed,
+// carries no result/resourceName, OR the resourceName is present but MALFORMED
+// (e.g. "customers/123/campaigns/" or "noslash") such that no id can be extracted —
+// accepting that would let creation continue with an empty, unreconcilable id or
+// report success with a blank id. The caller treats the error as UNCONFIRMED.
+func firstResourceName(body []byte) (resourceName, id string, err error) {
 	var mr mutateResponse
-	if err := json.Unmarshal(body, &mr); err != nil {
-		return "", fmt.Errorf("decode mutate response: %w", err)
+	if uErr := json.Unmarshal(body, &mr); uErr != nil {
+		return "", "", fmt.Errorf("decode mutate response: %w", uErr)
 	}
 	if len(mr.Results) == 0 || mr.Results[0].ResourceName == "" {
-		return "", fmt.Errorf("mutate response carried no resource name")
+		return "", "", fmt.Errorf("mutate response carried no resource name")
 	}
-	return mr.Results[0].ResourceName, nil
+	rn := mr.Results[0].ResourceName
+	rid := resourceID(rn)
+	if rid == "" {
+		return "", "", fmt.Errorf("mutate response resource name %q is malformed (no id segment)", rn)
+	}
+	return rn, rid, nil
 }
 
 // composeName builds a deterministic budget/campaign name from the input. The
@@ -448,26 +463,37 @@ func firstResourceName(body []byte) (string, error) {
 // collides on DUPLICATE_NAME rather than silently double-creating.
 func composeName(kind string, in CampaignInput) string {
 	parts := []string{"LFX", kind}
-	if p := strings.TrimSpace(in.Project); p != "" {
+	if p := sanitizeNamePart(in.Project); p != "" {
 		parts = append(parts, p)
 	}
-	if e := strings.TrimSpace(in.EventName); e != "" {
+	if e := sanitizeNamePart(in.EventName); e != "" {
 		parts = append(parts, e)
 	}
-	if s := strings.TrimSpace(in.NameSuffix); s != "" {
+	if s := sanitizeNamePart(in.NameSuffix); s != "" {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, " | ")
 }
 
+// sanitizeNamePart trims a caller-supplied name segment and strips the "|"
+// delimiter: a raw "|" in Project/EventName/NameSuffix would inject extra fields
+// into the pipe-delimited composed name and break project attribution / name-based
+// reconciliation (which split on "|"). Mirrors the meta/twitter/reddit builders'
+// delimiter sanitization. Collapses any resulting doubled spaces.
+func sanitizeNamePart(s string) string {
+	s = strings.ReplaceAll(s, "|", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	return strings.TrimSpace(s)
+}
+
 // validateEntityName rejects an empty or over-length composed name before any
 // create call (Google enforces a name length limit and rejects duplicates).
-func validateEntityName(kind, name string) error {
+func validateEntityName(kind, name string, maxLen int) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("google-ads %s name is empty", kind)
 	}
-	if len(name) > maxEntityNameLen {
-		return fmt.Errorf("google-ads %s name exceeds %d chars (%d): shorten EventName/Project/NameSuffix", kind, maxEntityNameLen, len(name))
+	if len(name) > maxLen {
+		return fmt.Errorf("google-ads %s name exceeds %d chars (%d): shorten EventName/Project/NameSuffix", kind, maxLen, len(name))
 	}
 	return nil
 }

@@ -72,8 +72,14 @@ campaign create also sets `containsEuPoliticalAdvertising:
 DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING` — v23 REQUIRES this on every create
 (omitting it fails with `FieldError.REQUIRED`, and since 2026-04-01 an account with
 any undeclared campaign has ALL mutate calls rejected). Both resource ids are
-surfaced (`campaignBudgetId` + `campaignId`) via `resourceID`, which takes the
-trailing segment of the `results[0].resourceName`. Between the two calls, if the
+surfaced (`campaignBudgetId` + `campaignId`) via `firstResourceName`, which decodes
+`results[0].resourceName` and returns both the resource name and its trailing-id
+segment. It errors when the body is malformed, carries no result/resourceName, OR
+the resourceName is present but MALFORMED (e.g. `customers/1/campaigns/` or
+`noslash`) such that no id can be extracted — accepting a present-but-malformed
+name would let creation continue with an empty, unreconcilable id (or report
+success with a blank id), so it is treated as UNCONFIRMED like the no-resourceName
+case. Between the two calls, if the
 caller's context is already done, the campaign `:mutate` is skipped and the created
 budget is returned as a reconcilable partial rather than fired on a dead context.
 
@@ -81,8 +87,20 @@ Input is validated up front, before any paid `:mutate` call: the budget must be
 finite (NaN/Inf rejected — NaN passes every ordered comparison, so it would
 otherwise slip through and create a $0 budget) and must round to a positive
 `amountMicros` (a sub-micro value like 0.0000001 is > 0 but converts to 0 micros);
-and at least one of Project / EventName must be non-empty so a paid campaign is
-never created under a nameless, un-attributable name.
+and BOTH Project AND EventName must be non-empty (independently — mirrors the
+meta/twitter/reddit clients). Project is the canonical attribution key the data
+pipeline parses out of the campaign name, so a campaign with only one segment is
+mis-attributed, not just "less descriptive". Caller-supplied name segments are
+sanitized (`sanitizeNamePart`) to strip the `|` delimiter before composing, so a
+raw `|` in Project/EventName/NameSuffix can't inject extra pipe-fields and break
+the name-based attribution/reconciliation that splits on `|`.
+
+The composed name is length-validated against **per-entity** limits, not a single
+shared limit: Google Ads v23 permits `CampaignBudget.name` up to 255 chars but
+`Campaign.name` only 128. Collapsing them (validating the campaign name against
+255) would let a 129–255-char campaign name pass preflight and then be rejected by
+the paid `campaigns:mutate` call AFTER the budget was already created — an
+avoidable orphan. Both names are validated before either `:mutate`.
 
 Because `:mutate` has NO idempotency key, a blind retry double-creates. So every
 create outcome is classified: an ambiguous failure (a mutating 3xx/5xx `apiError`,
