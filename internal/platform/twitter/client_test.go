@@ -3125,6 +3125,27 @@ func TestParseErrorCodes_BoundsUntrustedBody(t *testing.T) {
 	}
 }
 
+// TestTransportError_DoesNotLeakURL verifies transportError.Error() renders only
+// method/path + the underlying cause, NOT the request URL. A *url.Error's %v
+// embeds the full URL (which can carry request material / a destination secret),
+// and this string is copied into PromotedTweetWarning + persisted Steps.
+func TestTransportError_DoesNotLeakURL(t *testing.T) {
+	secretURL := "https://ads-api.x.com/12/accounts/acc1/promoted_tweets?signature=SECRET-abc123&token=xyz"
+	te := &transportError{
+		Method: http.MethodPost,
+		Path:   "promoted_tweets",
+		Err:    &url.Error{Op: "Post", URL: secretURL, Err: io.ErrUnexpectedEOF},
+	}
+	got := te.Error()
+	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
+		t.Errorf("transportError.Error() leaked the request URL: %q", got)
+	}
+	// The underlying cause is still surfaced for diagnostics.
+	if !strings.Contains(got, io.ErrUnexpectedEOF.Error()) {
+		t.Errorf("transportError.Error() should surface the cause, got: %q", got)
+	}
+}
+
 // TestCreateOutcomeAmbiguous_Twitter verifies a 5xx apiError and any
 // transportError are ambiguous regardless of method, a 3xx is ambiguous ONLY on a
 // mutating method (a GET redirect is not a create), and a definite 4xx (and 429)

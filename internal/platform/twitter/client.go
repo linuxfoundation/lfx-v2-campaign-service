@@ -500,10 +500,32 @@ type transportError struct {
 }
 
 func (e *transportError) Error() string {
-	return fmt.Sprintf("x ads api %s %s: %v", e.Method, e.Path, e.Err)
+	// Render only method/path + a SAFE description of the cause. Err from
+	// httpClient.Do is typically a *url.Error whose String()/%v embeds the full
+	// request URL (a create URL can carry request material / a destination's secret
+	// query), and this string is copied into PromotedTweetWarning and persisted
+	// Steps — so surfacing the raw error would leak the URL. safeTransportCause
+	// strips a *url.Error down to its underlying cause (timeout/EOF/reset) with no
+	// URL. Mirrors the apiError body-suppression discipline.
+	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.Err))
 }
 
 func (e *transportError) Unwrap() error { return e.Err }
+
+// safeTransportCause returns a URL-free description of a round-trip error. A
+// *url.Error's %v embeds the request URL, so we unwrap to its underlying cause
+// (which does not); anything else is rendered as-is (Do's non-url.Error causes —
+// EOF, i/o timeout — carry no URL). Empty cause falls back to a generic label.
+func safeTransportCause(err error) string {
+	if err == nil {
+		return "transport failure"
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return ue.Err.Error()
+	}
+	return err.Error()
+}
 
 // isPreSendDialError reports whether a httpClient.Do error clearly happened
 // BEFORE the request could be sent — a DNS resolution failure or a connect-time
@@ -541,12 +563,11 @@ func isPreSendDialError(err error) bool {
 // A definite 4xx (X rejected it), or any pre-send failure (validation, request
 // build, a pre-connect dial error), means NOT applied → returns false.
 //
-// Mirrors the meta/reddit clients: a transportError is always ambiguous, and an
-// *apiError is ambiguous on a 3xx or 5xx status — the predicate is NOT gated on
-// the HTTP method (unlike an earlier draft). Callers already invoke this only on
-// mutating (create) failures, so a method gate added nothing but a silent
-// divergence from the siblings; a GET-5xx is a caller-scoping concern, not this
-// predicate's.
+// Mirrors the meta/reddit clients: a transportError is always ambiguous; an
+// *apiError is ambiguous on a 5xx regardless of method, and on a 3xx ONLY for a
+// mutating method (a GET redirect is not a create, so it stays non-ambiguous).
+// Gating the 3xx on the method keeps the helper's contract correct for any caller
+// and identical to the siblings.
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
@@ -1130,6 +1151,14 @@ func validateDate(label, date string) error {
 // created PAUSED (entity_status=PAUSED); the promoted-tweet association is
 // created ACTIVE by the API (the endpoint does not accept entity_status), but
 // the paused line item gates delivery so nothing serves until it is enabled.
+//
+// IMPORTANT — non-standard error contract: on an AMBIGUOUS or partial failure this
+// returns a NON-NIL *CampaignResult ALONGSIDE a non-nil error. The result carries
+// whatever was (or may have been) created — the deterministic CampaignName, and
+// CampaignID/LineItemID once known — so the caller can reconcile the possibly-
+// orphaned resources by name/id before retrying (a blind retry would duplicate
+// them). Callers MUST inspect the returned result when err != nil, not discard it;
+// only a definite pre-send/validation failure returns (nil, err).
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	steps := []string{}
 

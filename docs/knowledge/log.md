@@ -2,6 +2,20 @@
 
 ## 2026-07-20
 
+**Update** — Fixed a URL leak + stale docs on the X/Twitter client (PR #31 review,
+cursor Medium + dealako + copilot). (1) `transportError.Error()` rendered `%v` of
+the wrapped `httpClient.Do` error — typically a `*url.Error` embedding the full
+request URL (which can carry request material / a destination's secret query) —
+and that string was copied into `PromotedTweetWarning` + persisted `Steps`. Added
+`safeTransportCause` which unwraps a `*url.Error` to its underlying cause
+(timeout/EOF/reset) with no URL; `Error()` now renders method/path + that. Test
+added. NOTE: reddit/meta (merged) have the same `%v` transportError render —
+follow-up to apply the same URL-suppression there. (2) Corrected the stale
+`createOutcomeAmbiguous` header comment that still claimed "NOT gated on the HTTP
+method" after the 3xx gate was re-added. (3) Documented CreateCampaign's
+non-standard `(non-nil result, non-nil error)` contract so callers inspect the
+result on error (for reconcile) instead of discarding it.
+
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
 `createOutcomeAmbiguous`, but a 2xx response with an empty `id` fell through to a
