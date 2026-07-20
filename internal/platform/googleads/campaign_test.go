@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -209,15 +210,21 @@ func TestCreateCampaign_CampaignDefinite4xxKeepsBudgetPartial(t *testing.T) {
 	}
 }
 
-func TestCreateCampaign_RejectsBadBudget(t *testing.T) {
+func TestCreateCampaign_RejectsBadInput(t *testing.T) {
 	c := newCampaignClient(t,
 		func(w http.ResponseWriter, _ *http.Request) { t.Error("no call expected"); okBudget(w, nil) },
 		func(w http.ResponseWriter, _ *http.Request) { t.Error("no call expected"); okCampaign(w, nil) },
 	)
-	for _, b := range []float64{0, -5, maxBudgetUSD + 1} {
+	// Bad budgets: zero, negative, over-max, NaN, ±Inf, and a sub-micro value that
+	// rounds to 0 amountMicros. All must be rejected BEFORE any :mutate call.
+	for _, b := range []float64{0, -5, maxBudgetUSD + 1, math.NaN(), math.Inf(1), math.Inf(-1), 0.0000001} {
 		if _, err := c.CreateCampaign(context.Background(), CampaignInput{EventName: "E", BudgetUSD: b}); err == nil {
-			t.Errorf("budget %.0f should be rejected before any call", b)
+			t.Errorf("budget %v should be rejected before any call", b)
 		}
+	}
+	// Missing attribution (no Project AND no EventName) must be rejected.
+	if _, err := c.CreateCampaign(context.Background(), CampaignInput{BudgetUSD: 50, NameSuffix: "x"}); err == nil {
+		t.Error("a campaign with no Project and no EventName should be rejected")
 	}
 }
 

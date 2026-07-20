@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 )
@@ -267,11 +268,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
-	if in.BudgetUSD <= 0 {
-		return nil, fmt.Errorf("google-ads campaign budget must be > 0, got %.2f", in.BudgetUSD)
+	// Require at least one attribution field so a paid campaign is never created
+	// under a nameless "LFX | <kind>" — a mis-attributed spend is hard to trace.
+	if strings.TrimSpace(in.Project) == "" && strings.TrimSpace(in.EventName) == "" {
+		return nil, fmt.Errorf("google-ads campaign requires a non-empty Project or EventName")
+	}
+	// Validate the budget and compute amountMicros ONCE. Reject NaN/Inf explicitly
+	// (NaN passes every ordered comparison, so `> 0`/`<= max` alone would let it
+	// through and create a $0 budget), and reject anything that rounds to <= 0 micros
+	// (a sub-micro budget like 0.0000001 is > 0 but converts to 0 amountMicros).
+	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) {
+		return nil, fmt.Errorf("google-ads campaign budget must be a finite number, got %v", in.BudgetUSD)
 	}
 	if in.BudgetUSD > maxBudgetUSD {
 		return nil, fmt.Errorf("google-ads campaign budget %.2f exceeds the maximum %.0f", in.BudgetUSD, maxBudgetUSD)
+	}
+	amountMicros := int64(in.BudgetUSD * microsPerUnit)
+	if amountMicros <= 0 {
+		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.BudgetUSD)
 	}
 
 	budgetName := composeName("Budget", in)
@@ -303,7 +317,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	shared := false
 	budgetReq := mutateRequest{Operations: []mutateOperation{{Create: campaignBudgetCreate{
 		Name:             budgetName,
-		AmountMicros:     int64(in.BudgetUSD * microsPerUnit),
+		AmountMicros:     amountMicros,
 		DeliveryMethod:   "STANDARD",
 		ExplicitlyShared: &shared,
 	}}}}

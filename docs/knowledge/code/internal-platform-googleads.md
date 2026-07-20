@@ -71,6 +71,13 @@ can't assume conversion tracking, which `maximizeConversions` requires). Both
 resource ids are surfaced (`campaignBudgetId` + `campaignId`) via `resourceID`,
 which takes the trailing segment of the `results[0].resourceName`.
 
+Input is validated up front, before any paid `:mutate` call: the budget must be
+finite (NaN/Inf rejected — NaN passes every ordered comparison, so it would
+otherwise slip through and create a $0 budget) and must round to a positive
+`amountMicros` (a sub-micro value like 0.0000001 is > 0 but converts to 0 micros);
+and at least one of Project / EventName must be non-empty so a paid campaign is
+never created under a nameless, un-attributable name.
+
 Because `:mutate` has NO idempotency key, a blind retry double-creates. So every
 create outcome is classified: an ambiguous failure (a mutating 3xx/5xx `apiError`
 or a `transportError`, or a 2xx with no `resourceName`) is reported UNCONFIRMED
