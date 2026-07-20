@@ -111,17 +111,32 @@ func Migrate(dsn string) error {
 	return nil
 }
 
-// pgxURL converts a URL-scheme DSN to the "pgx5://" scheme golang-migrate's
-// driver expects. A "postgres://" / "postgresql://" DSN is rewritten; an
 // ValidateMigrationDSN reports whether dsn is in the URL form migrations require,
-// WITHOUT connecting. A keyword DSN ("host=… user=…") is a deterministic config
-// error that no retry can fix, so callers use this to fail fast up front rather
-// than entering a retry loop that can never succeed.
+// WITHOUT connecting. It checks BOTH that the DSN has a URL scheme golang-migrate
+// can consume (not a keyword "host=… user=…" DSN) AND that it actually parses as a
+// pgx config — a syntactically broken URL like "postgres://[bad" passes the prefix
+// check but would fail deep in NewPool/Migrate, so we reject it up front. A keyword
+// or malformed DSN is a deterministic config error no retry can fix, so callers use
+// this to fail fast rather than entering a retry loop that can never succeed.
 func ValidateMigrationDSN(dsn string) error {
-	_, err := pgxURL(dsn)
-	return err
+	if _, err := pgxURL(dsn); err != nil {
+		return err
+	}
+	// Also verify the URL actually parses, so a syntactically broken URL like
+	// "postgres://[bad" is caught here rather than deep in NewPool. Only the
+	// postgres/postgresql schemes are what NewPool consumes (pgxpool.ParseConfig
+	// doesn't understand golang-migrate's internal "pgx5://" scheme), so restrict the
+	// parse check to those — a "pgx5://" DSN passed the prefix check above.
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		if _, err := pgxpool.ParseConfig(dsn); err != nil {
+			return fmt.Errorf("DATABASE_URL is not a parseable postgres URL: %w", err)
+		}
+	}
+	return nil
 }
 
+// pgxURL converts a URL-scheme DSN to the "pgx5://" scheme golang-migrate's
+// driver expects. A "postgres://" / "postgresql://" DSN is rewritten; an
 // already-"pgx5://" DSN is passed through. A keyword DSN ("host=… user=…") has
 // no URL scheme golang-migrate can parse and is rejected with a clear error.
 func pgxURL(dsn string) (string, error) {

@@ -42,6 +42,23 @@ func TestPgxURL_RejectsKeywordDSN(t *testing.T) {
 	}
 }
 
+func TestValidateMigrationDSN(t *testing.T) {
+	// Valid URL DSNs pass (no connection is attempted).
+	for _, ok := range []string{"postgres://app@host:5432/db?sslmode=disable", "postgresql://u:p@h/d", "pgx5://u@h/d"} {
+		if err := ValidateMigrationDSN(ok); err != nil {
+			t.Errorf("ValidateMigrationDSN(%q) = %v, want nil", ok, err)
+		}
+	}
+	// A keyword DSN (no URL scheme) and a syntactically MALFORMED URL both fail up
+	// front — the malformed one passes the prefix check but must be caught by the
+	// parseability check, not deferred to NewPool/Migrate.
+	for _, bad := range []string{"host=localhost user=u dbname=d", "postgres://[bad", "not a dsn at all"} {
+		if err := ValidateMigrationDSN(bad); err == nil {
+			t.Errorf("ValidateMigrationDSN(%q) = nil, want an error", bad)
+		}
+	}
+}
+
 func withSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
 	t.Helper()
 	sr := tracetest.NewSpanRecorder()
