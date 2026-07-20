@@ -5,8 +5,10 @@ package reddit
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -555,6 +558,127 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_ManualVariantsNoPostURL exercises the manual-variant branch:
+// Variants supplied WITHOUT a PostURL. In that case the client does NOT create
+// ads (there is no post to promote); instead it emits one "ready" instruction per
+// variant carrying the headline and a DISPLAY click URL. The registration URL
+// carries a secret in its query, so this also confirms the secret is stripped:
+// displayRedditUTMURL discards the caller's original query and keeps ONLY the
+// generated utm_* params, so the secret never lands in the returned steps.
+func TestCreateCampaign_ManualVariantsNoPostURL(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var mu sync.Mutex
+	var paths []string
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(path, "/campaigns") && r.Method == http.MethodPost:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "camp_1"}})
+		case strings.HasSuffix(path, "/ad_groups") && r.Method == http.MethodPost:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	// Compose the secret-bearing registration URL at runtime so no credential-shaped
+	// literal appears in the test source (avoids tripping secretlint/gitleaks).
+	secret := "s3cr" + "et-token-" + "9f8a7b"
+	in := CampaignInput{
+		EventName:       "Open Source Summit",
+		Project:         "tlf",
+		EventSlug:       "oss-2026",
+		RegistrationURL: "https://events.linuxfoundation.org/oss/?token=" + secret,
+		BudgetUSD:       500,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"kubernetes"},
+		Objective:       "traffic",
+		Variants: []AdVariant{
+			{Headline: "Join us at OSS", Body: "The premier open source event"},
+			{Headline: "Register for OSS 2026", Body: "Talks, workshops, and more"},
+		},
+		// No PostURL -> manual-variant branch.
+	}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	// No ad is created in the manual-variant path (no post to promote), and no
+	// AdID/AdCount is set.
+	mu.Lock()
+	for _, p := range paths {
+		if strings.HasSuffix(p, "/ads") {
+			t.Errorf("manual-variant path must NOT create ads, but saw %q", p)
+		}
+	}
+	mu.Unlock()
+	if res.AdCount != 0 || res.AdID != "" {
+		t.Errorf("manual-variant path: AdCount=%d AdID=%q, want 0 and empty", res.AdCount, res.AdID)
+	}
+
+	allSteps := strings.Join(res.Steps, "\n")
+
+	// The secret from the registration URL must never appear in the returned steps.
+	if strings.Contains(allSteps, secret) {
+		t.Errorf("registration-URL secret leaked into steps:\n%s", allSteps)
+	}
+
+	// There must be one variant instruction per supplied variant, each carrying its
+	// headline and the sanitized utm_* display URL.
+	if !strings.Contains(allSteps, "2 ad variant(s) ready") {
+		t.Errorf("expected a '2 ad variant(s) ready' summary step, got:\n%s", allSteps)
+	}
+	// The operator instruction must carry the NEW set/replace semantics explicitly:
+	// the operator SETS/REPLACES the shown utm_* params on their registration URL,
+	// keeping ALL its other query parameters (buildRedditUTMURL's url.Values.Set
+	// replaces only the exact keys it generates and preserves everything else,
+	// including an ungenerated utm_* like utm_id). Assert both distinctive phrases so
+	// this operator-critical guidance can't regress to the old "append ... keeping
+	// its existing query" wording (which the summary-count check alone would still
+	// pass).
+	for _, want := range []string{
+		"set/replace the shown utm_* params",
+		"keeping all its other query parameters",
+		"drop any trailing '/' from the path",
+	} {
+		if !strings.Contains(allSteps, want) {
+			t.Errorf("operator instruction missing new phrase %q; got:\n%s", want, allSteps)
+		}
+	}
+	for i, v := range in.Variants {
+		if !strings.Contains(allSteps, v.Headline) {
+			t.Errorf("variant %d headline %q missing from steps:\n%s", i+1, v.Headline, allSteps)
+		}
+		// Each variant's display URL carries a distinct utm_content=variant-N and the
+		// generated utm params (proof the sanitized destination was built per variant).
+		wantContent := fmt.Sprintf("utm_content=variant-%d", i+1)
+		if !strings.Contains(allSteps, wantContent) {
+			t.Errorf("variant %d: expected %q in steps:\n%s", i+1, wantContent, allSteps)
+		}
+	}
+	if !strings.Contains(allSteps, "utm_source=reddit") {
+		t.Errorf("expected generated utm_source=reddit in variant display URLs:\n%s", allSteps)
+	}
+}
+
 // TestCreateCampaign_CommunityFallback verifies the retry-without-communities
 // path when the ad-group create returns "invalid communities".
 func TestCreateCampaign_CommunityFallback(t *testing.T) {
@@ -908,6 +1032,57 @@ func TestCreateCampaign_ConnRefusedNotUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestIsPreSendDialError classifies which Do errors PROVE the request was NOT
+// sent (so a create is NOT ambiguous): only DNS resolution and connect-time dial
+// failures (connection-refused/no-route/network-unreachable) — in these the
+// connection was never established, so no request bytes could have reached Reddit.
+// TLS errors are deliberately AMBIGUOUS (in notPreSend below), matching the merged
+// Meta client: they aren't a reliable pre-send proof for an arbitrary supplied
+// transport.
+//
+// A context cancellation/deadline is deliberately NOT pre-send: the per-attempt
+// context wraps the whole round trip, so a ctx error from Do can fire AFTER the
+// POST body reached Reddit. Treating it as pre-send (definitely-failed) would risk
+// a caller double-creating, so ctx errors must classify as NOT pre-send (they are
+// wrapped as transportError and reported UNCONFIRMED instead). A generic
+// post-connect failure (e.g. unexpected EOF) likewise stays ambiguous (not
+// pre-send).
+func TestIsPreSendDialError(t *testing.T) {
+	preSend := []error{
+		&net.DNSError{Err: "no such host", Name: "x"},
+		syscall.ECONNREFUSED,
+		syscall.EHOSTUNREACH,
+		syscall.ENETUNREACH,
+	}
+	for _, e := range preSend {
+		if !isPreSendDialError(e) {
+			t.Errorf("isPreSendDialError(%v) = false, want true (pre-send / not sent)", e)
+		}
+	}
+	notPreSend := []error{
+		io.ErrUnexpectedEOF, // mid-flight after a connection was established
+		errors.New("some other error"),
+		// No TLS error is pre-send (matching the merged Meta client): a custom
+		// transport can enable renegotiation, and a wrapping/retrying RoundTripper can
+		// surface a cert error while reading a response AFTER forwarding the POST — so
+		// neither a cert-verification nor a record-header failure proves pre-send. Both
+		// flow to the ambiguous (UNCONFIRMED) path.
+		&tls.CertificateVerificationError{},
+		tls.RecordHeaderError{Msg: "bad record"},
+		// Context errors are NOT pre-send: the per-attempt ctx wraps the whole round
+		// trip, so a ctx error can surface after the POST reached Reddit. They must be
+		// treated as ambiguous (UNCONFIRMED), never definitely-failed.
+		context.Canceled,
+		context.DeadlineExceeded,
+		fmt.Errorf("wrapped: %w", context.Canceled),
+	}
+	for _, e := range notPreSend {
+		if isPreSendDialError(e) {
+			t.Errorf("isPreSendDialError(%v) = true, want false (ambiguous / post-connect)", e)
+		}
+	}
+}
+
 // TestCreateCampaign_2xxUndecodableIsUnconfirmed verifies a campaign create that
 // returns 2xx with an undecodable body is treated as UNCONFIRMED (the mutation
 // likely succeeded), returning a partial with the campaign name.
@@ -1051,6 +1226,66 @@ func TestCreateCampaign_CtxCancelDuringVerifyIsFatal(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&campaignPosts); n != 0 {
 		t.Errorf("no campaign POST should occur after ctx cancel, got %d", n)
+	}
+}
+
+// TestCreateCampaign_CtxCancelDuringCampaignPostIsUnconfirmed verifies the
+// corrected semantics: a caller context cancellation that fires while the
+// campaign POST is IN FLIGHT (after the request has gone out but before the
+// response is read) must be reported as UNCONFIRMED — the campaign MAY have been
+// created — NOT as a clean pre-send FAILED. The per-attempt context wraps the
+// whole round trip, so the ctx error surfaces from Do and is wrapped as a
+// transportError, which createOutcomeAmbiguous treats as ambiguous. Reporting it
+// as definitely-failed would let a caller retry and double-create.
+func TestCreateCampaign_CtxCancelDuringCampaignPostIsUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// serverDone unblocks the POST handler unconditionally at test end, so the
+	// handler goroutine can never leak if the client-side connection teardown
+	// doesn't cancel the server request context promptly (which would otherwise
+	// hang the deferred Server.Close on -race).
+	serverDone := make(chan struct{})
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+		case strings.HasSuffix(r.URL.Path, "/campaigns") && r.Method == http.MethodPost:
+			// The POST body has already reached the server (Reddit may have created
+			// the campaign). Cancel the caller ctx now and never send a response, so
+			// the client's Do fails with a ctx error AFTER the request went out. Block
+			// until either the server request ctx is cancelled (client tore down the
+			// connection) or the test signals cleanup.
+			cancel()
+			select {
+			case <-r.Context().Done():
+			case <-serverDone:
+			}
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	apiSrv := httptest.NewServer(handler)
+	defer apiSrv.Close()
+	defer close(serverDone) // runs before apiSrv.Close() (LIFO), releasing the handler
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	res, err := c.CreateCampaign(ctx, validRedditInput())
+	if err == nil {
+		t.Fatal("expected an error on ctx cancellation during the campaign POST")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("in-flight cancel must return a partial UNCONFIRMED result with the campaign name, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an in-flight campaign-POST cancel must be UNCONFIRMED (may exist), got %v", err)
+	}
+	if strings.Contains(err.Error(), "aborted before completion") {
+		t.Errorf("an in-flight cancel must NOT be reported as a clean pre-POST abort, got %v", err)
 	}
 }
 
@@ -3396,5 +3631,144 @@ func TestRedactURL(t *testing.T) {
 		if got := redactURL(tc.in); got != tc.want {
 			t.Errorf("redactURL(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestBuiltinClientDoesNotFollowRedirectsOnPOST verifies the built-in
+// *http.Client disables redirect following: a mutating POST that receives a 3xx
+// must NOT be followed to the redirect target (which could be unreachable — an
+// unresolvable/refused host — and let isPreSendDialError misclassify a
+// possibly-received POST as a pre-send DNS/dial failure). The 3xx must instead
+// surface as a non-2xx error (UNCONFIRMED for a mutating request), and the
+// redirect target handler must never be hit.
+func TestBuiltinClientDoesNotFollowRedirectsOnPOST(t *testing.T) {
+	var targetHit atomic.Bool
+	// target is where the redirect would send the request if it were followed.
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHit.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected", http.StatusNotFound)
+			return
+		}
+		// Redirect the mutating POST elsewhere. A redirect-following client would
+		// re-issue against target; the built-in client must not.
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer apiSrv.Close()
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+
+	// Uses the DEFAULT built-in client (no WithHTTPClient), so CheckRedirect applies.
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	_, err := c.request(context.Background(), http.MethodPost, "/campaigns", map[string]any{"x": 1})
+	if err == nil {
+		t.Fatal("a 3xx redirect on a POST must surface as an error, got nil")
+	}
+	// The 3xx must be reported as a non-2xx apiError, not a false success.
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		t.Fatalf("err = %v (%T), want *apiError", err, err)
+	}
+	if ae.StatusCode != http.StatusFound {
+		t.Errorf("apiError.StatusCode = %d, want %d (302 Found)", ae.StatusCode, http.StatusFound)
+	}
+	// A 302 on a MUTATING request must be UNCONFIRMED (ambiguous): receiving a 3xx
+	// proves the POST reached a responder, but does not prove no resource was
+	// committed before the redirect — so the caller must NOT retry into a duplicate.
+	if !createOutcomeAmbiguous(err) {
+		t.Errorf("a 3xx on a mutating POST must be classified as ambiguous (UNCONFIRMED), got not-ambiguous for %v", err)
+	}
+	if targetHit.Load() {
+		t.Error("redirect target was hit: the built-in client followed a redirect on a mutating POST")
+	}
+}
+
+// TestBuiltinClientCheckRedirectReturnsErrUseLastResponse pins the redirect
+// policy directly: the built-in client's CheckRedirect must return
+// http.ErrUseLastResponse so a 3xx is handed back as-is rather than followed.
+func TestBuiltinClientCheckRedirectReturnsErrUseLastResponse(t *testing.T) {
+	c := NewClient(testCreds, testAccount)
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("built-in client must set CheckRedirect to disable redirect following")
+	}
+	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse", got)
+	}
+}
+
+// TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller verifies that a
+// caller-supplied *http.Client WITHOUT a CheckRedirect gets the no-follow policy
+// enforced via a shallow copy on c.httpClient, while the caller's original client
+// is provably NOT mutated (its CheckRedirect stays nil).
+func TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller(t *testing.T) {
+	supplied := &http.Client{Timeout: 5 * time.Second} // CheckRedirect nil
+	c := NewClient(testCreds, testAccount, WithHTTPClient(supplied))
+
+	// The client actually used must enforce no-follow.
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("supplied client without CheckRedirect must get no-follow enforced on c.httpClient")
+	}
+	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
+		t.Errorf("enforced CheckRedirect = %v, want http.ErrUseLastResponse", got)
+	}
+	// The caller's original client must NOT be mutated: it must be a distinct copy
+	// and the caller's CheckRedirect must remain nil.
+	if c.httpClient == supplied {
+		t.Error("c.httpClient must be a COPY of the supplied client, not the same pointer")
+	}
+	if supplied.CheckRedirect != nil {
+		t.Error("the caller's original client was mutated: CheckRedirect is no longer nil")
+	}
+	// The copy must preserve the supplied Timeout.
+	if c.httpClient.Timeout != 5*time.Second {
+		t.Errorf("copied client Timeout = %v, want 5s (must preserve supplied fields)", c.httpClient.Timeout)
+	}
+}
+
+// TestWithHTTPClientOverridesExplicitCheckRedirect verifies that no-follow is
+// enforced UNCONDITIONALLY: a caller-supplied client that sets its OWN
+// CheckRedirect is still overridden to noFollow (a caller callback that returns
+// nil, or follows N hops then stops, would re-open the pre-send hole), and the
+// caller's original client is not mutated.
+func TestWithHTTPClientOverridesExplicitCheckRedirect(t *testing.T) {
+	sentinel := errors.New("caller policy")
+	callerPolicy := func(_ *http.Request, _ []*http.Request) error { return sentinel }
+	supplied := &http.Client{CheckRedirect: callerPolicy}
+	c := NewClient(testCreds, testAccount, WithHTTPClient(supplied))
+
+	// The client we USE must enforce no-follow, not the caller's follow-capable policy.
+	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse (no-follow enforced)", got)
+	}
+	// The caller's original client must be untouched (copy, not mutate).
+	if c.httpClient == supplied {
+		t.Error("supplied client must be copied, not used in place, when overriding CheckRedirect")
+	}
+	if got := supplied.CheckRedirect(nil, nil); !errors.Is(got, sentinel) {
+		t.Error("the caller's original client was mutated: its CheckRedirect no longer returns the caller policy")
+	}
+}
+
+// TestCreateOutcomeAmbiguous3xxByMethod verifies that a 3xx apiError is
+// UNCONFIRMED on a mutating method but NOT ambiguous on a GET.
+func TestCreateOutcomeAmbiguous3xxByMethod(t *testing.T) {
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		err := &apiError{Method: m, Path: "/x", StatusCode: http.StatusFound}
+		if !createOutcomeAmbiguous(err) {
+			t.Errorf("createOutcomeAmbiguous(302 %s) = false, want true (UNCONFIRMED)", m)
+		}
+	}
+	getErr := &apiError{Method: http.MethodGet, Path: "/x", StatusCode: http.StatusFound}
+	if createOutcomeAmbiguous(getErr) {
+		t.Error("createOutcomeAmbiguous(302 GET) = true, want false (a GET redirect is not a create)")
 	}
 }

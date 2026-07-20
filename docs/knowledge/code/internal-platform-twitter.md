@@ -47,6 +47,12 @@ toward the 1-req/sec limit; it does NOT enforce the account-wide write limit
 across concurrent dispatches or replicas (that needs cross-replica coordination,
 tracked in LFXV2-2665), so operators must not rely on this stateless client for
 cross-dispatch rate limiting. When the account limit is hit anyway, 429s are
-retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`.
+retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. Redirect
+following is force-disabled (a shared `noFollow` `CheckRedirect` policy on the
+default and any `WithHTTPClient`-supplied client, via a shallow copy) so a 3xx is
+surfaced rather than followed — important with OAuth 1.0a, where a followed
+redirect would resend a request signed for the original URL to a different one.
+(Typing the non-2xx error and classifying a mutating 3xx as UNCONFIRMED, as the
+meta/reddit clients do, is tracked as a follow-up — LFXV2-2642.)
 
 See [internal/platform/twitter](../../../internal/platform/twitter).
