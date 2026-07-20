@@ -612,6 +612,56 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignAdSetAmbiguousIsUnconfirmed verifies that an AMBIGUOUS ad-set
+// failure (a 5xx — Meta may have committed the ad set) is worded UNCONFIRMED with
+// verify-before-retry, NOT a definite "failed", so a caller does not blind-retry
+// into a duplicate ad set. Mirrors the campaign/ad-create ambiguity handling.
+func TestCreateCampaignAdSetAmbiguousIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			// 5xx — Meta may have committed the ad set before erroring.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"upstream","type":"OAuthException","code":2}}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-abc"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
+	)
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon", Project: "tlf",
+		RegistrationURL: "https://events.example.org/kubecon", Objective: "traffic",
+		GeoTargets: []string{"US"}, Budget: 500, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "Join us", Headline: "KubeCon 2026"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when ad set creation returns 5xx")
+	}
+	if res == nil || res.CampaignID != "camp_orphan" {
+		t.Fatalf("expected a partial result carrying the orphaned campaign id, got %+v", res)
+	}
+	// The error must convey UNCONFIRMED, not a definite "failed".
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("ambiguous ad-set 5xx must be UNCONFIRMED, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "ad set creation failed") {
+		t.Errorf("ambiguous ad-set 5xx must not read as a definite failure: %v", err)
+	}
+}
+
 // TestCreateCampaignNoIDReturnsPartial verifies a 2xx campaign create with no id
 // returns a partial result carrying the campaign name (reconcilable by name), not
 // a bare (nil, err).
@@ -3006,6 +3056,48 @@ func TestDoRequestPropagatesBodyReadError(t *testing.T) {
 	err := c.doRequest(context.Background(), http.MethodGet, "/x", nil, &out)
 	if err == nil {
 		t.Fatal("expected a read error, got nil (a truncated body must not be a success)")
+	}
+}
+
+// TestDoRequestNon2xxReadErrorPreservesStatus verifies that when a NON-2xx
+// response body fails to read, doRequest still surfaces a typed *APIError carrying
+// the HTTP status (not a plain error). This matters for a mutating 3xx (surfaced
+// because redirects aren't followed): the create may have committed, and
+// createOutcomeAmbiguous classifies on the *APIError status — stripping it would
+// silently turn an ambiguous create into a definite "failed".
+func TestDoRequestNon2xxReadErrorPreservesStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "1000") // advertise more than we send
+		w.WriteHeader(http.StatusFound)           // 302 — a mutating redirect, not followed
+		_, _ = io.WriteString(w, `{"partial":`)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		if hj, ok := w.(http.Hijacker); ok {
+			if conn, _, err := hj.Hijack(); err == nil {
+				_ = conn.Close()
+			}
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected a read error, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError preserving the status, got %T: %v", err, err)
+	}
+	if ae.StatusCode != http.StatusFound {
+		t.Errorf("APIError.StatusCode = %d, want 302 (status must survive a body-read failure)", ae.StatusCode)
+	}
+	// The whole point: a mutating 3xx with an unreadable body stays AMBIGUOUS.
+	if !createOutcomeAmbiguous(err) {
+		t.Error("a mutating 302 with an unreadable body must be classified ambiguous")
 	}
 }
 

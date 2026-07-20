@@ -784,13 +784,23 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		if readErr != nil && (!throttled || attempt >= retryMax) {
 			// A read failure on a 2xx is AMBIGUOUS: Meta committed the mutation but we
 			// couldn't read the result — wrap it as transportError so a create is
-			// treated as "may exist". A read failure on a non-2xx isn't a committed
-			// mutation, so return it plain. Mirrors the reddit client wrapping 2xx
-			// read/decode failures as transportError.
+			// treated as "may exist". Mirrors the reddit client wrapping 2xx read/decode
+			// failures as transportError.
 			if status >= 200 && status < 300 {
 				return &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
 			}
-			return fmt.Errorf("meta API %s %s: read response body: %w", method, path, readErr)
+			// A read failure on a NON-2xx still must preserve the HTTP status: a
+			// mutating 3xx (redirect, not followed) or 5xx may have committed the create
+			// before the unreadable body, and createOutcomeAmbiguous classifies on the
+			// *APIError status. Returning a plain error here would strip the status and
+			// silently turn an ambiguous create into a definite "failed" — the exact
+			// duplicate-on-retry risk the no-follow + ambiguity handling exists to close.
+			// The body couldn't be read, so no Graph envelope diagnostics are available;
+			// carry the status/method/path and note the read failure in the message.
+			return &APIError{
+				StatusCode: status, Method: method, Path: path,
+				Message: fmt.Sprintf("read response body: %v", readErr),
+			}
 		}
 
 		if throttled && attempt < retryMax {
@@ -1914,6 +1924,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// The campaign was already created (PAUSED). Return a partial result carrying
 		// its id so the caller can identify/clean up the orphan without parsing the
 		// error string; auto-deleting here would race a retry that reuses it.
+		//
+		// An AMBIGUOUS ad-set failure (transport/timeout, a mutating 3xx now surfaced
+		// because redirects aren't followed, or a 5xx) can occur AFTER Meta committed
+		// the ad set — a definite "failed" instruction would let a retry create a
+		// DUPLICATE ad set. Word it UNCONFIRMED (verify before retrying) in that case;
+		// a clear 4xx rejection means nothing was created, so keep the plain "failed"
+		// wording. Mirrors the campaign and ad/creative create paths.
+		if createOutcomeAmbiguous(err) {
+			return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; an ad set may exist — verify in Meta Ads Manager before retrying): %w", campaignID, err)
+		}
 		return partialResult(), fmt.Errorf("meta ad set creation failed (campaign %s created, PAUSED): %w", campaignID, err)
 	}
 	adSetID = adSetResp.ID

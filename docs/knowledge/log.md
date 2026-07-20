@@ -2,6 +2,18 @@
 
 ## 2026-07-19
 
+**Update** — Closed two more Meta ambiguity gaps (LFXV2-2641, PR #30 review by
+Copilot). (1) `doRequest` returned a plain error when a NON-2xx response body
+failed to read, stripping the HTTP status — so a mutating 3xx/5xx with an
+unreadable body (the create may have committed) was mis-seen as a definite failure
+by `createOutcomeAmbiguous` (which keys on the `*APIError` status). It now returns
+an `*APIError` preserving the status on a non-2xx read failure (2xx read failures
+stay `transportError`). (2) The ad-set create returned its error directly without
+the ambiguity check the campaign and ad/creative creates use, so a surfaced 3xx/5xx
+read as a definite "ad set creation failed" — risking a duplicate ad set on retry.
+It now routes through `createOutcomeAmbiguous`: ambiguous → UNCONFIRMED (verify
+before retrying), definite 4xx → "failed". Tests added for both.
+
 **Update** — Gated the Meta client's 3xx create-outcome ambiguity on a mutating
 method (LFXV2-2641, PR #30 review by Cursor Bugbot). `createOutcomeAmbiguous`
 treated EVERY 3xx as UNCONFIRMED without checking the method, diverging from the
