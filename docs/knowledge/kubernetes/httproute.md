@@ -35,3 +35,12 @@ MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with 
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
 routed project-nested family, and its `campaigns-placeholder` rule covers the
 reserved prefixes, so chart↔route parity holds.
+
+This parity is enforced by a Go test — `TestRouteRuleSetParity`
+(`charts/lfx-v2-campaign-service/parity_test.go`). It renders both templates with
+`helm template`, extracts the HTTPRoute's RE2 regex and the RuleSet's project-nested
+path patterns (translating Traefik `:projectId`/`*`/`**` tokens to regexps), and
+asserts a curated table of accepted/rejected paths matches IDENTICALLY in both
+matchers — so a future edit to one matcher that isn't mirrored in the other fails
+the build rather than silently opening an unauthenticated bypass. (The test skips
+when `helm` is absent but fails on a render error.)

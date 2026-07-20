@@ -2,6 +2,17 @@
 
 ## 2026-07-20
 
+**Update** — Added the route/rule PARITY test (PR #28 review, copilot). The PR
+described an RE2 route/RuleSet parity regression guard, but none was committed — the
+HTTPRoute regex and the Heimdall RuleSet path list are two hand-maintained matchers
+with nothing coupling them, so a drift (a forwarded-but-unruled path) would skip the
+campaign_manager FGA check unnoticed. Added `TestRouteRuleSetParity`
+(`charts/lfx-v2-campaign-service/parity_test.go`): renders both templates via `helm
+template`, extracts the RE2 regex + the RuleSet's project-nested patterns (translating
+Traefik `:projectId`/`*`/`**`), and asserts a curated accepted/rejected path table
+matches identically in both matchers (skips if helm absent; fails on render error).
+Verified non-vacuous by flipping an expectation. httproute concept doc updated.
+
 **Update** — Bounded the migration step with the startup deadline (PR #28 follow-up
 review, cursor Medium). After the earlier pool-first fix, `initDatabase` still ran
 `postgres.Migrate` (no context) synchronously with no time bound, so a reachable
