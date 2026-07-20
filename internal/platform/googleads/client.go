@@ -283,7 +283,15 @@ type apiError struct {
 	StatusCode int
 	Method     string
 	Path       string
-	Body       string
+	// Body is a TRUNCATED (maxErrorBodyChars) snapshot of the error body, retained
+	// only for logging/diagnostics and never surfaced by Error(). Do NOT parse it
+	// for classification — it may be cut mid-JSON. Use ErrorCodes instead.
+	Body string
+	// ErrorCodes holds Google's machine-readable error-code enum constants, parsed
+	// from the FULL (untruncated) error body in doRequest before Body is truncated.
+	// This is what hasErrorCode matches on, so duplicate/field-error detection works
+	// even for error payloads longer than maxErrorBodyChars.
+	ErrorCodes []string
 }
 
 func (e *apiError) Error() string {
@@ -616,11 +624,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			text := buf.String()
+			raw := buf.Bytes()
+			// Parse the machine-readable error codes from the FULL body BEFORE
+			// truncating: a real Google error JSON often exceeds maxErrorBodyChars, and
+			// parsing the truncated (mid-JSON) snapshot would fail and silently drop the
+			// codes — breaking duplicate/field-error classification.
+			codes := parseErrorCodes(raw)
+			text := string(raw)
 			if len(text) > maxErrorBodyChars {
 				text = text[:maxErrorBodyChars]
 			}
-			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text, ErrorCodes: codes}
 		}
 
 		return buf.Bytes(), nil

@@ -40,12 +40,22 @@ const (
 	// advertisingChannelSearch is the only channel type this client creates today.
 	advertisingChannelSearch = "SEARCH"
 
-	// errCodeDuplicateName is Google's error code (in the campaignBudgetError /
-	// campaignError families) when a non-shared budget or campaign name already
-	// exists. Because :mutate has no idempotency key, a retried create that reuses a
-	// deterministic name fails with this code — callers treat it as "already exists,
-	// reconcile by name" rather than a fresh failure. See isDuplicateNameErr.
-	errCodeDuplicateName = "DUPLICATE_NAME"
+	// euPoliticalAdvertisingNo declares a campaign does NOT contain EU political
+	// advertising — required on every v23 campaign create (see campaignCreate).
+	euPoliticalAdvertisingNo = "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"
+
+	// errCodeDuplicateBudgetName is Google's CampaignBudgetError code when a
+	// non-shared campaign BUDGET name already exists.
+	errCodeDuplicateBudgetName = "DUPLICATE_NAME"
+	// errCodeDuplicateCampaignName is Google's CampaignError code when a CAMPAIGN
+	// name already exists — a DIFFERENT code from the budget's DUPLICATE_NAME. Using
+	// the wrong one means the campaign-duplicate branch never fires.
+	//
+	// Because :mutate has no idempotency key, a retried create that reuses a
+	// deterministic name fails with the family-appropriate code — callers treat it as
+	// "already exists, reconcile by name" rather than a fresh failure. See
+	// isDuplicateBudgetNameErr / isDuplicateCampaignNameErr.
+	errCodeDuplicateCampaignName = "DUPLICATE_CAMPAIGN_NAME"
 )
 
 // CampaignInput is the platform-agnostic request to create a Google Ads campaign.
@@ -118,12 +128,19 @@ type campaignBudgetCreate struct {
 // strategy is required; manualCpc{} is the dependency-free choice for a PAUSED
 // shell (maximizeConversions requires conversion tracking configured on the
 // account, which a generic broker can't assume).
+//
+// containsEuPoliticalAdvertising is REQUIRED on every v23 create: omitting it fails
+// with FieldError.REQUIRED, and since 2026-04-01 an account with any undeclared
+// campaign has ALL mutate calls rejected with
+// MutateError.EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED. These are non-political
+// ad campaigns, so we declare DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING.
 type campaignCreate struct {
-	Name                   string          `json:"name"`
-	Status                 string          `json:"status"`
-	AdvertisingChannelType string          `json:"advertisingChannelType"`
-	CampaignBudget         string          `json:"campaignBudget"`
-	ManualCPC              json.RawMessage `json:"manualCpc"`
+	Name                           string          `json:"name"`
+	Status                         string          `json:"status"`
+	AdvertisingChannelType         string          `json:"advertisingChannelType"`
+	CampaignBudget                 string          `json:"campaignBudget"`
+	ContainsEuPoliticalAdvertising string          `json:"containsEuPoliticalAdvertising"`
+	ManualCPC                      json.RawMessage `json:"manualCpc"`
 }
 
 // googleAdsErrorEnvelope is the error body shape: the machine-readable error codes
@@ -184,10 +201,12 @@ const (
 	maxErrorCodeLen       = 128
 )
 
-// hasErrorCode reports whether the apiError's body carried the given Google Ads
-// enum error code. The body is parsed on demand (not surfaced by Error()).
+// hasErrorCode reports whether the apiError carried the given Google Ads enum
+// error code. It reads the ErrorCodes parsed from the FULL body in doRequest — NOT
+// the truncated Body — so classification works for error payloads longer than
+// maxErrorBodyChars.
 func (e *apiError) hasErrorCode(code string) bool {
-	for _, c := range parseErrorCodes([]byte(e.Body)) {
+	for _, c := range e.ErrorCodes {
 		if strings.EqualFold(c, code) {
 			return true
 		}
@@ -195,23 +214,37 @@ func (e *apiError) hasErrorCode(code string) bool {
 	return false
 }
 
-// isDuplicateNameErr reports whether err is Google's DUPLICATE_NAME rejection on a
-// definite 4xx. Gated to a 4xx (Google returns DUPLICATE_NAME as a validation
-// error): a 3xx/5xx carrying the code stays ambiguous via createOutcomeAmbiguous,
-// so a create that may have committed is not mislabeled a known duplicate.
-func isDuplicateNameErr(err error) bool {
+// isDuplicateBudgetNameErr reports whether err is Google's CampaignBudgetError
+// DUPLICATE_NAME rejection on a definite 4xx. Gated to a 4xx (Google returns it as
+// a validation error): a 3xx/5xx carrying the code stays ambiguous via
+// createOutcomeAmbiguous, so a create that may have committed is not mislabeled a
+// known duplicate.
+func isDuplicateBudgetNameErr(err error) bool {
 	var ae *apiError
 	return errors.As(err, &ae) &&
 		ae.StatusCode >= 400 && ae.StatusCode < 500 &&
-		ae.hasErrorCode(errCodeDuplicateName)
+		ae.hasErrorCode(errCodeDuplicateBudgetName)
+}
+
+// isDuplicateCampaignNameErr reports whether err is Google's CampaignError
+// DUPLICATE_CAMPAIGN_NAME rejection on a definite 4xx — the campaign-name analogue
+// of isDuplicateBudgetNameErr (the two families use different codes).
+func isDuplicateCampaignNameErr(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) &&
+		ae.StatusCode >= 400 && ae.StatusCode < 500 &&
+		ae.hasErrorCode(errCodeDuplicateCampaignName)
 }
 
 // createOutcomeAmbiguous reports whether a failed MUTATING request MAY have been
 // committed upstream (so a caller must reconcile/verify before retrying, to avoid a
 // duplicate — :mutate has no idempotency key). A 5xx apiError or any transportError
 // is ambiguous regardless of method; a 3xx is ambiguous only on a mutating method
-// (a GET redirect is not a create). A definite 4xx (Google rejected it) and a
-// pre-send error are NOT ambiguous. Mirrors the reddit/meta/twitter clients.
+// (a GET redirect is not a create). A 429 on a mutating call is ALSO ambiguous:
+// doRequest deliberately does NOT retry a non-idempotent 429 (idempotent=false)
+// precisely because the throttled request may already have committed upstream, so
+// the caller must reconcile rather than blind-retry. A definite 4xx (Google
+// rejected it) and a pre-send error are NOT ambiguous. Mirrors the sibling clients.
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
@@ -221,7 +254,7 @@ func createOutcomeAmbiguous(err error) bool {
 	if !errors.As(err, &ae) {
 		return false
 	}
-	if ae.StatusCode >= 500 {
+	if ae.StatusCode >= 500 || ae.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
@@ -325,7 +358,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	budgetResp, err := c.doRequest(ctx, http.MethodPost, budgetPath, budgetReq, false)
 	if err != nil {
 		switch {
-		case isDuplicateNameErr(err):
+		case isDuplicateBudgetNameErr(err):
 			// A retry with a stable NameSuffix hit a name that already exists: the
 			// budget was (almost certainly) created by a prior attempt. Not created
 			// here, but NOT a clean failure either — reconcile by name.
@@ -354,20 +387,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return r
 	}
 
+	// The budget is now committed. If the caller's context has already been
+	// cancelled/timed out, do NOT fire the campaign :mutate — surface the created
+	// budget as a reconcilable partial + UNCONFIRMED, so a retry reconciles the
+	// orphan budget by name rather than blind-proceeding on a dead context.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation aborted after budget %s created (context done before campaign create; the budget may need reconciling): %w", budgetID, ctxErr)
+	}
+
 	// Step 2: create the campaign referencing the budget.
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreate{
-		Name:                   campaignName,
-		Status:                 "PAUSED",
-		AdvertisingChannelType: advertisingChannelSearch,
-		CampaignBudget:         budgetResource,
-		ManualCPC:              json.RawMessage(`{}`),
+		Name:                           campaignName,
+		Status:                         "PAUSED",
+		AdvertisingChannelType:         advertisingChannelSearch,
+		CampaignBudget:                 budgetResource,
+		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
+		ManualCPC:                      json.RawMessage(`{}`),
 	}}}}
 	campaignPath := c.customerPath("campaigns:mutate")
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, campaignPath, campaignReq, false)
 	if err != nil {
 		switch {
-		case isDuplicateNameErr(err):
-			return budgetPartial(), fmt.Errorf("google-ads campaign %q already exists (DUPLICATE_NAME; budget %s created) — a prior attempt likely created it; verify in Google Ads before retrying: %w", campaignName, budgetID, err)
+		case isDuplicateCampaignNameErr(err):
+			return budgetPartial(), fmt.Errorf("google-ads campaign %q already exists (DUPLICATE_CAMPAIGN_NAME; budget %s created) — a prior attempt likely created it; verify in Google Ads before retrying: %w", campaignName, budgetID, err)
 		case createOutcomeAmbiguous(err):
 			return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; campaign %q may exist — verify in Google Ads before retrying): %w", budgetID, campaignName, err)
 		default:

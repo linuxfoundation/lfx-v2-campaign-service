@@ -97,6 +97,39 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	if _, ok := cop["manualCpc"]; !ok {
 		t.Error("campaign create must carry a manualCpc bidding strategy")
 	}
+	// v23 requires the EU political-advertising declaration on every create.
+	if cop["containsEuPoliticalAdvertising"] != "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING" {
+		t.Errorf("containsEuPoliticalAdvertising = %v, want DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING", cop["containsEuPoliticalAdvertising"])
+	}
+}
+
+func TestCreateCampaign_Campaign429IsUnconfirmed(t *testing.T) {
+	c := newCampaignClient(t, okBudget,
+		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTooManyRequests) },
+	)
+	res, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a mutating 429 must be UNCONFIRMED (doRequest suppresses its retry because it may have committed), got: %v", err)
+	}
+	if res == nil || res.CampaignBudgetID != "111" {
+		t.Fatalf("partial must carry the created budget id, got %+v", res)
+	}
+}
+
+func TestCreateCampaign_CampaignDuplicateNameIsUnconfirmedExists(t *testing.T) {
+	c := newCampaignClient(t, okBudget,
+		gaqlError(http.StatusBadRequest, "campaignError", "DUPLICATE_CAMPAIGN_NAME"),
+	)
+	res, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil {
+		t.Fatal("expected an error on DUPLICATE_CAMPAIGN_NAME")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("DUPLICATE_CAMPAIGN_NAME must read as already-exists, got: %v", err)
+	}
+	if res == nil || res.CampaignBudgetID != "111" {
+		t.Fatalf("partial must carry the created budget id, got %+v", res)
+	}
 }
 
 func TestCreateCampaign_BudgetAmbiguous5xxIsUnconfirmed(t *testing.T) {
@@ -282,7 +315,7 @@ func TestCreateOutcomeAmbiguous_GoogleAds(t *testing.T) {
 		{"3xx-POST", &apiError{StatusCode: 302, Method: http.MethodPost}, true},
 		{"3xx-GET-not-a-create", &apiError{StatusCode: 302, Method: http.MethodGet}, false},
 		{"400", &apiError{StatusCode: 400, Method: http.MethodPost}, false},
-		{"429", &apiError{StatusCode: 429, Method: http.MethodPost}, false},
+		{"429-mutating-is-ambiguous", &apiError{StatusCode: 429, Method: http.MethodPost}, true},
 		{"transport", &transportError{Method: http.MethodPost, Err: io.ErrUnexpectedEOF}, true},
 		{"plain", errors.New("x"), false},
 		{"nil", nil, false},
@@ -294,13 +327,26 @@ func TestCreateOutcomeAmbiguous_GoogleAds(t *testing.T) {
 	}
 }
 
-func TestIsDuplicateNameErr_GatedTo4xx(t *testing.T) {
-	dup := `{"error":{"details":[{"@type":"x.GoogleAdsFailure","errors":[{"errorCode":{"campaignBudgetError":"DUPLICATE_NAME"}}]}]}}`
-	if !isDuplicateNameErr(&apiError{StatusCode: 400, Body: dup}) {
-		t.Error("400 DUPLICATE_NAME must match")
+func TestIsDuplicateNameErr_GatedTo4xxAndFamily(t *testing.T) {
+	budgetDup := apiError{StatusCode: 400, ErrorCodes: []string{"DUPLICATE_NAME"}}
+	campaignDup := apiError{StatusCode: 400, ErrorCodes: []string{"DUPLICATE_CAMPAIGN_NAME"}}
+
+	// Budget check matches the budget code, NOT the campaign code (different codes).
+	if !isDuplicateBudgetNameErr(&budgetDup) {
+		t.Error("400 CampaignBudgetError.DUPLICATE_NAME must match isDuplicateBudgetNameErr")
 	}
-	// A 5xx carrying the code must NOT be a known duplicate (stays ambiguous).
-	if isDuplicateNameErr(&apiError{StatusCode: 503, Body: dup}) {
+	if isDuplicateBudgetNameErr(&campaignDup) {
+		t.Error("DUPLICATE_CAMPAIGN_NAME must NOT match the budget check")
+	}
+	// Campaign check matches the campaign code, NOT the budget code.
+	if !isDuplicateCampaignNameErr(&campaignDup) {
+		t.Error("400 CampaignError.DUPLICATE_CAMPAIGN_NAME must match isDuplicateCampaignNameErr")
+	}
+	if isDuplicateCampaignNameErr(&budgetDup) {
+		t.Error("budget DUPLICATE_NAME must NOT match the campaign check")
+	}
+	// A 5xx carrying either code must NOT be a known duplicate (stays ambiguous).
+	if isDuplicateBudgetNameErr(&apiError{StatusCode: 503, ErrorCodes: []string{"DUPLICATE_NAME"}}) {
 		t.Error("5xx DUPLICATE_NAME must NOT be treated as a known duplicate")
 	}
 }
