@@ -48,11 +48,34 @@ across concurrent dispatches or replicas (that needs cross-replica coordination,
 tracked in LFXV2-2665), so operators must not rely on this stateless client for
 cross-dispatch rate limiting. When the account limit is hit anyway, 429s are
 retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. Redirect
-following is force-disabled (a shared `noFollow` `CheckRedirect` policy on the
-default and any `WithHTTPClient`-supplied client, via a shallow copy) so a 3xx is
-surfaced rather than followed — important with OAuth 1.0a, where a followed
-redirect would resend a request signed for the original URL to a different one.
-(Typing the non-2xx error and classifying a mutating 3xx as UNCONFIRMED, as the
-meta/reddit clients do, is tracked as a follow-up — LFXV2-2642.)
+following is force-disabled (a shared `noFollow` `CheckRedirect` policy). For a
+`WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
+carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
+`CheckRedirect: noFollow`, rather than value-copying the caller's client (an
+`http.Client` must not be copied after first use). So a 3xx is surfaced rather than
+followed — important with OAuth 1.0a, where a followed redirect would resend a
+request signed for the original URL to a different one.
+A non-2xx surfaces a typed `apiError`. Its `Error()` renders only method/path/
+status — the raw body is NOT echoed, and neither are X's machine-readable error
+codes, so a signed URL / destination secret (which an untrusted body could place
+even inside `errors[].code`) can't leak into a persisted Step. The codes are
+retained on the struct solely for internal classification via `hasErrorCode`
+(e.g. matching `DUPLICATE_PROMOTABLE_ENTITY`), and `parseErrorCodes` bounds what
+it keeps (drops over-long values, caps the count). This mirrors the reddit
+client, whose `apiError` likewise retains `Body` for classification but never
+surfaces it. An ambiguous
+transport/read/decode failure surfaces a `transportError`, and a pre-connect dial
+failure surfaces a `preSendError`. BOTH render URL-free: `httpClient.Do` returns a
+`*url.Error` whose `%v`/`String()` embeds the full request URL (and X puts create
+parameters in the query string), so a naive `%w`/`%v` of that error would leak the
+URL into the copied `PromotedTweetWarning` and persisted Steps. Each type's
+`Error()` runs the cause through `safeTransportCause`, which peels EVERY nested
+`*url.Error` layer down to the URL-free underlying cause (timeout/EOF/ECONNREFUSED);
+`Unwrap()` retains the real cause so `errors.Is`/`errors.As` (incl.
+`isPreSendDialError`) still match. `preSendError` is DEFINITE (request never sent →
+not applied), distinct from the ambiguous `transportError`.
+`createOutcomeAmbiguous` treats a mutating 3xx/5xx (and transport error) as
+UNCONFIRMED so a create that may have committed is not blind-retried into a
+duplicate; a `preSendError` is neither, so it stays a definite "not applied".
 
 See [internal/platform/twitter](../../../internal/platform/twitter).

@@ -18,15 +18,18 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -190,12 +193,21 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient. Following a
 	// redirect would carry an already-sent mutating POST to a different target (and
 	// resend an OAuth-1.0a request signed for the original URL), so no-follow is a
-	// correctness requirement, not a default. Applied to a SHALLOW COPY so the
-	// caller's *http.Client is never mutated. Mirrors the reddit client.
+	// correctness requirement, not a default.
+	//
+	// Build a FRESH *http.Client rather than value-copying the caller's: an
+	// http.Client must not be copied after first use (a value copy duplicates its
+	// internal mutex while sharing the request-cancellation map, so concurrent use
+	// of the caller's client and our copy can race). Carry over only the exported,
+	// reusable fields (Transport, Jar, Timeout) and set our own CheckRedirect. The
+	// caller's client is never mutated and is safe to keep using elsewhere.
 	if c.httpClient != nil {
-		hc := *c.httpClient
-		hc.CheckRedirect = noFollow
-		c.httpClient = &hc
+		c.httpClient = &http.Client{
+			Transport:     c.httpClient.Transport,
+			CheckRedirect: noFollow,
+			Jar:           c.httpClient.Jar,
+			Timeout:       c.httpClient.Timeout,
+		}
 	}
 	return c
 }
@@ -380,6 +392,246 @@ type apiResponse struct {
 	NextCursor string `json:"next_cursor"`
 }
 
+// apiError is a non-2xx response from the X Ads API. It carries status/method/path
+// so an error names exactly which call failed. The upstream body is deliberately
+// NOT surfaced by Error(): an X Ads / proxy diagnostic body is untrusted and can
+// reflect request material (a signed URL, a destination's secret query), and this
+// error may be persisted into a campaign's Steps. Report status only. Mirrors the
+// reddit/meta/googleads clients' apiError.
+type apiError struct {
+	StatusCode int
+	Method     string
+	Path       string
+	// ErrorCodes carries X's machine-readable error codes from the response
+	// envelope (`{"errors":[{"code":"..."}]}`), e.g. DUPLICATE_PROMOTABLE_ENTITY.
+	// These are retained ONLY for internal classification (hasErrorCode) and are
+	// deliberately NOT surfaced by Error(): the `code` field comes from an
+	// untrusted response and nothing guarantees X (or an intercepting proxy)
+	// confines it to a short enum token — a hostile or malformed body could place
+	// secrets or a very large payload there. Rendering them into Error() would
+	// re-open the exact body-leak channel this type exists to close, since the
+	// stringified error is persisted into a campaign's Steps. See parseErrorCodes
+	// for the bounds applied at parse time. Empty when the body wasn't a
+	// recognizable X error envelope.
+	ErrorCodes []string
+}
+
+func (e *apiError) Error() string {
+	// Deliberately DO NOT include e.ErrorCodes (or any body-derived text): the
+	// upstream response is untrusted and can reflect request material (a signed
+	// URL, a destination's secret query) or arbitrary proxy diagnostics. Codes are
+	// retained on the struct for internal classification (hasErrorCode) but are
+	// never surfaced when the error is stringified into Steps / returned to a
+	// caller / logged. Report only method, path, and status. Mirrors the
+	// reddit/meta/googleads clients' apiError.
+	return fmt.Sprintf("x ads api %s %s -> %d", e.Method, e.Path, e.StatusCode)
+}
+
+// hasErrorCode reports whether the apiError carries the given X error code.
+func (e *apiError) hasErrorCode(code string) bool {
+	for _, c := range e.ErrorCodes {
+		if strings.EqualFold(c, code) {
+			return true
+		}
+	}
+	return false
+}
+
+// errCodeDuplicatePromotableEntity is X's error code when a tweet is already
+// promoted (possibly by a different line item). See isDuplicatePromotedTweetErr.
+const errCodeDuplicatePromotableEntity = "DUPLICATE_PROMOTABLE_ENTITY"
+
+// xErrorEnvelope is the X Ads error body shape: {"errors":[{"code":"...", ...}]}.
+// message is intentionally NOT captured — only the machine-readable codes are
+// retained (see apiError.ErrorCodes).
+type xErrorEnvelope struct {
+	Errors []struct {
+		Code string `json:"code"`
+	} `json:"errors"`
+}
+
+// Bounds on the internally-retained error codes. Even though codes are never
+// surfaced by Error() (see apiError.Error), they are parsed from an untrusted
+// body — so we defensively cap how much of it we hold onto for classification. A
+// genuine X error code (e.g. DUPLICATE_PROMOTABLE_ENTITY) is a short screaming-
+// snake token well under this length; anything longer isn't an enum code and is
+// dropped rather than retained.
+const (
+	maxRetainedErrorCodes  = 16
+	maxErrorCodeCodeLength = 128
+)
+
+// parseErrorCodes extracts X's error codes from a non-2xx body, ignoring anything
+// that isn't a recognizable envelope. Returns nil on a malformed/absent body.
+// Over-long values and codes beyond maxRetainedErrorCodes are dropped: these are
+// used only for enum classification (hasErrorCode), never surfaced, so bounding
+// them prevents a hostile body from being persisted even internally.
+func parseErrorCodes(body []byte) []string {
+	if len(body) == 0 {
+		return nil
+	}
+	var env xErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil
+	}
+	var codes []string
+	for _, e := range env.Errors {
+		if e.Code == "" || len(e.Code) > maxErrorCodeCodeLength {
+			continue
+		}
+		codes = append(codes, e.Code)
+		if len(codes) >= maxRetainedErrorCodes {
+			break
+		}
+	}
+	return codes
+}
+
+// transportError wraps a round-trip failure that happened AFTER the request was
+// plausibly sent (mid-flight timeout, EOF, reset), OR a failure to read/decode a
+// 2xx response: the server may or may not have processed the request, so the
+// outcome is AMBIGUOUS. A pre-send failure (request build, pre-connect dial — see
+// isPreSendDialError) is NOT wrapped as transportError. Mirrors the sibling
+// clients.
+type transportError struct {
+	Method string
+	Path   string
+	Err    error
+}
+
+func (e *transportError) Error() string {
+	// Render only method/path + a SAFE description of the cause. Err from
+	// httpClient.Do is typically a *url.Error whose String()/%v embeds the full
+	// request URL (a create URL can carry request material / a destination's secret
+	// query), and this string is copied into PromotedTweetWarning and persisted
+	// Steps — so surfacing the raw error would leak the URL. safeTransportCause
+	// strips a *url.Error down to its underlying cause (timeout/EOF/reset) with no
+	// URL. Mirrors the apiError body-suppression discipline.
+	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.Err))
+}
+
+func (e *transportError) Unwrap() error { return e.Err }
+
+// preSendError wraps a failure that clearly happened BEFORE the request was sent
+// (DNS/connect-time dial failure — see isPreSendDialError): the outcome is DEFINITE
+// (the request never reached X, so a mutation did not happen), unlike the ambiguous
+// transportError. It exists so the pre-send branch renders URL-free like
+// transportError: the wrapped cause is typically a *url.Error whose %v/String()
+// embeds the full request URL, and this string is copied into PromotedTweetWarning
+// and persisted Steps. Error() strips the URL via safeTransportCause; Unwrap()
+// retains the real cause so errors.Is/errors.As (incl. isPreSendDialError) still
+// match.
+type preSendError struct {
+	Method string
+	Path   string
+	Err    error
+}
+
+func (e *preSendError) Error() string {
+	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.Err))
+}
+
+func (e *preSendError) Unwrap() error { return e.Err }
+
+// safeTransportCause returns a URL-free description of a round-trip error. A
+// *url.Error's %v embeds the request URL, so we unwrap to its underlying cause
+// (which does not); anything else is rendered as-is (Do's non-url.Error causes —
+// EOF, i/o timeout — carry no URL). Empty cause falls back to a generic label.
+func safeTransportCause(err error) string {
+	if err == nil {
+		return "transport failure"
+	}
+	// Peel off EVERY *url.Error layer, not just the outermost: http.Client.Do wraps a
+	// RoundTripper's error in its own *url.Error, and a supported injected transport
+	// can itself return a *url.Error, so a single unwrap can leave an inner *url.Error
+	// whose .Error() still embeds the request URL. Loop until the cause is no longer a
+	// *url.Error (or nil), then render that URL-free cause.
+	for {
+		var ue *url.Error
+		if !errors.As(err, &ue) {
+			break
+		}
+		if ue.Err == nil {
+			return "transport failure"
+		}
+		err = ue.Err
+	}
+	return err.Error()
+}
+
+// isPreSendDialError reports whether a httpClient.Do error clearly happened
+// BEFORE the request could be sent — a DNS resolution failure or a connect-time
+// dial failure (connection refused / no route / network unreachable). Only these
+// prove the request never reached X, so a mutation definitely did not happen.
+// Mirrors the reddit/meta/googleads clients.
+func isPreSendDialError(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		if errors.Is(err, syscall.ECONNREFUSED) ||
+			errors.Is(err, syscall.EHOSTUNREACH) ||
+			errors.Is(err, syscall.ENETUNREACH) {
+			return true
+		}
+	}
+	return false
+}
+
+// createOutcomeAmbiguous reports whether a failed MUTATING request MAY have been
+// applied by X despite the error — i.e. the request plausibly reached the server
+// and its outcome is unknowable. Callers on the create path use it to decide
+// whether a failed create is "may exist" (retain/reconcile) vs "not applied":
+//   - transportError: the round-trip failed after a connection was established, or
+//     a 2xx couldn't be read/decoded, so the mutation may have been received;
+//   - *apiError with a 3xx status: redirect following is force-disabled (see
+//     noFollow), so a 3xx is surfaced rather than followed; a 3xx on a mutating
+//     request is not a definite rejection — X may have committed before redirecting;
+//   - *apiError with a 5xx status: X received it and may have committed the
+//     mutation before erroring.
+//
+// A definite 4xx (X rejected it), or any pre-send failure (validation, request
+// build, a pre-connect dial error), means NOT applied → returns false.
+//
+// Mirrors the meta/reddit clients: a transportError is always ambiguous; an
+// *apiError is ambiguous on a 5xx regardless of method, and on a 3xx ONLY for a
+// mutating method (a GET redirect is not a create, so it stays non-ambiguous).
+// Gating the 3xx on the method keeps the helper's contract correct for any caller
+// and identical to the siblings.
+func createOutcomeAmbiguous(err error) bool {
+	var te *transportError
+	if errors.As(err, &te) {
+		return true
+	}
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	// A 5xx may follow a committed create.
+	if ae.StatusCode >= 500 {
+		return true
+	}
+	// A 3xx on a MUTATING request reached a responder and may have committed a
+	// resource before redirecting — UNCONFIRMED. A 3xx on a GET is not a create, so
+	// it stays non-ambiguous. Gating on the method keeps this helper's contract
+	// correct for any caller (not just the create path) and makes it genuinely
+	// identical to the reddit/meta clients.
+	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
+}
+
+// isMutatingMethod reports whether an HTTP method can create/modify server state,
+// so a 3xx on it may hide a committed mutation. Mirrors the reddit/meta clients.
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
 // maxListPages caps how many pages a name-lookup will page through, a safety
 // bound against an unexpectedly huge account. The find-by-name callers request
 // count=1000 (the X Ads v12 list max page size), so 25 pages cover up to
@@ -447,7 +699,19 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("x ads api %s %s: %w", method, path, err)
+			// A Do error that clearly happened BEFORE the request could be sent (DNS
+			// failure, connection refused, no route) means NOT sent — return it plain
+			// so a create is treated as "not applied". A failure after a connection was
+			// established (mid-flight timeout, EOF) is ambiguous → transportError so a
+			// create is treated as "may exist". Mirrors the sibling clients.
+			if isPreSendDialError(err) {
+				// Wrap in preSendError (not a raw %w of err): err is typically a
+				// *url.Error whose render embeds the request URL, which would leak into
+				// persisted Steps. preSendError.Error() strips the URL but Unwrap()
+				// retains the cause for errors.Is/As.
+				return nil, &preSendError{Method: method, Path: path, Err: err}
+			}
+			return nil, &transportError{Method: method, Path: path, Err: err}
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
@@ -457,7 +721,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 			// error instead.
 			if attempt >= retryMax {
 				_ = resp.Body.Close()
-				return nil, fmt.Errorf("x ads api %s %s -> exhausted %d retries after 429s", method, path, retryMax)
+				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 			}
 			waitDur := c.parseRetryAfter(resp)
 			_ = resp.Body.Close()
@@ -468,7 +732,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 				// wait exceeds our cap, sleeping would consume a retry without any
 				// chance of the window clearing, so abort with the rate-limit error.
 				if waitDur > maxRetryWait {
-					return nil, fmt.Errorf("x ads api %s %s -> 429: rate-limit reset in %s exceeds max wait %s; aborting", method, path, waitDur.Round(time.Second), maxRetryWait)
+					return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 				}
 			} else {
 				// No server-declared reset: fall back to computed exponential
@@ -490,27 +754,35 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 		_ = resp.Body.Close()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			if readErr != nil {
-				return nil, fmt.Errorf("x ads api %s %s -> %d: %s (body read error: %v)", method, path, resp.StatusCode, truncate(respBody, 400), readErr)
-			}
-			return nil, fmt.Errorf("x ads api %s %s -> %d: %s", method, path, resp.StatusCode, truncate(respBody, 400))
+			// Return a TYPED apiError carrying status/method/path and X's MACHINE-
+			// READABLE error codes (e.g. DUPLICATE_PROMOTABLE_ENTITY) — but NOT the raw
+			// response body, which can reflect signed URLs / destination secrets and
+			// may be persisted into Steps. Callers classify on the code, not the body.
+			// A read error just means no codes are available. createOutcomeAmbiguous
+			// uses the type to treat a mutating 3xx/5xx as "may exist" while a definite
+			// 4xx is a clean failure.
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, ErrorCodes: parseErrorCodes(respBody)}
 		}
 		if readErr != nil {
-			// A 2xx with a body we couldn't fully/ cleanly read: don't decode a
-			// partial body into a misleading result — surface the I/O failure.
-			return nil, fmt.Errorf("x ads api %s %s: %w", method, path, readErr)
+			// A 2xx with a body we couldn't fully/cleanly read is AMBIGUOUS on a
+			// mutating call: X may have committed but we can't read the result. Wrap
+			// as transportError so a create is treated as "may exist".
+			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
 		}
 
 		var out apiResponse
 		if len(respBody) > 0 {
 			if err := json.Unmarshal(respBody, &out); err != nil {
-				return nil, fmt.Errorf("decode response: %w", err)
+				// A 2xx we can't decode is AMBIGUOUS on a mutating call: X returned
+				// success but we can't read the payload (id). Wrap as transportError so a
+				// create is treated as "may exist" rather than a definite failure.
+				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("decode response: %w", err)}
 			}
 		}
 		return &out, nil
 	}
 
-	return nil, fmt.Errorf("x ads api %s %s -> exhausted %d retries after 429s", method, path, retryMax)
+	return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 }
 
 // parseRetryAfter returns how long to wait before retrying a 429, or 0 if no
@@ -615,13 +887,6 @@ func readAll(resp *http.Response) ([]byte, error) {
 		return body[:maxResponseBody], fmt.Errorf("response body exceeds %d bytes", maxResponseBody)
 	}
 	return body, nil
-}
-
-func truncate(b []byte, n int) string {
-	if len(b) <= n {
-		return string(b)
-	}
-	return string(b[:n])
 }
 
 // ---------------------------------------------------------------------------
@@ -866,7 +1131,15 @@ type CampaignResult struct {
 	// not be confirmed (POST failed, or returned a malformed/empty response). The
 	// campaign and line item may still have been created, so the overall call is
 	// not fatal, but consumers MUST NOT treat a result with this set as an
-	// unqualified success — the promoted tweet may need to be added manually.
+	// unqualified success. The warning distinguishes two cases the consumer MUST
+	// respect: a DEFINITE failure (a 4xx rejection / pre-send error — the message
+	// says the promoted tweet must be "added manually", safe to do) versus an
+	// UNCONFIRMED outcome (an ambiguous 3xx/5xx/transport failure, or a 2xx with no
+	// id — the message says "verify ... before retrying"). For an UNCONFIRMED
+	// result the association MAY already exist, so the consumer must VERIFY in X Ads
+	// Manager before adding or retrying — adding manually then would create the
+	// duplicate this signal exists to prevent. Read the warning text; do not assume
+	// manual addition is always safe.
 	PromotedTweetWarning string
 	TwitterURL           string
 	Steps                []string
@@ -914,6 +1187,17 @@ func validateDate(label, date string) error {
 // created PAUSED (entity_status=PAUSED); the promoted-tweet association is
 // created ACTIVE by the API (the endpoint does not accept entity_status), but
 // the paused line item gates delivery so nothing serves until it is enabled.
+//
+// IMPORTANT — non-standard error contract: on an AMBIGUOUS or partial failure this
+// returns a NON-NIL *CampaignResult ALONGSIDE a non-nil error. The result carries
+// whatever was (or may have been) created — the deterministic CampaignName, and
+// CampaignID/LineItemID once known — so the caller can reconcile the possibly-
+// orphaned resources by name/id before retrying (a blind retry would duplicate
+// them). Callers MUST inspect the returned result when err != nil, not discard it.
+// (nil, err) is returned only up to and including the initial campaign create,
+// when nothing has (or may have) been created — a validation/pre-send error, a
+// name-lookup failure, or a definite 4xx/429 POST rejection. Once the campaign is
+// created/reused or its create is ambiguous, a non-nil partial is always returned.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	steps := []string{}
 
@@ -1080,13 +1364,38 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err := c.pace(ctx); err != nil {
 			return nil, err
 		}
+		// campaignNamePartial builds a result carrying only the deterministic campaign
+		// NAME (no id yet) so an ambiguous/malformed campaign create is reconcilable by
+		// name rather than discarded — mirrors the meta/reddit clients' name-only
+		// partial for the first create step (the partialResult helper below needs the
+		// campaignID, which we don't have here).
+		campaignNamePartial := func() *CampaignResult {
+			return &CampaignResult{
+				Platform:     "twitter-ads",
+				CampaignName: campaignName,
+				TwitterURL:   AdsManagerURL,
+				Steps:        steps,
+			}
+		}
 		resp, err := c.createRequest(ctx, "campaigns", campaignParams)
 		if err != nil {
+			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
+			// committed campaign create — X may have made the PAUSED campaign under the
+			// deterministic name. Return a name-carrying partial + UNCONFIRMED so a
+			// caller verifies before retrying rather than blind-creating a duplicate. A
+			// definite 4xx/pre-send error means nothing was created: plain (nil, err).
+			// Mirrors the line-item/promoted-tweet paths and the meta/reddit clients.
+			if createOutcomeAmbiguous(err) {
+				return campaignNamePartial(), fmt.Errorf("x campaign creation UNCONFIRMED (a PAUSED campaign %q may exist — verify in X Ads Manager before retrying): %w", campaignName, err)
+			}
 			return nil, err
 		}
 		campaignID = extractID(resp)
 		if campaignID == "" {
-			return nil, fmt.Errorf("x campaign creation succeeded but returned no campaign ID")
+			// A 2xx with no id is a malformed SUCCESS: X may have created the PAUSED
+			// campaign but didn't return a usable id. Reconcilable by name + UNCONFIRMED,
+			// not a bare failure.
+			return campaignNamePartial(), fmt.Errorf("x campaign creation UNCONFIRMED (X returned a 2xx with no campaign ID; a PAUSED campaign %q may exist — verify in X Ads Manager before retrying)", campaignName)
 		}
 		steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f/day)", campaignID, in.BudgetUsd))
 	}
@@ -1169,11 +1478,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		resp, err := c.createRequest(ctx, "line_items", lineItemParams)
 		if err != nil {
+			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
+			// committed line-item create — word it UNCONFIRMED so a caller reconciling
+			// the returned partial result verifies before retrying rather than blind-
+			// creating a duplicate. A definite 4xx/pre-send error stays a plain failure.
+			// Mirrors the campaign/promoted-tweet paths and the meta ad-set handling.
+			if createOutcomeAmbiguous(err) {
+				return partialResult(), fmt.Errorf("x line item creation UNCONFIRMED (%s; a line item may exist — verify in X Ads Manager before retrying): %w", campaignStatus(), err)
+			}
 			return partialResult(), fmt.Errorf("x line item creation failed (%s): %w", campaignStatus(), err)
 		}
 		lineItemID = extractID(resp)
 		if lineItemID == "" {
-			return partialResult(), fmt.Errorf("x line item creation succeeded but returned no line item ID (%s)", campaignStatus())
+			// A 2xx with no id is a malformed SUCCESS: X may have created the line item
+			// but didn't return a usable id. UNCONFIRMED (verify before retrying), not a
+			// clean failure — mirrors the promoted-tweet and meta campaign/ad-set no-id
+			// handling.
+			return partialResult(), fmt.Errorf("x line item creation UNCONFIRMED (%s; X returned a 2xx with no line item ID — it may exist; verify in X Ads Manager before retrying)", campaignStatus())
 		}
 		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
 	}
@@ -1214,10 +1535,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// campaign and line item still return.
 			promotedTweetWarning = fmt.Sprintf("promoted-tweet association for tweet %s may already exist (X returned DUPLICATE_PROMOTABLE_ENTITY), possibly on a different line item — verify manually in X Ads Manager", tweetID)
 			steps = append(steps, fmt.Sprintf("Promoted tweet reported as duplicate for line item %s (tweet: %s) — the association may already exist (possibly on a different line item); verify manually in X Ads Manager", lineItemID, tweetID))
+		case err != nil && createOutcomeAmbiguous(err):
+			// An AMBIGUOUS failure (mutating 3xx/5xx or a post-connection transport
+			// error): X may have RECEIVED and created the promoted-tweet association
+			// before the error. This POST is not find-or-create, so a blind retry
+			// could duplicate it — surface it as UNCONFIRMED ("may exist") so the
+			// caller reconciles rather than re-creating. Mirrors the meta/reddit
+			// clients' ambiguous-create handling.
+			promotedTweetWarning = fmt.Sprintf("promoted-tweet association for tweet %s is UNCONFIRMED: the create request may have reached X but its outcome is unknown (%s) — it MAY have been created; verify in X Ads Manager before retrying to avoid a duplicate", tweetID, err.Error())
+			steps = append(steps, fmt.Sprintf("Promoted tweet creation UNCONFIRMED for tweet %s (%s) — verify in X Ads Manager before retrying", tweetID, err.Error()))
 		case err != nil:
-			// A real POST failure. Do NOT report unqualified success: record a
-			// warning both in the step log and on the result so the caller can see
-			// the promoted tweet may not have been created/associated.
+			// A DEFINITE failure (a 4xx rejection or a pre-send error): the
+			// association was NOT created. Record a warning so the caller sees the
+			// promoted tweet must be added manually, but it is safe to retry.
 			promotedTweetWarning = fmt.Sprintf("promoted-tweet POST failed for tweet %s: %s", tweetID, err.Error())
 			steps = append(steps, fmt.Sprintf("Promoted tweet creation failed: %s — add manually in X Ads Manager", err.Error()))
 		default:
@@ -1225,11 +1555,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if promotedTweetID != "" {
 				steps = append(steps, fmt.Sprintf("Promoted tweet created: %s (tweet: %s; created ACTIVE by the API but held from serving by the PAUSED line item)", promotedTweetID, tweetID))
 			} else {
-				// A 2xx response missing data.id is a malformed success: don't
-				// silently treat it as done. Surface a warning (step + result field)
-				// so the gap is visible without making the whole flow fatal.
-				promotedTweetWarning = fmt.Sprintf("promoted-tweet POST returned no ID (malformed response) for tweet %s", tweetID)
-				steps = append(steps, fmt.Sprintf("Promoted tweet creation returned no promoted-tweet ID (malformed response, tweet: %s) — add it manually in X Ads Manager", tweetID))
+				// A 2xx response missing data.id is a malformed SUCCESS: the POST
+				// reached X and returned 2xx, so the association MAY have been created —
+				// X just didn't return a usable id. This is UNCONFIRMED, NOT a clean
+				// failure: telling the operator to "add it manually" would invite the
+				// duplicate this classification exists to prevent (a manual re-add on top
+				// of an association X already made). Surface it with the same verify-
+				// before-retry wording as the ambiguous-error branch so it is reconciled,
+				// not blindly re-created. Non-fatal: the campaign + line item still return.
+				promotedTweetWarning = fmt.Sprintf("promoted-tweet association for tweet %s is UNCONFIRMED: X returned a 2xx with no promoted-tweet ID (malformed response) — it MAY have been created; verify in X Ads Manager before retrying to avoid a duplicate", tweetID)
+				steps = append(steps, fmt.Sprintf("Promoted tweet creation UNCONFIRMED for tweet %s (2xx with no ID, malformed response) — verify in X Ads Manager before retrying", tweetID))
 			}
 		}
 	} else {
@@ -1292,23 +1627,27 @@ func extractID(resp *apiResponse) string {
 }
 
 // isDuplicatePromotedTweetErr reports whether err from a promoted_tweets POST is
-// X's DUPLICATE_PROMOTABLE_ENTITY rejection. Because doRequest surfaces non-2xx
-// bodies as the error string, we match X's recognizable error code. A match does
-// NOT prove this tweet is attached to THIS line item: X returns this code when
-// the tweet is already promoted by a DIFFERENT line item, so it cannot be treated
-// as idempotent success — callers surface it as a warning to verify manually
-// rather than as an unqualified success. NOTE: true cross-call idempotency
-// (idempotency keys sent to X) is tracked in LFXV2-2665.
+// X's DUPLICATE_PROMOTABLE_ENTITY rejection. It checks the typed apiError's
+// machine-readable error codes (not the — no-longer-surfaced — body). A match does
+// NOT prove this tweet is attached to THIS line item: X returns this code when the
+// tweet is already promoted by a DIFFERENT line item, so it cannot be treated as
+// idempotent success — callers surface it as a warning to verify manually rather
+// than as an unqualified success. NOTE: true cross-call idempotency (idempotency
+// keys sent to X) is tracked in LFXV2-2665.
+//
+// The match is gated to a DEFINITE 4xx status: X documents this code as a 400
+// validation rejection, and the CreateCampaign switch evaluates this branch BEFORE
+// createOutcomeAmbiguous. Without the gate, a mutating 3xx/5xx response that
+// happened to carry this code (e.g. an intercepting proxy) would be reported as a
+// known duplicate instead of the required UNCONFIRMED outcome — silently dropping
+// the ambiguity for exactly the case that must stay ambiguous. On a 3xx/5xx the
+// create may have committed, so we must NOT assert "duplicate"; let it fall through
+// to createOutcomeAmbiguous.
 func isDuplicatePromotedTweetErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	// Match only X's specific DUPLICATE_PROMOTABLE_ENTITY error code. Broad
-	// substring matches on "already promoted"/"already associated" widened the net
-	// to messages that don't actually prove a duplicate, so drop them: the code is
-	// the recognizable, unambiguous signal.
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "duplicate_promotable_entity")
+	var ae *apiError
+	return errors.As(err, &ae) &&
+		ae.StatusCode >= 400 && ae.StatusCode < 500 &&
+		ae.hasErrorCode(errCodeDuplicatePromotableEntity)
 }
 
 // extractPromotedTweetID reads the promoted tweet id, which the X Ads API
