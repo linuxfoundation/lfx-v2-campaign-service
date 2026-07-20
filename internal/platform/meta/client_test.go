@@ -3100,7 +3100,7 @@ func TestDoRequestNon2xxReadErrorPreservesStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Length", "1000") // advertise more than we send
-		w.WriteHeader(http.StatusFound)           // 302 — a mutating redirect, not followed
+		w.WriteHeader(http.StatusFound)          // 302 — a mutating redirect, not followed
 		_, _ = io.WriteString(w, `{"partial":`)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -3620,10 +3620,10 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 		status int
 		want   bool
 	}{
-		{http.MethodGet, http.StatusFound, false},                 // GET 302 — not a create
-		{http.MethodGet, http.StatusInternalServerError, true},    // GET 500 — still ambiguous
-		{http.MethodPost, http.StatusFound, true},                 // POST 302 — mutating redirect
-		{http.MethodDelete, http.StatusTemporaryRedirect, true},   // DELETE 307 — mutating
+		{http.MethodGet, http.StatusFound, false},               // GET 302 — not a create
+		{http.MethodGet, http.StatusInternalServerError, true},  // GET 500 — still ambiguous
+		{http.MethodPost, http.StatusFound, true},               // POST 302 — mutating redirect
+		{http.MethodDelete, http.StatusTemporaryRedirect, true}, // DELETE 307 — mutating
 	}
 	for _, tc := range methodCases {
 		err := &APIError{StatusCode: tc.status, Method: tc.method, Path: "/campaigns"}
