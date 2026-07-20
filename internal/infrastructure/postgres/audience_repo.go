@@ -1,0 +1,150 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package postgres
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+)
+
+// AudienceRepo is a pgx-backed implementation of domain.AudienceRepository.
+type AudienceRepo struct {
+	db *Pool
+}
+
+// NewAudienceRepo returns an AudienceRepo backed by pool.
+func NewAudienceRepo(pool *Pool) *AudienceRepo { return &AudienceRepo{db: pool} }
+
+var _ domain.AudienceRepository = (*AudienceRepo)(nil)
+
+// audienceCols is the column list every audience read scans, in scanAudience order.
+const audienceCols = `id::text, project_id::text, brief_id::text, platform,
+	platform_master_list_id, suppression_list_ids, inclusion_summary, status, version,
+	created_by, created_at, updated_at`
+
+// CreateAudience inserts a new audience row and returns it.
+func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
+	q := `INSERT INTO campaign_audiences
+		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
+		 inclusion_summary, status, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		RETURNING ` + audienceCols
+	row := r.db.QueryRow(ctx, q,
+		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
+		nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
+		nullJSON(a.CreatedBy),
+	)
+	created, err := scanAudience(row)
+	if err != nil {
+		return nil, fmt.Errorf("create audience: %w", err)
+	}
+	return created, nil
+}
+
+// GetAudience returns one audience by id, scoped to (project, brief), or ErrNotFound.
+func (r *AudienceRepo) GetAudience(ctx context.Context, projectID, briefID, id string) (*model.CampaignAudience, error) {
+	q := `SELECT ` + audienceCols + ` FROM campaign_audiences
+		WHERE id=$1 AND brief_id=$2 AND project_id=$3`
+	a, err := scanAudience(r.db.QueryRow(ctx, q, id, briefID, projectID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get audience: %w", err)
+	}
+	return a, nil
+}
+
+// ListAudiences returns a brief's audiences (newest first), scoped to the project.
+func (r *AudienceRepo) ListAudiences(ctx context.Context, projectID, briefID string) ([]*model.CampaignAudience, error) {
+	q := `SELECT ` + audienceCols + ` FROM campaign_audiences
+		WHERE brief_id=$1 AND project_id=$2
+		ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, q, briefID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list audiences: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*model.CampaignAudience
+	for rows.Next() {
+		a, sErr := scanAudience(rows)
+		if sErr != nil {
+			return nil, fmt.Errorf("scan audience row: %w", sErr)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate audience rows: %w", err)
+	}
+	return out, nil
+}
+
+// UpdateAudience replaces the mutable fields under an optimistic-concurrency guard on
+// expectedVersion (ErrPreconditionFailed on mismatch, ErrNotFound when absent).
+func (r *AudienceRepo) UpdateAudience(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
+	q := `UPDATE campaign_audiences SET
+		platform_master_list_id=$1, suppression_list_ids=$2, inclusion_summary=$3,
+		status=$4, version=version+1, updated_at=now()
+		WHERE id=$5 AND brief_id=$6 AND project_id=$7 AND version=$8`
+	tag, err := r.db.Exec(ctx, q,
+		nullStr(a.PlatformMasterListID), nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary),
+		string(a.StatusOrDefault()), a.ID, a.BriefID, a.ProjectID, expectedVersion,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update audience: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Distinguish "absent" from "version mismatch" by re-reading, and surface a
+		// transient re-fetch error rather than masking it as a precondition failure
+		// (consistent with ReplaceCampaign / ConnectionRepo.Update).
+		_, gerr := r.GetAudience(ctx, a.ProjectID, a.BriefID, a.ID)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
+			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
+		}
+	}
+	return r.GetAudience(ctx, a.ProjectID, a.BriefID, a.ID)
+}
+
+// scanAudience reads one campaign_audiences row in audienceCols order.
+func scanAudience(row pgx.Row) (*model.CampaignAudience, error) {
+	var (
+		a         model.CampaignAudience
+		platform  string
+		masterID  *string
+		suppress  []byte
+		inclusion *string
+		status    string
+		createdBy []byte
+	)
+	if err := row.Scan(
+		&a.ID, &a.ProjectID, &a.BriefID, &platform,
+		&masterID, &suppress, &inclusion, &status, &a.Version,
+		&createdBy, &a.CreatedAt, &a.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	a.Platform = model.Provider(platform)
+	if masterID != nil {
+		a.PlatformMasterListID = *masterID
+	}
+	if inclusion != nil {
+		a.InclusionSummary = *inclusion
+	}
+	a.SuppressionListIDs = suppress
+	a.CreatedBy = createdBy
+	a.Status = model.AudienceStatus(status)
+	return &a, nil
+}

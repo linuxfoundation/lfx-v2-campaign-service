@@ -32,5 +32,14 @@ applied file.
   `campaign_jobs (updated_at) WHERE status IN ('queued','running')`, supporting
   the periodic stuck-job recovery sweep (`JobRepo.FailStuckJobs`) so it does not
   full-scan campaign_jobs as terminal job history grows.
+- `000005` — `campaign_audiences` table (email channel, epic LFXV2-2770): a built
+  audience subordinate to a brief (`brief_id` REFERENCES `campaign_briefs(id)`),
+  storing a POINTER + provenance (`platform_master_list_id`, `suppression_list_ids`,
+  `inclusion_summary`, `status` building/built/failed, `version`) to the audience
+  that physically lives in the platform (a HubSpot master list) — NOT its contents.
+  Indexed on `brief_id` and `project_id` (a brief may have many audiences, so there
+  is no natural uniqueness, hence both get their own index). `AudienceRepo`
+  (create/get/list/update, project-scoped, optimistic-concurrency update via
+  `ErrPreconditionFailed`) implements `domain.AudienceRepository`.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).

@@ -133,6 +133,22 @@ migration/pool, swapping the live pool/repo in via `SetReadinessDep`/`SetBackend
 (invalid DB settings, bad encryption key) still fail fast. `Close` cancels the
 retry goroutine. Updated the container + deployment concept docs and the
 startupProbe comment.
+**Creation** — Added the `campaign_audiences` resource — DB layer (LFXV2-2773 subtask
+2781, email epic LFXV2-2770). Migration `000005` creates `campaign_audiences` (a built
+audience subordinate to a brief: `brief_id` FK to `campaign_briefs`, columns store a
+POINTER + provenance — `platform_master_list_id`, `suppression_list_ids`,
+`inclusion_summary`, `status` building/built/failed, `version` — NOT the audience
+contents, which stay in HubSpot). This is the "B2" decision: a built audience is a
+first-class, inspectable, reusable, versioned LFX resource. Added `model.CampaignAudience`
+(+ AudienceStatus, StatusOrDefault), `domain.AudienceRepository` interface, and
+`postgres.AudienceRepo` (create/get/list/update; project-scoped; optimistic-concurrency
+update gated on version → ErrPreconditionFailed, matching ReplaceCampaign). Indexed on
+brief_id + project_id (no natural uniqueness — a brief may have many audiences). The
+Goa API/handlers + route/rule wiring are the sibling subtasks (2782/2783); the repo
+isn't consumed until the service exists. Model unit test added; per repo convention
+(no DB unit tests here — repos are covered via service-layer fakes) the migration is
+validated on boot. Whole-module build/vet/test green; concept doc + log updated.
+
 **Update** — Idempotency-lookup errors no longer silently fall through to dispatch
 (PR #11 review, cursor Medium). In `dispatchPlatform`, the fast path treated ANY
 non-nil error from `GetCampaignByPlatform` like "no row" and fell through to
