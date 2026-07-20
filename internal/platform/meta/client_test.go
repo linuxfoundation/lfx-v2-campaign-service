@@ -662,6 +662,52 @@ func TestCreateCampaignAdSetAmbiguousIsUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignAdSetNoIDIsUnconfirmed verifies a 2xx ad-set create with no id
+// is UNCONFIRMED (Meta may have created it), not a definite "returned no ad set ID"
+// — same duplicate-avoidance as the campaign/ad and twitter no-id paths.
+func TestCreateCampaignAdSetNoIDIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{}`) // 2xx, no id
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-abc"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
+	)
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon", Project: "tlf",
+		RegistrationURL: "https://events.example.org/kubecon", Objective: "traffic",
+		GeoTargets: []string{"US"}, Budget: 500, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "Join us", Headline: "KubeCon 2026"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when the ad set returns a 2xx with no id")
+	}
+	if res == nil || res.CampaignID != "camp_orphan" {
+		t.Fatalf("expected a partial result carrying the orphaned campaign id, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx ad-set with no id must be UNCONFIRMED, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "returned no ad set ID") && !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx ad-set with no id must not read as a definite failure: %v", err)
+	}
+}
+
 // TestCreateCampaignNoIDReturnsPartial verifies a 2xx campaign create with no id
 // returns a partial result carrying the campaign name (reconcilable by name), not
 // a bare (nil, err).

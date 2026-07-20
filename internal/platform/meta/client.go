@@ -1960,7 +1960,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	adSetID = adSetResp.ID
 	if adSetID == "" {
-		return partialResult(), fmt.Errorf("meta ad set creation succeeded but returned no ad set ID (campaign %s created, PAUSED)", campaignID)
+		// A 2xx with no id is a malformed SUCCESS: Meta may have created the ad set
+		// but didn't return a usable id. UNCONFIRMED (verify before retrying), NOT a
+		// clean failure — a blind retry could duplicate an ad set Meta already made.
+		// Mirrors the campaign/ad no-id and the ad-set error-path handling.
+		return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; Meta returned a 2xx with no ad set ID — an ad set may exist; verify in Meta Ads Manager before retrying)", campaignID)
 	}
 	budgetLabel := "daily"
 	if in.LifetimeBudget {

@@ -1,5 +1,15 @@
 # Log
 
+## 2026-07-20
+
+**Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
+PR #30 review by Copilot). The ad-set create's error path already routed through
+`createOutcomeAmbiguous`, but a 2xx response with an empty `id` fell through to a
+definite "returned no ad set ID" — the same duplicate-create risk as the campaign
+and twitter no-id paths. Now surfaces UNCONFIRMED (verify before retrying). Test
+added. Also fixed a CI `check-fmt` failure (gofmt comment alignment in the meta
+test).
+
 ## 2026-07-19
 
 **Update** — Fixed an http.Client copy-after-use in the Meta client's no-follow
