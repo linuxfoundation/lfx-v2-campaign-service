@@ -41,6 +41,12 @@ This parity is enforced by a Go test — `TestRouteRuleSetParity`
 `helm template`, extracts the HTTPRoute's RE2 regex and the RuleSet's project-nested
 path patterns (translating Traefik `:projectId`/`*`/`**` tokens to regexps), and
 asserts a curated table of accepted/rejected paths matches IDENTICALLY in both
-matchers — so a future edit to one matcher that isn't mirrored in the other fails
-the build rather than silently opening an unauthenticated bypass. (The test skips
-when `helm` is absent but fails on a render error.)
+matchers. It also runs a WITNESS check (`TestRouteRuleSetParityWitnesses`) that
+couples the assertion to the matchers' own content: it enumerates concrete example
+paths from the route regex's AST (via `regexp/syntax`, one witness per alternation
+leaf) and requires each to be authorized by a RuleSet entry, and builds a witness
+from every RuleSet pattern and requires the route to forward it. This is what
+catches a ONE-SIDED matcher edit — e.g. adding `tiktok-ads/metrics` to only the
+route regex yields the witness `/projects/x/tiktok-ads/metrics`, which matches the
+route but no rule, failing the build rather than silently opening an unauthenticated
+bypass. (The test skips when `helm` is absent but fails on a render error.)

@@ -8,13 +8,20 @@
 // patterns. If the two drift — a path the route forwards but the RuleSet does not
 // authorize — that path reaches the service WITHOUT the campaign_manager FGA check
 // (an unruled, unauthenticated bypass). Nothing but this test couples the two
-// hand-maintained matchers, so it renders both with `helm template` and asserts a
-// curated table of accepted/rejected paths matches IDENTICALLY in both matchers.
+// hand-maintained matchers, so it renders both with `helm template` and checks them
+// two ways: (1) a curated accepted/rejected table both matchers must agree on, and
+// (2) a WITNESS derivation that couples the assertions to the matchers' own content —
+// concrete example paths enumerated from the route regex's AST must each be ruled,
+// and a witness built from each RuleSet pattern must match the route. The witness
+// check is what catches a ONE-SIDED matcher edit (e.g. adding `tiktok-ads/metrics`
+// to only the route regex): a static table can miss it, but an enumerated witness
+// for the new alternative will match the route and not the RuleSet, failing parity.
 package charts_test
 
 import (
 	"os/exec"
 	"regexp"
+	"regexp/syntax"
 	"strings"
 	"testing"
 )
@@ -38,24 +45,27 @@ func helmTemplate(t *testing.T, showOnly string) string {
 	return string(out)
 }
 
-// extractRouteRegex pulls the single RegularExpression path-match value out of the
-// rendered HTTPRoute and compiles it. The value line looks like:
+// extractRouteRegexRaw pulls the single RegularExpression path-match value out of
+// the rendered HTTPRoute as its raw string. The value line looks like:
 //
 //	value: ^/projects/[^/]+/(...)$
-func extractRouteRegex(t *testing.T, httproute string) *regexp.Regexp {
+func extractRouteRegexRaw(t *testing.T, httproute string) string {
 	t.Helper()
-	var raw string
 	for _, line := range strings.Split(httproute, "\n") {
 		s := strings.TrimSpace(line)
 		// The project-nested selector is the only RE2 value anchored at /projects/.
 		if strings.HasPrefix(s, "value:") && strings.Contains(s, "^/projects/") {
-			raw = strings.TrimSpace(strings.TrimPrefix(s, "value:"))
-			break
+			return strings.TrimSpace(strings.TrimPrefix(s, "value:"))
 		}
 	}
-	if raw == "" {
-		t.Fatalf("no RegularExpression /projects/ value found in rendered HTTPRoute:\n%s", httproute)
-	}
+	t.Fatalf("no RegularExpression /projects/ value found in rendered HTTPRoute:\n%s", httproute)
+	return ""
+}
+
+// extractRouteRegex pulls the RegularExpression path-match value and compiles it.
+func extractRouteRegex(t *testing.T, httproute string) *regexp.Regexp {
+	t.Helper()
+	raw := extractRouteRegexRaw(t, httproute)
 	re, err := regexp.Compile(raw)
 	if err != nil {
 		t.Fatalf("route regex %q does not compile: %v", raw, err)
@@ -210,6 +220,137 @@ func TestRouteRuleSetParity(t *testing.T) {
 		}
 		if ruleMatch != tc.accept {
 			t.Errorf("RuleSet match for %q = %v, want %v", tc.path, ruleMatch, tc.accept)
+		}
+	}
+}
+
+// enumerateMatches returns a bounded set of concrete strings that the compiled
+// regex fully matches, by walking the parsed regexp AST. It expands alternations
+// (every branch) and concatenations (cartesian across sub-parts), collapses the
+// open-ended pieces the route uses — `[^/]+` (a projectId segment) and `.*` (a
+// free descendant suffix) — to fixed witness literals, and treats `?`/star/plus as
+// "zero or one representative occurrence". The point is not to enumerate the
+// infinite language but to emit at least one witness per ALTERNATION LEAF, so a new
+// branch added to the regex necessarily yields a new witness path — which the
+// parity assertion then requires the RuleSet to also match. The cap guards against
+// a combinatorial blow-up if the regex ever grows many independent option groups.
+func enumerateMatches(t *testing.T, pattern string) []string {
+	t.Helper()
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		t.Fatalf("cannot parse route regex for enumeration: %v", err)
+	}
+	const cap = 512
+	out := expand(re.Simplify())
+	if len(out) > cap {
+		t.Fatalf("route regex enumerated to %d witnesses (> cap %d) — the regex likely grew independent option groups; raise the cap or curate witnesses", len(out), cap)
+	}
+	// Drop the anchors that OpLiteral can't carry; MatchString re-applies them.
+	for i, s := range out {
+		out[i] = strings.TrimSuffix(strings.TrimPrefix(s, "^"), "$")
+	}
+	return out
+}
+
+// expand returns the set of representative match strings for one regexp AST node.
+func expand(re *syntax.Regexp) []string {
+	switch re.Op {
+	case syntax.OpLiteral:
+		return []string{string(re.Rune)}
+	case syntax.OpCharClass:
+		// The only char classes this regex uses are `[^/]` (a path segment char) and
+		// implicit ones; a single representative char suffices for a witness segment.
+		return []string{"x"}
+	case syntax.OpAnyCharNotNL, syntax.OpAnyChar:
+		return []string{"x"}
+	case syntax.OpBeginLine, syntax.OpEndLine, syntax.OpBeginText, syntax.OpEndText, syntax.OpEmptyMatch:
+		return []string{""}
+	case syntax.OpCapture:
+		return expand(re.Sub[0])
+	case syntax.OpConcat:
+		acc := []string{""}
+		for _, sub := range re.Sub {
+			parts := expand(sub)
+			next := make([]string, 0, len(acc)*len(parts))
+			for _, a := range acc {
+				for _, p := range parts {
+					next = append(next, a+p)
+				}
+			}
+			acc = next
+		}
+		return acc
+	case syntax.OpAlternate:
+		var out []string
+		for _, sub := range re.Sub {
+			out = append(out, expand(sub)...)
+		}
+		return out
+	case syntax.OpQuest, syntax.OpStar:
+		// zero OR one representative occurrence.
+		out := []string{""}
+		out = append(out, expand(re.Sub[0])...)
+		return out
+	case syntax.OpPlus:
+		// one representative occurrence (a `[^/]+` segment or a `.*`-derived suffix).
+		return expand(re.Sub[0])
+	default:
+		// Fall back to a single opaque witness so an unexpected op doesn't silently
+		// drop a branch; the caller's assertions will surface any mismatch.
+		return []string{"x"}
+	}
+}
+
+// ruleWitness turns a RuleSet path pattern into a single concrete witness path by
+// substituting each token with a representative value: `:name`/`*` -> one segment,
+// `**` -> a two-segment descendant (so it also proves the "any-depth" intent).
+func ruleWitness(pattern string) string {
+	segs := strings.Split(pattern, "/")
+	for i, seg := range segs {
+		switch {
+		case seg == "**":
+			segs[i] = "w1/w2"
+		case seg == "*" || strings.HasPrefix(seg, ":"):
+			segs[i] = "p1"
+		}
+	}
+	return strings.Join(segs, "/")
+}
+
+// TestRouteRuleSetParityWitnesses couples the parity assertion to the matchers' OWN
+// content, defeating a one-sided matcher edit that a static table would miss:
+//   - every concrete path enumerated from the ROUTE regex's alternation leaves must
+//     be authorized by some RuleSet entry (a route-only new branch fails here);
+//   - a witness built from every RULESET pattern must match the route regex (a
+//     RuleSet-only new entry fails here).
+func TestRouteRuleSetParityWitnesses(t *testing.T) {
+	routeValue := extractRouteRegexRaw(t, helmTemplate(t, "templates/httproute.yaml"))
+	routeRe := regexp.MustCompile(routeValue)
+	rulePats := extractRulePatterns(t, helmTemplate(t, "templates/ruleset.yaml"))
+	ruleMatchers := make([]*regexp.Regexp, 0, len(rulePats))
+	for _, p := range rulePats {
+		ruleMatchers = append(ruleMatchers, ruleMatcher(t, p))
+	}
+
+	// Direction 1: every route-regex leaf witness must be ruled.
+	witnesses := enumerateMatches(t, routeValue)
+	if len(witnesses) == 0 {
+		t.Fatal("route regex enumerated to zero witnesses")
+	}
+	for _, w := range witnesses {
+		if !routeRe.MatchString(w) {
+			t.Fatalf("internal error: enumerated witness %q does not match its own route regex", w)
+		}
+		if !anyRuleMatches(ruleMatchers, w) {
+			t.Errorf("route regex forwards %q but NO RuleSet entry authorizes it — one-sided route edit (unauthenticated bypass)", w)
+		}
+	}
+
+	// Direction 2: a witness from every RuleSet pattern must be forwarded by the route.
+	for _, p := range rulePats {
+		w := ruleWitness(p)
+		if !routeRe.MatchString(w) {
+			t.Errorf("RuleSet authorizes %q (witness %q) but the route regex does NOT forward it — one-sided RuleSet edit (a dead rule, or a route gap)", p, w)
 		}
 	}
 }

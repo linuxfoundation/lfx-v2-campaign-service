@@ -13,6 +13,17 @@ Traefik `:projectId`/`*`/`**`), and asserts a curated accepted/rejected path tab
 matches identically in both matchers (skips if helm absent; fails on render error).
 Verified non-vacuous by flipping an expectation. httproute concept doc updated.
 
+**Update** — Strengthened the parity test to couple to matcher CONTENT (PR #28
+review, copilot). The curated table only sampled fixed paths, so a one-sided
+matcher edit that no case exercised (copilot's example: adding `tiktok-ads/metrics`
+to the route regex only) would still pass. Added `TestRouteRuleSetParityWitnesses`:
+it enumerates concrete example paths from the route regex's AST (`regexp/syntax`
+walker — one witness per alternation leaf, `[^/]+`/`.*` collapsed to literals) and
+requires each to be RULED, and builds a witness from every RuleSet pattern and
+requires the route to FORWARD it. A route-only new branch now yields an unruled
+witness → fail; a RuleSet-only entry yields an unforwarded witness → fail. Verified
+against copilot's exact scenario (`/projects/x/tiktok-ads/metrics` is caught).
+
 **Update** — Bounded the migration step with the startup deadline (PR #28 follow-up
 review, cursor Medium). After the earlier pool-first fix, `initDatabase` still ran
 `postgres.Migrate` (no context) synchronously with no time bound, so a reachable
