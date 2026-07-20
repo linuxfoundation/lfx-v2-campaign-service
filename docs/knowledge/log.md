@@ -2,6 +2,15 @@
 
 ## 2026-07-20
 
+**Update** — Corrected the "re-run after a partial migration is harmless" doc claim
+(PR #28 review, copilot). The container concept doc and the `Migrate` doc comment
+said migrations are idempotent so a re-run after a partial is harmless — but that's
+wrong for a PARTIAL (dirty) migration: golang-migrate marks the schema dirty
+precisely because partial migration SQL is not assumed idempotent, and a re-run then
+hits `ErrDirty` (needs manual `force`, exactly the permanent-failure path documented
+above). Reworded both to scope the "skipped/harmless" claim to a CLEAN schema and
+describe partial failure as the dirty/manual-recovery state.
+
 **Update** — Fail fast on a PERMANENT migration failure instead of 503-looping
 forever (PR #28 review, copilot + cursor). The 503-mode retry loop retried
 `initDatabase` on ANY error — so a dirty schema (`migrate.ErrDirty`, set when a prior

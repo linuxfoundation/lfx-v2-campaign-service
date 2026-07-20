@@ -104,7 +104,11 @@ func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error)
 }
 
 // Migrate applies all pending up migrations from the embedded migration files.
-// It is safe to call on every startup; already-applied migrations are skipped.
+// It is safe to call on every startup when the schema is CLEAN: already-applied
+// migrations are skipped. It does NOT silently re-run a PARTIALLY-applied migration —
+// golang-migrate marks such a schema dirty (migrate.ErrDirty, surfaced by
+// IsPermanentMigrationErr) and refuses to proceed until an operator forces the
+// version, since partial migration SQL is not assumed idempotent.
 func Migrate(dsn string) error {
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {

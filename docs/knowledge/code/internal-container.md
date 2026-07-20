@@ -50,11 +50,16 @@ deadline: `initDatabase` returns on the deadline, but the migration goroutine ma
 still be running afterward. Two things keep this safe rather than a leak-and-race:
 (1) a package-level `migrateMu` serializes migration runs, so a retry BLOCKS on the
 mutex until the prior (deadline-abandoned) migration finishes instead of starting a
-second concurrent one; and (2) migrations are idempotent (already-applied steps are
-skipped), so a re-run after a partial is harmless. So there is at most one migration
-in flight at a time, never overlapping/racing — though a genuinely stuck migration
-can still delay readiness (surfaced as `/readyz` 503 during the cold-start window,
-which is the intended behavior, not a hang of the whole process).
+second concurrent one; and (2) a re-run only re-applies work when the schema is
+CLEAN — a fully-applied migration is skipped (harmless). A re-run does NOT silently
+retry a PARTIALLY-applied migration: golang-migrate marks the schema dirty
+(`migrate.ErrDirty`) precisely because partial migration SQL is not assumed
+idempotent, so a re-run against a dirty schema fails fast (see the permanent-failure
+handling above — it needs an operator to `force` the version), rather than
+re-executing partial SQL. So there is at most one migration in flight at a time,
+never overlapping/racing — though a genuinely stuck (slow/lock-blocked) migration on
+a CLEAN schema can still delay readiness (surfaced as `/readyz` 503 during the
+cold-start window, which is the intended behavior, not a hang of the whole process).
 
 This is what makes the Deployment's ~90s `startupProbe` budget real: the pod is
 kept alive and `/readyz` stays 503 across a DB cold start, rather than the process
