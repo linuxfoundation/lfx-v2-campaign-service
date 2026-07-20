@@ -96,11 +96,11 @@ spec:
           - path: /projects/:projectId/connection-hubspot/set-credential
           # Briefs (+ nested campaigns) and jobs. A single-segment capture (:rest)
           # would only match /briefs/{id}; the routed contract has DEEPER paths —
-          # /briefs/{id}/refresh, /approve, and /briefs/{id}/campaigns/{cid}/status —
-          # so use the ** free wildcard, which matches ALL descendants (any number of
-          # segments incl. slashes). The bare base paths (POST /briefs, GET /jobs) are
-          # kept as their own entries so they're matched regardless of whether **
-          # matches zero segments.
+          # /briefs/{id}/approve and /briefs/{id}/campaigns/{campaignId} (per the
+          # generated Goa routes) — so use the ** free wildcard, which matches ALL
+          # descendants (any number of segments incl. slashes). The bare base paths
+          # (POST /briefs, GET /jobs) are kept as their own entries so they're
+          # matched regardless of whether ** matches zero segments.
           - path: /projects/:projectId/briefs
           - path: /projects/:projectId/briefs/**
           - path: /projects/:projectId/jobs
