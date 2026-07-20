@@ -396,6 +396,17 @@ func TestIsDuplicateNameErr_GatedTo4xxAndFamily(t *testing.T) {
 	if isDuplicateBudgetNameErr(&apiError{StatusCode: 503, ErrorCodes: []string{"DUPLICATE_NAME"}}) {
 		t.Error("5xx DUPLICATE_NAME must NOT be treated as a known duplicate")
 	}
+	// A 429 carrying either code must NOT be a known duplicate: createOutcomeAmbiguous
+	// classifies a mutating 429 as possibly-committed, so the throttled request itself
+	// may be the one that created the resource — reading "already exists" would skip
+	// the required reconcile. (The duplicate predicates run before the ambiguity check
+	// on the create path, so the exclusion must live here.)
+	if isDuplicateBudgetNameErr(&apiError{StatusCode: 429, ErrorCodes: []string{"DUPLICATE_NAME"}}) {
+		t.Error("429 DUPLICATE_NAME must NOT be treated as a known duplicate (it is ambiguous)")
+	}
+	if isDuplicateCampaignNameErr(&apiError{StatusCode: 429, ErrorCodes: []string{"DUPLICATE_CAMPAIGN_NAME"}}) {
+		t.Error("429 DUPLICATE_CAMPAIGN_NAME must NOT be treated as a known duplicate (it is ambiguous)")
+	}
 }
 
 func TestComposeName_DeterministicAndBounded(t *testing.T) {
@@ -423,14 +434,20 @@ func TestComposeName_StripsPipeInjection(t *testing.T) {
 
 func TestSanitizeNamePart(t *testing.T) {
 	cases := map[string]string{
-		"  hello  ": "hello",
-		"a | b":     "a b",
-		"a||b":      "a b",
-		"a  b\tc":   "a b c",
-		"|leading":  "leading",
-		"trailing|": "trailing",
-		"":          "",
-		"   ":       "",
+		"  hello  ":  "hello",
+		"a | b":      "a b",
+		"a||b":       "a b",
+		"a  b\tc":    "a b c",
+		"|leading":   "leading",
+		"trailing|":  "trailing",
+		"":           "",
+		"   ":        "",
+		"a\x00b":     "a b", // NUL (v23 forbids it in a name) → space, then collapsed
+		"a\x00\x00b": "a b", // runs of control chars collapse to one space
+		"\x00lead":   "lead",
+		"trail\x00":  "trail",
+		"a\x1bb":     "a b", // ESC (another control char) → space
+		"\x00":       "",    // a lone NUL sanitizes to empty (rejected upstream)
 	}
 	for in, want := range cases {
 		if got := sanitizeNamePart(in); got != want {

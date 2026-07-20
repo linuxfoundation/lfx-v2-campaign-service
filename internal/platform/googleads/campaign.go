@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"unicode"
 )
 
 // ---------------------------------------------------------------------------
@@ -223,25 +224,37 @@ func (e *apiError) hasErrorCode(code string) bool {
 	return false
 }
 
+// isDefiniteClientError reports whether ae is a definite 4xx client-error rejection
+// that is NOT ambiguous — i.e. a 4xx EXCEPT 429. A 429 is excluded because
+// createOutcomeAmbiguous classifies a mutating 429 as possibly-committed (doRequest
+// does not retry a non-idempotent 429), so a duplicate-name code carried on a 429
+// must NOT be read as a known prior create — the throttled request itself may be
+// the one that created it. Keeping this exclusion here (the duplicate predicates run
+// BEFORE createOutcomeAmbiguous on the create path) preserves the ambiguity contract.
+func isDefiniteClientError(ae *apiError) bool {
+	return ae.StatusCode >= 400 && ae.StatusCode < 500 &&
+		ae.StatusCode != http.StatusTooManyRequests
+}
+
 // isDuplicateBudgetNameErr reports whether err is Google's CampaignBudgetError
-// DUPLICATE_NAME rejection on a definite 4xx. Gated to a 4xx (Google returns it as
-// a validation error): a 3xx/5xx carrying the code stays ambiguous via
-// createOutcomeAmbiguous, so a create that may have committed is not mislabeled a
-// known duplicate.
+// DUPLICATE_NAME rejection on a definite 4xx (excluding 429). A 3xx/5xx/429 carrying
+// the code stays ambiguous via createOutcomeAmbiguous, so a create that may have
+// committed is not mislabeled a known duplicate.
 func isDuplicateBudgetNameErr(err error) bool {
 	var ae *apiError
 	return errors.As(err, &ae) &&
-		ae.StatusCode >= 400 && ae.StatusCode < 500 &&
+		isDefiniteClientError(ae) &&
 		ae.hasErrorCode(errCodeDuplicateBudgetName)
 }
 
 // isDuplicateCampaignNameErr reports whether err is Google's CampaignError
-// DUPLICATE_CAMPAIGN_NAME rejection on a definite 4xx — the campaign-name analogue
-// of isDuplicateBudgetNameErr (the two families use different codes).
+// DUPLICATE_CAMPAIGN_NAME rejection on a definite 4xx (excluding 429) — the
+// campaign-name analogue of isDuplicateBudgetNameErr (the two families use different
+// codes).
 func isDuplicateCampaignNameErr(err error) bool {
 	var ae *apiError
 	return errors.As(err, &ae) &&
-		ae.StatusCode >= 400 && ae.StatusCode < 500 &&
+		isDefiniteClientError(ae) &&
 		ae.hasErrorCode(errCodeDuplicateCampaignName)
 }
 
@@ -490,9 +503,19 @@ func composeName(kind string, in CampaignInput) string {
 // delimiter: a raw "|" in Project/EventName/NameSuffix would inject extra fields
 // into the pipe-delimited composed name and break project attribution / name-based
 // reconciliation (which split on "|"). Mirrors the meta/twitter/reddit builders'
-// delimiter sanitization. Collapses any resulting doubled spaces.
+// delimiter sanitization. It also replaces ANY control character (incl. NUL, which
+// Google Ads v23 explicitly forbids in a name; strings.Fields only folds the
+// whitespace control chars like CR/LF, not NUL) with a space, so an embedded control
+// char can't reach a paid :mutate as a guaranteed-invalid name. All runs of the
+// resulting whitespace are collapsed to a single space.
 func sanitizeNamePart(s string) string {
 	s = strings.ReplaceAll(s, "|", " ")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 	s = strings.Join(strings.Fields(s), " ")
 	return strings.TrimSpace(s)
 }
