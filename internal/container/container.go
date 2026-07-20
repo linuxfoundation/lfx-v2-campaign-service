@@ -210,12 +210,36 @@ func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
 		return nil, fmt.Errorf("open database pool: %w", err)
 	}
 
-	if mErr := postgres.Migrate(dsn); mErr != nil {
+	// Migrate only after a reachable ping (above), so it connects immediately rather
+	// than blocking against a down DB. It can still run long on a reachable DB if a
+	// migration is slow or lock-blocked, and golang-migrate's Up() takes no context,
+	// so bound it with the startup deadline: run it under migrateMu (only ONE
+	// migration ever runs at a time, so a retry can't start a second while a prior is
+	// still finishing) and return on the deadline. On timeout the in-flight migration
+	// keeps running under the lock; the next retry blocks on migrateMu until it
+	// finishes rather than launching an overlapping one.
+	migrateDone := make(chan error, 1)
+	go func() {
+		migrateMu.Lock()
+		defer migrateMu.Unlock()
+		migrateDone <- postgres.Migrate(dsn)
+	}()
+	select {
+	case mErr := <-migrateDone:
+		if mErr != nil {
+			pool.Close()
+			return nil, fmt.Errorf("run migrations: %w", mErr)
+		}
+	case <-ctx.Done():
 		pool.Close()
-		return nil, fmt.Errorf("run migrations: %w", mErr)
+		return nil, fmt.Errorf("run migrations: %w", ctx.Err())
 	}
 	return pool, nil
 }
+
+// migrateMu serializes golang-migrate runs so a retry never starts a second
+// migration while a prior (possibly deadline-abandoned) one is still finishing.
+var migrateMu sync.Mutex
 
 // Close releases any resources held by the container and stops the background
 // DB-init goroutine if one is running.

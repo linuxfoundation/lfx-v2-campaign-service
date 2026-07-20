@@ -2,6 +2,15 @@
 
 ## 2026-07-20
 
+**Update** — Bounded the migration step with the startup deadline (PR #28 follow-up
+review, cursor Medium). After the earlier pool-first fix, `initDatabase` still ran
+`postgres.Migrate` (no context) synchronously with no time bound, so a reachable
+but slow/lock-blocked migration could block `NewContainer` indefinitely. Now
+Migrate runs in a goroutine under a package `migrateMu` (serializes runs so a retry
+never starts a second migration while a prior deadline-abandoned one is finishing)
+and the caller returns on the startup deadline. Also cleaned a union-merge artifact
+in this log (duplicated oversized-body line).
+
 **Update** — Hardened the #28 503-mode cold-start fix after review (cursor HIGH +
 copilot). (1) `initDatabase` started `postgres.Migrate` (uncancellable Up()) in a
 goroutine and returned on the 15s deadline WITHOUT waiting — so the retry loop
@@ -88,7 +97,6 @@ the ambiguity check the campaign and ad/creative creates use, so a surfaced 3xx/
 read as a definite "ad set creation failed" — risking a duplicate ad set on retry.
 It now routes through `createOutcomeAmbiguous`: ambiguous → UNCONFIRMED (verify
 before retrying), definite 4xx → "failed". Tests added for both. (3) The same
-status-stripping existed in the OVERSIZED-body branch (>1 MiB), which returned a
 status-stripping existed in the OVERSIZED-body branch (> maxResponseBody, 10 MiB), which returned a
 plain error before recording the status — a mutating 3xx/5xx over the cap was still
 mis-classified as a definite failure. Now the oversized-body branch preserves the
