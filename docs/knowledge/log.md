@@ -26,7 +26,12 @@ stay `transportError`). (2) The ad-set create returned its error directly withou
 the ambiguity check the campaign and ad/creative creates use, so a surfaced 3xx/5xx
 read as a definite "ad set creation failed" — risking a duplicate ad set on retry.
 It now routes through `createOutcomeAmbiguous`: ambiguous → UNCONFIRMED (verify
-before retrying), definite 4xx → "failed". Tests added for both.
+before retrying), definite 4xx → "failed". Tests added for both. (3) The same
+status-stripping existed in the OVERSIZED-body branch (>1 MiB), which returned a
+plain error before recording the status — a mutating 3xx/5xx over the cap was still
+mis-classified as a definite failure. Now the oversized-body branch preserves the
+status the same way (2xx → transportError, non-2xx → *APIError), with a regression
+test. Updated the meta concept doc to describe the fresh-client + status-preservation.
 
 **Update** — Gated the Meta client's 3xx create-outcome ambiguity on a mutating
 method (LFXV2-2641, PR #30 review by Cursor Bugbot). `createOutcomeAmbiguous`

@@ -764,13 +764,26 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		// returns EOF (not an error) at the limit, so an oversized body would
 		// otherwise be silently truncated and mis-parsed as a valid short response.
 		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
-		if readErr == nil && int64(len(raw)) > maxResponseBody {
-			_ = resp.Body.Close()
-			return fmt.Errorf("meta API %s %s: response exceeds %d bytes", method, path, maxResponseBody)
-		}
 		retryAfter := c.parseRetryAfter(resp)
 		status := resp.StatusCode
 		_ = resp.Body.Close()
+
+		if readErr == nil && int64(len(raw)) > maxResponseBody {
+			// Oversized body: we can't trust the payload, but the STATUS must still be
+			// preserved for the same reason as a read failure below — a mutating 3xx/5xx
+			// (or a 2xx) may reflect a committed create, and stripping the status would
+			// mis-classify it as a definite failure and invite a duplicate on retry. A
+			// 2xx is ambiguous (transportError); a non-2xx carries its status via
+			// *APIError. (An oversized error/redirect body is anomalous, but we classify
+			// on status, not payload.)
+			if status >= 200 && status < 300 {
+				return &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
+			}
+			return &APIError{
+				StatusCode: status, Method: method, Path: path,
+				Message: fmt.Sprintf("response exceeds %d bytes", maxResponseBody),
+			}
+		}
 
 		// Meta reports throttling either as HTTP 429 or, commonly, as HTTP 400 with
 		// a Graph error envelope whose code is a known rate-limit code. Treat both

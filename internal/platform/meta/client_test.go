@@ -3027,6 +3027,37 @@ func TestValidateGeoTargetsDeduplicates(t *testing.T) {
 	}
 }
 
+// TestDoRequestOversizedNon2xxPreservesStatus verifies that an OVERSIZED non-2xx
+// body still surfaces a typed *APIError carrying the status. Like a read failure,
+// an oversized-body branch that stripped the status would mis-classify a mutating
+// 3xx/5xx (create may have committed) as a definite failure.
+func TestDoRequestOversizedNon2xxPreservesStatus(t *testing.T) {
+	pad := strings.Repeat("x", (1<<20)+1024) // > maxResponseBody (1 MiB)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError) // 5xx — create may have committed
+		_, _ = io.WriteString(w, `{"pad":"`+pad+`"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected an error for an oversized body, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError preserving the status, got %T: %v", err, err)
+	}
+	if ae.StatusCode != http.StatusInternalServerError {
+		t.Errorf("APIError.StatusCode = %d, want 500 (status must survive an oversized body)", ae.StatusCode)
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("a mutating 500 with an oversized body must be classified ambiguous")
+	}
+}
+
 // TestDoRequestPropagatesBodyReadError verifies a truncated response (declared
 // Content-Length larger than the body sent) is reported as an error, not a
 // false success, even if the partial body would parse.
