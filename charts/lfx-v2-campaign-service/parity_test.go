@@ -73,28 +73,86 @@ func extractRouteRegex(t *testing.T, httproute string) *regexp.Regexp {
 	return re
 }
 
-// extractRulePatterns pulls the Traefik path patterns out of the rendered RuleSet.
-// Only the project-nested rule matters for parity with the /projects/ route regex,
-// so /campaigns, /_campaigns/, and the /_campaigns/openapi passthrough entries
-// (which the route regex deliberately does NOT cover) are excluded.
+// projectAPIRuleID is the Heimdall rule id whose paths must be in parity with the
+// route regex. Scoping extraction to THIS rule (not "any /projects/ path anywhere")
+// is the security point: the invariant is specifically that each forwarded path is
+// gated on campaign_manager for project:{projectId}. A path moved into an allow_all,
+// deny_all, or differently-scoped rule must FAIL parity, not silently satisfy it.
+const projectAPIRuleID = "rule:lfx:lfx-v2-campaign-service:project-api"
+
+// ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
+// the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
+func ruleBlock(t *testing.T, ruleset, ruleID string) string {
+	t.Helper()
+	lines := strings.Split(ruleset, "\n")
+	start := -1
+	for i, line := range lines {
+		s := strings.TrimSpace(line)
+		if strings.HasPrefix(s, "- id:") && strings.Contains(s, ruleID) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("rule %q not found in rendered RuleSet:\n%s", ruleID, ruleset)
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "- id:") {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+// extractRulePatterns pulls the Traefik path patterns out of ONLY the project-api
+// rule block. /campaigns, /_campaigns/, and the openapi passthrough entries live in
+// OTHER rules (a deny_all placeholder and an allow_all openapi rule) and the route
+// regex deliberately does not cover them, so scoping to project-api both excludes
+// them and, crucially, ensures a path is counted as "authorized" only when it is
+// under the campaign_manager rule — not any unrelated rule.
 func extractRulePatterns(t *testing.T, ruleset string) []string {
 	t.Helper()
+	block := ruleBlock(t, ruleset, projectAPIRuleID)
 	var pats []string
-	for _, line := range strings.Split(ruleset, "\n") {
+	for _, line := range strings.Split(block, "\n") {
 		s := strings.TrimSpace(line)
 		if !strings.HasPrefix(s, "- path:") {
 			continue
 		}
 		p := strings.TrimSpace(strings.TrimPrefix(s, "- path:"))
 		if !strings.HasPrefix(p, "/projects/") {
-			continue // /campaigns, /_campaigns/... are not part of the /projects/ regex
+			continue
 		}
 		pats = append(pats, p)
 	}
 	if len(pats) == 0 {
-		t.Fatalf("no /projects/ path patterns found in rendered RuleSet:\n%s", ruleset)
+		t.Fatalf("no /projects/ path patterns found in the %s rule:\n%s", projectAPIRuleID, block)
 	}
 	return pats
+}
+
+// assertProjectAPIAuthz verifies the project-api rule actually enforces the claimed
+// security invariant: an openfga_check authorizer with relation campaign_manager on
+// object project:{projectId}. Without this, the path-parity checks could pass on a
+// rule that was silently downgraded to allow_all/deny_all or re-scoped to a different
+// relation/object — the exact regression the parity test exists to catch.
+func assertProjectAPIAuthz(t *testing.T, ruleset string) {
+	t.Helper()
+	block := ruleBlock(t, ruleset, projectAPIRuleID)
+	if !strings.Contains(block, "authorizer: openfga_check") {
+		t.Errorf("%s rule must use the openfga_check authorizer (not allow_all/deny_all):\n%s", projectAPIRuleID, block)
+	}
+	if !strings.Contains(block, "relation: campaign_manager") {
+		t.Errorf("%s rule must gate on relation campaign_manager:\n%s", projectAPIRuleID, block)
+	}
+	// The object must be project:{projectId} (captured from the URL), not a fixed or
+	// different-type object. Match the rendered template expression loosely on the
+	// project: prefix + the projectId capture.
+	if !strings.Contains(block, "object: \"project:") || !strings.Contains(block, "Captures.projectId") {
+		t.Errorf("%s rule must scope the object to project:{projectId} (URL capture):\n%s", projectAPIRuleID, block)
+	}
 }
 
 // ruleMatcher compiles a Traefik-style path pattern into a Go regexp. Traefik's
@@ -149,11 +207,24 @@ func anyRuleMatches(matchers []*regexp.Regexp, path string) bool {
 }
 
 // TestRouteRuleSetParity asserts every path the HTTPRoute regex forwards is also
+// TestProjectAPIRuleEnforcesCampaignManager asserts the project-api rule enforces the
+// exact security invariant the parity tests assume: an openfga_check on relation
+// campaign_manager, object project:{projectId}. Named separately so a downgrade of
+// the rule to allow_all/deny_all — or a re-scope to a different relation/object —
+// fails loudly even if the path lists still line up.
+func TestProjectAPIRuleEnforcesCampaignManager(t *testing.T) {
+	assertProjectAPIAuthz(t, helmTemplate(t, "templates/ruleset.yaml"))
+}
+
 // authorized by a RuleSet entry, and vice versa — the chart↔route parity invariant.
 // A drift here is a security bug: a forwarded-but-unruled path skips the FGA check.
 func TestRouteRuleSetParity(t *testing.T) {
 	routeRe := extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml"))
-	rulePats := extractRulePatterns(t, helmTemplate(t, "templates/ruleset.yaml"))
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	// The paths are only meaningfully "authorized" if the project-api rule still gates
+	// on campaign_manager for project:{projectId}; assert that before trusting parity.
+	assertProjectAPIAuthz(t, ruleset)
+	rulePats := extractRulePatterns(t, ruleset)
 	ruleMatchers := make([]*regexp.Regexp, 0, len(rulePats))
 	for _, p := range rulePats {
 		ruleMatchers = append(ruleMatchers, ruleMatcher(t, p))
@@ -326,7 +397,9 @@ func ruleWitness(pattern string) string {
 func TestRouteRuleSetParityWitnesses(t *testing.T) {
 	routeValue := extractRouteRegexRaw(t, helmTemplate(t, "templates/httproute.yaml"))
 	routeRe := regexp.MustCompile(routeValue)
-	rulePats := extractRulePatterns(t, helmTemplate(t, "templates/ruleset.yaml"))
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	assertProjectAPIAuthz(t, ruleset)
+	rulePats := extractRulePatterns(t, ruleset)
 	ruleMatchers := make([]*regexp.Regexp, 0, len(rulePats))
 	for _, p := range rulePats {
 		ruleMatchers = append(ruleMatchers, ruleMatcher(t, p))

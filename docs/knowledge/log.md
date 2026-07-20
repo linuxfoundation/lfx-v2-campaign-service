@@ -13,6 +13,16 @@ Traefik `:projectId`/`*`/`**`), and asserts a curated accepted/rejected path tab
 matches identically in both matchers (skips if helm absent; fails on render error).
 Verified non-vacuous by flipping an expectation. httproute concept doc updated.
 
+**Update** — Scoped the parity test to the campaign_manager rule (PR #28 review,
+copilot). `extractRulePatterns` treated ANY `/projects/` path anywhere in the RuleSet
+as "authorized", so a path moved into an allow_all/deny_all/differently-scoped rule
+would still satisfy parity — but the actual invariant is campaign_manager on
+project:{projectId}, not just "some rule matches". Now extraction is scoped to the
+`project-api` rule BLOCK (isolated from its `- id:` to the next), and a new
+`TestProjectAPIRuleEnforcesCampaignManager` (also called from both parity tests)
+asserts that rule's authorizer is openfga_check with relation campaign_manager +
+object project:{projectId}. A rule downgrade/re-scope now fails the security test.
+
 **Update** — Strengthened the parity test to couple to matcher CONTENT (PR #28
 review, copilot). The curated table only sampled fixed paths, so a one-sided
 matcher edit that no case exercised (copilot's example: adding `tiktok-ads/metrics`

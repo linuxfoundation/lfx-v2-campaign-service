@@ -50,3 +50,11 @@ catches a ONE-SIDED matcher edit — e.g. adding `tiktok-ads/metrics` to only th
 route regex yields the witness `/projects/x/tiktok-ads/metrics`, which matches the
 route but no rule, failing the build rather than silently opening an unauthenticated
 bypass. (The test skips when `helm` is absent but fails on a render error.)
+
+Path extraction is SCOPED to the `project-api` rule block (not "any `/projects/` path
+in the RuleSet"), and a separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
+that rule's authorizer is `openfga_check` with relation `campaign_manager` on object
+`project:{projectId}`. This matters because the invariant is not merely "some rule
+matches" but "the campaign_manager rule matches": a path moved into an `allow_all` /
+`deny_all` / differently-scoped rule, or a downgrade of the rule's relation/object,
+must FAIL the security regression test rather than silently satisfy path parity.
