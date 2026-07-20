@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -207,6 +208,56 @@ func TestCreateCampaign_Budget2xxNoResourceNameIsUnconfirmed(t *testing.T) {
 	_, err := c.CreateCampaign(context.Background(), sampleInput())
 	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Errorf("budget 2xx-with-no-resource-name must be UNCONFIRMED, got: %v", err)
+	}
+}
+
+// armAfterBudgetCtx is a context wrapper whose Err() reports Canceled only once
+// armed, and — crucially — Done() always returns nil so the HTTP transport never
+// aborts the in-flight budget request/response on it (Err() being non-nil does not,
+// by itself, cancel a request; the transport keys on Done()). This lets the budget
+// mutate complete cleanly (id 111) and then makes the client's own ctx.Err() check
+// BETWEEN the two mutates observe the cancellation — deterministically exercising the
+// post-budget cancellation branch without a data race or a raced in-flight abort.
+type armAfterBudgetCtx struct {
+	context.Context
+	armed *atomic.Bool
+}
+
+func (c armAfterBudgetCtx) Err() error {
+	if c.armed.Load() {
+		return context.Canceled
+	}
+	return nil
+}
+func (c armAfterBudgetCtx) Done() <-chan struct{} { return nil }
+
+// If the context is cancelled AFTER the budget is created but BEFORE the campaign
+// mutate, the campaign create must be skipped (a done context would fail it anyway)
+// and the created budget returned as a reconcilable partial — so a retry reconciles
+// the orphan budget by name instead of firing on a dead context.
+func TestCreateCampaign_CtxCancelledAfterBudgetKeepsBudgetPartial(t *testing.T) {
+	var armed atomic.Bool
+	ctx := armAfterBudgetCtx{Context: context.Background(), armed: &armed}
+	c := newCampaignClient(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			okBudget(w, r)    // budget succeeds cleanly → id 111
+			armed.Store(true) // now the caller's context reads as cancelled
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("campaign must NOT be attempted after the context is cancelled")
+			okCampaign(w, nil)
+		},
+	)
+	res, err := c.CreateCampaign(ctx, sampleInput())
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Errorf("expected a context.Canceled error, got: %v", err)
+	}
+	// The created budget must be reconcilable in the partial.
+	if res == nil || res.CampaignBudgetID != "111" {
+		t.Fatalf("partial must carry the created budget id 111, got %+v", res)
+	}
+	if res.CampaignID != "" {
+		t.Errorf("campaign id must be empty (never attempted), got %q", res.CampaignID)
 	}
 }
 
