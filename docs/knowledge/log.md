@@ -52,6 +52,22 @@ follow-up to apply the same URL-suppression there. (2) Corrected the stale
 method" after the 3xx gate was re-added. (3) Documented CreateCampaign's
 non-standard `(non-nil result, non-nil error)` contract so callers inspect the
 result on error (for reconcile) instead of discarding it.
+**Creation** — Added the `internal/platform/snowflake` Go package (email channel,
+LFXV2-2772 under epic LFXV2-2770): a READ-ONLY Snowflake client that resolves
+past-edition EVENT_NAME/EVENT_ID from `ANALYTICS.PLATINUM_LFX_ONE.event_registrations`
+for HubSpot BEHAVIORAL_EVENT filters. Read-only BY CONSTRUCTION — no arbitrary-SQL
+entry point (unlike the reference app's `snowflake_query(sql)`); the one method
+`ResolvePastEventNames` builds a fixed, fully-parameterized SELECT DISTINCT (terms
+bind as ILIKE ?/NOT ILIKE ?, never interpolated; identifiers are constants guarded by
+`ident`; LIMIT-capped). Source is PLATINUM (not the reference's Silver_Segment).
+Fail-closed on error/empty (callers must NOT substitute guessed names). Key-pair (JWT)
+auth via injected PKCS8 PEM, with `.env`-mangling tolerance (quotes/`\n`/CRLF); pool
+opens lazily; DSN never quoted into errors. Tested with a hand-rolled in-process
+database/sql driver fake (no new test dep) — 9 cases asserting query shape,
+injection-safety, fail-closed, and key parsing. **DEPENDENCY:** adds
+`github.com/snowflakedb/gosnowflake` v1.19.1 (the only official Go Snowflake driver;
+no shared Go Snowflake service exists — the LFX One UI's Snowflake service is
+TypeScript). Concept doc + code index added; `go mod tidy` run.
 
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
