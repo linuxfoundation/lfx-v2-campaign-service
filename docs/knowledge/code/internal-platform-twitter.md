@@ -65,8 +65,17 @@ it keeps (drops over-long values, caps the count). This mirrors the reddit
 client, whose `apiError` likewise retains `Body` for classification but never
 surfaces it. An ambiguous
 transport/read/decode failure surfaces a `transportError`, and a pre-connect dial
-failure surfaces a plain error. `createOutcomeAmbiguous` treats a mutating 3xx/5xx
-(and transport error) as UNCONFIRMED so a create that may have committed is not
-blind-retried into a duplicate.
+failure surfaces a `preSendError`. BOTH render URL-free: `httpClient.Do` returns a
+`*url.Error` whose `%v`/`String()` embeds the full request URL (and X puts create
+parameters in the query string), so a naive `%w`/`%v` of that error would leak the
+URL into the copied `PromotedTweetWarning` and persisted Steps. Each type's
+`Error()` runs the cause through `safeTransportCause`, which peels EVERY nested
+`*url.Error` layer down to the URL-free underlying cause (timeout/EOF/ECONNREFUSED);
+`Unwrap()` retains the real cause so `errors.Is`/`errors.As` (incl.
+`isPreSendDialError`) still match. `preSendError` is DEFINITE (request never sent →
+not applied), distinct from the ambiguous `transportError`.
+`createOutcomeAmbiguous` treats a mutating 3xx/5xx (and transport error) as
+UNCONFIRMED so a create that may have committed is not blind-retried into a
+duplicate; a `preSendError` is neither, so it stays a definite "not applied".
 
 See [internal/platform/twitter](../../../internal/platform/twitter).

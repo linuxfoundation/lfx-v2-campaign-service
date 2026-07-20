@@ -3149,6 +3149,34 @@ func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	}
 }
 
+// TestPreSendError_DoesNotLeakURL verifies the pre-send branch renders URL-free too.
+// A pre-send dial failure is wrapped in preSendError (not a raw %w of the *url.Error),
+// so its Error() must not leak the request URL into PromotedTweetWarning/Steps, while
+// Unwrap() must retain the cause so isPreSendDialError/errors.Is still match.
+func TestPreSendError_DoesNotLeakURL(t *testing.T) {
+	secretURL := "https://ads-api.x.com/12/accounts/acc1/campaigns?signature=SECRET-abc123&token=xyz"
+	// A connection-refused dial error, as http.Client.Do would return it: a *url.Error
+	// wrapping a *net.OpError{Op:"dial"} whose Err is ECONNREFUSED.
+	dialErr := &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+	pse := &preSendError{
+		Method: http.MethodPost,
+		Path:   "campaigns",
+		Err:    &url.Error{Op: "Post", URL: secretURL, Err: dialErr},
+	}
+	got := pse.Error()
+	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
+		t.Errorf("preSendError.Error() leaked the request URL: %q", got)
+	}
+	// Unwrap must keep the cause chain so the pre-send classification still holds
+	// (a caller that re-checks isPreSendDialError on the wrapped error must match).
+	if !isPreSendDialError(pse) {
+		t.Errorf("preSendError must remain classifiable as a pre-send dial error via Unwrap")
+	}
+	if !errors.Is(pse, syscall.ECONNREFUSED) {
+		t.Errorf("preSendError must retain the underlying cause for errors.Is")
+	}
+}
+
 // TestCreateOutcomeAmbiguous_Twitter verifies a 5xx apiError and any
 // transportError are ambiguous regardless of method, a 3xx is ambiguous ONLY on a
 // mutating method (a GET redirect is not a create), and a definite 4xx (and 429)

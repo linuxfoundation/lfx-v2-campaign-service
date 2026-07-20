@@ -512,6 +512,27 @@ func (e *transportError) Error() string {
 
 func (e *transportError) Unwrap() error { return e.Err }
 
+// preSendError wraps a failure that clearly happened BEFORE the request was sent
+// (DNS/connect-time dial failure — see isPreSendDialError): the outcome is DEFINITE
+// (the request never reached X, so a mutation did not happen), unlike the ambiguous
+// transportError. It exists so the pre-send branch renders URL-free like
+// transportError: the wrapped cause is typically a *url.Error whose %v/String()
+// embeds the full request URL, and this string is copied into PromotedTweetWarning
+// and persisted Steps. Error() strips the URL via safeTransportCause; Unwrap()
+// retains the real cause so errors.Is/errors.As (incl. isPreSendDialError) still
+// match.
+type preSendError struct {
+	Method string
+	Path   string
+	Err    error
+}
+
+func (e *preSendError) Error() string {
+	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.Err))
+}
+
+func (e *preSendError) Unwrap() error { return e.Err }
+
 // safeTransportCause returns a URL-free description of a round-trip error. A
 // *url.Error's %v embeds the request URL, so we unwrap to its underlying cause
 // (which does not); anything else is rendered as-is (Do's non-url.Error causes —
@@ -684,7 +705,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 			// established (mid-flight timeout, EOF) is ambiguous → transportError so a
 			// create is treated as "may exist". Mirrors the sibling clients.
 			if isPreSendDialError(err) {
-				return nil, fmt.Errorf("x ads api %s %s: %w", method, path, err)
+				// Wrap in preSendError (not a raw %w of err): err is typically a
+				// *url.Error whose render embeds the request URL, which would leak into
+				// persisted Steps. preSendError.Error() strips the URL but Unwrap()
+				// retains the cause for errors.Is/As.
+				return nil, &preSendError{Method: method, Path: path, Err: err}
 			}
 			return nil, &transportError{Method: method, Path: path, Err: err}
 		}

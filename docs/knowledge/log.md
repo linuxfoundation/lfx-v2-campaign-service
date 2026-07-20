@@ -2,6 +2,18 @@
 
 ## 2026-07-20
 
+**Update** — Closed the second half of the X/Twitter URL leak (PR #31 review,
+copilot). The transportError fix covered the AMBIGUOUS branch, but the PRE-SEND
+branch (`isPreSendDialError` → DNS/connect-refused) still did a raw
+`fmt.Errorf("... %w", err)` of the `*url.Error`, so a DNS/refused failure on a
+create still rendered the request URL (X puts create params in the query string)
+into persisted Steps. Added a `preSendError` type mirroring transportError's
+URL-free `Error()` (via `safeTransportCause`) but semantically DEFINITE (request
+never sent → not applied, unlike ambiguous transportError); `Unwrap()` retains the
+cause so `isPreSendDialError`/`errors.Is` still match. Test added
+(`TestPreSendError_DoesNotLeakURL`). NOTE: reddit/meta (merged) have the SAME raw
+`%w` pre-send render — same follow-up as the transportError leak applies there.
+
 **Update** — Fixed a URL leak + stale docs on the X/Twitter client (PR #31 review,
 cursor Medium + dealako + copilot). (1) `transportError.Error()` rendered `%v` of
 the wrapped `httpClient.Do` error — typically a `*url.Error` embedding the full
