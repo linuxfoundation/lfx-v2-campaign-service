@@ -544,10 +544,30 @@ func createOutcomeAmbiguous(err error) bool {
 		return true
 	}
 	var ae *apiError
-	if errors.As(err, &ae) {
-		return (ae.StatusCode >= 300 && ae.StatusCode < 400) || ae.StatusCode >= 500
+	if !errors.As(err, &ae) {
+		return false
 	}
-	return false
+	// A 5xx may follow a committed create.
+	if ae.StatusCode >= 500 {
+		return true
+	}
+	// A 3xx on a MUTATING request reached a responder and may have committed a
+	// resource before redirecting — UNCONFIRMED. A 3xx on a GET is not a create, so
+	// it stays non-ambiguous. Gating on the method keeps this helper's contract
+	// correct for any caller (not just the create path) and makes it genuinely
+	// identical to the reddit/meta clients.
+	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
+}
+
+// isMutatingMethod reports whether an HTTP method can create/modify server state,
+// so a 3xx on it may hide a committed mutation. Mirrors the reddit/meta clients.
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 // maxListPages caps how many pages a name-lookup will page through, a safety

@@ -53,6 +53,21 @@ Added `isMutatingMethod` to the meta client and gated the 3xx branch (5xx and
 transport errors stay ambiguous regardless of method); extended the ambiguity test
 with GET/POST/DELETE method cases. Now genuinely identical to reddit.
 
+**Update** — Fixed the http.Client copy-after-use in the X/Twitter client's
+no-follow enforcement (LFXV2-2642, PR #31), matching the meta fix (PR #30):
+`NewClient` now builds a fresh `*http.Client` (Transport/Jar/Timeout + noFollow)
+instead of value-copying the caller's; the no-follow test asserts Transport/Timeout
+preservation and a distinct pointer.
+
+**Update** — Gated the X/Twitter client's 3xx create-outcome ambiguity on a
+mutating method (LFXV2-2642, PR #31), matching the same fix applied to the meta
+client (PR #30, Cursor review) and the reddit client. `createOutcomeAmbiguous`
+had treated every 3xx as UNCONFIRMED regardless of method; now a 3xx is ambiguous
+only on a mutating method (a GET redirect is not a create), while 5xx and
+transport errors stay ambiguous regardless of method. Added `isMutatingMethod`
+and GET/POST/DELETE test cases. All three clients (reddit/meta/twitter) now share
+an identical method-gated contract.
+
 ## 2026-07-18
 
 **Creation** — Added the `internal/platform/googleads` Go package (GA-1 scaffold,
@@ -80,8 +95,9 @@ signed URLs / destination secrets and gets persisted into Steps). Added a typed
 `apiError` (status/method/path + X's machine-readable error codes, NO body),
 `transportError` (ambiguous), `isPreSendDialError`, and `createOutcomeAmbiguous`
 (a 5xx apiError or a transportError → UNCONFIRMED regardless of method; a 3xx →
-UNCONFIRMED only on a mutating method; a definite 4xx or pre-send error → not
-ambiguous). `isDuplicatePromotedTweetErr` now matches the typed error code
+UNCONFIRMED only on a mutating method, since a GET redirect is not a create; a
+definite 4xx or a pre-send error → not ambiguous). `isDuplicatePromotedTweetErr`
+now matches the typed error code
 (DUPLICATE_PROMOTABLE_ENTITY, gated to a 4xx) instead of the no-longer-surfaced
 body. Brings X to parity with the reddit/meta/googleads clients. Concept doc updated.
 

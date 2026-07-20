@@ -2943,17 +2943,19 @@ func TestParseErrorCodes_BoundsUntrustedBody(t *testing.T) {
 	}
 }
 
-// TestCreateOutcomeAmbiguous_Twitter verifies a 3xx/5xx apiError and any
-// transportError are ambiguous, while a definite 4xx (and 429) are not. The
-// predicate is NOT method-gated (mirrors meta/reddit) — callers invoke it only on
-// mutating failures, so it is deliberately status/type-based.
+// TestCreateOutcomeAmbiguous_Twitter verifies a 5xx apiError and any
+// transportError are ambiguous regardless of method, a 3xx is ambiguous ONLY on a
+// mutating method (a GET redirect is not a create), and a definite 4xx (and 429)
+// are not. Mirrors the reddit/meta clients' method-gated 3xx contract.
 func TestCreateOutcomeAmbiguous_Twitter(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
 		want bool
 	}{
-		{"302", &apiError{StatusCode: http.StatusFound, Method: http.MethodPost, Path: "campaigns"}, true},
+		{"302-POST", &apiError{StatusCode: http.StatusFound, Method: http.MethodPost, Path: "campaigns"}, true},
+		{"302-GET-not-a-create", &apiError{StatusCode: http.StatusFound, Method: http.MethodGet, Path: "campaigns"}, false},
+		{"307-DELETE", &apiError{StatusCode: http.StatusTemporaryRedirect, Method: http.MethodDelete, Path: "campaigns"}, true},
 		{"500", &apiError{StatusCode: http.StatusInternalServerError, Method: http.MethodPost, Path: "campaigns"}, true},
 		{"429", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodPost, Path: "campaigns"}, false}, // handled by retry, not ambiguity
 		{"400", &apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPost, Path: "campaigns"}, false},
