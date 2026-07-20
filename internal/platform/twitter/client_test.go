@@ -10,8 +10,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -586,14 +589,15 @@ func TestRetryExhausted(t *testing.T) {
 	if got := atomic.LoadInt32(&calls); got != retryMax+1 {
 		t.Errorf("expected %d calls, got %d", retryMax+1, got)
 	}
-	// A persistent 429 across every attempt must surface the intended
-	// exhausted-rate-limit error, not the generic non-2xx path. The message
-	// must name the exhausted retries and their count.
-	if !strings.Contains(err.Error(), "exhausted") {
-		t.Errorf("expected exhausted-rate-limit error, got: %v", err)
+	// A persistent 429 across every attempt surfaces a TYPED apiError carrying the
+	// 429 status (not a free-text string), so a caller can classify the rate-limit
+	// cause; the retry count itself is asserted by the calls==retryMax+1 check above.
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected a typed *apiError, got %T: %v", err, err)
 	}
-	if !strings.Contains(err.Error(), strconv.Itoa(retryMax)) {
-		t.Errorf("expected error to name %d retries, got: %v", retryMax, err)
+	if ae.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("expected a 429 apiError, got status %d", ae.StatusCode)
 	}
 }
 
@@ -1602,17 +1606,28 @@ func TestPromotedTweetMissingIDWarns(t *testing.T) {
 		t.Errorf("expected empty PromotedTweetID, got %q", res.PromotedTweetID)
 	}
 	if res.PromotedTweetWarning == "" {
-		t.Errorf("expected PromotedTweetWarning to be set for malformed promoted-tweet response")
+		t.Fatalf("expected PromotedTweetWarning to be set for malformed promoted-tweet response")
+	}
+	// A 2xx with no id means the POST SUCCEEDED — X may have created the
+	// association. It must be classified UNCONFIRMED (verify before retrying), NOT
+	// as a clean failure that tells the operator to "add it manually" (which would
+	// invite a duplicate on top of an association X already made).
+	if !strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED") {
+		t.Errorf("2xx-with-no-id must be UNCONFIRMED, got: %q", res.PromotedTweetWarning)
+	}
+	if strings.Contains(res.PromotedTweetWarning, "add it manually") ||
+		strings.Contains(res.PromotedTweetWarning, "add manually") {
+		t.Errorf("2xx-with-no-id must NOT tell the operator to add manually (duplicate risk): %q", res.PromotedTweetWarning)
 	}
 	var found bool
 	for _, s := range res.Steps {
-		if strings.Contains(s, "no promoted-tweet ID") {
+		if strings.Contains(s, "UNCONFIRMED") && strings.Contains(s, "verify") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected a warning step for missing promoted-tweet id, steps: %v", res.Steps)
+		t.Errorf("expected an UNCONFIRMED/verify warning step for the 2xx-with-no-id response, steps: %v", res.Steps)
 	}
 }
 
@@ -1750,6 +1765,72 @@ func TestPromotedTweetDuplicateSurfacesWarning(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a duplicate/verify-manually warning step for duplicate promoted-tweet, steps: %v", res.Steps)
+	}
+}
+
+// TestPromotedTweetDuplicateCodeOn5xxIsUnconfirmed is the regression for the
+// classification-ordering bug: the duplicate branch runs BEFORE
+// createOutcomeAmbiguous, and isDuplicatePromotedTweetErr must NOT claim
+// "duplicate" for a 3xx/5xx response that happens to carry
+// DUPLICATE_PROMOTABLE_ENTITY — on a 5xx the create MAY have committed, so the
+// outcome must stay UNCONFIRMED. Without the 4xx gate on the duplicate predicate,
+// this response would be mislabeled a known duplicate and the ambiguity lost.
+func TestPromotedTweetDuplicateCodeOn5xxIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			// A 5xx that (anomalously) carries the duplicate code — must NOT be
+			// treated as a known duplicate; the create may have committed.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"DUPLICATE_PROMOTABLE_ENTITY"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign should not be fatal on a 5xx promoted-tweet: %v", err)
+	}
+	if res.PromotedTweetWarning == "" {
+		t.Fatal("expected a PromotedTweetWarning for the 5xx promoted-tweet response")
+	}
+	// Must be UNCONFIRMED, NOT the duplicate/known-existing wording.
+	if !strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED") {
+		t.Errorf("5xx-with-duplicate-code must be UNCONFIRMED, got: %q", res.PromotedTweetWarning)
+	}
+	if strings.Contains(res.PromotedTweetWarning, "already exist") ||
+		strings.Contains(res.PromotedTweetWarning, "DUPLICATE_PROMOTABLE_ENTITY") {
+		t.Errorf("5xx must not be classified as a known duplicate: %q", res.PromotedTweetWarning)
 	}
 }
 
@@ -2524,6 +2605,176 @@ func TestPartialResultAfterCampaignCreated(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignLineItemAmbiguousIsUnconfirmed verifies that an AMBIGUOUS
+// line-item failure (a 5xx — X may have committed the line item) is worded
+// UNCONFIRMED (verify before retrying), NOT a definite "failed", so a caller
+// reconciling the partial result does not blind-retry into a duplicate line item.
+func TestCreateCampaignLineItemAmbiguousIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusServiceUnavailable) // 5xx — line item may have committed
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 5xx line-item create")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("ambiguous line-item 5xx must be UNCONFIRMED, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "line item creation failed") {
+		t.Errorf("ambiguous line-item 5xx must not read as a definite failure: %v", err)
+	}
+}
+
+// TestCreateCampaignLineItemNoIDIsUnconfirmed verifies that a 2xx line-item create
+// with no id is UNCONFIRMED (X may have created it), not a definite "returned no
+// line item ID" — same duplicate-avoidance as the promoted-tweet/ad-set no-id paths.
+func TestCreateCampaignLineItemNoIDIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{}}`)) // 2xx, no id
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 2xx line-item create with no id")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx line-item with no id must be UNCONFIRMED, got: %v", err)
+	}
+}
+
+// TestCreateCampaignAmbiguousCampaignIsUnconfirmed verifies the INITIAL campaign
+// POST is also covered: a 5xx (X may have committed the PAUSED campaign) returns a
+// name-carrying partial result with UNCONFIRMED wording, not a bare (nil, err), so
+// a caller reconciles by name instead of blind-retrying into a duplicate.
+func TestCreateCampaignAmbiguousCampaignIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusServiceUnavailable) // 5xx — campaign may have committed
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 5xx campaign create")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("ambiguous campaign 5xx must be UNCONFIRMED, got: %v", err)
+	}
+	// A name-carrying partial must be returned so the orphan is reconcilable by name.
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a partial result carrying the campaign name, got %+v", res)
+	}
+	if res.CampaignID != "" {
+		t.Errorf("CampaignID must be empty (no id returned), got %q", res.CampaignID)
+	}
+}
+
+// TestCreateCampaignNoCampaignIDIsUnconfirmed verifies a 2xx campaign create with
+// no id returns a name-carrying partial + UNCONFIRMED, not a bare failure.
+func TestCreateCampaignNoCampaignIDIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{}}`)) // 2xx, no id
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 2xx campaign create with no id")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx campaign with no id must be UNCONFIRMED, got: %v", err)
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a partial result carrying the campaign name, got %+v", res)
+	}
+}
+
 // TestNormalizeSigningURL is a direct unit test of the RFC 5849 §3.4.1.2 signing
 // URL normalization: scheme + host are lowercased, a port equal to the scheme's
 // default (http:80 / https:443) is dropped, a non-default port is preserved, and
@@ -2740,9 +2991,10 @@ func stepsContain(steps []string, substr string) bool {
 
 // TestNoFollowRedirectPolicy verifies the client force-disables redirect
 // following: the default client gets CheckRedirect=noFollow, and a WithHTTPClient-
-// supplied client is also overridden — on a copy, so the caller's client is not
-// mutated. With OAuth 1.0a a followed redirect would also resend a request signed
-// for the original URL to a different one.
+// supplied client's policy is overridden by building a FRESH client (an
+// http.Client must not be copied after first use), preserving the caller's
+// reusable Transport/Timeout without mutating the caller's client. With OAuth 1.0a
+// a followed redirect would also resend a request signed for the original URL.
 func TestNoFollowRedirectPolicy(t *testing.T) {
 	creds := Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"}
 	acct := AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"}
@@ -2756,24 +3008,279 @@ func TestNoFollowRedirectPolicy(t *testing.T) {
 	}
 
 	// Inject a client that ALREADY carries a caller-supplied redirect policy (a
-	// sentinel). This distinguishes an unconditional override from a "fill only nil
-	// callbacks" implementation: the latter would preserve the sentinel and silently
-	// re-enable redirect following. We assert (a) the client the code actually uses
-	// force-returns http.ErrUseLastResponse despite the sentinel, and (b) the
-	// caller's original client is untouched (shallow copy, not mutation).
+	// sentinel) plus a distinctive Transport and Timeout. This proves (a) the
+	// override is unconditional (a "fill only nil callbacks" impl would preserve the
+	// sentinel and re-enable following), (b) the reusable Transport/Timeout are
+	// carried onto the fresh client, and (c) the caller's client is not mutated and
+	// is NOT the same pointer (no value-copy of an http.Client after first use).
 	sentinel := errors.New("caller-sentinel-redirect-policy")
-	caller := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return sentinel }}
+	callerTransport := &http.Transport{}
+	caller := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return sentinel },
+		Transport:     callerTransport,
+		Timeout:       17 * time.Second,
+	}
 	c2 := NewClient(creds, acct, WithHTTPClient(caller))
+	if c2.httpClient == caller {
+		t.Fatal("client reused the caller's *http.Client — must build a fresh one (no copy-after-use)")
+	}
 	if c2.httpClient.CheckRedirect == nil {
 		t.Fatal("injected client's CheckRedirect was not overridden")
 	}
 	if err := c2.httpClient.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
 		t.Errorf("injected client's CheckRedirect = %v, want http.ErrUseLastResponse (unconditional override)", err)
 	}
-	if caller.CheckRedirect == nil {
-		t.Fatal("caller's *http.Client was mutated — override must use a shallow copy")
+	if c2.httpClient.Transport != callerTransport {
+		t.Error("fresh client did not preserve the caller's Transport")
+	}
+	if c2.httpClient.Timeout != 17*time.Second {
+		t.Errorf("fresh client Timeout = %v, want the caller's 17s", c2.httpClient.Timeout)
 	}
 	if err := caller.CheckRedirect(nil, nil); err != sentinel {
 		t.Errorf("caller's CheckRedirect was mutated: got %v, want the untouched sentinel", err)
+	}
+}
+
+// TestDoRequest_Non2xxIsTypedApiErrorNoBodyLeak verifies a non-2xx surfaces a
+// typed apiError with the status + X's machine-readable codes, and does NOT echo
+// the raw body (which can carry request material / signed URLs).
+func TestDoRequest_Non2xxIsTypedApiErrorNoBodyLeak(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		// A body carrying a code AND a sensitive-looking message.
+		_, _ = w.Write([]byte(`{"errors":[{"code":"INVALID_PARAMETER","message":"secret-token-abc123 in url"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL))
+	_, err := c.request(context.Background(), http.MethodGet, "campaigns")
+	if err == nil {
+		t.Fatal("expected an error on a 400, got nil")
+	}
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apiError, got %T: %v", err, err)
+	}
+	if ae.StatusCode != http.StatusBadRequest {
+		t.Errorf("StatusCode = %d, want 400", ae.StatusCode)
+	}
+	if !ae.hasErrorCode("INVALID_PARAMETER") {
+		t.Errorf("apiError should carry the INVALID_PARAMETER code, got %v", ae.ErrorCodes)
+	}
+	// The raw body / message must NOT leak into the error string.
+	if strings.Contains(ae.Error(), "secret-token-abc123") {
+		t.Errorf("apiError.Error() leaked the body: %q", ae.Error())
+	}
+}
+
+// TestApiError_ErrorNeverSurfacesCode is the direct regression for the no-body-
+// leak guarantee: even when the SENSITIVE text is placed in errors[].code itself
+// (the field we retain for classification), Error() must render only method/path/
+// status and never the code. Guards against re-introducing a body-controlled
+// channel into PromotedTweetWarning/Steps.
+func TestApiError_ErrorNeverSurfacesCode(t *testing.T) {
+	ae := &apiError{
+		StatusCode: http.StatusBadRequest,
+		Method:     http.MethodPost,
+		Path:       "campaigns",
+		ErrorCodes: []string{"secret-token-abc123", "DUPLICATE_PROMOTABLE_ENTITY"},
+	}
+	s := ae.Error()
+	if strings.Contains(s, "secret-token-abc123") || strings.Contains(s, "DUPLICATE_PROMOTABLE_ENTITY") {
+		t.Errorf("apiError.Error() surfaced a retained code: %q", s)
+	}
+	// The code is still usable for internal classification.
+	if !ae.hasErrorCode("DUPLICATE_PROMOTABLE_ENTITY") {
+		t.Error("hasErrorCode should still match a retained code")
+	}
+}
+
+// TestParseErrorCodes_BoundsUntrustedBody verifies that a hostile body cannot
+// inflate the internally-retained codes: over-long values are dropped and the
+// count is capped at maxRetainedErrorCodes.
+func TestParseErrorCodes_BoundsUntrustedBody(t *testing.T) {
+	// Over-long code value is dropped, valid enum code is kept.
+	long := strings.Repeat("A", maxErrorCodeCodeLength+1)
+	body := []byte(`{"errors":[{"code":"` + long + `"},{"code":"DUPLICATE_PROMOTABLE_ENTITY"}]}`)
+	codes := parseErrorCodes(body)
+	if len(codes) != 1 || codes[0] != "DUPLICATE_PROMOTABLE_ENTITY" {
+		t.Fatalf("over-long code should be dropped, got %v", codes)
+	}
+
+	// More codes than the cap are truncated.
+	var sb strings.Builder
+	sb.WriteString(`{"errors":[`)
+	for i := 0; i < maxRetainedErrorCodes+10; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(`{"code":"CODE"}`)
+	}
+	sb.WriteString(`]}`)
+	if got := len(parseErrorCodes([]byte(sb.String()))); got != maxRetainedErrorCodes {
+		t.Errorf("retained %d codes, want cap of %d", got, maxRetainedErrorCodes)
+	}
+}
+
+// TestTransportError_DoesNotLeakURL verifies transportError.Error() renders only
+// method/path + the underlying cause, NOT the request URL. A *url.Error's %v
+// embeds the full URL (which can carry request material / a destination secret),
+// and this string is copied into PromotedTweetWarning + persisted Steps.
+func TestTransportError_DoesNotLeakURL(t *testing.T) {
+	secretURL := "https://ads-api.x.com/12/accounts/acc1/promoted_tweets?signature=SECRET-abc123&token=xyz"
+	// NESTED *url.Error: http.Client.Do wraps a RoundTripper's *url.Error in its own,
+	// so both layers carry the URL. A single unwrap would leave the inner one leaking.
+	inner := &url.Error{Op: "Post", URL: secretURL, Err: io.ErrUnexpectedEOF}
+	te := &transportError{
+		Method: http.MethodPost,
+		Path:   "promoted_tweets",
+		Err:    &url.Error{Op: "Post", URL: secretURL, Err: inner},
+	}
+	got := te.Error()
+	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
+		t.Errorf("transportError.Error() leaked the request URL (nested *url.Error): %q", got)
+	}
+	// The innermost non-url cause is still surfaced for diagnostics.
+	if !strings.Contains(got, io.ErrUnexpectedEOF.Error()) {
+		t.Errorf("transportError.Error() should surface the cause, got: %q", got)
+	}
+}
+
+// TestPreSendError_DoesNotLeakURL verifies the pre-send branch renders URL-free too.
+// A pre-send dial failure is wrapped in preSendError (not a raw %w of the *url.Error),
+// so its Error() must not leak the request URL into PromotedTweetWarning/Steps, while
+// Unwrap() must retain the cause so isPreSendDialError/errors.Is still match.
+func TestPreSendError_DoesNotLeakURL(t *testing.T) {
+	secretURL := "https://ads-api.x.com/12/accounts/acc1/campaigns?signature=SECRET-abc123&token=xyz"
+	// A connection-refused dial error, as http.Client.Do would return it: a *url.Error
+	// wrapping a *net.OpError{Op:"dial"} whose Err is ECONNREFUSED.
+	dialErr := &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+	pse := &preSendError{
+		Method: http.MethodPost,
+		Path:   "campaigns",
+		Err:    &url.Error{Op: "Post", URL: secretURL, Err: dialErr},
+	}
+	got := pse.Error()
+	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
+		t.Errorf("preSendError.Error() leaked the request URL: %q", got)
+	}
+	// Unwrap must keep the cause chain so the pre-send classification still holds
+	// (a caller that re-checks isPreSendDialError on the wrapped error must match).
+	if !isPreSendDialError(pse) {
+		t.Errorf("preSendError must remain classifiable as a pre-send dial error via Unwrap")
+	}
+	if !errors.Is(pse, syscall.ECONNREFUSED) {
+		t.Errorf("preSendError must retain the underlying cause for errors.Is")
+	}
+}
+
+// TestCreateOutcomeAmbiguous_Twitter verifies a 5xx apiError and any
+// transportError are ambiguous regardless of method, a 3xx is ambiguous ONLY on a
+// mutating method (a GET redirect is not a create), and a definite 4xx (and 429)
+// are not. Mirrors the reddit/meta clients' method-gated 3xx contract.
+func TestCreateOutcomeAmbiguous_Twitter(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"302-POST", &apiError{StatusCode: http.StatusFound, Method: http.MethodPost, Path: "campaigns"}, true},
+		{"302-GET-not-a-create", &apiError{StatusCode: http.StatusFound, Method: http.MethodGet, Path: "campaigns"}, false},
+		{"307-DELETE", &apiError{StatusCode: http.StatusTemporaryRedirect, Method: http.MethodDelete, Path: "campaigns"}, true},
+		{"500", &apiError{StatusCode: http.StatusInternalServerError, Method: http.MethodPost, Path: "campaigns"}, true},
+		{"429", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodPost, Path: "campaigns"}, false}, // handled by retry, not ambiguity
+		{"400", &apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPost, Path: "campaigns"}, false},
+		{"transport", &transportError{Method: http.MethodPost, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
+		{"5xx-not-method-gated", &apiError{StatusCode: http.StatusBadGateway, Method: http.MethodGet, Path: "campaigns"}, true},
+		{"transport-not-method-gated", &transportError{Method: http.MethodGet, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
+		{"plain error", errors.New("boom"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		if got := createOutcomeAmbiguous(tc.err); got != tc.want {
+			t.Errorf("%s: createOutcomeAmbiguous = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestCreateCampaign_AmbiguousPromotedTweetIsUnconfirmed verifies the classifier
+// is WIRED into the create path: a 5xx on the (non-idempotent) promoted_tweets
+// POST yields an UNCONFIRMED warning (may-exist), distinct from a definite 4xx
+// which reads as a clean "failed — add manually".
+func TestCreateCampaign_AmbiguousPromotedTweetIsUnconfirmed(t *testing.T) {
+	cases := []struct {
+		name          string
+		promotedTweet func(w http.ResponseWriter)
+		wantSubstr    string
+	}{
+		{"5xx is unconfirmed", func(w http.ResponseWriter) { w.WriteHeader(http.StatusBadGateway) }, "UNCONFIRMED"},
+		{"4xx is definite failure", func(w http.ResponseWriter) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"INVALID_PARAMETER"}]}`))
+		}, "POST failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "promoted_tweets") && r.Method == http.MethodPost:
+					tc.promotedTweet(w)
+				case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "campaigns"):
+					_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+				case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "line_items"):
+					_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+				default:
+					// GET list lookups (find-by-name) → no match → empty page.
+					_, _ = w.Write([]byte(`{"data":[],"next_cursor":""}`))
+				}
+			}))
+			defer srv.Close()
+
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+				WithBaseURL(srv.URL), WithWriteDelay(0))
+			res, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName: "KubeCon", Project: "tlf", BudgetUsd: 500,
+				StartDate: "2099-01-01", EndDate: "2099-02-01",
+				TweetID: "1234567890", RegistrationURL: "https://events.example.org/reg",
+			})
+			// The campaign + line item succeeded, so the overall call is non-fatal;
+			// the promoted-tweet outcome shows up as a warning on the result.
+			if err != nil {
+				t.Fatalf("CreateCampaign returned a fatal error: %v", err)
+			}
+			if !strings.Contains(res.PromotedTweetWarning, tc.wantSubstr) {
+				t.Errorf("PromotedTweetWarning = %q, want it to contain %q", res.PromotedTweetWarning, tc.wantSubstr)
+			}
+			// The two paths must be DISTINCT: only the ambiguous (5xx) case is UNCONFIRMED.
+			isUnconfirmed := strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED")
+			if (tc.wantSubstr == "UNCONFIRMED") != isUnconfirmed {
+				t.Errorf("UNCONFIRMED distinction wrong for %s: warning=%q", tc.name, res.PromotedTweetWarning)
+			}
+		})
+	}
+}
+
+// TestIsPreSendDialError_Twitter verifies the pre-send classification.
+func TestIsPreSendDialError_Twitter(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"dns", &net.DNSError{Err: "nx", Name: "x"}, true},
+		{"dial refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, true},
+		{"wrapped dns", fmt.Errorf("do: %w", &net.DNSError{Err: "nx", Name: "x"}), true},
+		{"mid-flight eof", io.ErrUnexpectedEOF, false},
+		{"read op", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, false},
+	}
+	for _, tc := range cases {
+		if got := isPreSendDialError(tc.err); got != tc.want {
+			t.Errorf("%s: isPreSendDialError = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
