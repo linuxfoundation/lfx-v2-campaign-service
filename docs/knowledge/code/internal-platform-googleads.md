@@ -98,7 +98,7 @@ budget is returned as a reconcilable partial rather than fired on a dead context
 
 Input is validated up front, before any paid `:mutate` call: the budget must be
 finite (NaN/Inf rejected — NaN passes every ordered comparison, so it would
-otherwise slip through and create a $0 budget) and must round to a positive
+otherwise slip through and create a zero-unit budget) and must round to a positive
 `amountMicros` (a sub-micro value like 0.0000001 is > 0 but converts to 0 micros);
 and BOTH Project AND EventName must be non-empty (independently — mirrors the
 meta/twitter/reddit clients). Project is the canonical attribution key the data
