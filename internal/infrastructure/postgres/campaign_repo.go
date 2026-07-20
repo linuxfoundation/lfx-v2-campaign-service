@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -47,7 +48,7 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 	}
 	claimed := tag.RowsAffected() == 1
 
-	row, gerr := r.GetCampaignByPlatform(ctx, briefID, platform)
+	row, gerr := r.GetCampaignByPlatform(ctx, projectID, briefID, platform)
 	if gerr != nil {
 		// The row must exist now (we or someone else just wrote it); a read failure
 		// here is a genuine error. If WE just inserted the pending row, roll it back
@@ -61,6 +62,15 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
 			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform); derr != nil {
 				cancel()
+				// Double failure: both the post-insert read AND the rollback delete
+				// failed, so a 'pending' placeholder is orphaned and will block every
+				// future claim for this (brief, platform) — no sweeper reaps pending
+				// campaigns rows. This is a rare double-fault, but its blast radius is
+				// total for the pair, so log at ERROR with enough context to alert and
+				// reconcile manually (delete the stuck row) rather than swallowing it.
+				slog.ErrorContext(ctx, "orphaned pending campaign claim: read-after-claim AND rollback both failed; manual cleanup required",
+					"project_id", projectID, "brief_id", briefID, "platform", string(platform), "job_id", jobID,
+					"read_err", gerr.Error(), "rollback_err", derr.Error())
 				return false, nil, fmt.Errorf("read campaign after claim: %w (and failed to roll back pending claim: %v)", gerr, derr)
 			}
 			cancel()
@@ -99,10 +109,14 @@ func (r *CampaignRepo) GetCampaign(ctx context.Context, projectID, briefID, id s
 }
 
 // GetCampaignByPlatform returns the campaign for a (brief, platform) pair. The
-// (brief_id, platform) pair is unique, so at most one row matches.
-func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, briefID string, platform model.Provider) (*model.Campaign, error) {
-	q := `SELECT ` + campaignCols + ` FROM campaigns WHERE brief_id=$1 AND platform=$2`
-	c, err := scanCampaign(r.db.QueryRow(ctx, q, briefID, string(platform)))
+// (brief_id, platform) pair is unique, so at most one row matches. It is scoped by
+// project_id for tenant isolation (defense-in-depth), matching GetCampaign and
+// ClaimCampaignDispatch — brief_id is a globally-unique UUID, so this guards a
+// future direct caller from reading across tenants with an attacker-influenced
+// briefID.
+func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider) (*model.Campaign, error) {
+	q := `SELECT ` + campaignCols + ` FROM campaigns WHERE brief_id=$1 AND platform=$2 AND project_id=$3`
+	c, err := scanCampaign(r.db.QueryRow(ctx, q, briefID, string(platform), projectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound

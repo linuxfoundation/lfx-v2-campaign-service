@@ -465,7 +465,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Fast path: if this pair already has a completed campaign (upstream id set),
 	// reuse it — idempotent, and valid even if no dispatcher is registered for the
 	// platform anymore.
-	if existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ID, p); lerr == nil && existing.PlatformCampaignID != "" {
+	if existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p); lerr == nil && existing.PlatformCampaignID != "" {
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
 		return res

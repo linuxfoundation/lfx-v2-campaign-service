@@ -111,7 +111,7 @@ func (r *fakeCampaignRepo) GetCampaign(context.Context, string, string, string) 
 	return nil, errors.New("unused")
 }
 
-func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, briefID string, platform model.Provider) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, briefID string, platform model.Provider) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.byPlatformErr != nil {
@@ -405,6 +405,63 @@ func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 	}
 	if !strings.Contains(string(j.Result), "\"skipped\":true") {
 		t.Errorf("result = %s, want the platform marked skipped:true", j.Result)
+	}
+}
+
+// TestClaimCampaignDispatch_ConcurrentSingleWinner exercises the ACTUAL race the
+// single-flight claim guards against: N goroutines calling ClaimCampaignDispatch
+// for the SAME (brief, platform) at the same time. Exactly one must win
+// (claimed=true) and every loser must cleanly observe claimed=false with no error
+// and the SAME pending row — the ON CONFLICT (brief_id, platform) DO NOTHING
+// arbitration the design leans on. The prior claim tests only pre-seed a claimed
+// row and call Start once, so they never run two claimers concurrently.
+func TestClaimCampaignDispatch_ConcurrentSingleWinner(t *testing.T) {
+	// The fake repo models ON CONFLICT DO NOTHING under a mutex: first caller
+	// inserts + returns claimed=true; every later caller sees the existing row and
+	// returns claimed=false — the same arbitration Postgres provides.
+	repo := &fakeCampaignRepo{}
+
+	const n = 32
+	var (
+		wg     sync.WaitGroup
+		start  = make(chan struct{})
+		mu     sync.Mutex
+		wins   int
+		errs   int
+		rowIDs = map[*model.Campaign]struct{}{}
+	)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start // release all goroutines at once to maximize contention
+			claimed, row, err := repo.ClaimCampaignDispatch(
+				context.Background(), "cncf", "b1", model.ProviderGoogleAds, "job1")
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs++
+				return
+			}
+			if claimed {
+				wins++
+			}
+			if row != nil {
+				rowIDs[row] = struct{}{}
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	if errs != 0 {
+		t.Errorf("got %d errors; every claimer (winner or loser) must return nil error", errs)
+	}
+	if wins != 1 {
+		t.Errorf("exactly one goroutine must win the claim, got %d winners", wins)
+	}
+	if len(rowIDs) != 1 {
+		t.Errorf("all claimers must observe the SAME pending row, got %d distinct rows", len(rowIDs))
 	}
 }
 

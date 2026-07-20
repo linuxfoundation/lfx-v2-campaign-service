@@ -42,8 +42,9 @@ type CampaignReader interface {
 	GetCampaign(ctx context.Context, projectID, briefID, id string) (*model.Campaign, error)
 	// GetCampaignByPlatform returns the campaign for a (brief, platform) pair, or
 	// ErrNotFound. Used to make dispatch idempotent: a brief already dispatched to
-	// a platform must not create a second upstream (paid) campaign on retry.
-	GetCampaignByPlatform(ctx context.Context, briefID string, platform model.Provider) (*model.Campaign, error)
+	// a platform must not create a second upstream (paid) campaign on retry. Scoped
+	// by projectID for tenant isolation, matching GetCampaign/ClaimCampaignDispatch.
+	GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider) (*model.Campaign, error)
 	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
 	// platform) by inserting a placeholder campaign row (status 'pending') via
 	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker

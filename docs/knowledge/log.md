@@ -1,5 +1,23 @@
 # Log
 
+## 2026-07-20
+
+**Update** — Addressed dealako's 4 [minor] review items on PR #11 (LFXV2-2626).
+(1) `GetCampaignByPlatform` was the one campaign_repo method not scoped by
+project_id — added a `projectID` param + `AND project_id=$3` (matching
+GetCampaign/ClaimCampaignDispatch) for tenant-isolation defense-in-depth; updated
+the domain interface + the orchestrator call site. (2) The rare double-fault in
+`ClaimCampaignDispatch` (post-insert read AND rollback both fail) orphans a
+`status='pending'` row that permanently blocks the (brief,platform) pair — now
+logs at ERROR with project_id/brief_id/platform/job_id for alerting/manual
+reconcile. (3) Added `TestClaimCampaignDispatch_ConcurrentSingleWinner` — N
+goroutines racing the claim path, asserting exactly one wins and losers cleanly
+no-op (the prior claim tests were single-threaded). (4) `design/brief.go`: `Brief`
+now `Reference()`s `BriefInput` for the 8 shared attributes instead of
+duplicating them — this also fixed a latent drift the manual copy had already
+caused (Brief's `program_type` was missing BriefInput's Enum, so the generated
+OpenAPI had no enum + gibberish examples on the Brief response; regenerated).
+
 ## 2026-07-13
 
 **Creation** — Added OKF concept doc for internal/platform/meta (Meta Ads Graph

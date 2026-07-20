@@ -47,11 +47,12 @@ type CreateBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Extracted event/course details
 	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
@@ -76,11 +77,12 @@ type GetBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Extracted event/course details
 	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
@@ -105,11 +107,12 @@ type UpdateBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Extracted event/course details
 	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
@@ -134,11 +137,12 @@ type ApproveBriefResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Extracted event/course details
 	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`

@@ -47,11 +47,12 @@ type CreateBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Extracted event/course details
 	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
@@ -76,11 +77,12 @@ type GetBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Extracted event/course details
 	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
@@ -105,11 +107,12 @@ type UpdateBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Extracted event/course details
 	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
@@ -134,11 +137,12 @@ type ApproveBriefResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Extracted event/course details
 	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
@@ -1595,6 +1599,11 @@ func ValidateCreateBriefResponseBody(body *CreateBriefResponseBody) (err error) 
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
 	}
+	if body.ProgramType != nil {
+		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -1623,6 +1632,11 @@ func ValidateGetBriefResponseBody(body *GetBriefResponseBody) (err error) {
 	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.ProgramType != nil {
+		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
 	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
@@ -1653,6 +1667,11 @@ func ValidateUpdateBriefResponseBody(body *UpdateBriefResponseBody) (err error) 
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
 	}
+	if body.ProgramType != nil {
+		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -1681,6 +1700,11 @@ func ValidateApproveBriefResponseBody(body *ApproveBriefResponseBody) (err error
 	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.ProgramType != nil {
+		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
 	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {

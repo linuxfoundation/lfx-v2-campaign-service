@@ -80,11 +80,12 @@ type Brief struct {
 	ProjectID string
 	// Funnel context
 	ProgramType string
-	// Event/course slug
+	// Event/course slug (unique within the project)
 	EventSlug string
 	// Event/course page URL
 	URL *string
-	// Suggested default platforms
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
 	Platforms []string
 	// Extracted event/course details
 	EventDetails any

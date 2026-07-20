@@ -410,7 +410,7 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 	cp := *r.cur
 	return &cp, nil
 }
-func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, model.Provider) (*model.Campaign, error) {
+func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
 func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string) (bool, *model.Campaign, error) {

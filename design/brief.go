@@ -32,18 +32,26 @@ var BriefInput = Type("brief-input", func() {
 	Required("program_type", "event_slug")
 })
 
-// Brief is the brief response view.
+// Brief is the brief response view. It Reference()s BriefInput so the eight
+// shared attributes (program_type, event_slug, url, platforms, event_details,
+// copy, keywords, targeting) inherit their type/validation/description from a
+// single source of truth — a later change to BriefInput's program_type Enum or a
+// validation rule flows here automatically, so the two can't silently drift.
+// Brief then layers on its response-only fields.
 var Brief = Type("brief", func() {
+	Reference(BriefInput)
 	Attribute("id", String, "Brief UUID")
 	Attribute("project_id", String, "Owning project")
-	Attribute("program_type", String, "Funnel context")
-	Attribute("event_slug", String, "Event/course slug")
-	Attribute("url", String, "Event/course page URL")
-	Attribute("platforms", ArrayOf(String), "Suggested default platforms")
-	Attribute("event_details", Any, "Extracted event/course details")
-	Attribute("copy", Any, "Ad copy")
-	Attribute("keywords", Any, "Keyword list")
-	Attribute("targeting", Any, "Targeting recommendation")
+	// Inherited from BriefInput via Reference (name-only Attribute calls).
+	Attribute("program_type")
+	Attribute("event_slug")
+	Attribute("url")
+	Attribute("platforms")
+	Attribute("event_details")
+	Attribute("copy")
+	Attribute("keywords")
+	Attribute("targeting")
+	// Response-only fields.
 	Attribute("status", String, "Lifecycle status", func() {
 		Enum("draft", "approved", "archived")
 	})
