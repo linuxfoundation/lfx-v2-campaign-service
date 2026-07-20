@@ -193,12 +193,21 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient. Following a
 	// redirect would carry an already-sent mutating POST to a different target (and
 	// resend an OAuth-1.0a request signed for the original URL), so no-follow is a
-	// correctness requirement, not a default. Applied to a SHALLOW COPY so the
-	// caller's *http.Client is never mutated. Mirrors the reddit client.
+	// correctness requirement, not a default.
+	//
+	// Build a FRESH *http.Client rather than value-copying the caller's: an
+	// http.Client must not be copied after first use (a value copy duplicates its
+	// internal mutex while sharing the request-cancellation map, so concurrent use
+	// of the caller's client and our copy can race). Carry over only the exported,
+	// reusable fields (Transport, Jar, Timeout) and set our own CheckRedirect. The
+	// caller's client is never mutated and is safe to keep using elsewhere.
 	if c.httpClient != nil {
-		hc := *c.httpClient
-		hc.CheckRedirect = noFollow
-		c.httpClient = &hc
+		c.httpClient = &http.Client{
+			Transport:     c.httpClient.Transport,
+			CheckRedirect: noFollow,
+			Jar:           c.httpClient.Jar,
+			Timeout:       c.httpClient.Timeout,
+		}
 	}
 	return c
 }
