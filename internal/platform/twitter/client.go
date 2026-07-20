@@ -1193,8 +1193,11 @@ func validateDate(label, date string) error {
 // whatever was (or may have been) created — the deterministic CampaignName, and
 // CampaignID/LineItemID once known — so the caller can reconcile the possibly-
 // orphaned resources by name/id before retrying (a blind retry would duplicate
-// them). Callers MUST inspect the returned result when err != nil, not discard it;
-// only a definite pre-send/validation failure returns (nil, err).
+// them). Callers MUST inspect the returned result when err != nil, not discard it.
+// (nil, err) is returned only up to and including the initial campaign create,
+// when nothing has (or may have) been created — a validation/pre-send error, a
+// name-lookup failure, or a definite 4xx/429 POST rejection. Once the campaign is
+// created/reused or its create is ambiguous, a non-nil partial is always returned.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	steps := []string{}
 
