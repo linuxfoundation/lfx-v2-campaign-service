@@ -10,6 +10,18 @@ and twitter no-id paths. Now surfaces UNCONFIRMED (verify before retrying). Test
 added. Also fixed a CI `check-fmt` failure (gofmt comment alignment in the meta
 test).
 
+**Update** — Extended the X/Twitter create-outcome ambiguity to the INITIAL
+CAMPAIGN create (LFXV2-2642, PR #31 review by Cursor + Copilot) — the last
+uncovered create step. The campaign POST returned a bare `(nil, err)` on an
+ambiguous 3xx/5xx/transport failure and a plain error on a 2xx-no-id, discarding
+the deterministic campaign name; X may have committed the PAUSED campaign, so a
+caller got no reconcile signal and could retry into a duplicate. Now returns a
+name-carrying partial result + UNCONFIRMED (verify before retrying) for both cases
+(a definite 4xx/pre-send error still returns plain `(nil, err)`), mirroring the
+meta/reddit clients' name-only partial for the first create step. The whole
+twitter flow (campaign → line item → promoted tweet) now classifies every create
+outcome consistently. Tests added.
+
 **Update** — Extended the X/Twitter create-outcome ambiguity to the LINE-ITEM
 create (LFXV2-2642, PR #31 review by Cursor). The line-item POST always returned a
 definite "line item creation failed" (even on a 5xx/mutating-3xx/transport error

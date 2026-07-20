@@ -2691,6 +2691,90 @@ func TestCreateCampaignLineItemNoIDIsUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignAmbiguousCampaignIsUnconfirmed verifies the INITIAL campaign
+// POST is also covered: a 5xx (X may have committed the PAUSED campaign) returns a
+// name-carrying partial result with UNCONFIRMED wording, not a bare (nil, err), so
+// a caller reconciles by name instead of blind-retrying into a duplicate.
+func TestCreateCampaignAmbiguousCampaignIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			w.WriteHeader(http.StatusServiceUnavailable) // 5xx — campaign may have committed
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 5xx campaign create")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("ambiguous campaign 5xx must be UNCONFIRMED, got: %v", err)
+	}
+	// A name-carrying partial must be returned so the orphan is reconcilable by name.
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a partial result carrying the campaign name, got %+v", res)
+	}
+	if res.CampaignID != "" {
+		t.Errorf("CampaignID must be empty (no id returned), got %q", res.CampaignID)
+	}
+}
+
+// TestCreateCampaignNoCampaignIDIsUnconfirmed verifies a 2xx campaign create with
+// no id returns a name-carrying partial + UNCONFIRMED, not a bare failure.
+func TestCreateCampaignNoCampaignIDIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{}}`)) // 2xx, no id
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected an error on a 2xx campaign create with no id")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx campaign with no id must be UNCONFIRMED, got: %v", err)
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a partial result carrying the campaign name, got %+v", res)
+	}
+}
+
 // TestNormalizeSigningURL is a direct unit test of the RFC 5849 §3.4.1.2 signing
 // URL normalization: scheme + host are lowercased, a port equal to the scheme's
 // default (http:80 / https:443) is dropped, a non-default port is preserved, and

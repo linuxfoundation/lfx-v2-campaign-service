@@ -1296,13 +1296,38 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err := c.pace(ctx); err != nil {
 			return nil, err
 		}
+		// campaignNamePartial builds a result carrying only the deterministic campaign
+		// NAME (no id yet) so an ambiguous/malformed campaign create is reconcilable by
+		// name rather than discarded — mirrors the meta/reddit clients' name-only
+		// partial for the first create step (the partialResult helper below needs the
+		// campaignID, which we don't have here).
+		campaignNamePartial := func() *CampaignResult {
+			return &CampaignResult{
+				Platform:     "twitter-ads",
+				CampaignName: campaignName,
+				TwitterURL:   AdsManagerURL,
+				Steps:        steps,
+			}
+		}
 		resp, err := c.createRequest(ctx, "campaigns", campaignParams)
 		if err != nil {
+			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
+			// committed campaign create — X may have made the PAUSED campaign under the
+			// deterministic name. Return a name-carrying partial + UNCONFIRMED so a
+			// caller verifies before retrying rather than blind-creating a duplicate. A
+			// definite 4xx/pre-send error means nothing was created: plain (nil, err).
+			// Mirrors the line-item/promoted-tweet paths and the meta/reddit clients.
+			if createOutcomeAmbiguous(err) {
+				return campaignNamePartial(), fmt.Errorf("x campaign creation UNCONFIRMED (a PAUSED campaign %q may exist — verify in X Ads Manager before retrying): %w", campaignName, err)
+			}
 			return nil, err
 		}
 		campaignID = extractID(resp)
 		if campaignID == "" {
-			return nil, fmt.Errorf("x campaign creation succeeded but returned no campaign ID")
+			// A 2xx with no id is a malformed SUCCESS: X may have created the PAUSED
+			// campaign but didn't return a usable id. Reconcilable by name + UNCONFIRMED,
+			// not a bare failure.
+			return campaignNamePartial(), fmt.Errorf("x campaign creation UNCONFIRMED (X returned a 2xx with no campaign ID; a PAUSED campaign %q may exist — verify in X Ads Manager before retrying)", campaignName)
 		}
 		steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f/day)", campaignID, in.BudgetUsd))
 	}
