@@ -520,9 +520,20 @@ func safeTransportCause(err error) string {
 	if err == nil {
 		return "transport failure"
 	}
-	var ue *url.Error
-	if errors.As(err, &ue) && ue.Err != nil {
-		return ue.Err.Error()
+	// Peel off EVERY *url.Error layer, not just the outermost: http.Client.Do wraps a
+	// RoundTripper's error in its own *url.Error, and a supported injected transport
+	// can itself return a *url.Error, so a single unwrap can leave an inner *url.Error
+	// whose .Error() still embeds the request URL. Loop until the cause is no longer a
+	// *url.Error (or nil), then render that URL-free cause.
+	for {
+		var ue *url.Error
+		if !errors.As(err, &ue) {
+			break
+		}
+		if ue.Err == nil {
+			return "transport failure"
+		}
+		err = ue.Err
 	}
 	return err.Error()
 }

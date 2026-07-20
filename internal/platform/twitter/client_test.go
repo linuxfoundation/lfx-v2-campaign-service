@@ -3131,16 +3131,19 @@ func TestParseErrorCodes_BoundsUntrustedBody(t *testing.T) {
 // and this string is copied into PromotedTweetWarning + persisted Steps.
 func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	secretURL := "https://ads-api.x.com/12/accounts/acc1/promoted_tweets?signature=SECRET-abc123&token=xyz"
+	// NESTED *url.Error: http.Client.Do wraps a RoundTripper's *url.Error in its own,
+	// so both layers carry the URL. A single unwrap would leave the inner one leaking.
+	inner := &url.Error{Op: "Post", URL: secretURL, Err: io.ErrUnexpectedEOF}
 	te := &transportError{
 		Method: http.MethodPost,
 		Path:   "promoted_tweets",
-		Err:    &url.Error{Op: "Post", URL: secretURL, Err: io.ErrUnexpectedEOF},
+		Err:    &url.Error{Op: "Post", URL: secretURL, Err: inner},
 	}
 	got := te.Error()
 	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
-		t.Errorf("transportError.Error() leaked the request URL: %q", got)
+		t.Errorf("transportError.Error() leaked the request URL (nested *url.Error): %q", got)
 	}
-	// The underlying cause is still surfaced for diagnostics.
+	// The innermost non-url cause is still surfaced for diagnostics.
 	if !strings.Contains(got, io.ErrUnexpectedEOF.Error()) {
 		t.Errorf("transportError.Error() should surface the cause, got: %q", got)
 	}
