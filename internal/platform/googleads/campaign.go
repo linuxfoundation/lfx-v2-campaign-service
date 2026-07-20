@@ -150,13 +150,32 @@ type campaignBudgetCreate struct {
 // campaign has ALL mutate calls rejected with
 // MutateError.EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED. These are non-political
 // ad campaigns, so we declare DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING.
+//
+// networkSettings must be set for a SEARCH create: a Campaign that targets NO network
+// (which is what an omitted networkSettings resolves to — proto3 bools default false)
+// is rejected with CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK, AFTER the
+// budget mutate has committed (an avoidable orphan). Google documents no protective
+// default, and every official create sample sets it. We target Google Search only
+// (the conservative choice for a PAUSED broker shell); targetSearchNetwork stays false
+// because true would require targetGoogleSearch AND opt this into Search Partners,
+// which a generic broker shouldn't assume.
 type campaignCreate struct {
 	Name                           string          `json:"name"`
 	Status                         string          `json:"status"`
 	AdvertisingChannelType         string          `json:"advertisingChannelType"`
 	CampaignBudget                 string          `json:"campaignBudget"`
 	ContainsEuPoliticalAdvertising string          `json:"containsEuPoliticalAdvertising"`
+	NetworkSettings                networkSettings `json:"networkSettings"`
 	ManualCPC                      json.RawMessage `json:"manualCpc"`
+}
+
+// networkSettings selects which networks a campaign's ads serve on. For a SEARCH
+// campaign, targetGoogleSearch MUST be true (see campaignCreate). The remaining flags
+// are sent explicitly as false rather than omitted so the payload is unambiguous.
+type networkSettings struct {
+	TargetGoogleSearch   bool `json:"targetGoogleSearch"`
+	TargetSearchNetwork  bool `json:"targetSearchNetwork"`
+	TargetContentNetwork bool `json:"targetContentNetwork"`
 }
 
 // googleAdsErrorEnvelope is the error body shape: the machine-readable error codes
@@ -442,6 +461,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AdvertisingChannelType:         advertisingChannelSearch,
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
+		NetworkSettings:                networkSettings{TargetGoogleSearch: true},
 		ManualCPC:                      json.RawMessage(`{}`),
 	}}}}
 	campaignPath := c.customerPath("campaigns:mutate")

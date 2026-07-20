@@ -349,6 +349,19 @@ injection-safety, fail-closed, and key parsing. **DEPENDENCY:** adds
 `github.com/snowflakedb/gosnowflake` v1.19.1 (the only official Go Snowflake driver;
 no shared Go Snowflake service exists — the LFX One UI's Snowflake service is
 TypeScript). Concept doc + code index added; `go mod tidy` run.
+**Update** — Added `networkSettings` to the GA-2 SEARCH campaign create (PR #33
+review, copilot — verified against v23 docs before applying). A SEARCH campaign that
+targets NO network is rejected with
+`CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK`, and an omitted
+`networkSettings` resolves to exactly that (proto3 bools default false) — Google
+documents no protective default and every official create sample sets it. The
+rejection lands on `campaigns:mutate` AFTER the budget commits, so it would orphan the
+budget. Now sends `networkSettings{targetGoogleSearch: true, targetSearchNetwork:
+false, targetContentNetwork: false}` — Google Search only (conservative for a PAUSED
+broker shell; targetSearchNetwork=true would require targetGoogleSearch AND opt into
+Search Partners). Happy-path test now asserts the networkSettings block. Concept doc
+updated.
+
 **Update** — Corrected the GA-2 name-length limits after re-verifying the v23 docs
 (PR #33 review round 3, copilot — TWO contradictory claims: one said 255, one said
 128; BOTH wrong for Campaign). Authoritative from the v23 System Limits table + RPC

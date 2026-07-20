@@ -76,7 +76,15 @@ this client does not perform; mirrors the meta client's `Budget`.) The
 campaign create also sets `containsEuPoliticalAdvertising:
 DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING` — v23 REQUIRES this on every create
 (omitting it fails with `FieldError.REQUIRED`, and since 2026-04-01 an account with
-any undeclared campaign has ALL mutate calls rejected). Both resource ids are
+any undeclared campaign has ALL mutate calls rejected). It also sets
+`networkSettings` with `targetGoogleSearch: true` (search/content networks
+explicitly false): a SEARCH campaign that targets NO network — which is what an
+omitted `networkSettings` resolves to (proto3 bools default false) — is rejected with
+`CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK` AFTER the budget mutate has
+committed, an avoidable orphan. Google Search only is the conservative choice for a
+PAUSED broker shell; `targetSearchNetwork` stays false because true would opt into
+Search Partners (and requires `targetGoogleSearch`), which a generic broker shouldn't
+assume. Both resource ids are
 surfaced (`campaignBudgetId` + `campaignId`) via `firstResourceName`, which decodes
 `results[0].resourceName` and returns both the resource name and its trailing-id
 segment. It errors when the body is malformed, carries no result/resourceName, OR

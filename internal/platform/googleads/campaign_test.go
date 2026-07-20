@@ -103,6 +103,19 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	if cop["containsEuPoliticalAdvertising"] != "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING" {
 		t.Errorf("containsEuPoliticalAdvertising = %v, want DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING", cop["containsEuPoliticalAdvertising"])
 	}
+	// v23 SEARCH create must target at least one network (else
+	// CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK after the budget commits). We target
+	// Google Search only; the other flags are sent explicitly false.
+	ns, ok := cop["networkSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("campaign create must carry networkSettings, got %v", cop["networkSettings"])
+	}
+	if ns["targetGoogleSearch"] != true {
+		t.Errorf("networkSettings.targetGoogleSearch = %v, want true", ns["targetGoogleSearch"])
+	}
+	if ns["targetSearchNetwork"] != false || ns["targetContentNetwork"] != false {
+		t.Errorf("networkSettings search/content = %v / %v, want false / false", ns["targetSearchNetwork"], ns["targetContentNetwork"])
+	}
 }
 
 func TestCreateCampaign_Campaign429IsUnconfirmed(t *testing.T) {
