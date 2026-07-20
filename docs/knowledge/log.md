@@ -118,6 +118,31 @@ migration/pool, swapping the live pool/repo in via `SetReadinessDep`/`SetBackend
 (invalid DB settings, bad encryption key) still fail fast. `Close` cancels the
 retry goroutine. Updated the container + deployment concept docs and the
 startupProbe comment.
+**Update** — Closed the second half of the X/Twitter URL leak (PR #31 review,
+copilot). The transportError fix covered the AMBIGUOUS branch, but the PRE-SEND
+branch (`isPreSendDialError` → DNS/connect-refused) still did a raw
+`fmt.Errorf("... %w", err)` of the `*url.Error`, so a DNS/refused failure on a
+create still rendered the request URL (X puts create params in the query string)
+into persisted Steps. Added a `preSendError` type mirroring transportError's
+URL-free `Error()` (via `safeTransportCause`) but semantically DEFINITE (request
+never sent → not applied, unlike ambiguous transportError); `Unwrap()` retains the
+cause so `isPreSendDialError`/`errors.Is` still match. Test added
+(`TestPreSendError_DoesNotLeakURL`). NOTE: reddit/meta (merged) have the SAME raw
+`%w` pre-send render — same follow-up as the transportError leak applies there.
+
+**Update** — Fixed a URL leak + stale docs on the X/Twitter client (PR #31 review,
+cursor Medium + dealako + copilot). (1) `transportError.Error()` rendered `%v` of
+the wrapped `httpClient.Do` error — typically a `*url.Error` embedding the full
+request URL (which can carry request material / a destination's secret query) —
+and that string was copied into `PromotedTweetWarning` + persisted `Steps`. Added
+`safeTransportCause` which unwraps a `*url.Error` to its underlying cause
+(timeout/EOF/reset) with no URL; `Error()` now renders method/path + that. Test
+added. NOTE: reddit/meta (merged) have the same `%v` transportError render —
+follow-up to apply the same URL-suppression there. (2) Corrected the stale
+`createOutcomeAmbiguous` header comment that still claimed "NOT gated on the HTTP
+method" after the 3xx gate was re-added. (3) Documented CreateCampaign's
+non-standard `(non-nil result, non-nil error)` contract so callers inspect the
+result on error (for reconcile) instead of discarding it.
 
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
@@ -245,6 +270,45 @@ UNCONDITIONAL (a "fill only nil callbacks" impl would pass). Now they inject a
 caller client carrying a SENTINEL `CheckRedirect` and assert the client the code
 uses returns `http.ErrUseLastResponse` despite it, while the caller's original
 still returns the sentinel (shallow copy, not mutation). (PR #30 review by Copilot.)
+
+**Update** — Typed the X/Twitter Ads client's errors and added outcome
+classification (LFXV2-2642). doRequest previously returned a bare fmt.Errorf for
+every non-2xx AND echoed the response body into the error string (which can carry
+signed URLs / destination secrets and gets persisted into Steps). Added a typed
+`apiError` (status/method/path + X's machine-readable error codes, NO body),
+`transportError` (ambiguous), `isPreSendDialError`, and `createOutcomeAmbiguous`
+(a 5xx apiError or a transportError → UNCONFIRMED regardless of method; a 3xx →
+UNCONFIRMED only on a mutating method, since a GET redirect is not a create; a
+definite 4xx or a pre-send error → not ambiguous). `isDuplicatePromotedTweetErr`
+now matches the typed error code
+(DUPLICATE_PROMOTABLE_ENTITY, gated to a 4xx) instead of the no-longer-surfaced
+body. Brings X to parity with the reddit/meta/googleads clients. Concept doc updated.
+
+**Update** — Extended the X/Twitter create-outcome classification to the 2xx
+edge (LFXV2-2642, PR #31 review by Copilot): a promoted_tweets POST returning a
+2xx with no `data.id` was warning "add it manually" — but a 2xx means the POST
+succeeded and X MAY have created the association, so a manual re-add risks the
+duplicate the classifier prevents. Now that case is surfaced as UNCONFIRMED
+(verify before retrying), same wording as the ambiguous-error branch;
+`TestPromotedTweetMissingIDWarns` updated to assert the distinction.
+
+**Update** — Gated the X/Twitter duplicate classification to a 4xx (LFXV2-2642,
+PR #31 review): `isDuplicatePromotedTweetErr` matched `DUPLICATE_PROMOTABLE_ENTITY`
+on any status and ran before `createOutcomeAmbiguous`, so a mutating 3xx/5xx
+carrying that code was reported as a known duplicate instead of UNCONFIRMED (the
+create may have committed on a 5xx). Now requires a definite 4xx; 3xx/5xx falls
+through to ambiguous. Also reworded an UNCONFIRMED warning from "reached X" to
+"may have reached X" (a transportError is only plausibly sent), and corrected the
+`createOutcomeAmbiguous` log description (status/type-based + caller-scoped, NOT
+"any GET failure → clean").
+
+**Update** — Closed a no-body-leak regression in that same X/Twitter `apiError`
+(LFXV2-2642, PR #31 review by Copilot): `Error()` was rendering the retained
+`ErrorCodes` from the untrusted response body, re-opening the leak channel into
+persisted Steps (an untrusted body can place secrets even inside `errors[].code`).
+Now `Error()` renders method/path/status only; codes are kept solely for
+`hasErrorCode` classification, and `parseErrorCodes` drops over-long values and
+caps the count. Mirrors the reddit client's Body-for-classification-only pattern.
 
 **Update** — Disabled HTTP redirect following on the Meta and X/Twitter Ads
 clients (LFXV2-2641), closing a duplicate-create gap: both built their
