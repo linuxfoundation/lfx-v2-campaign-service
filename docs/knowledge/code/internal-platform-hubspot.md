@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/hubspot"
-description: "HubSpot API client (email-channel scaffold): static private-app bearer auth, request layer with 429 retry, typed body-free errors."
+description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def operations."
 resource: "internal/platform/hubspot"
 tags:
   - platform-client
@@ -55,9 +55,40 @@ googleads/reddit/meta/twitter clients:
   have committed would double-create; it returns the 429 as an `apiError`
   immediately.
 
+## Marketing-email operations (LFXV2-2779)
+
+`email.go` builds on `doRequest`: `SearchEmails`/`GetEmail` (idempotent reads),
+`CloneEmail` (`POST /marketing/v3/emails/clone`), `PatchEmailSettings`
+(subject/from/preheader), and `SetSendList`. Creates/clones/PATCHes pass
+`idempotent=false` (no idempotency key → a retried 429 could double-create); a 2xx
+with no id on a clone/get is surfaced as UNCONFIRMED so the caller verifies rather
+than assuming success.
+
+**`SetSendList` routing gotcha (load-bearing):** a HubSpot email's recipient list
+goes in `contactIlsLists` when it is an ILS list (any CRM-v3 processingType) and
+`contactLists` when legacy — and the two namespaces must NOT both appear in one
+PATCH. Putting an ILS list id in `contactLists` (or including the opposite namespace)
+makes HubSpot silently reject the ENTIRE `to` object, leaving the email with no
+recipients. The client sends a COMPLETE `to` (clearing `contactIds` so no
+clone-source contacts leak) with only the send-list's namespace populated, and only
+same-namespace suppressions (HubSpot mirrors the exclude to the other namespace).
+The ILS-vs-legacy decision is the caller's (from `GetList().ProcessingType`).
+
+## CRM contact-list + event-definition operations (LFXV2-2780)
+
+`lists.go`: `SearchLists`, `GetList` (with `includeFilters=true` so the filterBranch
++ processingType come back — the latter drives the send-list routing above),
+`CreateList` (`POST /crm/v3/lists/` — DYNAMIC, contact objectTypeId `0-1`),
+`UpdateListFilters` (`PUT …/filter-branch`), and `ListEventDefinitions` (resolve
+`fullyQualifiedName` for BEHAVIORAL_EVENT filters). `filterBranch` is passed through
+as OPAQUE JSON — HubSpot's shape invariants (OR-root with AND sub-branches, no nested
+ORs, `IN_LIST` not `LIST_MEMBERSHIP` in membership branches) belong to the
+audience-builder (LFXV2-2774), not this transport client. A create's 2xx-with-no-id
+is UNCONFIRMED. List/get responses are decoded from BOTH the `{"list":{…}}` wrapper
+and the bare top-level shape HubSpot variously returns.
+
 ## Scope
 
-This is the SCAFFOLD (auth + request layer). The HubSpot operations —
-marketing-email search/get/clone/patch/set-content/set-send-list (LFXV2-2779) and
-CRM-lists + event-defs search/get/create/update-filter-branch (LFXV2-2780) — build
-on `doRequest`, each mutating op classifying its outcome per the ambiguity contract.
+Auth + request layer + the email/list/event-def operations above. Consumers: the
+audience-building logic (LFXV2-2774, uses lists + event-defs) and the email staging
+dispatcher (LFXV2-2777, uses the marketing-email ops), the latter blocked on PR #11.

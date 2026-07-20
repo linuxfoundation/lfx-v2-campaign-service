@@ -61,8 +61,23 @@ isn't mutated), bounded 10 MiB reads, typed `apiError` (method/path/status only,
 body never surfaced) + `transportError` (URL-free via `safeCause`, cause retained
 via Unwrap), `isPreSendDialError` pre-send classification, and 429 retry gated on an
 explicit `idempotent` flag (a non-idempotent create is never retried — no idempotency
-key → double-create risk). Concept doc + code index added. Next: marketing-email ops
-(LFXV2-2779) and CRM-lists/event-defs ops (LFXV2-2780) build on `doRequest`.
+key → double-create risk). Concept doc + code index added.
+
+**Creation** — Added the HubSpot marketing-email ops (LFXV2-2779) + CRM-list/event-def
+ops (LFXV2-2780) on the client. `email.go`: SearchEmails/GetEmail (idempotent),
+CloneEmail, PatchEmailSettings, SetSendList. `lists.go`: SearchLists, GetList
+(includeFilters=true → filterBranch + processingType), CreateList (DYNAMIC,
+objectTypeId 0-1, opaque filterBranch), UpdateListFilters (PUT …/filter-branch),
+ListEventDefinitions. Creates/clones are non-idempotent; a 2xx-with-no-id is
+UNCONFIRMED (a resource may exist → verify, don't blind-retry). LOAD-BEARING GOTCHA
+captured in SetSendList: an ILS list (any CRM-v3 processingType) MUST go in
+`contactIlsLists`, a legacy list in `contactLists`, and the two namespaces must NOT
+both appear in one PATCH — an ILS id in contactLists (or the opposite namespace
+present) makes HubSpot silently reject the whole `to` object → no recipients. Sends a
+complete `to` (contactIds cleared) with only the send-list's namespace + same-
+namespace suppressions (HubSpot mirrors the exclude). filterBranch shape invariants
+stay with the audience-builder (LFXV2-2774), not this client. 30 table-driven httptest
+cases; full gate green.
 
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
