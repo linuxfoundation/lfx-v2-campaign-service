@@ -612,6 +612,102 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignAdSetAmbiguousIsUnconfirmed verifies that an AMBIGUOUS ad-set
+// failure (a 5xx — Meta may have committed the ad set) is worded UNCONFIRMED with
+// verify-before-retry, NOT a definite "failed", so a caller does not blind-retry
+// into a duplicate ad set. Mirrors the campaign/ad-create ambiguity handling.
+func TestCreateCampaignAdSetAmbiguousIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			// 5xx — Meta may have committed the ad set before erroring.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"upstream","type":"OAuthException","code":2}}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-abc"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
+	)
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon", Project: "tlf",
+		RegistrationURL: "https://events.example.org/kubecon", Objective: "traffic",
+		GeoTargets: []string{"US"}, Budget: 500, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "Join us", Headline: "KubeCon 2026"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when ad set creation returns 5xx")
+	}
+	if res == nil || res.CampaignID != "camp_orphan" {
+		t.Fatalf("expected a partial result carrying the orphaned campaign id, got %+v", res)
+	}
+	// The error must convey UNCONFIRMED, not a definite "failed".
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("ambiguous ad-set 5xx must be UNCONFIRMED, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "ad set creation failed") {
+		t.Errorf("ambiguous ad-set 5xx must not read as a definite failure: %v", err)
+	}
+}
+
+// TestCreateCampaignAdSetNoIDIsUnconfirmed verifies a 2xx ad-set create with no id
+// is UNCONFIRMED (Meta may have created it), not a definite "returned no ad set ID"
+// — same duplicate-avoidance as the campaign/ad and twitter no-id paths.
+func TestCreateCampaignAdSetNoIDIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{}`) // 2xx, no id
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-abc"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
+	)
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon", Project: "tlf",
+		RegistrationURL: "https://events.example.org/kubecon", Objective: "traffic",
+		GeoTargets: []string{"US"}, Budget: 500, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "Join us", Headline: "KubeCon 2026"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when the ad set returns a 2xx with no id")
+	}
+	if res == nil || res.CampaignID != "camp_orphan" {
+		t.Fatalf("expected a partial result carrying the orphaned campaign id, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx ad-set with no id must be UNCONFIRMED, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "returned no ad set ID") && !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("2xx ad-set with no id must not read as a definite failure: %v", err)
+	}
+}
+
 // TestCreateCampaignNoIDReturnsPartial verifies a 2xx campaign create with no id
 // returns a partial result carrying the campaign name (reconcilable by name), not
 // a bare (nil, err).
@@ -2977,6 +3073,40 @@ func TestValidateGeoTargetsDeduplicates(t *testing.T) {
 	}
 }
 
+// TestDoRequestOversizedNon2xxPreservesStatus verifies that an OVERSIZED non-2xx
+// body still surfaces a typed *APIError carrying the status. Like a read failure,
+// an oversized-body branch that stripped the status would mis-classify a mutating
+// 3xx/5xx (create may have committed) as a definite failure.
+func TestDoRequestOversizedNon2xxPreservesStatus(t *testing.T) {
+	// Build the payload from maxResponseBody so it actually crosses the configured
+	// cap (10 MiB today) and exercises the oversized-body branch — a fixed ~1 MiB
+	// pad would take the ordinary path and pass even if that branch were broken.
+	pad := strings.Repeat("x", maxResponseBody+1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError) // 5xx — create may have committed
+		_, _ = io.WriteString(w, `{"pad":"`+pad+`"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected an error for an oversized body, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError preserving the status, got %T: %v", err, err)
+	}
+	if ae.StatusCode != http.StatusInternalServerError {
+		t.Errorf("APIError.StatusCode = %d, want 500 (status must survive an oversized body)", ae.StatusCode)
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("a mutating 500 with an oversized body must be classified ambiguous")
+	}
+}
+
 // TestDoRequestPropagatesBodyReadError verifies a truncated response (declared
 // Content-Length larger than the body sent) is reported as an error, not a
 // false success, even if the partial body would parse.
@@ -3006,6 +3136,48 @@ func TestDoRequestPropagatesBodyReadError(t *testing.T) {
 	err := c.doRequest(context.Background(), http.MethodGet, "/x", nil, &out)
 	if err == nil {
 		t.Fatal("expected a read error, got nil (a truncated body must not be a success)")
+	}
+}
+
+// TestDoRequestNon2xxReadErrorPreservesStatus verifies that when a NON-2xx
+// response body fails to read, doRequest still surfaces a typed *APIError carrying
+// the HTTP status (not a plain error). This matters for a mutating 3xx (surfaced
+// because redirects aren't followed): the create may have committed, and
+// createOutcomeAmbiguous classifies on the *APIError status — stripping it would
+// silently turn an ambiguous create into a definite "failed".
+func TestDoRequestNon2xxReadErrorPreservesStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "1000") // advertise more than we send
+		w.WriteHeader(http.StatusFound)          // 302 — a mutating redirect, not followed
+		_, _ = io.WriteString(w, `{"partial":`)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		if hj, ok := w.(http.Hijacker); ok {
+			if conn, _, err := hj.Hijack(); err == nil {
+				_ = conn.Close()
+			}
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected a read error, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError preserving the status, got %T: %v", err, err)
+	}
+	if ae.StatusCode != http.StatusFound {
+		t.Errorf("APIError.StatusCode = %d, want 302 (status must survive a body-read failure)", ae.StatusCode)
+	}
+	// The whole point: a mutating 3xx with an unreadable body stays AMBIGUOUS.
+	if !createOutcomeAmbiguous(err) {
+		t.Error("a mutating 302 with an unreadable body must be classified ambiguous")
 	}
 }
 
@@ -3408,5 +3580,104 @@ func TestBuildPlacementTargetingRejectsMessengerInbox(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "messengerInbox") {
 		t.Errorf("error = %v, want it to name messengerInbox", err)
+	}
+}
+
+// TestNoFollowRedirectPolicy verifies the client force-disables redirect
+// following: the default client gets CheckRedirect=noFollow, and a WithHTTPClient-
+// supplied client's policy is overridden by building a FRESH client (an
+// http.Client must not be copied after first use), preserving the caller's
+// reusable Transport/Timeout without mutating the caller's client. Following a 3xx
+// on a mutating POST could carry an already-sent create to a different target.
+func TestNoFollowRedirectPolicy(t *testing.T) {
+	// Default client.
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p1"})
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("default client has no CheckRedirect — redirects would be followed")
+	}
+	if err := c.httpClient.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse (no-follow)", err)
+	}
+
+	// Inject a client that ALREADY carries a caller-supplied redirect policy (a
+	// sentinel) plus a distinctive Transport and Timeout. This proves (a) the
+	// override is unconditional (a "fill only nil callbacks" impl would preserve the
+	// sentinel and re-enable following), (b) the reusable Transport/Timeout are
+	// carried onto the fresh client, and (c) the caller's client is not mutated and
+	// is NOT the same pointer (no value-copy of an http.Client after first use).
+	sentinel := errors.New("caller-sentinel-redirect-policy")
+	callerTransport := &http.Transport{}
+	caller := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return sentinel },
+		Transport:     callerTransport,
+		Timeout:       17 * time.Second,
+	}
+	c2 := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "p1"},
+		WithHTTPClient(caller))
+	if c2.httpClient == caller {
+		t.Fatal("client reused the caller's *http.Client — must build a fresh one (no copy-after-use)")
+	}
+	if c2.httpClient.CheckRedirect == nil {
+		t.Fatal("injected client's CheckRedirect was not overridden")
+	}
+	if err := c2.httpClient.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Errorf("injected client's CheckRedirect = %v, want http.ErrUseLastResponse (unconditional override)", err)
+	}
+	if c2.httpClient.Transport != callerTransport {
+		t.Error("fresh client did not preserve the caller's Transport")
+	}
+	if c2.httpClient.Timeout != 17*time.Second {
+		t.Errorf("fresh client Timeout = %v, want the caller's 17s", c2.httpClient.Timeout)
+	}
+	// The caller's client is untouched.
+	if err := caller.CheckRedirect(nil, nil); err != sentinel {
+		t.Errorf("caller's CheckRedirect was mutated: got %v, want the untouched sentinel", err)
+	}
+}
+
+// TestCreateOutcomeAmbiguous_3xxIsAmbiguous verifies a mutating 3xx (now surfaced
+// as an APIError because redirect following is disabled) is classified AMBIGUOUS
+// alongside 5xx — Meta may have committed the create before returning the redirect,
+// so a caller must not treat it as a definite failure and blind-retry (duplicate).
+// A definite 4xx stays non-ambiguous.
+func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
+	cases := []struct {
+		status int
+		want   bool
+	}{
+		{http.StatusFound, true},               // 302 — redirect, not followed
+		{http.StatusTemporaryRedirect, true},   // 307
+		{http.StatusInternalServerError, true}, // 500
+		{http.StatusBadGateway, true},          // 502
+		{http.StatusBadRequest, false},         // 400 — definite rejection
+		{http.StatusNotFound, false},           // 404
+		{http.StatusTooManyRequests, false},    // 429 handled by retry, not here
+	}
+	for _, tc := range cases {
+		err := &APIError{StatusCode: tc.status, Method: http.MethodPost, Path: "/campaigns"}
+		if got := createOutcomeAmbiguous(err); got != tc.want {
+			t.Errorf("createOutcomeAmbiguous(APIError{%d}) = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+
+	// The 3xx-ambiguity is gated on a MUTATING method: a GET redirect is not a
+	// create, so it must NOT be UNCONFIRMED. A 5xx stays ambiguous regardless of
+	// method (the server may have committed before erroring). Matches the reddit
+	// client's contract.
+	methodCases := []struct {
+		method string
+		status int
+		want   bool
+	}{
+		{http.MethodGet, http.StatusFound, false},               // GET 302 — not a create
+		{http.MethodGet, http.StatusInternalServerError, true},  // GET 500 — still ambiguous
+		{http.MethodPost, http.StatusFound, true},               // POST 302 — mutating redirect
+		{http.MethodDelete, http.StatusTemporaryRedirect, true}, // DELETE 307 — mutating
+	}
+	for _, tc := range methodCases {
+		err := &APIError{StatusCode: tc.status, Method: tc.method, Path: "/campaigns"}
+		if got := createOutcomeAmbiguous(err); got != tc.want {
+			t.Errorf("createOutcomeAmbiguous(APIError{%s %d}) = %v, want %v", tc.method, tc.status, got, tc.want)
+		}
 	}
 }

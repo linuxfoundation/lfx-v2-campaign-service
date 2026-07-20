@@ -122,6 +122,19 @@ type Client struct {
 // Option customizes a Client at construction time.
 type Option func(*Client)
 
+// noFollow is the CheckRedirect policy for every client this package uses: it
+// returns http.ErrUseLastResponse so the client does NOT follow redirects and
+// hands the 3xx response back to the request layer, where a non-2xx status is
+// surfaced as an error. The X Ads API returns JSON directly and never legitimately
+// 3xx-redirects these calls; not following keeps outcome classification sound — a
+// redirect can't carry an already-sent mutating POST to a different target (and,
+// with OAuth 1.0a, a followed redirect would resend a request signed for the
+// original URL to a different one). Shared by the built-in client and the caller-
+// supplied-client enforcement in NewClient. Mirrors the reddit/googleads clients.
+func noFollow(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 // WithBaseURL overrides the API base URL (default DefaultBaseURL). Trailing
 // slashes are trimmed so accountURL never produces a double-slash path (e.g.
 // "https://ads-api.x.com/" + "/12/..." -> "//12/..."), which would be signed
@@ -165,13 +178,24 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		account:    account,
 		baseURL:    DefaultBaseURL,
 		apiVersion: DefaultAPIVersion,
-		httpClient: &http.Client{Timeout: requestTimeout},
+		httpClient: &http.Client{Timeout: requestTimeout, CheckRedirect: noFollow},
 		nonceFn:    defaultNonce,
 		timeFn:     time.Now,
 		writeDelay: writeDelay,
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
+	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient. Following a
+	// redirect would carry an already-sent mutating POST to a different target (and
+	// resend an OAuth-1.0a request signed for the original URL), so no-follow is a
+	// correctness requirement, not a default. Applied to a SHALLOW COPY so the
+	// caller's *http.Client is never mutated. Mirrors the reddit client.
+	if c.httpClient != nil {
+		hc := *c.httpClient
+		hc.CheckRedirect = noFollow
+		c.httpClient = &hc
 	}
 	return c
 }

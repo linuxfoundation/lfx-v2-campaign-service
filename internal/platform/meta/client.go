@@ -298,7 +298,21 @@ type Client struct {
 // Option customizes a Client.
 type Option func(*Client)
 
-// WithHTTPClient overrides the HTTP client (useful for tests / timeouts).
+// noFollow is the CheckRedirect policy for every client this package uses: it
+// returns http.ErrUseLastResponse so the client does NOT follow redirects and
+// hands the 3xx response back to the request layer, where a non-2xx status is
+// surfaced as an error. The Graph API returns JSON directly and never legitimately
+// 3xx-redirects these calls; not following keeps outcome classification sound — a
+// redirect can't carry an already-sent mutating POST to a different target and be
+// misclassified. It is shared by the built-in client and the caller-supplied-
+// client enforcement in NewClient. Mirrors the reddit/linkedin/googleads clients.
+func noFollow(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// WithHTTPClient overrides the HTTP client (useful for tests / timeouts). Redirect
+// following is force-disabled on whatever client ends up in use (see NewClient),
+// so an injected client cannot reintroduce redirect following.
 func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) {
 		// Ignore a nil client so the safe default installed by NewClient isn't
@@ -355,7 +369,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	c := &Client{
 		creds:          creds,
 		account:        account,
-		httpClient:     &http.Client{Timeout: DefaultRequestTimeout},
+		httpClient:     &http.Client{Timeout: DefaultRequestTimeout, CheckRedirect: noFollow},
 		baseURL:        DefaultBaseURL,
 		adsManagerURL:  DefaultAdsManagerURL,
 		timeNow:        time.Now,
@@ -363,6 +377,27 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
+	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient, which replaces
+	// the default above. Following a redirect would carry an already-sent mutating
+	// POST to a different target and muddy outcome classification, so no-follow is a
+	// correctness requirement, not a default.
+	//
+	// Build a FRESH *http.Client rather than value-copying the caller's: an
+	// http.Client must not be copied after first use (a value copy duplicates its
+	// internal mutex while sharing the request-cancellation map, so concurrent use
+	// of the caller's client and our copy can race). We carry over only the exported,
+	// reusable fields (Transport, Jar, Timeout) — the shareable connection pool /
+	// cookie jar / deadline — and set our own CheckRedirect. The caller's client is
+	// never mutated and is safe to keep using elsewhere.
+	if c.httpClient != nil {
+		c.httpClient = &http.Client{
+			Transport:     c.httpClient.Transport,
+			CheckRedirect: noFollow,
+			Jar:           c.httpClient.Jar,
+			Timeout:       c.httpClient.Timeout,
+		}
 	}
 	return c
 }
@@ -638,6 +673,10 @@ func isPreSendDialError(err error) bool {
 //     reaches here), so the request may have been received;
 //   - *APIError with a 5xx status: Meta received it and may have committed the
 //     mutation before erroring.
+//   - *APIError with a 3xx status: redirect following is force-disabled (see
+//     noFollow), so a 3xx is surfaced here rather than followed. A 3xx on a
+//     mutating request is NOT a definite rejection — Meta may have committed the
+//     create and then returned a redirect — so it is ambiguous like a 5xx.
 //
 // A definite 4xx (Meta rejected it), or any pre-send failure (token missing,
 // body encode/build, a pre-connect dial error), means NOT applied → returns
@@ -649,7 +688,30 @@ func createOutcomeAmbiguous(err error) bool {
 		return true
 	}
 	var ae *APIError
-	return errors.As(err, &ae) && ae.StatusCode >= 500
+	if !errors.As(err, &ae) {
+		return false
+	}
+	// A 5xx may follow a committed create.
+	if ae.StatusCode >= 500 {
+		return true
+	}
+	// A 3xx on a MUTATING request reached a responder and may have committed a
+	// resource before redirecting — UNCONFIRMED. A 3xx on a GET is not a create, so
+	// it stays non-ambiguous. Gating on the method (rather than treating every 3xx
+	// as ambiguous) keeps this helper's contract correct for any caller, not just
+	// the create path — and makes it genuinely identical to the reddit client.
+	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
+}
+
+// isMutatingMethod reports whether an HTTP method can create/modify server state,
+// so a 3xx on it may hide a committed mutation. Mirrors the reddit client.
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 // doRequest performs a Graph API call and decodes the JSON body into out.
@@ -702,13 +764,26 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		// returns EOF (not an error) at the limit, so an oversized body would
 		// otherwise be silently truncated and mis-parsed as a valid short response.
 		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
-		if readErr == nil && int64(len(raw)) > maxResponseBody {
-			_ = resp.Body.Close()
-			return fmt.Errorf("meta API %s %s: response exceeds %d bytes", method, path, maxResponseBody)
-		}
 		retryAfter := c.parseRetryAfter(resp)
 		status := resp.StatusCode
 		_ = resp.Body.Close()
+
+		if readErr == nil && int64(len(raw)) > maxResponseBody {
+			// Oversized body: we can't trust the payload, but the STATUS must still be
+			// preserved for the same reason as a read failure below — a mutating 3xx/5xx
+			// (or a 2xx) may reflect a committed create, and stripping the status would
+			// mis-classify it as a definite failure and invite a duplicate on retry. A
+			// 2xx is ambiguous (transportError); a non-2xx carries its status via
+			// *APIError. (An oversized error/redirect body is anomalous, but we classify
+			// on status, not payload.)
+			if status >= 200 && status < 300 {
+				return &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
+			}
+			return &APIError{
+				StatusCode: status, Method: method, Path: path,
+				Message: fmt.Sprintf("response exceeds %d bytes", maxResponseBody),
+			}
+		}
 
 		// Meta reports throttling either as HTTP 429 or, commonly, as HTTP 400 with
 		// a Graph error envelope whose code is a known rate-limit code. Treat both
@@ -731,13 +806,23 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		if readErr != nil && (!throttled || attempt >= retryMax) {
 			// A read failure on a 2xx is AMBIGUOUS: Meta committed the mutation but we
 			// couldn't read the result — wrap it as transportError so a create is
-			// treated as "may exist". A read failure on a non-2xx isn't a committed
-			// mutation, so return it plain. Mirrors the reddit client wrapping 2xx
-			// read/decode failures as transportError.
+			// treated as "may exist". Mirrors the reddit client wrapping 2xx read/decode
+			// failures as transportError.
 			if status >= 200 && status < 300 {
 				return &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
 			}
-			return fmt.Errorf("meta API %s %s: read response body: %w", method, path, readErr)
+			// A read failure on a NON-2xx still must preserve the HTTP status: a
+			// mutating 3xx (redirect, not followed) or 5xx may have committed the create
+			// before the unreadable body, and createOutcomeAmbiguous classifies on the
+			// *APIError status. Returning a plain error here would strip the status and
+			// silently turn an ambiguous create into a definite "failed" — the exact
+			// duplicate-on-retry risk the no-follow + ambiguity handling exists to close.
+			// The body couldn't be read, so no Graph envelope diagnostics are available;
+			// carry the status/method/path and note the read failure in the message.
+			return &APIError{
+				StatusCode: status, Method: method, Path: path,
+				Message: fmt.Sprintf("read response body: %v", readErr),
+			}
 		}
 
 		if throttled && attempt < retryMax {
@@ -1773,7 +1858,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// (retry-safe idempotency is tracked in LFXV2-2665). Mirrors the reddit
 		// client's createOutcomeAmbiguous handling.
 		if createOutcomeAmbiguous(err) {
-			steps = append(steps, "Campaign creation outcome is UNCONFIRMED (timeout or server error); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
+			steps = append(steps, "Campaign creation outcome is UNCONFIRMED (ambiguous response — timeout, server error, or an unfollowed redirect); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
 			return &CampaignResult{
 				Platform:     "meta-ads",
 				CampaignName: campaignName,
@@ -1861,11 +1946,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// The campaign was already created (PAUSED). Return a partial result carrying
 		// its id so the caller can identify/clean up the orphan without parsing the
 		// error string; auto-deleting here would race a retry that reuses it.
+		//
+		// An AMBIGUOUS ad-set failure (transport/timeout, a mutating 3xx now surfaced
+		// because redirects aren't followed, or a 5xx) can occur AFTER Meta committed
+		// the ad set — a definite "failed" instruction would let a retry create a
+		// DUPLICATE ad set. Word it UNCONFIRMED (verify before retrying) in that case;
+		// a clear 4xx rejection means nothing was created, so keep the plain "failed"
+		// wording. Mirrors the campaign and ad/creative create paths.
+		if createOutcomeAmbiguous(err) {
+			return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; an ad set may exist — verify in Meta Ads Manager before retrying): %w", campaignID, err)
+		}
 		return partialResult(), fmt.Errorf("meta ad set creation failed (campaign %s created, PAUSED): %w", campaignID, err)
 	}
 	adSetID = adSetResp.ID
 	if adSetID == "" {
-		return partialResult(), fmt.Errorf("meta ad set creation succeeded but returned no ad set ID (campaign %s created, PAUSED)", campaignID)
+		// A 2xx with no id is a malformed SUCCESS: Meta may have created the ad set
+		// but didn't return a usable id. UNCONFIRMED (verify before retrying), NOT a
+		// clean failure — a blind retry could duplicate an ad set Meta already made.
+		// Mirrors the campaign/ad no-id and the ad-set error-path handling.
+		return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; Meta returned a 2xx with no ad set ID — an ad set may exist; verify in Meta Ads Manager before retrying)", campaignID)
 	}
 	budgetLabel := "daily"
 	if in.LifetimeBudget {

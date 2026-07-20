@@ -1,5 +1,58 @@
 # Log
 
+## 2026-07-20
+
+**Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
+PR #30 review by Copilot). The ad-set create's error path already routed through
+`createOutcomeAmbiguous`, but a 2xx response with an empty `id` fell through to a
+definite "returned no ad set ID" — the same duplicate-create risk as the campaign
+and twitter no-id paths. Now surfaces UNCONFIRMED (verify before retrying). Test
+added. Also fixed a CI `check-fmt` failure (gofmt comment alignment in the meta
+test).
+
+## 2026-07-19
+
+**Update** — Fixed an http.Client copy-after-use in the Meta client's no-follow
+enforcement (LFXV2-2641, PR #30 review by Copilot). `NewClient` value-copied a
+`WithHTTPClient`-supplied client (`hc := *c.httpClient`) to override CheckRedirect
+— but an `http.Client` must not be copied after first use (the copy duplicates its
+internal mutex while sharing the request-cancellation map, so concurrent use of
+the caller's client and the copy can race). Now builds a FRESH `*http.Client`
+carrying only the exported reusable fields (Transport, Jar, Timeout) with
+`CheckRedirect: noFollow`. The no-follow test asserts Transport/Timeout are
+preserved and the fresh client is a distinct pointer. Also made the campaign
+UNCONFIRMED step reason-neutral ("ambiguous response — timeout, server error, or
+an unfollowed redirect") since a 3xx now routes there too. NOTE: the reddit client
+(merged) has the same value-copy pattern — follow-up tracked to apply the same
+fresh-client fix there. The twitter client gets the same fix on PR #31.
+
+**Update** — Closed two more Meta ambiguity gaps (LFXV2-2641, PR #30 review by
+Copilot). (1) `doRequest` returned a plain error when a NON-2xx response body
+failed to read, stripping the HTTP status — so a mutating 3xx/5xx with an
+unreadable body (the create may have committed) was mis-seen as a definite failure
+by `createOutcomeAmbiguous` (which keys on the `*APIError` status). It now returns
+an `*APIError` preserving the status on a non-2xx read failure (2xx read failures
+stay `transportError`). (2) The ad-set create returned its error directly without
+the ambiguity check the campaign and ad/creative creates use, so a surfaced 3xx/5xx
+read as a definite "ad set creation failed" — risking a duplicate ad set on retry.
+It now routes through `createOutcomeAmbiguous`: ambiguous → UNCONFIRMED (verify
+before retrying), definite 4xx → "failed". Tests added for both. (3) The same
+status-stripping existed in the OVERSIZED-body branch (> maxResponseBody, 10 MiB), which returned a
+plain error before recording the status — a mutating 3xx/5xx over the cap was still
+mis-classified as a definite failure. Now the oversized-body branch preserves the
+status the same way (2xx → transportError, non-2xx → *APIError), with a regression
+test. Updated the meta concept doc to describe the fresh-client + status-preservation.
+
+**Update** — Gated the Meta client's 3xx create-outcome ambiguity on a mutating
+method (LFXV2-2641, PR #30 review by Cursor Bugbot). `createOutcomeAmbiguous`
+treated EVERY 3xx as UNCONFIRMED without checking the method, diverging from the
+reddit client (which gates 3xx on `isMutatingMethod`) despite claiming to mirror
+it. All call sites pass POST today so behavior was unchanged, but the helper's
+contract was wrong for any future GET caller — a GET redirect is not a create.
+Added `isMutatingMethod` to the meta client and gated the 3xx branch (5xx and
+transport errors stay ambiguous regardless of method); extended the ambiguity test
+with GET/POST/DELETE method cases. Now genuinely identical to reddit.
+
 ## 2026-07-18
 
 **Creation** — Added the `internal/platform/googleads` Go package (GA-1 scaffold,
@@ -12,6 +65,23 @@ GAQL gotcha documented: v23 replaced campaign.start_date/end_date with
 campaign.start_date_time/end_date_time. Concept doc + code index updated. Campaign
 creation (:mutate), metrics/keywords/audience, and keyword actions follow in
 GA-2..GA-5.
+
+**Update** — Also strengthened the no-follow regression tests (meta + twitter):
+they injected a nil-`CheckRedirect` client, which couldn't prove the override is
+UNCONDITIONAL (a "fill only nil callbacks" impl would pass). Now they inject a
+caller client carrying a SENTINEL `CheckRedirect` and assert the client the code
+uses returns `http.ErrUseLastResponse` despite it, while the caller's original
+still returns the sentinel (shallow copy, not mutation). (PR #30 review by Copilot.)
+
+**Update** — Disabled HTTP redirect following on the Meta and X/Twitter Ads
+clients (LFXV2-2641), closing a duplicate-create gap: both built their
+`*http.Client` (and accepted `WithHTTPClient` clients) with no `CheckRedirect`, so
+the stdlib could follow a 3xx on a mutating POST after the create was committed and
+muddy outcome classification (for X, a followed redirect also resends an OAuth-1.0a
+request signed for the original URL). Added a shared `noFollow`
+(`http.ErrUseLastResponse`) policy set on the default client and enforced
+unconditionally after options via a shallow copy (so a caller's client isn't
+mutated) — matching the reddit/linkedin/googleads clients. Regression tests added.
 
 ## 2026-07-15
 
