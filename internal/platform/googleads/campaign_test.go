@@ -311,6 +311,38 @@ func TestParseErrorCodes_BoundsHostileBody(t *testing.T) {
 	}
 }
 
+// End-to-end regression for the full-body-before-truncation parse: doRequest parses
+// error codes from the RAW body and only THEN truncates apiError.Body to
+// maxErrorBodyChars. A real Google error JSON exceeds that bound, so if the codes
+// were re-parsed from the truncated Body the duplicate code (placed here AFTER the
+// bound) would be lost and duplicate detection would silently break. This drives a
+// >maxErrorBodyChars body through doRequest via CreateCampaign and asserts the
+// DUPLICATE_NAME is still detected (surfaces as already-exists), not misclassified.
+func TestCreateCampaign_DuplicateCodeAfterTruncationBoundStillDetected(t *testing.T) {
+	// Pad the message so the errorCode object lands well past maxErrorBodyChars.
+	pad := strings.Repeat("x", maxErrorBodyChars*2)
+	dupAfterBound := func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":3,"status":"INVALID_ARGUMENT","message":"`+pad+`","details":[`+
+			`{"@type":"type.googleapis.com/google.ads.googleads.v23.errors.GoogleAdsFailure",`+
+			`"errors":[{"errorCode":{"campaignBudgetError":"DUPLICATE_NAME"},"message":"dup"}]}]}}`)
+	}
+	c := newCampaignClient(t, dupAfterBound,
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("campaign must not be attempted")
+			okCampaign(w, nil)
+		},
+	)
+	res, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("DUPLICATE_NAME past the truncation bound must still read as already-exists, got: %v", err)
+	}
+	// Budget duplicate → name-carrying partial for name-based reconcile.
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a name-carrying partial, got %+v", res)
+	}
+}
+
 func TestCreateOutcomeAmbiguous_GoogleAds(t *testing.T) {
 	cases := []struct {
 		name string
