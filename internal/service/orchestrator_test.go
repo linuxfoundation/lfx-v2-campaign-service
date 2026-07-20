@@ -368,6 +368,35 @@ func TestOrchestrator_ClaimErrorIsFailure(t *testing.T) {
 	}
 }
 
+// TestOrchestrator_IdempotencyLookupErrorIsFailure verifies that a REAL DB error
+// from the idempotency lookup (GetCampaignByPlatform) — anything other than
+// ErrNotFound — is surfaced as a platform failure and the dispatcher is never
+// called. Otherwise a transient read failure would be treated like "no existing
+// campaign" and dispatch could duplicate an existing-but-unloaded campaign.
+func TestOrchestrator_IdempotencyLookupErrorIsFailure(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{byPlatformErr: errors.New("db connection reset")}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+	disp.mu.Lock()
+	calls := disp.calls
+	disp.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("Dispatch called %d times, want 0 (a lookup error must not fall through to dispatch)", calls)
+	}
+	if len(camps.upserted) != 0 {
+		t.Errorf("upserted %d campaigns, want 0 (no create on a lookup error)", len(camps.upserted))
+	}
+}
+
 // TestOrchestrator_AlreadyClaimedPendingSkips verifies that when another worker
 // holds the pending claim (no upstream id yet), this worker does not dispatch and
 // the skip is NOT recorded as a terminal failure: a single skipped platform is a

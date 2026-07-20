@@ -464,10 +464,26 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 
 	// Fast path: if this pair already has a completed campaign (upstream id set),
 	// reuse it — idempotent, and valid even if no dispatcher is registered for the
-	// platform anymore.
-	if existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p); lerr == nil && existing.PlatformCampaignID != "" {
+	// platform anymore. A real DB error here (anything other than "no such row") must
+	// NOT be swallowed as "no existing campaign": proceeding to claim/dispatch when an
+	// existing campaign simply couldn't be loaded risks a duplicate upstream create.
+	// Only ErrNotFound is a clean "nothing yet, proceed".
+	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p)
+	switch {
+	case lerr == nil && existing.PlatformCampaignID != "":
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
+		return res
+	case lerr == nil:
+		// A row exists but has no upstream id yet (a prior pending/failed attempt) —
+		// fall through to the claim path, which reconciles it.
+	case errors.Is(lerr, domain.ErrNotFound):
+		// No campaign for this pair yet — fall through to claim/dispatch.
+	default:
+		// A transient/real DB failure — surface it as a platform failure rather than
+		// dispatching blind (which could duplicate an existing-but-unloaded campaign).
+		slog.ErrorContext(ctx, "idempotency lookup failed", "platform", p, "job_id", jobID, "error", lerr)
+		res.Error = "could not check for an existing campaign"
 		return res
 	}
 

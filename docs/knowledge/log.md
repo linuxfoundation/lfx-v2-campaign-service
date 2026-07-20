@@ -2,6 +2,16 @@
 
 ## 2026-07-20
 
+**Update** — Idempotency-lookup errors no longer silently fall through to dispatch
+(PR #11 review, cursor Medium). In `dispatchPlatform`, the fast path treated ANY
+non-nil error from `GetCampaignByPlatform` like "no row" and fell through to
+claim/dispatch — so a transient/real DB failure that hid an existing campaign could
+trigger a duplicate upstream create, with no log/signal. Now the outcomes are
+distinguished: existing-with-upstream-id → reuse; `ErrNotFound` → fall through to the
+claim; any OTHER error → surface as a platform failure (logged ERROR), not a blind
+dispatch. Corrected the concept doc, which had documented the old swallow-the-error
+behavior as intentional. Test added (`TestOrchestrator_IdempotencyLookupErrorIsFailure`).
+
 **Update** — Addressed dealako's 4 [minor] review items on PR #11 (LFXV2-2626).
 (1) `GetCampaignByPlatform` was the one campaign_repo method not scoped by
 project_id — added a `projectID` param + `AND project_id=$3` (matching
