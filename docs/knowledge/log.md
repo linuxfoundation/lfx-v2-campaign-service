@@ -1,5 +1,110 @@
 # Log
 
+## 2026-07-20
+
+**Update** — Made the DB cold-start startupProbe budget real (PR #28 review,
+LFXV2-2558). `NewContainer` capped migration+pool init at 15s and `main` exited
+on failure, so an unreachable DB at boot crash-looped the pod and the ~90s
+startupProbe budget never applied. Now a *transient* DB-init failure boots the
+services in 503 mode (a `notReady` health dep so `/readyz` returns 503, distinct
+from no-DB mode; connection service nil-repo) and a background goroutine retries
+migration/pool, swapping the live pool/repo in via `SetReadinessDep`/`SetBackend`
+(mutex-guarded against concurrent request reads) once it opens. Config errors
+(invalid DB settings, bad encryption key) still fail fast. `Close` cancels the
+retry goroutine. Updated the container + deployment concept docs and the
+startupProbe comment.
+
+**Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
+PR #30 review by Copilot). The ad-set create's error path already routed through
+`createOutcomeAmbiguous`, but a 2xx response with an empty `id` fell through to a
+definite "returned no ad set ID" — the same duplicate-create risk as the campaign
+and twitter no-id paths. Now surfaces UNCONFIRMED (verify before retrying). Test
+added. Also fixed a CI `check-fmt` failure (gofmt comment alignment in the meta
+test).
+
+**Update** — Extended the X/Twitter create-outcome ambiguity to the INITIAL
+CAMPAIGN create (LFXV2-2642, PR #31 review by Cursor + Copilot) — the last
+uncovered create step. The campaign POST returned a bare `(nil, err)` on an
+ambiguous 3xx/5xx/transport failure and a plain error on a 2xx-no-id, discarding
+the deterministic campaign name; X may have committed the PAUSED campaign, so a
+caller got no reconcile signal and could retry into a duplicate. Now returns a
+name-carrying partial result + UNCONFIRMED (verify before retrying) for both cases
+(a definite 4xx/pre-send error still returns plain `(nil, err)`), mirroring the
+meta/reddit clients' name-only partial for the first create step. The whole
+twitter flow (campaign → line item → promoted tweet) now classifies every create
+outcome consistently. Tests added.
+
+**Update** — Extended the X/Twitter create-outcome ambiguity to the LINE-ITEM
+create (LFXV2-2642, PR #31 review by Cursor). The line-item POST always returned a
+definite "line item creation failed" (even on a 5xx/mutating-3xx/transport error
+where X may have committed it) and a definite "returned no line item ID" on a
+2xx-no-id — the same blind-retry/duplicate risk already fixed for the campaign,
+promoted-tweet, and meta ad-set paths. Both now surface UNCONFIRMED (verify before
+retrying) when ambiguous; a definite 4xx/pre-send error still reads "failed".
+Also updated the `PromotedTweetWarning` field contract (it told consumers the
+promoted tweet "may need to be added manually", which for an UNCONFIRMED outcome is
+the duplicate risk this exists to prevent — now it requires verifying before adding
+or retrying) and corrected the twitter concept doc's "shallow copy" wording to the
+fresh-client construction.
+
+## 2026-07-19
+
+**Update** — Fixed an http.Client copy-after-use in the Meta client's no-follow
+enforcement (LFXV2-2641, PR #30 review by Copilot). `NewClient` value-copied a
+`WithHTTPClient`-supplied client (`hc := *c.httpClient`) to override CheckRedirect
+— but an `http.Client` must not be copied after first use (the copy duplicates its
+internal mutex while sharing the request-cancellation map, so concurrent use of
+the caller's client and the copy can race). Now builds a FRESH `*http.Client`
+carrying only the exported reusable fields (Transport, Jar, Timeout) with
+`CheckRedirect: noFollow`. The no-follow test asserts Transport/Timeout are
+preserved and the fresh client is a distinct pointer. Also made the campaign
+UNCONFIRMED step reason-neutral ("ambiguous response — timeout, server error, or
+an unfollowed redirect") since a 3xx now routes there too. NOTE: the reddit client
+(merged) has the same value-copy pattern — follow-up tracked to apply the same
+fresh-client fix there. The twitter client gets the same fix on PR #31.
+
+**Update** — Closed two more Meta ambiguity gaps (LFXV2-2641, PR #30 review by
+Copilot). (1) `doRequest` returned a plain error when a NON-2xx response body
+failed to read, stripping the HTTP status — so a mutating 3xx/5xx with an
+unreadable body (the create may have committed) was mis-seen as a definite failure
+by `createOutcomeAmbiguous` (which keys on the `*APIError` status). It now returns
+an `*APIError` preserving the status on a non-2xx read failure (2xx read failures
+stay `transportError`). (2) The ad-set create returned its error directly without
+the ambiguity check the campaign and ad/creative creates use, so a surfaced 3xx/5xx
+read as a definite "ad set creation failed" — risking a duplicate ad set on retry.
+It now routes through `createOutcomeAmbiguous`: ambiguous → UNCONFIRMED (verify
+before retrying), definite 4xx → "failed". Tests added for both. (3) The same
+status-stripping existed in the OVERSIZED-body branch (>1 MiB), which returned a
+plain error before recording the status — a mutating 3xx/5xx over the cap was still
+mis-classified as a definite failure. Now the oversized-body branch preserves the
+status the same way (2xx → transportError, non-2xx → *APIError), with a regression
+test. Updated the meta concept doc to describe the fresh-client + status-preservation.
+
+**Update** — Gated the Meta client's 3xx create-outcome ambiguity on a mutating
+method (LFXV2-2641, PR #30 review by Cursor Bugbot). `createOutcomeAmbiguous`
+treated EVERY 3xx as UNCONFIRMED without checking the method, diverging from the
+reddit client (which gates 3xx on `isMutatingMethod`) despite claiming to mirror
+it. All call sites pass POST today so behavior was unchanged, but the helper's
+contract was wrong for any future GET caller — a GET redirect is not a create.
+Added `isMutatingMethod` to the meta client and gated the 3xx branch (5xx and
+transport errors stay ambiguous regardless of method); extended the ambiguity test
+with GET/POST/DELETE method cases. Now genuinely identical to reddit.
+
+**Update** — Fixed the http.Client copy-after-use in the X/Twitter client's
+no-follow enforcement (LFXV2-2642, PR #31), matching the meta fix (PR #30):
+`NewClient` now builds a fresh `*http.Client` (Transport/Jar/Timeout + noFollow)
+instead of value-copying the caller's; the no-follow test asserts Transport/Timeout
+preservation and a distinct pointer.
+
+**Update** — Gated the X/Twitter client's 3xx create-outcome ambiguity on a
+mutating method (LFXV2-2642, PR #31), matching the same fix applied to the meta
+client (PR #30, Cursor review) and the reddit client. `createOutcomeAmbiguous`
+had treated every 3xx as UNCONFIRMED regardless of method; now a 3xx is ambiguous
+only on a mutating method (a GET redirect is not a create), while 5xx and
+transport errors stay ambiguous regardless of method. Added `isMutatingMethod`
+and GET/POST/DELETE test cases. All three clients (reddit/meta/twitter) now share
+an identical method-gated contract.
+
 ## 2026-07-18
 
 **Creation** — Added the `internal/platform/googleads` Go package (GA-1 scaffold,

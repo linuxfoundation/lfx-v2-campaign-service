@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	campaignsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
@@ -29,8 +30,15 @@ type campaignService struct {
 	// field (rather than a hardcoded return) so readiness can be exercised in
 	// tests.
 	ready bool
+
+	// mu guards dep, which can be swapped in after construction: when the
+	// database is still coming up (cold start), the service boots with a nil dep
+	// (so /readyz reports not-ready) and the container injects the live pool via
+	// SetReadinessDep once migrations succeed. The swap happens on a background
+	// goroutine while probe requests read dep concurrently, so access is guarded.
+	mu sync.RWMutex
 	// dep is an optional backing dependency whose health is AND-ed into
-	// readiness (nil when no database is wired).
+	// readiness (nil when no database is wired OR not yet ready).
 	dep ReadinessChecker
 }
 
@@ -41,9 +49,26 @@ type CampaignService = campaignService
 var _ campaignsvc.Service = (*CampaignService)(nil)
 
 // NewCampaignService constructs a CampaignService. dep may be nil (no database
-// wired); when non-nil, its health is required for readiness.
+// wired, or not yet ready); when non-nil, its health is required for readiness.
 func NewCampaignService(dep ReadinessChecker) *CampaignService {
 	return &CampaignService{ready: true, dep: dep}
+}
+
+// SetReadinessDep swaps in (or clears) the readiness dependency after
+// construction. Used by the container to inject the database pool once it opens
+// during a cold start, flipping /readyz from 503 to healthy. Safe for concurrent
+// use with the Readyz/ServiceReady readers.
+func (s *CampaignService) SetReadinessDep(dep ReadinessChecker) {
+	s.mu.Lock()
+	s.dep = dep
+	s.mu.Unlock()
+}
+
+// readinessDep returns the current readiness dependency under the read lock.
+func (s *CampaignService) readinessDep() ReadinessChecker {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dep
 }
 
 // ServiceReady reports whether the service is able to accept inbound requests:
@@ -54,10 +79,10 @@ func (s *CampaignService) ServiceReady() bool {
 	if !s.ready {
 		return false
 	}
-	if s.dep != nil {
+	if dep := s.readinessDep(); dep != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), readinessProbeTimeout)
 		defer cancel()
-		return s.dep.Ready(ctx)
+		return dep.Ready(ctx)
 	}
 	return true
 }
@@ -73,10 +98,10 @@ func (s *CampaignService) Readyz(ctx context.Context) ([]byte, error) {
 		}
 	}
 
-	if s.dep != nil {
+	if dep := s.readinessDep(); dep != nil {
 		pingCtx, cancel := context.WithTimeout(ctx, readinessProbeTimeout)
 		defer cancel()
-		if !s.dep.Ready(pingCtx) {
+		if !dep.Ready(pingCtx) {
 			slog.DebugContext(ctx, "readyz: database dependency not ready")
 			return nil, &campaignsvc.ServiceUnavailableError{
 				Code:    "503",

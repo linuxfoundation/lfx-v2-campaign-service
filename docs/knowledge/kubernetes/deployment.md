@@ -16,4 +16,12 @@ including `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` /
 key is required whenever a database URL is configured because startup
 initializes the AES-GCM encryptor before opening the pool used by `/readyz`.
 
+Probes: `livez` restarts a hung process (never touches the DB); `readyz` gates
+traffic on DB connectivity. The `startupProbe` on `/readyz` carries a ~90s
+`failureThreshold` budget for a database cold start. This budget is meaningful
+because the process does NOT exit when the DB is unreachable at boot — the
+container boots in 503 mode and retries the pool in the background (see the
+`internal/container` concept), so `/readyz` stays 503 and the pod is kept alive
+across the window rather than crash-looping.
+
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

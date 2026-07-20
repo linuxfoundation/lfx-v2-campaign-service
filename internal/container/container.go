@@ -8,20 +8,42 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
-// startupDBTimeout bounds the database connection/ping during container init so
-// an unreachable or slow database fails the pod fast (and lets Kubernetes
-// restart it) rather than wedging startup indefinitely.
-const startupDBTimeout = 15 * time.Second
+// startupDBTimeout bounds ONE database migration+pool-open attempt. It is a var
+// (not a const) only so tests can shrink it; production never changes it.
+var startupDBTimeout = 15 * time.Second
+
+// dbRetryInterval is the pause between background DB-init attempts during a cold
+// start. A var for the same test-only reason.
+var dbRetryInterval = 3 * time.Second
+
+// setBackends is the interface the container needs to late-bind the database once
+// the pool opens. Both service types implement it.
+type readinessSetter interface {
+	SetReadinessDep(service.ReadinessChecker)
+}
+type backendSetter interface {
+	SetBackend(domain.ConnectionRepository, domain.Encryptor)
+}
+
+// notReady is a ReadinessChecker that always reports not-ready. It is wired as
+// the health dependency during a cold start so /readyz returns 503 (not OK)
+// until the real pool is swapped in — distinct from the no-database mode, where
+// no dependency is wired and /readyz reports ready.
+type notReady struct{}
+
+func (notReady) Ready(context.Context) bool { return false }
 
 // Container holds all application dependencies.
 type Container struct {
@@ -29,16 +51,38 @@ type Container struct {
 	Service     svc.Service
 	Connections connsvc.Service
 
+	// mu guards pool, which the background DB-init goroutine sets once the pool
+	// opens and Close reads on shutdown.
+	mu   sync.Mutex
 	pool *postgres.Pool
+
+	// cancelInit stops the background DB-init goroutine (nil when none runs).
+	cancelInit context.CancelFunc
+	// initDone is closed when the background goroutine exits, so Close can wait
+	// for it (nil when no goroutine runs).
+	initDone chan struct{}
 }
 
 // NewContainer creates and wires all application dependencies.
 //
-// If a database URL is configured, it runs migrations, opens the pool, and
-// wires the connection service against it. Otherwise the connection service is
-// still wired (with a nil repo) so its routes stay mounted and return the typed
-// 503 ServiceUnavailable from the OpenAPI contract instead of a bare 404; only
-// the health endpoints are backed by real data in that mode.
+// If a database URL is configured it runs migrations and opens the pool. On
+// SUCCESS everything is wired against the live pool immediately. On a TRANSIENT
+// failure (database unreachable / migration deadline) the container does NOT
+// fail the process: it boots the services in 503 mode (health reports not-ready,
+// connection endpoints return the typed 503) and retries migration+pool in the
+// BACKGROUND, swapping the live pool in once it opens. This is what makes the
+// deployment's ~90s startupProbe budget real: /readyz stays 503 during a DB cold
+// start and the pod is kept alive, rather than the process exiting at the first
+// 15s attempt and crash-looping.
+//
+// Config errors that a retry cannot fix (invalid database settings, a bad
+// credential-encryption key) still fail fast — those return an error and the
+// process exits.
+//
+// If no database URL is configured, the connection service is wired with a nil
+// repo so its routes stay mounted and return the typed 503 ServiceUnavailable
+// from the OpenAPI contract instead of a bare 404; the health endpoints report
+// ready in that mode.
 func NewContainer(cfg *config.Config) (*Container, error) {
 	slog.Info("initializing dependency container")
 
@@ -59,51 +103,122 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		return c, nil
 	}
 
+	// A bad credential-encryption key is a config error, not a transient DB
+	// problem, so fail fast (a retry can't fix it).
 	enc, err := crypto.NewAESGCMFromBase64(cfg.CredentialEncryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("init credential encryptor: %w", err)
 	}
 
-	startupCtx, cancel := context.WithTimeout(context.Background(), startupDBTimeout)
+	// Fast path: one synchronous attempt. On success, wire the live pool now.
+	if pool, initErr := initDatabase(context.Background(), cfg.DatabaseURL); initErr == nil {
+		c.setPool(pool)
+		repo := postgres.NewConnectionRepo(pool)
+		c.Connections = service.NewConnectionService(repo, enc)
+		c.Service = service.NewCampaignService(pool)
+		if host := cfg.RedactedDatabaseHost(); host != "" {
+			slog.Info("dependency container initialized", "database", host)
+		} else {
+			slog.Info("dependency container initialized")
+		}
+		return c, nil
+	} else {
+		slog.Warn("database not ready at startup; booting in 503 mode and retrying in the background",
+			"error", initErr.Error())
+	}
+
+	// Transient failure: boot in 503 mode. Wire the health dependency to notReady
+	// (so /readyz reports 503, unlike the no-database mode) and the connection
+	// service with a nil repo. The background goroutine swaps in the live
+	// pool/repo once it opens, flipping both to healthy.
+	campaign := service.NewCampaignService(notReady{})
+	connections := service.NewConnectionService(nil, enc)
+	c.Service = campaign
+	c.Connections = connections
+
+	initCtx, cancel := context.WithCancel(context.Background())
+	c.cancelInit = cancel
+	c.initDone = make(chan struct{})
+	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections)
+
+	return c, nil
+}
+
+// retryDatabaseInit keeps attempting migration+pool-open until it succeeds or the
+// context is cancelled (shutdown). On success it swaps the live pool into both
+// services so /readyz flips to healthy and the connection endpoints go live.
+func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter) {
+	defer close(c.initDone)
+
+	for attempt := 1; ; attempt++ {
+		pool, err := initDatabase(ctx, cfg.DatabaseURL)
+		if err == nil {
+			c.setPool(pool)
+			b.SetBackend(postgres.NewConnectionRepo(pool), enc)
+			r.SetReadinessDep(pool)
+			if host := cfg.RedactedDatabaseHost(); host != "" {
+				slog.Info("database now ready; connection endpoints live", "database", host, "attempts", attempt)
+			} else {
+				slog.Info("database now ready; connection endpoints live", "attempts", attempt)
+			}
+			return
+		}
+		slog.Warn("background database initialization attempt failed; will retry",
+			"attempt", attempt, "retryIn", dbRetryInterval.String(), "error", err.Error())
+
+		select {
+		case <-ctx.Done():
+			slog.Info("stopping background database initialization (shutdown)")
+			return
+		case <-time.After(dbRetryInterval):
+		}
+	}
+}
+
+// setPool stores the live pool under the lock (Close reads it on shutdown).
+func (c *Container) setPool(pool *postgres.Pool) {
+	c.mu.Lock()
+	c.pool = pool
+	c.mu.Unlock()
+}
+
+// initDatabase runs migrations and opens the pool within a single bounded
+// attempt. golang-migrate's Up() takes no context, so it is bounded by running
+// it under the same deadline. Returns the live pool or an error.
+func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
+	ctx, cancel := context.WithTimeout(parent, startupDBTimeout)
 	defer cancel()
 
-	// golang-migrate's Up() takes no context, so bound it with the same startup
-	// deadline: run it in a goroutine and fail fast if the database is
-	// unreachable, rather than letting migration wedge boot indefinitely.
 	migrateErr := make(chan error, 1)
-	go func() { migrateErr <- postgres.Migrate(cfg.DatabaseURL) }()
+	go func() { migrateErr <- postgres.Migrate(dsn) }()
 	select {
 	case err := <-migrateErr:
 		if err != nil {
 			return nil, fmt.Errorf("run migrations: %w", err)
 		}
-	case <-startupCtx.Done():
-		return nil, fmt.Errorf("run migrations: %w", startupCtx.Err())
+	case <-ctx.Done():
+		return nil, fmt.Errorf("run migrations: %w", ctx.Err())
 	}
 
-	pool, err := postgres.NewPool(startupCtx, cfg.DatabaseURL)
+	pool, err := postgres.NewPool(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database pool: %w", err)
 	}
-	c.pool = pool
-
-	repo := postgres.NewConnectionRepo(pool)
-	c.Connections = service.NewConnectionService(repo, enc)
-	// The health service's readiness depends on the database pool (Readyz).
-	c.Service = service.NewCampaignService(pool)
-
-	if host := cfg.RedactedDatabaseHost(); host != "" {
-		slog.Info("dependency container initialized", "database", host)
-	} else {
-		slog.Info("dependency container initialized")
-	}
-	return c, nil
+	return pool, nil
 }
 
-// Close releases any resources held by the container.
+// Close releases any resources held by the container and stops the background
+// DB-init goroutine if one is running.
 func (c *Container) Close() error {
-	if c.pool != nil {
-		c.pool.Close()
+	if c.cancelInit != nil {
+		c.cancelInit()
+		<-c.initDone
+	}
+	c.mu.Lock()
+	pool := c.pool
+	c.mu.Unlock()
+	if pool != nil {
+		pool.Close()
 	}
 	return nil
 }

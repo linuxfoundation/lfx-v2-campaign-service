@@ -169,3 +169,20 @@ func TestServiceReady_WithDependency(t *testing.T) {
 		})
 	}
 }
+
+// TestSetReadinessDep_LateBinding verifies the container can swap the readiness
+// dependency in after construction (the DB cold-start path): a service booted
+// with a not-ready dep reports not-ready, and once a healthy dep is injected it
+// reports ready — without rebuilding the service (its endpoints are already
+// mounted).
+func TestSetReadinessDep_LateBinding(t *testing.T) {
+	s := NewCampaignService(fakeReadiness{ready: false})
+	assert.False(t, s.ServiceReady(), "should be not-ready while the pool is coming up")
+
+	s.SetReadinessDep(fakeReadiness{ready: true})
+	assert.True(t, s.ServiceReady(), "should flip to ready once a healthy dep is injected")
+
+	// Clearing the dep (nil) returns to the no-dependency 'ready' semantics.
+	s.SetReadinessDep(nil)
+	assert.True(t, s.ServiceReady())
+}

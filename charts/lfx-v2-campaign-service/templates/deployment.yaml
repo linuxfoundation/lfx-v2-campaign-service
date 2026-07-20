@@ -141,8 +141,12 @@ spec:
             httpGet:
               path: /readyz
               port: web
-            # Allow ~90s for a cold start where the DB (CloudNativePG) may still
-            # be coming up and the in-process migration runs on first boot.
+            # ~90s budget for a cold start where the DB (CloudNativePG) may still
+            # be coming up. This is real because the process no longer exits when
+            # the DB is unreachable at boot: NewContainer boots in 503 mode and
+            # retries migration/pool in the background, so /readyz stays 503 (not a
+            # crash) until the DB is up and this probe keeps the pod alive across
+            # the window. See internal/container/container.go.
             failureThreshold: 90
             periodSeconds: 1
             timeoutSeconds: 3
