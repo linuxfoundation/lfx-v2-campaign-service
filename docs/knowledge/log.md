@@ -374,6 +374,27 @@ service. Wired into the container (no-db / 503-boot / live / cold-start-retry pa
 and mounted in the server (`buildMux` + a route-mount test asserting
 `GET …/audiences` resolves non-404 + a nil-endpoints fail-loud case). Service-layer
 tests cover create/defaults/If-Match(428/412/success)/404/late-binding. Full gate green.
+**Update** — Made `page_id` REQUIRED in `MetaAdsConnectionConfig` (design/connection.go,
+PR #38 review): an active Meta connection with no page id would always fail dispatch
+(the adapter needs it for the promoted-object page), so requiring it at connection time
+surfaces a 4xx at creation instead of a silent runtime failure. Regenerated the Goa API,
+dropped the now-non-pointer `cfg.PageID` deref in the connection service, updated
+internal-dispatch.md, and strengthened the meta happy-path dispatch test to assert the
+full mapping contract (objective→OUTCOME_SALES, lifetime budget in minor units, geo
+countries, pixel + page promoted objects, per-variant creative/ad fan-out).
+
+**Update** — Added the linkedin, meta, and twitter PlatformDispatcher adapters to
+`internal/dispatch` (LFXV2-2638 / 2640 / 2642), following the reddit template from the
+Creation entry below. Each reuses the shared `credsSource` (Get → Decrypt) and does
+its own per-platform interpretation: linkedin unmarshals a single OAuth2 accessToken +
+builds RuntimeConfig from the connection's AccountID + numeric `org_id`; meta uses an
+accessToken + AccountID (`act_...`) + `page_id`, budget in the account's currency (no
+FX); twitter uses an OAuth1 4-tuple + AccountID + `funding_instrument_id`. All four are
+registered in `container.registerDispatchers` (fast path + cold-start retry). Each has
+pre-create/NoUpstreamCreate tests + a happy-path through the real client against an
+httptest server. Google Ads follows once its client (PR #33) lands; email/HubSpot is
+LFXV2-2777.
+
 **Creation** — Added `internal/dispatch` — the per-platform PlatformDispatcher
 adapters that wire the orchestrator to the ad-platform clients (LFXV2-2639, Reddit
 first). Until now the orchestrator's `dispatchers` map was empty, so campaign creation

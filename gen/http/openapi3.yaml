@@ -7537,6 +7537,7 @@ components:
                 page_id: Dolorem quia.
             required:
                 - account_id
+                - page_id
         MetaAdsCredentials:
             type: object
             properties:

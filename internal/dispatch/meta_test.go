@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,21 +73,43 @@ func TestMeta_BadConfigIsPreCreate(t *testing.T) {
 // ---- happy path through an httptest meta API ------------------------------
 
 func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
-	var creativeCount, adCount int32
+	// Capture every mutating request path + body so we can assert the full mapping
+	// contract, not just the returned id. A mapping regression (a dropped pixel,
+	// placements, lifetime budget, account/page id, or geo target) must fail this test
+	// rather than quietly create a materially different paid campaign.
+	type captured struct {
+		path string
+		body string
+	}
+	var (
+		mu                   sync.Mutex
+		reqs                 []captured
+		creativeCount, adCnt int32
+	)
+	record := func(r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		reqs = append(reqs, captured{path: r.URL.Path, body: string(b)})
+		mu.Unlock()
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			record(r)
 			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			record(r)
 			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			record(r)
 			n := atomic.AddInt32(&creativeCount, 1)
 			_, _ = io.WriteString(w, `{"id":"creative_`+strconv.Itoa(int(n))+`"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
-			n := atomic.AddInt32(&adCount, 1)
+			record(r)
+			n := atomic.AddInt32(&adCnt, 1)
 			_, _ = io.WriteString(w, `{"id":"ad_`+strconv.Itoa(int(n))+`"}`)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -99,11 +122,18 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
 		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
 	)
-	// CurrencyOffset set → the preflight skips currency-code derivation.
+	// NON-DEFAULT values for every mapped field: a lifetime budget, an explicit
+	// objective ("conversions" → OUTCOME_SALES + a numeric pixel promoted object), two
+	// geo targets, an explicit facebook-only placement, and two variants (→ two
+	// creatives + two ads). currencyOffset set → preflight skips FX derivation.
 	cfg := json.RawMessage(`{"metaConfig":{
-		"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic",
-		"geoTargets":["US"],"currencyOffset":100,
-		"variants":[{"headline":"KubeCon 2099","primaryText":"Join us — it's great","description":"Cloud native event"}]
+		"budget":2500,"lifetimeBudget":true,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"objective":"conversions","geoTargets":["US","GB"],"currencyOffset":100,
+		"pixelId":"555000111","placements":{"facebook":true,"instagram":false},
+		"variants":[
+			{"headline":"KubeCon 2099","primaryText":"Join us — it's great","description":"Cloud native event"},
+			{"headline":"Register now","primaryText":"Early bird pricing","description":"Save your seat"}
+		]
 	}}`)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
 	if err != nil {
@@ -114,6 +144,70 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	}
 	if camp.CampaignName == "" || len(camp.Result) == 0 {
 		t.Error("campaign name + result blob should be populated")
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("success status = %q, want %q", camp.Status, campaignStatusCreated)
+	}
+
+	// Per-variant fan-out: two variants → two creatives + two ads.
+	if got := atomic.LoadInt32(&creativeCount); got != 2 {
+		t.Errorf("adcreatives created = %d, want 2 (one per variant)", got)
+	}
+	if got := atomic.LoadInt32(&adCnt); got != 2 {
+		t.Errorf("ads created = %d, want 2 (one per variant)", got)
+	}
+
+	// Assert the mapped fields landed in the outbound request bodies. We match on the
+	// account/page ids and each config field so a dropped mapping fails loudly.
+	mu.Lock()
+	defer mu.Unlock()
+	find := func(suffix string) string {
+		for _, rq := range reqs {
+			if strings.HasSuffix(rq.path, suffix) {
+				return rq.body
+			}
+		}
+		return ""
+	}
+	// Every mutating request must target the connection's ad account (act_777) in its path.
+	for _, rq := range reqs {
+		if !strings.Contains(rq.path, "act_777") {
+			t.Errorf("request path %q does not target the connection account act_777", rq.path)
+		}
+	}
+	// Campaign body carries the mapped objective ("conversions" → OUTCOME_SALES).
+	campBody := find("/campaigns")
+	if !strings.Contains(campBody, "OUTCOME_SALES") {
+		t.Errorf("campaign body missing objective OUTCOME_SALES (from \"conversions\")\nbody: %s", campBody)
+	}
+	// Ad-set body carries budget (lifetime, in minor units = 2500*100), geo countries,
+	// and the pixel promoted object (conversions objective).
+	adsetBody := find("/adsets")
+	if !strings.Contains(adsetBody, `"lifetime_budget"`) {
+		t.Errorf("adset body should use lifetime_budget (lifetimeBudget:true)\nbody: %s", adsetBody)
+	}
+	if strings.Contains(adsetBody, `"daily_budget"`) {
+		t.Errorf("adset body must NOT use daily_budget when lifetimeBudget:true\nbody: %s", adsetBody)
+	}
+	if !strings.Contains(adsetBody, "250000") { // 2500 * currencyOffset(100)
+		t.Errorf("adset body missing minor-unit budget 250000 (2500 * offset 100)\nbody: %s", adsetBody)
+	}
+	for _, want := range []string{"US", "GB"} { // geo targets
+		if !strings.Contains(adsetBody, want) {
+			t.Errorf("adset body missing geo target %q\nbody: %s", want, adsetBody)
+		}
+	}
+	if !strings.Contains(adsetBody, "555000111") { // numeric pixel on promoted_object
+		t.Errorf("adset body missing the pixel id 555000111\nbody: %s", adsetBody)
+	}
+	// facebook-only placement → publisher_platforms should include facebook, not instagram positions.
+	if !strings.Contains(adsetBody, "facebook") {
+		t.Errorf("adset targeting missing the facebook placement\nbody: %s", adsetBody)
+	}
+	// The connection's page id (987654321) rides on each creative's object_story_spec.
+	creativeBody := find("/adcreatives")
+	if !strings.Contains(creativeBody, "987654321") {
+		t.Errorf("creative object_story_spec missing the connection page id 987654321\nbody: %s", creativeBody)
 	}
 }
 
@@ -144,6 +238,19 @@ func TestMeta_AmbiguousCreateRetainsClaim(t *testing.T) {
 		t.Error("an ambiguous create must NOT be NoUpstreamCreate — the claim must be retained")
 	}
 	if camp == nil {
-		t.Error("an ambiguous create must return a non-nil campaign for orphan recording")
+		t.Fatal("an ambiguous create must return a non-nil campaign for orphan recording")
+	}
+	// The name-only reconciliation contract: no upstream id was confirmed, but the
+	// deterministic campaign name + result blob must survive so the orphan can be
+	// reconciled on retry. A regression that dropped these — or wrongly populated an
+	// upstream id — must fail here.
+	if camp.PlatformCampaignID != "" {
+		t.Errorf("an ambiguous create must NOT report an upstream campaign id, got %q", camp.PlatformCampaignID)
+	}
+	if camp.CampaignName == "" {
+		t.Error("an ambiguous create must retain the deterministic campaign name for reconciliation")
+	}
+	if len(camp.Result) == 0 {
+		t.Error("an ambiguous create must retain the result blob for reconciliation")
 	}
 }

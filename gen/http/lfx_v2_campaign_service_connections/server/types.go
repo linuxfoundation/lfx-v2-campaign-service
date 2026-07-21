@@ -5580,6 +5580,9 @@ func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigReq
 	if body.AccountID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
 	}
+	if body.PageID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("page_id", "body"))
+	}
 	return
 }
 

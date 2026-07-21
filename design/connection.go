@@ -386,7 +386,11 @@ var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	Attribute("account_id", String, "Meta ad account ID", func() { Example("act_193556282970417") })
 	Attribute("page_id", String, "Facebook page ID")
 	Attribute("app_id", String, "Meta app ID")
-	Required("account_id")
+	// page_id is required at connection time: the Meta dispatcher needs it to attach
+	// the promoted-object page, so an active connection without it would always fail
+	// dispatch. Requiring it here surfaces the error as a 4xx at connection creation
+	// rather than a silent runtime dispatch failure.
+	Required("account_id", "page_id")
 })
 
 var MetaAdsConnection = Type("meta-ads-connection", func() {

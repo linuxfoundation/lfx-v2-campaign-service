@@ -2382,7 +2382,7 @@ type MetaAdsConnectionConfigRequestBody struct {
 	// Meta ad account ID
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// Facebook page ID
-	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`
+	PageID string `form:"page_id" json:"page_id" xml:"page_id"`
 	// Meta app ID
 	AppID *string `form:"app_id,omitempty" json:"app_id,omitempty" xml:"app_id,omitempty"`
 }
