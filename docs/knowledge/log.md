@@ -2,7 +2,6 @@
 
 ## 2026-07-21
 
-<<<<<<< HEAD
 **Update** — HubSpot client v3-contract fixes (PR #35 review, copilot; verified
 against HubSpot's OpenAPI specs). (1) `PatchEmailSettings`/`SetSendList` now PATCH the
 DRAFT route `/marketing/v3/emails/{id}/draft` — the base `/{id}` route mutates the
@@ -19,7 +18,8 @@ distinguish a may-have-committed outcome from a definite 4xx. (5) 429/error resp
 bodies are drained (bounded) before close so the keep-alive connection is reused on
 retry. (6) Added multi-page pagination tests (cursor + offset forwarding, aggregation,
 termination) for all three list-walkers.
-=======
+
+
 **Update** — PR #40 review (round 11): two fixes. (1) Archived-brief lifecycle
 inconsistency (cursor): `ListAudiences` 404s on an archived parent brief, but
 `GetAudience`/`UpdateAudience` only matched the audience row and never re-checked the
@@ -151,7 +151,6 @@ service. Wired into the container (no-db / 503-boot / live / cold-start-retry pa
 and mounted in the server (`buildMux` + a route-mount test asserting
 `GET …/audiences` resolves non-404 + a nil-endpoints fail-loud case). Service-layer
 tests cover create/defaults/If-Match(428/412/success)/404/late-binding. Full gate green.
->>>>>>> origin/main
 
 ## 2026-07-20
 
@@ -352,7 +351,6 @@ follow-up to apply the same URL-suppression there. (2) Corrected the stale
 method" after the 3xx gate was re-added. (3) Documented CreateCampaign's
 non-standard `(non-nil result, non-nil error)` contract so callers inspect the
 result on error (for reconcile) instead of discarding it.
-<<<<<<< HEAD
 **Creation** — Added the `internal/platform/hubspot` Go package (email-channel
 scaffold, LFXV2-2778 under epic LFXV2-2770). HubSpot's auth is the simplest of any
 client — a STATIC private-app bearer token (no OAuth token-exchange flow), attached
@@ -376,7 +374,7 @@ recipients via `contactIlsLists` (ILS list ids) ONLY — HubSpot removed the leg
 so the client never emits it. Sends a complete `to` (contactIds cleared) with the ILS
 send list + its suppressions. filterBranch shape invariants stay with the
 audience-builder (LFXV2-2774), not this client. Full gate green.
-=======
+
 **Creation** — Added the `internal/platform/snowflake` Go package (email channel,
 LFXV2-2772 under epic LFXV2-2770): a READ-ONLY Snowflake client that resolves
 past-edition EVENT_NAME/EVENT_ID from `ANALYTICS.PLATINUM_LFX_ONE.event_registrations`
@@ -393,7 +391,6 @@ injection-safety, fail-closed, and key parsing. **DEPENDENCY:** adds
 `github.com/snowflakedb/gosnowflake` v1.19.1 (the only official Go Snowflake driver;
 no shared Go Snowflake service exists — the LFX One UI's Snowflake service is
 TypeScript). Concept doc + code index added; `go mod tidy` run.
->>>>>>> origin/main
 
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
