@@ -101,8 +101,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		TargetingProfiles:  cfg.TargetingProfiles,
 		EmployerExclusions: cfg.EmployerExclusions,
 	}
-	if id := strings.TrimSpace(cfg.AdAccountID); id != "" && id != accountID {
-		return nil, notCreated(fmt.Errorf("linkedin adAccountId %q does not match the connection's account %q — cross-account campaigns are not allowed", id, accountID))
+	// Trim the override once and use the TRIMMED value both for the guard AND for the
+	// client input — otherwise a whitespace-padded value that matches the connection
+	// passes the guard but reaches the client as a different (padded) account.
+	adAccountID := strings.TrimSpace(cfg.AdAccountID)
+	if adAccountID != "" && adAccountID != accountID {
+		return nil, notCreated(fmt.Errorf("linkedin adAccountId %q does not match the connection's account %q — cross-account campaigns are not allowed", adAccountID, accountID))
 	}
 
 	in := linkedin.CampaignInput{
@@ -118,7 +122,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		GeoTargets:       cfg.GeoTargets,
 		TargetingProfile: cfg.TargetingProfile,
 		Variants:         cfg.Variants,
-		AdAccountID:      cfg.AdAccountID,
+		AdAccountID:      adAccountID,
 	}
 
 	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
