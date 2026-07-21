@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -75,8 +76,8 @@ func (s *AudienceService) CreateAudience(ctx context.Context, p *audiences.Creat
 	if err != nil {
 		return nil, err
 	}
-	a := audienceFromInput(p.ProjectID, p.BriefID, "", p.Audience)
-	a.CreatedBy = marshalAny(actorFromCtx(ctx))
+	a := audienceFromInput(p.ProjectID, p.BriefID, p.Audience)
+	a.CreatedBy = marshalActor(actorFromCtx(ctx))
 	// Reject an inconsistent built audience (status=built with no master-list id)
 	// before hitting the DB — AudienceBuilt means the platform list exists.
 	if verr := a.Validate(); verr != nil {
@@ -208,11 +209,22 @@ func applyAudiencePatch(cur *model.CampaignAudience, in *audiences.AudienceUpdat
 
 // ─── Mapping helpers ───
 
+// marshalActor renders the created-by actor to JSONB, or SQL NULL when there is no
+// actor. It takes the CONCRETE *model.Actor (not `any`) so a nil pointer is detected
+// directly: passing a typed-nil `*model.Actor` through marshalAny(any) would slip past
+// its `v == nil` guard (a typed nil boxed in an interface is not == nil) and persist the
+// JSONB literal `null` instead of SQL NULL, diverging from an unattributed row's intent.
+func marshalActor(actor *model.Actor) json.RawMessage {
+	if actor == nil {
+		return nil
+	}
+	return marshalAny(actor)
+}
+
 // audienceFromInput builds the domain model from a create/update payload. StatusOrDefault
 // on the model handles an omitted status (defaults to "building").
-func audienceFromInput(projectID, briefID, id string, in *audiences.AudienceInput) *model.CampaignAudience {
+func audienceFromInput(projectID, briefID string, in *audiences.AudienceInput) *model.CampaignAudience {
 	a := &model.CampaignAudience{
-		ID:                   id,
 		ProjectID:            projectID,
 		BriefID:              briefID,
 		Platform:             model.Provider(in.Platform),
@@ -220,10 +232,14 @@ func audienceFromInput(projectID, briefID, id string, in *audiences.AudienceInpu
 		SuppressionListIDs:   marshalStrings(in.SuppressionListIds),
 		InclusionSummary:     strVal(in.InclusionSummary),
 	}
+	// Preserve an explicit status; only default when omitted. (StatusOrDefault() is a
+	// no-op when Status is already set, but the explicit if/else makes that self-evident
+	// — a prior review misread the earlier unconditional call as an overwrite.)
 	if in.Status != nil {
 		a.Status = model.AudienceStatus(*in.Status)
+	} else {
+		a.Status = a.StatusOrDefault()
 	}
-	a.Status = a.StatusOrDefault()
 	return a
 }
 

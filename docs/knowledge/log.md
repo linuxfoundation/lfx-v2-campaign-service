@@ -2,6 +2,20 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 human review (David CHANGES_REQUESTED + Rashad). Fixed the one
+blocking defect: `CreateAudience` stored `created_by` as the JSONB literal `null` for an
+unattributed row — `actorFromCtx` returns a typed-nil `*model.Actor` that slips past
+`marshalAny(any)`'s `v == nil` guard (a typed nil boxed in an interface is not `== nil`)
+and JSON-marshals to `"null"`. Added a `marshalActor(*model.Actor)` helper that checks
+the concrete pointer, so no actor → SQL NULL. Also (agreeing with both reviewers) added a
+DB CHECK `campaign_audiences_platform_valid` (`platform IN ('hubspot')`) to migration
+000006 so the platform enum is datastore-enforced like `status`, not only at request
+time. Clarified `audienceFromInput` status handling to an explicit if/else (behaviorally
+identical — `StatusOrDefault()` was already a no-op when set — but a reviewer misread the
+unconditional call as an overwrite; the false positive is now un-misreadable). Dropped
+the dead `id` parameter from `audienceFromInput`. Added tests: nil-actor→NULL created_by,
+and explicit-status-preserved-on-create.
+
 **Update** — PR #40 follow-up review: two fixes. (1) The "explicit empty list clears
 suppressions" contract couldn't round-trip: `suppression_list_ids` is an optional array,
 so the generated client encodes it `json:"...,omitempty"` and a non-nil `[]string{}` is

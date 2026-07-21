@@ -41,7 +41,11 @@ applied file.
   is no natural uniqueness, hence both get their own index). `AudienceRepo`
   (create/get/list/update, project-scoped, optimistic-concurrency update via
   `ErrPreconditionFailed`) implements `domain.AudienceRepository`.
-- `000006` — CHECK constraint `campaign_audiences_built_needs_master_list`
+- `000006` — CHECK constraint `campaign_audiences_platform_valid`
+  (`platform IN ('hubspot')`) enforcing the platform enum at the datastore, mirroring
+  the `status` CHECK on 000005 — the DSL `Enum("hubspot")` guards it only at request
+  time, so a direct/worker write could otherwise persist an unsupported platform. Plus
+  the CHECK constraint `campaign_audiences_built_needs_master_list`
   (`status <> 'built' OR (platform_master_list_id IS NOT NULL AND btrim(...) <> '')`)
   enforcing the built-audience invariant at the datastore: `built` means the platform
   master list exists, so a built row must carry a genuinely non-blank pointer. The

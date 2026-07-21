@@ -113,6 +113,41 @@ func TestAudienceService_CreateMapsInputAndDefaultsStatus(t *testing.T) {
 	}
 }
 
+func TestAudienceService_Create_NoActorPersistsNullCreatedBy(t *testing.T) {
+	// With no authenticated actor in the context, created_by must be SQL NULL (nil
+	// json.RawMessage), NOT the JSONB literal `null` — a typed-nil *model.Actor boxed in
+	// `any` slips past marshalAny's == nil guard, so marshalActor guards the pointer.
+	repo := newFakeAudienceRepo()
+	s := NewAudienceService(repo)
+	created, err := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", Audience: &audiences.AudienceInput{Platform: "hubspot"},
+	})
+	if err != nil {
+		t.Fatalf("CreateAudience: %v", err)
+	}
+	stored := repo.items[created.ID]
+	if stored.CreatedBy != nil {
+		t.Errorf("created_by must be nil (SQL NULL) with no actor, got JSONB %q", string(stored.CreatedBy))
+	}
+}
+
+func TestAudienceService_Create_PreservesExplicitStatus(t *testing.T) {
+	// An explicit status on create must be preserved, not downgraded to the default.
+	// (A built status needs a master-list id or Validate() rejects it, so use that.)
+	repo := newFakeAudienceRepo()
+	s := NewAudienceService(repo)
+	created, err := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Audience: &audiences.AudienceInput{Platform: "hubspot", Status: strptr("built"), PlatformMasterListID: strptr("m-1")},
+	})
+	if err != nil {
+		t.Fatalf("CreateAudience: %v", err)
+	}
+	if created.Status != string(model.AudienceBuilt) {
+		t.Errorf("explicit status downgraded: got %q, want built", created.Status)
+	}
+}
+
 func TestAudienceService_Update_RequiresAndChecksIfMatch(t *testing.T) {
 	repo := newFakeAudienceRepo()
 	s := NewAudienceService(repo)

@@ -22,3 +22,11 @@ ALTER TABLE campaign_audiences
         status <> 'built'
         OR (platform_master_list_id IS NOT NULL AND btrim(platform_master_list_id) <> '')
     );
+
+-- Same datastore-source-of-truth reasoning for `platform`: the DSL Enum("hubspot")
+-- guards it only at request time, while `status` (migration 000005) already carries a
+-- CHECK. Constrain the enum at the DB too, so the build worker / a direct write / a
+-- backfill cannot persist an unsupported platform.
+ALTER TABLE campaign_audiences
+    ADD CONSTRAINT campaign_audiences_platform_valid
+    CHECK (platform IN ('hubspot'));
