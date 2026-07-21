@@ -229,6 +229,49 @@ func TestAudienceService_Update_BuiltInvariantEnforcedAfterMerge(t *testing.T) {
 	}
 }
 
+// parseAudienceIfMatch is a separate copy of the strong-validator parser (mirroring
+// parseBriefIfMatch); the service emits QUOTED ETags, so exercise the full response-to-
+// If-Match round trip — bare version, strong quoted entity-tag, surrounding whitespace,
+// weak tags, an unbalanced quote, non-numeric input, and missing input — asserting the
+// typed error kind (428 vs 400) each case must produce.
+func TestParseAudienceIfMatch_StrongValidator(t *testing.T) {
+	// Accepted: bare, quoted, and whitespace-padded quoted → the numeric version.
+	for in, want := range map[string]int64{`3`: 3, `"3"`: 3, ` "42" `: 42} {
+		v, err := parseAudienceIfMatch(&in)
+		if err != nil {
+			t.Errorf("parseAudienceIfMatch(%q) unexpected error: %v", in, err)
+			continue
+		}
+		if v != want {
+			t.Errorf("parseAudienceIfMatch(%q) = %d, want %d", in, v, want)
+		}
+	}
+
+	// Weak tags and an unbalanced/malformed value are a 400 BadRequest.
+	for _, bad := range []string{`W/"3"`, `w/"3"`, `"3`, `3"`, `abc`, `""`} {
+		in := bad
+		_, err := parseAudienceIfMatch(&in)
+		var badReq *audiences.BadRequestError
+		if !errors.As(err, &badReq) {
+			t.Errorf("parseAudienceIfMatch(%q) = %T, want *BadRequestError", bad, err)
+		}
+	}
+
+	// Missing input (nil or empty) is a 428 PreconditionRequired.
+	for _, name := range []string{"nil", "empty"} {
+		var p *string
+		if name == "empty" {
+			empty := ""
+			p = &empty
+		}
+		_, err := parseAudienceIfMatch(p)
+		var preReq *audiences.PreconditionRequiredError
+		if !errors.As(err, &preReq) {
+			t.Errorf("parseAudienceIfMatch(%s) = %T, want *PreconditionRequiredError", name, err)
+		}
+	}
+}
+
 func TestAudienceService_Get_NotFoundMaps404(t *testing.T) {
 	s := NewAudienceService(newFakeAudienceRepo())
 	_, err := s.GetAudience(context.Background(), &audiences.GetAudiencePayload{
