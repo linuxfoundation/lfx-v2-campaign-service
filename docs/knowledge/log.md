@@ -2,6 +2,15 @@
 
 ## 2026-07-21
 
+**Update** — GA error-body snapshot no longer pins the full response (PR #33 review,
+copilot). `doRequest` built `apiError.Body` as `string(raw)[:maxErrorBodyChars]` — the
+400-char substring shared the up-to-`maxResponseBytes` backing array, so every retained
+apiError pinned the whole body. Now the raw BYTES are sliced to the cap first and only
+the bounded slice is converted to string (a fresh allocation), so the snapshot retains at
+most `maxErrorBodyChars`. Error-code parsing still runs against the FULL raw body first,
+so duplicate/field-error classification is unchanged. Added
+`TestDoRequest_ErrorBodySnapshotIsBounded`.
+
 **Update** — GA CampaignInput gains EventSlug (PR #33 review, dealako). Added a plumbed
 `EventSlug` field to `googleads.CampaignInput` for struct parity with the meta/twitter/
 reddit clients (which build UTM click-through params from it). GA's CreateCampaign builds

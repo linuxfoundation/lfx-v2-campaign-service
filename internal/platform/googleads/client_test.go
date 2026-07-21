@@ -203,6 +203,25 @@ func TestDoRequest_Non2xxIsAPIError(t *testing.T) {
 	}
 }
 
+func TestDoRequest_ErrorBodySnapshotIsBounded(t *testing.T) {
+	// A large error body must not be retained in full: apiError.Body is a bounded
+	// snapshot (the bytes are sliced BEFORE converting to string, so the snapshot
+	// doesn't pin the whole response's backing array).
+	big := strings.Repeat("x", maxErrorBodyChars*4)
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, big)
+	})
+	_, err := c.doRequest(context.Background(), http.MethodPost, "customers/1234567890/googleAds:search", searchRequest{Query: "x"}, false)
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apiError, got %T: %v", err, err)
+	}
+	if len(ae.Body) > maxErrorBodyChars {
+		t.Errorf("apiError.Body must be capped at %d bytes, got %d", maxErrorBodyChars, len(ae.Body))
+	}
+}
+
 func TestDoRequest_MidflightFailureIsAmbiguous(t *testing.T) {
 	// A 2xx with a body that can't be decoded downstream is exercised via
 	// gaqlSearch below; here we force a transport failure by pointing at a closed

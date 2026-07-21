@@ -630,10 +630,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			// parsing the truncated (mid-JSON) snapshot would fail and silently drop the
 			// codes — breaking duplicate/field-error classification.
 			codes := parseErrorCodes(raw)
-			text := string(raw)
-			if len(text) > maxErrorBodyChars {
-				text = text[:maxErrorBodyChars]
+			// Slice the BYTES to the cap BEFORE converting to string. Truncating the
+			// string after `string(raw)` would keep the 400-char result sharing the full
+			// (up-to-maxResponseBytes) backing array, so every retained apiError would
+			// pin the whole body. Converting only the bounded slice copies just those
+			// bytes, so the snapshot retains at most maxErrorBodyChars.
+			snap := raw
+			if len(snap) > maxErrorBodyChars {
+				snap = snap[:maxErrorBodyChars]
 			}
+			text := string(snap)
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text, ErrorCodes: codes}
 		}
 
