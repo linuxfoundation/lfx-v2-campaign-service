@@ -31,9 +31,10 @@ type Email struct {
 	Name    string `json:"name"`
 	Subject string `json:"subject"`
 	State   string `json:"state"`
-	// UpdatedAt is the last-modified timestamp (RFC3339). Used only to order
-	// SearchEmails results most-recently-updated first; the string sorts
-	// lexicographically in timestamp order.
+	// UpdatedAt is the last-modified timestamp (ISO-8601). Used only to order
+	// SearchEmails results most-recently-updated first — sortEmailsByUpdatedDesc PARSES
+	// it (a raw lexical compare is unreliable when offsets or fractional precision
+	// differ).
 	UpdatedAt string `json:"updatedAt"`
 	// AppURL is a human-facing edit link (built client-side, never from the API).
 	AppURL string `json:"-"`

@@ -2,6 +2,15 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot error-path query-strip + comment/test cleanup (PR #35 review round 18,
+copilot). (1) `doRequest` now strips the query string from `path` before it reaches any
+error (the full path is already in `u` for the URL) — a paginated request carries
+`?after=<cursor>`, and the cursor (or any future query secret) must not leak through the
+URL-free error contract. Added `TestDoRequest_ErrorPathStripsQueryString`. (2) Corrected
+the stale `Email.UpdatedAt` field comment (it still claimed lexical sorting; the code
+parses). (3) `TestSearchEmails_SortsByParsedInstantNotLexical` checks `len(got)` before
+indexing so a pagination/filter regression reports the failure instead of panicking.
+
 **Update** — HubSpot sort-by-instant + drop error-body snapshot (PR #35 review round 15,
 copilot). (1) `sortEmailsByUpdatedDesc` now PARSES `updatedAt` as an RFC3339 instant
 before comparing — a raw lexical compare mis-orders equivalent instants with different

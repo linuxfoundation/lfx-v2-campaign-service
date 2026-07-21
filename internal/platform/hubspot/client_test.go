@@ -139,6 +139,28 @@ func TestDoRequest_Non2xxIsApiErrorWithoutBody(t *testing.T) {
 	}
 }
 
+func TestDoRequest_ErrorPathStripsQueryString(t *testing.T) {
+	// A paginated request path carries `?after=<cursor>`; the query (a cursor or any
+	// future secret) must NOT leak into the error's rendered path.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	_, err := c.doRequest(context.Background(), http.MethodGet, "/marketing/v3/emails?limit=100&after=SECRETCURSOR", nil, true)
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *apiError, got %T: %v", err, err)
+	}
+	if strings.Contains(ae.Path, "?") || strings.Contains(ae.Path, "SECRETCURSOR") {
+		t.Errorf("apiError.Path must not carry the query string, got %q", ae.Path)
+	}
+	if strings.Contains(ae.Error(), "SECRETCURSOR") {
+		t.Errorf("apiError.Error() leaked the cursor: %q", ae.Error())
+	}
+	if ae.Path != "/marketing/v3/emails" {
+		t.Errorf("apiError.Path = %q, want the query-free path", ae.Path)
+	}
+}
+
 func TestClient_DoesNotFollowRedirects(t *testing.T) {
 	var followed bool
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

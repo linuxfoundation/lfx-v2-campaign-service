@@ -392,6 +392,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 
 	u := c.baseURL + "/" + strings.TrimPrefix(path, "/")
 
+	// Strip the query string from `path` before it reaches any error below (the full
+	// path is already captured in `u` for the URL). A paginated request carries
+	// `?after=<cursor>`, and a cursor — or any future query secret — must not leak
+	// through the URL-free error contract.
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		var reqBody io.Reader
 		if encoded != nil {

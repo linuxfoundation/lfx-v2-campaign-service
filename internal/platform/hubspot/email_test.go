@@ -160,8 +160,11 @@ func TestSearchEmails_SortsByParsedInstantNotLexical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchEmails: %v", err)
 	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 results, got %d: %+v", len(got), got)
+	}
 	ids := []string{got[0].ID, got[1].ID, got[2].ID}
-	if len(got) != 3 || ids[0] != "newest" || ids[1] != "newer" || ids[2] != "older" {
+	if ids[0] != "newest" || ids[1] != "newer" || ids[2] != "older" {
 		t.Errorf("must sort by parsed instant incl. subsecond (newest,newer,older), got %v", ids)
 	}
 }
