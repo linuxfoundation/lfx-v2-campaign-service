@@ -545,39 +545,6 @@ only on a mutating method (a GET redirect is not a create), while 5xx and
 transport errors stay ambiguous regardless of method. Added `isMutatingMethod`
 and GET/POST/DELETE test cases. All three clients (reddit/meta/twitter) now share
 an identical method-gated contract.
-**Update** — Fixed several GA-2 correctness bugs from PR #33 review (copilot +
-cursor), verified against the v23 docs: (1) campaign create now sets the REQUIRED
-`containsEuPoliticalAdvertising: DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING` —
-omitting it fails every create with FieldError.REQUIRED (and since 2026-04-01 an
-undeclared account has ALL mutates rejected), which would have orphaned the budget.
-(2) The campaign duplicate check used `DUPLICATE_NAME` (the BUDGET code); campaigns
-use `CampaignError.DUPLICATE_CAMPAIGN_NAME` — split into isDuplicateBudgetNameErr /
-isDuplicateCampaignNameErr so the campaign branch actually fires. (3) A mutating
-429 is now UNCONFIRMED (doRequest suppresses its retry precisely because it may
-have committed — was mis-classified as a clean failure → double-create risk). (4)
-Error codes are now parsed from the FULL body in doRequest and retained on
-`apiError.ErrorCodes`; hasErrorCode reads that field instead of re-parsing the
-truncated `Body` (a real error JSON exceeds maxErrorBodyChars, so the old on-demand
-parse of the truncated snapshot silently dropped codes, breaking all duplicate
-detection). (5) A ctx check between the budget and campaign mutates skips the
-campaign create on a done context, returning the budget as a reconcilable partial.
-(6) Clarified docs: a campaign-create 4xx doesn't mean nothing was created (the
-budget exists); the non-shared-budget name-reuse-on-retry corollary is undocumented
-so retry-safety relies on a stable NameSuffix. Concept doc + index updated (GA-1→GA-2).
-
-**Creation** — Added Google Ads campaign creation (GA-2, LFXV2-2637) in
-`internal/platform/googleads/campaign.go`: `CreateCampaign` creates a PAUSED SEARCH
-campaign as two sequential `:mutate` calls — a non-shared STANDARD `campaignBudget`
-(amountMicros = budget×1e6) then a `campaign` referencing it with a `manualCpc {}`
-bidding strategy. Both resource ids surfaced. Because `:mutate` has no idempotency
-key, added `createOutcomeAmbiguous` (5xx/transport ambiguous always; 3xx only on a
-mutating method) + `isDuplicateNameErr` (4xx DUPLICATE_NAME → already-exists) +
-machine-readable error-code parsing (`error.details[GoogleAdsFailure].errors[].errorCode`,
-body never surfaced, codes bounded): an ambiguous or 2xx-no-resourceName outcome →
-UNCONFIRMED + reconcilable partial (carries the budget id once created); a definite
-4xx → clean failure. Deterministic composed names so a retry collides on
-DUPLICATE_NAME rather than double-creating. Table-driven httptest coverage for
-every branch. Concept doc updated.
 
 ## 2026-07-18
 
