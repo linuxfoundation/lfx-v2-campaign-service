@@ -89,6 +89,7 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 	// should, silently returning no lists.
 	query = strings.TrimSpace(query)
 	out := make([]List, 0)
+	seen := make(map[string]struct{})
 	offset := 0
 	for page := 0; page < maxListPages; page++ {
 		body := map[string]any{
@@ -114,7 +115,18 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			return nil, fmt.Errorf("hubspot: decode list search: %w", err)
 		}
+		// Track whether this page introduced any list id we hadn't already collected.
+		// A page that repeats only ids we've seen means the server is looping (same
+		// rows across requests) — returning success would hand back duplicates, so we
+		// error like the cursor paginators do on a stuck cursor.
+		newThisPage := 0
 		for i := range resp.Lists {
+			id := resp.Lists[i].ListID
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			newThisPage++
 			// Contact-only contract enforced client-side: the search body can't
 			// constrain the object type, so drop any non-contact (company/deal/custom)
 			// list the server returned for the same name.
@@ -135,6 +147,12 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 		// audience). Surface it as an error instead.
 		if len(resp.Lists) == 0 {
 			return nil, fmt.Errorf("hubspot: SearchLists got an empty page with hasMore=true (cannot complete)")
+		}
+		// hasMore=true but a non-empty page added no NEW list ids: the server is
+		// repeating a page it already served. Refuse to loop on it (would duplicate
+		// results), consistent with the cursor paginators' stuck-cursor guard.
+		if newThisPage == 0 {
+			return nil, fmt.Errorf("hubspot: SearchLists received a repeated page (no new list ids) with hasMore=true")
 		}
 		next := resp.Offset
 		if next <= offset {

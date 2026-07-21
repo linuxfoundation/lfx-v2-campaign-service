@@ -2,6 +2,13 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot dedup + cap coverage (PR #35 review round 7, cursor/copilot).
+`SearchLists` (offset paginator) now tracks seen list ids and errors when a non-empty
+page adds no NEW ids (server repeating a page), matching the cursor paginators'
+stuck-cursor guard — previously it could return duplicate rows. Added a boundary test
+for the 10 MiB response cap: a body AT the limit succeeds, limit+1 is a `transportError`,
+and an over-cap MUTATING call stays `IsUnconfirmed`.
+
 **Update** — HubSpot contact-list filtering correction (PR #35 review round 6, copilot).
 `SearchLists` had sent `objectTypeId: "0-1"` in the `POST /crm/v3/lists/search` body to
 constrain to contact lists — but `objectTypeId` is NOT a `ListSearchRequest` field (it's

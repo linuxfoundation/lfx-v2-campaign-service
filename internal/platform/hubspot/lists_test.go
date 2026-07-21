@@ -95,6 +95,17 @@ func TestSearchLists_FollowsOffsetPagination(t *testing.T) {
 	}
 }
 
+func TestSearchLists_RepeatedPageErrors(t *testing.T) {
+	// A server that returns the SAME rows every request (with hasMore=true) must not
+	// loop and hand back duplicates — the walker errors once a page adds no new ids.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"lists":[{"listId":"1","name":"A","objectTypeId":"0-1"}],"hasMore":true,"offset":100}`)
+	})
+	if _, err := c.SearchLists(context.Background(), "q"); err == nil {
+		t.Fatal("a repeated page with hasMore=true must error, not return duplicates")
+	}
+}
+
 func TestSearchLists_EmptyPageWithHasMoreErrors(t *testing.T) {
 	// hasMore=true with an empty page means the server can't advance us — returning a
 	// silent partial would under-target the audience, so this must be a hard error.

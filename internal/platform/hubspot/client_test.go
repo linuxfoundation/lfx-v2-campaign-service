@@ -4,6 +4,7 @@
 package hubspot
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -333,5 +334,50 @@ func TestParsePositiveInt(t *testing.T) {
 		if _, err := parsePositiveInt(bad); err == nil {
 			t.Errorf("parsePositiveInt(%q) should error", bad)
 		}
+	}
+}
+
+func TestDoRequest_ResponseBodyCapBoundary(t *testing.T) {
+	// The 10 MiB response-safety guard is load-bearing (bounds memory + retained
+	// nextPageToken strings). Exercise the boundary: a body AT the limit succeeds, a
+	// body at limit+1 is a transportError, and for a MUTATING call that oversized
+	// body is UNCONFIRMED (the write may have committed).
+
+	// AT the limit: read succeeds and returns the full body.
+	atLimit := bytes.Repeat([]byte("a"), maxResponseBody)
+	cOK, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(atLimit)
+	})
+	raw, err := cOK.doRequest(context.Background(), http.MethodGet, "/x", nil, true)
+	if err != nil {
+		t.Fatalf("a body exactly at the %d-byte cap must succeed, got %v", maxResponseBody, err)
+	}
+	if len(raw) != maxResponseBody {
+		t.Errorf("read length = %d, want %d", len(raw), maxResponseBody)
+	}
+
+	// limit+1 on an IDEMPOTENT read: transportError, and NOT unconfirmed (a read
+	// commits nothing, so it's safely retryable).
+	overLimit := bytes.Repeat([]byte("a"), maxResponseBody+1)
+	cOver, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(overLimit)
+	})
+	_, err = cOver.doRequest(context.Background(), http.MethodGet, "/x", nil, true)
+	var te *transportError
+	if !errors.As(err, &te) {
+		t.Fatalf("a body over the cap must be a transportError, got %T: %v", err, err)
+	}
+	if IsUnconfirmed(err) {
+		t.Error("an over-cap IDEMPOTENT read must NOT be UNCONFIRMED (nothing committed)")
+	}
+
+	// limit+1 on a MUTATING call: still a transportError, but UNCONFIRMED (the
+	// mutation may have landed even though we couldn't accept the reply).
+	cMut, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(overLimit)
+	})
+	_, err = cMut.doRequest(context.Background(), http.MethodPost, "/marketing/v3/emails/clone", map[string]string{"x": "y"}, false)
+	if !IsUnconfirmed(err) {
+		t.Errorf("an over-cap MUTATING call must be UNCONFIRMED, got %T: %v", err, err)
 	}
 }
