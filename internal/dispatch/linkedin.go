@@ -91,7 +91,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	runtime := linkedin.RuntimeConfig{
 		DefaultAccountID:   accountID,
 		DefaultOrgID:       orgID,
-		Accounts:           []linkedin.Account{{AccountID: accountID, OrgID: orgID, Label: res.providerConfig["label"]}},
+		Accounts:           []linkedin.Account{{AccountID: accountID, OrgID: orgID, Label: res.label}},
 		TargetingProfiles:  cfg.TargetingProfiles,
 		EmployerExclusions: cfg.EmployerExclusions,
 	}
