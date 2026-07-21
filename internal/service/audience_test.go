@@ -173,3 +173,39 @@ func TestAudienceService_SetBackend_LateBinding(t *testing.T) {
 		t.Errorf("after SetBackend a missing id must be 404 (repo bound), got %T: %v", err, err)
 	}
 }
+
+func TestAudienceService_Update_MergesOmittedFields(t *testing.T) {
+	// An update that only sets status must NOT wipe the previously-set master list id
+	// / suppressions / summary — those are preserved by the load-then-merge.
+	repo := newFakeAudienceRepo()
+	s := NewAudienceService(repo)
+	created, _ := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Audience: &audiences.AudienceInput{
+			Platform:             "hubspot",
+			PlatformMasterListID: strptr("master-777"),
+			SuppressionListIds:   []string{"90"},
+			InclusionSummary:     strptr("attended KubeCon"),
+		},
+	})
+	// Update ONLY the status.
+	updated, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("1"),
+		Audience: &audiences.AudienceInput{Platform: "hubspot", Status: strptr("built")},
+	})
+	if err != nil {
+		t.Fatalf("UpdateAudience: %v", err)
+	}
+	if updated.Status != "built" {
+		t.Errorf("status not applied: %+v", updated)
+	}
+	if updated.PlatformMasterListID == nil || *updated.PlatformMasterListID != "master-777" {
+		t.Errorf("master list id was wiped by a status-only update: %+v", updated)
+	}
+	if updated.InclusionSummary == nil || *updated.InclusionSummary != "attended KubeCon" {
+		t.Errorf("inclusion summary was wiped: %+v", updated)
+	}
+	if len(updated.SuppressionListIds) != 1 {
+		t.Errorf("suppression ids were wiped: %v", updated.SuppressionListIds)
+	}
+}

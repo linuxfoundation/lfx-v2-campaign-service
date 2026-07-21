@@ -121,12 +121,43 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 	if verr != nil {
 		return nil, verr
 	}
-	a := audienceFromInput(p.ProjectID, p.BriefID, p.AudienceID, p.Audience)
-	updated, uerr := repo.UpdateAudience(ctx, a, version)
+	// Load the stored row and MERGE only the provided (non-nil) fields onto it —
+	// otherwise an update that omits an optional field (platform_master_list_id,
+	// suppression_list_ids, inclusion_summary, status) would write empty/null and
+	// clear data set as the build progressed. The If-Match version guards this
+	// read-modify-write: repo.UpdateAudience still fails with ErrPreconditionFailed
+	// if the row changed between this load and the write.
+	cur, gerr := repo.GetAudience(ctx, p.ProjectID, p.BriefID, p.AudienceID)
+	if gerr != nil {
+		return nil, mapAudienceErr(gerr)
+	}
+	applyAudiencePatch(cur, p.Audience)
+	updated, uerr := repo.UpdateAudience(ctx, cur, version)
 	if uerr != nil {
 		return nil, mapAudienceErr(uerr)
 	}
 	return audienceResult(updated), nil
+}
+
+// applyAudiencePatch merges the provided (non-nil) fields of in onto cur. A nil
+// pointer / empty slice means "leave unchanged"; platform is immutable (ignored on
+// update). This makes update a partial modification rather than a full overwrite.
+func applyAudiencePatch(cur *model.CampaignAudience, in *audiences.AudienceInput) {
+	if in == nil {
+		return
+	}
+	if in.PlatformMasterListID != nil {
+		cur.PlatformMasterListID = *in.PlatformMasterListID
+	}
+	if in.SuppressionListIds != nil {
+		cur.SuppressionListIDs = marshalStrings(in.SuppressionListIds)
+	}
+	if in.InclusionSummary != nil {
+		cur.InclusionSummary = *in.InclusionSummary
+	}
+	if in.Status != nil {
+		cur.Status = model.AudienceStatus(*in.Status)
+	}
 }
 
 // ─── Mapping helpers ───

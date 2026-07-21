@@ -31,10 +31,19 @@ const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 
 // CreateAudience inserts a new audience row and returns it.
 func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
+	// Gate the insert on an ACTIVE parent brief scoped by BOTH (project_id, brief_id).
+	// A bare brief_id FK check would let a caller authorized for project A supply a
+	// brief id from project B (tenant/parent disagree), and would accept an archived
+	// brief. INSERT...SELECT...WHERE EXISTS inserts zero rows when the active,
+	// same-project parent is absent, which we map to ErrNotFound.
 	q := `INSERT INTO campaign_audiences
 		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
 		 inclusion_summary, status, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8
+		WHERE EXISTS (
+			SELECT 1 FROM campaign_briefs
+			WHERE id=$2 AND project_id=$1 AND status <> 'archived'
+		)
 		RETURNING ` + audienceCols
 	row := r.db.QueryRow(ctx, q,
 		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
@@ -42,6 +51,11 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 		nullJSON(a.CreatedBy),
 	)
 	created, err := scanAudience(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No active parent brief for (project, brief) → the parent is missing,
+		// archived, or belongs to another project.
+		return nil, domain.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create audience: %w", err)
 	}
@@ -63,11 +77,33 @@ func (r *AudienceRepo) GetAudience(ctx context.Context, projectID, briefID, id s
 }
 
 // ListAudiences returns a brief's audiences (newest first), scoped to the project.
+// maxAudiencesPerList bounds a single ListAudiences response. Audiences accumulate
+// over time (per platform / per build), so an unbounded list would grow without
+// limit; this caps the query cost and response size. A stable (created_at, id) order
+// makes the cap deterministic (newest first).
+const maxAudiencesPerList = 200
+
 func (r *AudienceRepo) ListAudiences(ctx context.Context, projectID, briefID string) ([]*model.CampaignAudience, error) {
+	// Verify the ACTIVE parent brief exists for (project, brief) first — otherwise a
+	// missing / cross-project / archived brief would return 200 with an empty array
+	// instead of the NotFound the endpoint declares (the child-only query can't
+	// distinguish "no audiences yet" from "no such brief").
+	var exists bool
+	if err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM campaign_briefs WHERE id=$1 AND project_id=$2 AND status <> 'archived')`,
+		briefID, projectID,
+	).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("verify parent brief: %w", err)
+	}
+	if !exists {
+		return nil, domain.ErrNotFound
+	}
+
 	q := `SELECT ` + audienceCols + ` FROM campaign_audiences
 		WHERE brief_id=$1 AND project_id=$2
-		ORDER BY created_at DESC`
-	rows, err := r.db.Query(ctx, q, briefID, projectID)
+		ORDER BY created_at DESC, id DESC
+		LIMIT $3`
+	rows, err := r.db.Query(ctx, q, briefID, projectID, maxAudiencesPerList)
 	if err != nil {
 		return nil, fmt.Errorf("list audiences: %w", err)
 	}

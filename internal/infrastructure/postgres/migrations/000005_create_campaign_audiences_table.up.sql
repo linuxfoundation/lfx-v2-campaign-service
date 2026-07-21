@@ -11,7 +11,10 @@
 -- audiences over time / per platform).
 CREATE TABLE IF NOT EXISTS campaign_audiences (
     id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id             UUID        NOT NULL,
+    -- project_id is a slug/UUID string (TEXT), matching campaign_briefs.project_id
+    -- (converted to TEXT in migration 000003) and the connection tables. A UUID
+    -- column would reject slug-scoped creates like 'cncf' with an invalid-UUID error.
+    project_id             TEXT        NOT NULL,
     brief_id               UUID        NOT NULL REFERENCES campaign_briefs(id),
     platform               TEXT        NOT NULL,          -- 'hubspot'
     -- The pointer to the real audience in the platform (a HubSpot master list id).
