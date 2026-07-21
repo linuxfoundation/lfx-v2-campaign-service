@@ -208,7 +208,19 @@ func TestLinkedIn_GroupCreatedButCampaignFails_RecordsGroupOrphan(t *testing.T) 
 	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
 		t.Error("a group-created failure must retain the claim, not release it")
 	}
-	if camp == nil || camp.PlatformCampaignID != "group:500" {
-		t.Errorf("the group orphan must be captured as group:<id>, got %+v", camp)
+	// PlatformCampaignID MUST stay empty (no campaign was created) so the orchestrator's
+	// idempotency doesn't short-circuit a retry as success; the group orphan is captured
+	// via the group_created status + the CampaignGroupID in Result.
+	if camp == nil {
+		t.Fatalf("expected a non-nil campaign for orphan recording, got nil")
+	}
+	if camp.PlatformCampaignID != "" {
+		t.Errorf("PlatformCampaignID must be empty for a group-only orphan (else idempotency false-succeeds), got %q", camp.PlatformCampaignID)
+	}
+	if camp.Status != campaignStatusGroupCreated {
+		t.Errorf("a group-only orphan must have the group_created status, got %q", camp.Status)
+	}
+	if len(camp.Result) == 0 || !strings.Contains(string(camp.Result), "500") {
+		t.Errorf("the group id must be preserved in Result for reconciliation, got %s", camp.Result)
 	}
 }

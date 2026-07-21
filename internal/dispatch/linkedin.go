@@ -14,11 +14,16 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 )
 
-// linkedinCreds is the credential shape stored (encrypted) for a LinkedIn
-// connection. LinkedIn authenticates with a single OAuth2 bearer access token; this
-// adapter unmarshals the decrypted blob into this struct itself.
+// campaignStatusGroupCreated marks a LinkedIn dispatch where the campaign GROUP was
+// created but the CAMPAIGN was not — a recoverable orphan whose group id lives in
+// Result. Distinct from campaignStatusCreated so the degraded state is visible, and
+// PlatformCampaignID is left empty so a retry re-attempts the campaign (see
+// campaignFromLinkedIn).
+const campaignStatusGroupCreated = "group_created"
+
 // linkedinCreds mirrors LinkedinAdsCredentials's field name (no json tag) — the
-// persisted JSON key is the Go field name (AccessToken), see redditCreds.
+// persisted JSON key is the Go field name (AccessToken), see redditCreds. LinkedIn
+// authenticates with a single OAuth2 bearer access token.
 type linkedinCreds struct {
 	AccessToken string
 }
@@ -156,13 +161,16 @@ func campaignFromLinkedIn(r *linkedin.CampaignResult) *model.Campaign {
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
-	// LinkedIn can create the campaign GROUP but fail/leave-ambiguous the campaign
-	// itself, returning CampaignGroupID with an empty CampaignID. Don't lose that
-	// orphan: surface the group id as the platform id (prefixed so it's not mistaken
-	// for a campaign id) so the retained row is reconcilable. The full result (both
-	// ids) is also kept in Result.
+	// LinkedIn can create the campaign GROUP but fail/leave-ambiguous the CAMPAIGN,
+	// returning CampaignGroupID with an EMPTY CampaignID. We must NOT stuff the group
+	// id into PlatformCampaignID: the orchestrator's idempotency treats ANY non-empty
+	// PlatformCampaignID as "campaign finished upstream" and short-circuits a later
+	// dispatch to success — so a group-only orphan would look permanently succeeded
+	// and the campaign would never be created on retry. PlatformCampaignID stays EMPTY
+	// (no campaign exists) so a retry re-attempts; the group orphan is preserved in
+	// Result (below, CampaignGroupID) + the group_created status for reconciliation.
 	if c.PlatformCampaignID == "" && r.CampaignGroupID != "" {
-		c.PlatformCampaignID = "group:" + r.CampaignGroupID
+		c.Status = campaignStatusGroupCreated
 	}
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
