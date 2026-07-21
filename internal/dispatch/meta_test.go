@@ -116,3 +116,34 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 		t.Error("campaign name + result blob should be populated")
 	}
 }
+
+func TestMeta_AmbiguousCreateRetainsClaim(t *testing.T) {
+	// A 5xx on the campaign POST is ambiguous → the meta client returns a non-nil
+	// name-only partial (empty CampaignID). The adapter must retain the claim.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status") {
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on the campaign POST
+	}))
+	defer srv.Close()
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+	cfg := json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"],"currencyOffset":100,"variants":[{"headline":"KubeCon 2099","primaryText":"Join us — it's great","description":"x"}]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if err == nil {
+		t.Fatal("expected an error from an ambiguous create")
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
+		t.Error("an ambiguous create must NOT be NoUpstreamCreate — the claim must be retained")
+	}
+	if camp == nil {
+		t.Error("an ambiguous create must return a non-nil campaign for orphan recording")
+	}
+}
