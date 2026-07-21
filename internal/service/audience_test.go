@@ -332,3 +332,54 @@ func TestAudienceService_Update_MergesOmittedFields(t *testing.T) {
 		t.Errorf("suppression ids were wiped: %v", updated.SuppressionListIds)
 	}
 }
+
+func TestAudienceService_Update_SuppressionListOps(t *testing.T) {
+	repo := newFakeAudienceRepo()
+	s := NewAudienceService(repo)
+	created, _ := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Audience: &audiences.AudienceInput{Platform: "hubspot", SuppressionListIds: []string{"90", "91"}},
+	})
+
+	// Replace: a non-empty list replaces the set.
+	replaced, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("1"),
+		Audience: &audiences.AudienceUpdateInput{SuppressionListIds: []string{"92"}},
+	})
+	if err != nil {
+		t.Fatalf("replace suppressions: %v", err)
+	}
+	if len(replaced.SuppressionListIds) != 1 || replaced.SuppressionListIds[0] != "92" {
+		t.Errorf("suppressions not replaced: %v", replaced.SuppressionListIds)
+	}
+
+	// Clear via the explicit flag (an empty array can't round-trip through the client's
+	// omitempty tag, which is why the boolean exists) → empties the set.
+	clearTrue := true
+	cleared, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr(strconv.FormatInt(replaced.Version, 10)),
+		Audience: &audiences.AudienceUpdateInput{ClearSuppressionLists: &clearTrue},
+	})
+	if err != nil {
+		t.Fatalf("clear suppressions: %v", err)
+	}
+	if len(cleared.SuppressionListIds) != 0 {
+		t.Errorf("suppressions not cleared: %v", cleared.SuppressionListIds)
+	}
+
+	// clear_suppression_lists=true takes precedence over a supplied list.
+	created2, _ := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b2",
+		Audience: &audiences.AudienceInput{Platform: "hubspot", SuppressionListIds: []string{"5"}},
+	})
+	both, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b2", AudienceID: created2.ID, IfMatch: strptr("1"),
+		Audience: &audiences.AudienceUpdateInput{SuppressionListIds: []string{"6", "7"}, ClearSuppressionLists: &clearTrue},
+	})
+	if err != nil {
+		t.Fatalf("clear+supply: %v", err)
+	}
+	if len(both.SuppressionListIds) != 0 {
+		t.Errorf("clear flag must win over a supplied list, got: %v", both.SuppressionListIds)
+	}
+}

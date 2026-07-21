@@ -17,7 +17,9 @@ Brief → Campaigns hierarchy: brief CRUD (the funnel unit, carrying
 job to poll), and campaign read/update. The audiences service (`design/audience.go`,
 LFXV2-2773) models built campaign audiences nested under a brief
 (`.../briefs/{briefId}/audiences`): create, get, list, and update-as-PATCH (a
-load-then-merge where a nil field is unchanged and an explicit empty list clears),
+load-then-merge where a nil field is unchanged; suppression lists are cleared via an
+explicit `clear_suppression_lists` boolean, since an empty array can't round-trip through
+the generated client's `omitempty` tag),
 with optimistic concurrency via ETag/If-Match (`428` when missing, `412` on
 mismatch). PATCH takes a dedicated `AudienceUpdateInput` (all fields optional, no
 immutable `platform`) rather than the create-time `AudienceInput` (where `platform`

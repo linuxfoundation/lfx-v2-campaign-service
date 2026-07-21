@@ -164,25 +164,28 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 }
 
 // hasAudiencePatch reports whether the patch carries at least one field to change.
-// A field counts as supplied when its pointer is non-nil or (for suppression_list_ids)
-// the slice is non-nil — an explicit `[]` is a real "clear all" change, matching
-// applyAudiencePatch's slice semantics. An all-omitted patch is a no-op and rejected.
+// A field counts as supplied when its pointer is non-nil, a non-empty suppression list
+// is supplied, or the explicit clear_suppression_lists flag is set. An all-omitted patch
+// is a no-op and rejected. (A supplied EMPTY suppression_list_ids does not count on its
+// own — the generated client drops it on the wire via omitempty, so it never reaches
+// here; clearing must use clear_suppression_lists.)
 func hasAudiencePatch(in *audiences.AudienceUpdateInput) bool {
 	if in == nil {
 		return false
 	}
 	return in.PlatformMasterListID != nil ||
-		in.SuppressionListIds != nil ||
+		len(in.SuppressionListIds) > 0 ||
+		(in.ClearSuppressionLists != nil && *in.ClearSuppressionLists) ||
 		in.InclusionSummary != nil ||
 		in.Status != nil
 }
 
 // applyAudiencePatch merges the provided fields of in onto cur (PATCH semantics).
-// A nil pointer / OMITTED slice leaves a field unchanged. Note the slice distinction:
-// an OMITTED suppression_list_ids (JSON key absent → nil slice) is left unchanged,
-// but an EXPLICIT empty array (`[]`) is a non-nil empty slice that DOES apply and
-// clears the suppressions — an intentional "remove all" rather than a no-op. platform
-// is immutable and ignored on update.
+// A nil pointer leaves a field unchanged. Suppression lists have two operations:
+// clear_suppression_lists=true removes all (takes precedence), otherwise a non-empty
+// suppression_list_ids replaces the set. A bare empty suppression_list_ids is a no-op
+// because the generated client omits it on the wire (omitempty) — that is exactly why
+// clearing has its own boolean flag. platform is immutable and ignored on update.
 func applyAudiencePatch(cur *model.CampaignAudience, in *audiences.AudienceUpdateInput) {
 	if in == nil {
 		return
@@ -190,7 +193,9 @@ func applyAudiencePatch(cur *model.CampaignAudience, in *audiences.AudienceUpdat
 	if in.PlatformMasterListID != nil {
 		cur.PlatformMasterListID = *in.PlatformMasterListID
 	}
-	if in.SuppressionListIds != nil {
+	if in.ClearSuppressionLists != nil && *in.ClearSuppressionLists {
+		cur.SuppressionListIDs = marshalStrings([]string{})
+	} else if len(in.SuppressionListIds) > 0 {
 		cur.SuppressionListIDs = marshalStrings(in.SuppressionListIds)
 	}
 	if in.InclusionSummary != nil {
@@ -288,7 +293,10 @@ func mapAudienceErr(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, domain.ErrNotFound):
-		return &audiences.NotFoundError{Code: "404", Message: "the audience was not found"}
+		// Resource-neutral: this mapping is shared across create/get/list/update, and
+		// on create/list the ErrNotFound comes from a missing/cross-project/archived
+		// PARENT BRIEF, not a missing audience — so don't claim "audience not found".
+		return &audiences.NotFoundError{Code: "404", Message: "the audience or its parent brief was not found"}
 	case errors.Is(err, domain.ErrConflict):
 		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

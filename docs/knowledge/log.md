@@ -2,6 +2,17 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 follow-up review: two fixes. (1) The "explicit empty list clears
+suppressions" contract couldn't round-trip: `suppression_list_ids` is an optional array,
+so the generated client encodes it `json:"...,omitempty"` and a non-nil `[]string{}` is
+dropped on the wire — the clear silently didn't work. Replaced the empty-slice signal with
+an explicit `clear_suppression_lists` boolean in `AudienceUpdateInput` (always encodes;
+takes precedence over a supplied list), regenerated `gen/`, updated `applyAudiencePatch`/
+`hasAudiencePatch`, and added a service test for replace/clear/precedence. (2) `mapAudienceErr`
+mapped `ErrNotFound` → "the audience was not found", but on create/list that error comes
+from a missing/cross-project/archived PARENT BRIEF — made the shared message
+resource-neutral ("the audience or its parent brief was not found").
+
 **Update** — Route + authz for campaign_audiences (LFXV2-2783). Verified the audiences
 endpoints need NO new gateway wiring: they nest under `/briefs/{briefId}/audiences`, so
 the HTTPRoute `briefs(/.*)?` regex already forwards them and the single Heimdall

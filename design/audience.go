@@ -37,18 +37,27 @@ var AudienceInput = Type("audience-input", func() {
 
 // AudienceUpdateInput is the PATCH payload. Unlike AudienceInput it has NO required
 // fields: PATCH is a partial update where every field is optional (a nil field is left
-// unchanged, an explicit empty list clears — see applyAudiencePatch). platform is
-// deliberately absent: it is immutable, so the update handler never reads it; reusing
-// AudienceInput here (where platform is Required) would force callers to resend the
-// immutable platform on a status-only or suppression-only patch, breaking the
-// "only supplied fields change" contract. It Reference()s AudienceInput so the shared
-// mutable attributes inherit their type/validation/description from one source.
+// unchanged — see applyAudiencePatch). platform is deliberately absent: it is
+// immutable, so the update handler never reads it; reusing AudienceInput here (where
+// platform is Required) would force callers to resend the immutable platform on a
+// status-only or suppression-only patch, breaking the "only supplied fields change"
+// contract. It Reference()s AudienceInput so the shared mutable attributes inherit their
+// type/validation/description from one source.
+//
+// clear_suppression_lists models the "remove all suppressions" operation EXPLICITLY.
+// An empty-slice signal can't be used: suppression_list_ids is an optional array, so the
+// generated client encodes it json:"...,omitempty" and a non-nil []string{} is dropped on
+// the wire — the clear would silently not round-trip. A boolean flag always encodes, so
+// the clear is unambiguous end-to-end: set clear_suppression_lists=true to empty the list
+// (it takes precedence over a supplied suppression_list_ids), or send a non-empty
+// suppression_list_ids to replace.
 var AudienceUpdateInput = Type("audience-update-input", func() {
 	Reference(AudienceInput)
 	Attribute("platform_master_list_id")
 	Attribute("suppression_list_ids")
 	Attribute("inclusion_summary")
 	Attribute("status")
+	Attribute("clear_suppression_lists", Boolean, "Set true to remove all suppression lists (round-trips where an empty array cannot)")
 	// No Required(): every field is optional for a partial update.
 })
 

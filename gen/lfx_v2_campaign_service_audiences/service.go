@@ -99,6 +99,9 @@ type AudienceUpdateInput struct {
 	InclusionSummary *string
 	// Build lifecycle status
 	Status *string
+	// Set true to remove all suppression lists (round-trips where an empty array
+	// cannot)
+	ClearSuppressionLists *bool
 }
 
 // CreateAudiencePayload is the payload type of the

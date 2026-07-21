@@ -380,6 +380,9 @@ type AudienceUpdateInputRequestBody struct {
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 	// Build lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Set true to remove all suppression lists (round-trips where an empty array
+	// cannot)
+	ClearSuppressionLists *bool `form:"clear_suppression_lists,omitempty" json:"clear_suppression_lists,omitempty" xml:"clear_suppression_lists,omitempty"`
 }
 
 // NewCreateAudienceResponseBody builds the HTTP response body from the result
