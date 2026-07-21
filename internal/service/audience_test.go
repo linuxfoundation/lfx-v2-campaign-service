@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
@@ -119,10 +120,11 @@ func TestAudienceService_Update_RequiresAndChecksIfMatch(t *testing.T) {
 		ProjectID: "cncf", BriefID: "b1", Audience: &audiences.AudienceInput{Platform: "hubspot"},
 	})
 
-	// Missing If-Match → 428.
+	// Missing If-Match → 428. (Use a consistent built patch — id present — so the
+	// If-Match precondition is what's exercised, not content validation.)
 	_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
 		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID,
-		Audience: &audiences.AudienceUpdateInput{Status: strptr("built")},
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built"), PlatformMasterListID: strptr("12345")},
 	})
 	var preReq *audiences.PreconditionRequiredError
 	if !errors.As(err, &preReq) {
@@ -132,7 +134,7 @@ func TestAudienceService_Update_RequiresAndChecksIfMatch(t *testing.T) {
 	// Wrong version → 412.
 	_, err = s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
 		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("99"),
-		Audience: &audiences.AudienceUpdateInput{Status: strptr("built")},
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built"), PlatformMasterListID: strptr("12345")},
 	})
 	var preFail *audiences.PreconditionFailedError
 	if !errors.As(err, &preFail) {
@@ -172,6 +174,58 @@ func TestAudienceService_Update_EmptyPatchRejected(t *testing.T) {
 	got, _ := s.GetAudience(context.Background(), &audiences.GetAudiencePayload{ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID})
 	if got.Version != 1 {
 		t.Errorf("a rejected empty patch must not bump the version, got %d", got.Version)
+	}
+}
+
+func TestAudienceService_Create_BuiltWithoutMasterListRejected(t *testing.T) {
+	// status=built means the platform master list exists — creating one with no
+	// platform_master_list_id is an inconsistent state and must be a 400.
+	s := NewAudienceService(newFakeAudienceRepo())
+	_, err := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Audience: &audiences.AudienceInput{Platform: "hubspot", Status: strptr("built")}, // no master list id
+	})
+	var bad *audiences.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("a built audience with no master-list id must be a 400, got %T: %v", err, err)
+	}
+}
+
+func TestAudienceService_Update_BuiltInvariantEnforcedAfterMerge(t *testing.T) {
+	repo := newFakeAudienceRepo()
+	s := NewAudienceService(repo)
+	// Start from a building audience with no master list id.
+	created, _ := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", Audience: &audiences.AudienceInput{Platform: "hubspot"},
+	})
+
+	// (a) Patch ONLY status→built on a row with no master-list id → 400 (the merged
+	// row would claim a list that doesn't exist).
+	_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("1"),
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built")},
+	})
+	var bad *audiences.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("status-only built patch on an id-less row must be 400, got %T: %v", err, err)
+	}
+
+	// Now legitimately build it (status + id together).
+	built, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("1"),
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built"), PlatformMasterListID: strptr("master-1")},
+	})
+	if err != nil {
+		t.Fatalf("building with id must succeed: %v", err)
+	}
+
+	// (b) Clearing the master-list id on an already-built row → 400.
+	_, err = s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr(strconv.FormatInt(built.Version, 10)),
+		Audience: &audiences.AudienceUpdateInput{PlatformMasterListID: strptr("")}, // explicit clear
+	})
+	if !errors.As(err, &bad) {
+		t.Fatalf("clearing the master-list id on a built row must be 400, got %T: %v", err, err)
 	}
 }
 

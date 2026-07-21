@@ -77,6 +77,11 @@ func (s *AudienceService) CreateAudience(ctx context.Context, p *audiences.Creat
 	}
 	a := audienceFromInput(p.ProjectID, p.BriefID, "", p.Audience)
 	a.CreatedBy = marshalAny(actorFromCtx(ctx))
+	// Reject an inconsistent built audience (status=built with no master-list id)
+	// before hitting the DB — AudienceBuilt means the platform list exists.
+	if verr := a.Validate(); verr != nil {
+		return nil, audienceValidationErr(verr)
+	}
 	created, cerr := repo.CreateAudience(ctx, a)
 	if cerr != nil {
 		return nil, mapAudienceErr(cerr)
@@ -140,6 +145,12 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 		return nil, mapAudienceErr(gerr)
 	}
 	applyAudiencePatch(cur, p.Audience)
+	// Re-validate the MERGED row: a patch that sets status=built on a row with no
+	// master-list id, or clears the id on an already-built row, would leave "built"
+	// meaning nothing. Reject as a 400 before persisting.
+	if verr := cur.Validate(); verr != nil {
+		return nil, audienceValidationErr(verr)
+	}
 	updated, uerr := repo.UpdateAudience(ctx, cur, version)
 	if uerr != nil {
 		return nil, mapAudienceErr(uerr)
@@ -260,6 +271,12 @@ func parseAudienceIfMatch(ifMatch *string) (int64, error) {
 
 // mapAudienceErr maps domain errors to the generated audiences API error types,
 // preserving already-typed audiences errors.
+// audienceValidationErr maps a domain model-validation failure to a typed 400. The
+// message is the model error's own text (safe, human-readable, no internal detail).
+func audienceValidationErr(err error) error {
+	return &audiences.BadRequestError{Code: "400", Message: err.Error()}
+}
+
 func mapAudienceErr(err error) error {
 	switch {
 	case err == nil:

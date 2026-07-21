@@ -5,8 +5,15 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"time"
 )
+
+// ErrAudienceBuiltNeedsMasterList is returned when an audience is marked built but
+// has no platform master-list id — an inconsistent state, since AudienceBuilt is
+// DEFINED as "the master list exists in the platform".
+var ErrAudienceBuiltNeedsMasterList = errors.New("a built audience must have a platform_master_list_id")
 
 // AudienceStatus is the lifecycle of a built audience.
 type AudienceStatus string
@@ -55,4 +62,18 @@ func (a *CampaignAudience) StatusOrDefault() AudienceStatus {
 		return AudienceBuilding
 	}
 	return a.Status
+}
+
+// Validate enforces the cross-field invariant that a BUILT audience must carry its
+// platform master-list pointer — AudienceBuilt is defined as "the master list exists".
+// It is called before persisting on both create and update (after the patch merge), so
+// no path — a create with status=built and no id, a status-only patch to built on a row
+// with no id, or clearing the id on an already-built row — can leave the stored row
+// claiming a list that isn't pointed at. It evaluates the EFFECTIVE status
+// (StatusOrDefault), so an omitted status on create (→ building) is fine.
+func (a *CampaignAudience) Validate() error {
+	if a.StatusOrDefault() == AudienceBuilt && strings.TrimSpace(a.PlatformMasterListID) == "" {
+		return ErrAudienceBuiltNeedsMasterList
+	}
+	return nil
 }

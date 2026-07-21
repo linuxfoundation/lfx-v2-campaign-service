@@ -2,6 +2,15 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 follow-up review: enforce the built-audience invariant. `AudienceBuilt`
+is DEFINED as "the platform master list exists", but `status:"built"` was accepted with no
+`platform_master_list_id` — persisting a row that claims a list its pointer is NULL. Added
+`CampaignAudience.Validate()` (built ⇒ non-empty master-list id, evaluated on the EFFECTIVE
+status) and call it before persisting on BOTH create AND update-after-merge, so no path (a
+create with built+no-id, a status-only patch to built on an id-less row, or clearing the id
+on an already-built row) can leave "built" meaning nothing — each is now a 400. Model +
+service tests cover all three.
+
 **Update** — PR #40 follow-up review (two rounds): fixed the campaign_audiences PATCH
 contract. (1) The update method reused `AudienceInput`, where `platform` is Required —
 so the generated validator rejected a status-only/suppression-only patch unless the
