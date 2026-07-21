@@ -118,6 +118,24 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_BudgetMicrosRounds(t *testing.T) {
+	// float64(2.01)*1e6 == 2009999.99…; a truncating int64() would drop a micro and
+	// send 2009999. The conversion must round to 2010000.
+	var budgetBody map[string]any
+	c := newCampaignClient(t,
+		func(w http.ResponseWriter, r *http.Request) { budgetBody = decode(t, r); okBudget(w, r) },
+		okCampaign,
+	)
+	in := sampleInput()
+	in.Budget = 2.01
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if got := firstCreate(t, budgetBody)["amountMicros"]; got != float64(2010000) {
+		t.Errorf("amountMicros = %v, want 2010000 (rounded, not truncated)", got)
+	}
+}
+
 func TestCreateCampaign_Campaign429IsUnconfirmed(t *testing.T) {
 	c := newCampaignClient(t, okBudget,
 		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTooManyRequests) },

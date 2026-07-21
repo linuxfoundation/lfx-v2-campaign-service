@@ -383,7 +383,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if in.Budget > maxBudget {
 		return nil, fmt.Errorf("google-ads campaign budget %.2f exceeds the maximum %.0f", in.Budget, maxBudget)
 	}
-	amountMicros := int64(in.Budget * microsPerUnit)
+	// Round (not truncate): float64(2.01)*1e6 is 2009999.99…, which int64() would
+	// truncate to 2009999 — silently dropping a micro on ordinary budgets.
+	amountMicros := int64(math.Round(in.Budget * microsPerUnit))
 	if amountMicros <= 0 {
 		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.Budget)
 	}
