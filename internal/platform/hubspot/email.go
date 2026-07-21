@@ -145,16 +145,23 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 	return &e, nil
 }
 
-// EmailSettings carries the subject/from/preheader fields to patch on a draft.
-// Nil pointers are omitted (a HubSpot PATCH preserves omitted fields).
+// EmailSettings carries the subject/from fields to patch on a draft. Nil pointers
+// are omitted (a HubSpot PATCH preserves omitted fields).
+//
+// Preview/preheader text is deliberately NOT here: the Marketing Emails v3 object
+// exposes no first-class preheader field (verified against HubSpot's OpenAPI spec —
+// there is no `previewText` or `preview_text` property; preview text is only settable
+// through an undocumented content-module path). Sending a fake field would be
+// silently ignored while reporting success, so we don't offer it. Tracked for the
+// content path in LFXV2-2775.
 type EmailSettings struct {
 	Subject   *string
 	FromName  *string
 	FromEmail *string
-	Preheader *string
 }
 
-// PatchEmailSettings updates subject/from/preheader on a draft. MUTATING.
+// PatchEmailSettings updates subject and sender (from-name / reply-to) on a draft.
+// MUTATING.
 func (c *Client) PatchEmailSettings(ctx context.Context, id string, s EmailSettings) (*Email, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, fmt.Errorf("hubspot: PatchEmailSettings requires a non-empty id")
@@ -163,20 +170,18 @@ func (c *Client) PatchEmailSettings(ctx context.Context, id string, s EmailSetti
 	if s.Subject != nil {
 		payload["subject"] = *s.Subject
 	}
-	// from-name/from-email/preheader live under the `from`/`subscriptionDetails`
-	// shape HubSpot expects on the email object.
+	// The v3 `from` object uses fromName + replyTo (verified against HubSpot's
+	// PublicEmailFromDetails schema) — NOT name/email, which HubSpot ignores.
+	// replyTo doubles as the from-address recipients see.
 	from := map[string]any{}
 	if s.FromName != nil {
-		from["name"] = *s.FromName
+		from["fromName"] = *s.FromName
 	}
 	if s.FromEmail != nil {
-		from["email"] = *s.FromEmail
+		from["replyTo"] = *s.FromEmail
 	}
 	if len(from) > 0 {
 		payload["from"] = from
-	}
-	if s.Preheader != nil {
-		payload["preview_text"] = *s.Preheader
 	}
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("hubspot: PatchEmailSettings called with nothing to set")

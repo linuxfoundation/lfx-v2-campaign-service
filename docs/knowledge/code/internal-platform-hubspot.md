@@ -59,7 +59,9 @@ googleads/reddit/meta/twitter clients:
 
 `email.go` builds on `doRequest`: `SearchEmails`/`GetEmail` (idempotent reads),
 `CloneEmail` (`POST /marketing/v3/emails/clone`), `PatchEmailSettings`
-(subject/from/preheader), and `SetSendList`. Creates/clones/PATCHes pass
+(subject + the v3 `from` object's `fromName`/`replyTo`; preview/preheader text is
+NOT a first-class v3 field, so it is deliberately not offered — see LFXV2-2775), and
+`SetSendList`. Creates/clones/PATCHes pass
 `idempotent=false` (no idempotency key → a retried 429 could double-create); a 2xx
 with no id on a clone/get is surfaced as UNCONFIRMED so the caller verifies rather
 than assuming success.

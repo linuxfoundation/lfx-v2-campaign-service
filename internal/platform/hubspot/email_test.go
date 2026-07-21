@@ -112,17 +112,45 @@ func TestPatchEmailSettings_OnlySetsProvidedFields(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"999"}`)
 	})
 	_, err := c.PatchEmailSettings(context.Background(), "999", EmailSettings{
-		Subject:   strptr("New subject"),
-		Preheader: strptr("Peek"),
+		Subject: strptr("New subject"),
 	})
 	if err != nil {
 		t.Fatalf("PatchEmailSettings: %v", err)
 	}
-	if body["subject"] != "New subject" || body["preview_text"] != "Peek" {
+	if body["subject"] != "New subject" {
 		t.Errorf("patch body = %v", body)
 	}
 	if _, ok := body["from"]; ok {
 		t.Errorf("from must be omitted when no from-name/email set: %v", body)
+	}
+}
+
+func TestPatchEmailSettings_FromUsesV3FieldNames(t *testing.T) {
+	// The v3 `from` object uses fromName + replyTo, NOT name/email (which HubSpot
+	// silently ignores). Verified against HubSpot's PublicEmailFromDetails schema.
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c.PatchEmailSettings(context.Background(), "999", EmailSettings{
+		FromName:  strptr("CNCF Events"),
+		FromEmail: strptr("events@cncf.io"),
+	}); err != nil {
+		t.Fatalf("PatchEmailSettings: %v", err)
+	}
+	from, ok := body["from"].(map[string]any)
+	if !ok {
+		t.Fatalf("from object missing: %v", body)
+	}
+	if from["fromName"] != "CNCF Events" || from["replyTo"] != "events@cncf.io" {
+		t.Errorf("from must use fromName/replyTo, got %v", from)
+	}
+	if _, bad := from["name"]; bad {
+		t.Errorf("from must NOT use the ignored `name` field: %v", from)
+	}
+	if _, bad := from["email"]; bad {
+		t.Errorf("from must NOT use the ignored `email` field: %v", from)
 	}
 }
 
