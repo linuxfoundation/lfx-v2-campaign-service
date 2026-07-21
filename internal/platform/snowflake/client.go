@@ -41,6 +41,12 @@ const (
 	// queryTimeout bounds a single resolve query. A read against the curated table is
 	// fast; this guards against a hung warehouse.
 	queryTimeout = 30 * time.Second
+
+	// escapeClause declares backslash as the ILIKE escape character (pairs with
+	// likeContains). Snowflake parses the ESCAPE argument as a standard single-quoted
+	// string literal in which backslash IS an escape character, so a single literal
+	// backslash must be written as '\\' in the SQL text.
+	escapeClause = `ESCAPE '\\'`
 )
 
 // Config is the injected Snowflake connection configuration. PrivateKeyPEM is the
@@ -61,8 +67,13 @@ type Config struct {
 
 // Client is a read-only Snowflake client. It holds a lazily-opened *sql.DB (a
 // connection pool); it is safe for concurrent use.
+//
+// It does NOT retain the injected Config (which carries the PEM private key): after
+// NewClient builds the DSN the PEM is dropped, so the credential isn't held in two
+// places. The built DSN still embeds the signing key — that's unavoidable, since the
+// gosnowflake driver needs it to open the pool — so the DSN itself is treated as
+// secret (never logged or quoted into errors).
 type Client struct {
-	cfg    Config
 	dsn    string
 	opener func(dsn string) (*sql.DB, error) // injectable for tests
 
@@ -109,7 +120,6 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	}
 
 	c := &Client{
-		cfg: cfg,
 		dsn: dsn,
 		opener: func(dsn string) (*sql.DB, error) {
 			return sql.Open("snowflake", dsn)
@@ -167,12 +177,22 @@ func (c *Client) Close() error {
 // The query is fully parameterized (no term is interpolated into SQL); each term is
 // wrapped as a `%term%` ILIKE pattern with its metacharacters escaped (see
 // likeContains) so a literal `%` or `_` in a term matches literally instead of acting
-// as a wildcard. currentYear excludes that edition (e.g. "2026"). A blank eventTerm is
-// rejected (it would match everything).
+// as a wildcard. currentYear (a 4-digit year, e.g. "2026") is REQUIRED and excludes
+// that edition — it is the guarantee that only PAST editions are returned, so a blank
+// or malformed value is rejected rather than silently dropping the exclusion. A blank
+// eventTerm is likewise rejected (it would match everything).
 func (c *Client) ResolvePastEventNames(ctx context.Context, eventTerm, locationTerm, currentYear string) ([]Event, error) {
 	eventTerm = strings.TrimSpace(eventTerm)
 	if eventTerm == "" {
 		return nil, fmt.Errorf("snowflake: ResolvePastEventNames requires a non-empty event term")
+	}
+	// currentYear gates the "past editions only" contract. If it were optional, a
+	// blank/malformed value would silently drop the NOT-ILIKE exclusion and let the
+	// CURRENT edition through — the opposite of the method's guarantee. Require a
+	// 4-digit year.
+	currentYear = strings.TrimSpace(currentYear)
+	if !isFourDigitYear(currentYear) {
+		return nil, fmt.Errorf("snowflake: ResolvePastEventNames requires currentYear as a 4-digit year (got %q)", currentYear)
 	}
 
 	db, err := c.pool()
@@ -182,19 +202,17 @@ func (c *Client) ResolvePastEventNames(ctx context.Context, eventTerm, locationT
 
 	// Fully-qualified, read-only SELECT DISTINCT against the AUTHORITATIVE source
 	// (package constants, never caller-controlled). Only bind parameters vary; LIMIT
-	// bounds the result. ESCAPE '\' pairs with likeContains's metacharacter escaping.
+	// bounds the result. escapeClause pairs with likeContains's metacharacter escaping.
 	q := fmt.Sprintf(`SELECT DISTINCT EVENT_NAME, EVENT_ID
 FROM %s.%s.%s
-WHERE EVENT_NAME ILIKE ? ESCAPE '\'`, ident(defaultDatabase), ident(defaultSchema), ident(eventTable))
+WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), ident(eventTable), escapeClause)
 	args := []any{likeContains(eventTerm)}
 	if locationTerm = strings.TrimSpace(locationTerm); locationTerm != "" {
-		q += "\n  AND EVENT_NAME ILIKE ? ESCAPE '\\'"
+		q += "\n  AND EVENT_NAME ILIKE ? " + escapeClause
 		args = append(args, likeContains(locationTerm))
 	}
-	if currentYear = strings.TrimSpace(currentYear); currentYear != "" {
-		q += "\n  AND EVENT_NAME NOT ILIKE ? ESCAPE '\\'"
-		args = append(args, likeContains(currentYear))
-	}
+	q += "\n  AND EVENT_NAME NOT ILIKE ? " + escapeClause
+	args = append(args, likeContains(currentYear))
 	q += fmt.Sprintf("\nORDER BY EVENT_NAME\nLIMIT %d", maxEventRows)
 
 	qctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -252,6 +270,19 @@ func parsePrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 		return nil, fmt.Errorf("snowflake: private key is not an RSA key")
 	}
 	return rsaKey, nil
+}
+
+// isFourDigitYear reports whether s is exactly four ASCII digits (e.g. "2026").
+func isFourDigitYear(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // likeContains builds a `%term%` ILIKE pattern that matches term as a LITERAL

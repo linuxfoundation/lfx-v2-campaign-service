@@ -132,7 +132,7 @@ func TestSource_IsAlwaysPlatinum(t *testing.T) {
 	}
 	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}}
 	c := newFakeClient(t, drv)
-	if _, err := c.ResolvePastEventNames(context.Background(), "OSSNA", "", ""); err != nil {
+	if _, err := c.ResolvePastEventNames(context.Background(), "OSSNA", "", "2026"); err != nil {
 		t.Fatalf("ResolvePastEventNames: %v", err)
 	}
 	if !strings.Contains(drv.query, "ANALYTICS.PLATINUM_LFX_ONE.event_registrations") {
@@ -194,17 +194,19 @@ func TestResolvePastEventNames_EscapesLikeMetacharacters(t *testing.T) {
 	// A term containing ILIKE metacharacters must be escaped so it matches
 	// literally, not as a wildcard (otherwise "%"/"_" match nearly everything —
 	// the same "match everything" case the empty-term guard blocks).
-	if _, err := c.ResolvePastEventNames(context.Background(), `50%_off\x`, "", ""); err != nil {
+	if _, err := c.ResolvePastEventNames(context.Background(), `50%_off\x`, "", "2026"); err != nil {
 		t.Fatalf("ResolvePastEventNames: %v", err)
 	}
-	// backslash doubled, then % and _ escaped, wrapped in literal %…%.
+	// backslash doubled, then % and _ escaped, wrapped in literal %…%. This is the
+	// FIRST bind arg (the event term); the current-year exclusion binds after it.
 	want := driver.Value(`%50\%\_off\\x%`)
-	if len(drv.args) != 1 || drv.args[0] != want {
-		t.Errorf("escaped bind arg = %v, want %v", drv.args, want)
+	if len(drv.args) < 1 || drv.args[0] != want {
+		t.Errorf("escaped bind arg[0] = %v, want %v", drv.args, want)
 	}
-	// The query must declare the ESCAPE clause that pairs with the escaping.
-	if !strings.Contains(drv.query, `ESCAPE '\'`) {
-		t.Errorf("query must declare ESCAPE '\\':\n%s", drv.query)
+	// The query must declare ESCAPE '\\' (two backslashes in the SQL text — Snowflake
+	// parses the ESCAPE literal by string-literal rules, where \\ is one backslash).
+	if !strings.Contains(drv.query, `ESCAPE '\\'`) {
+		t.Errorf("query must declare ESCAPE '\\\\':\n%s", drv.query)
 	}
 }
 
@@ -218,23 +220,36 @@ func TestClient_ConcurrentFirstUse(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = c.ResolvePastEventNames(context.Background(), "KubeCon", "", "")
+			_, _ = c.ResolvePastEventNames(context.Background(), "KubeCon", "", "2026")
 		}()
 	}
 	wg.Wait()
 }
 
-func TestResolvePastEventNames_OmitsOptionalFilters(t *testing.T) {
+func TestResolvePastEventNames_OmitsOptionalLocation(t *testing.T) {
 	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}}
 	c := newFakeClient(t, drv)
-	if _, err := c.ResolvePastEventNames(context.Background(), "OSSNA", "", ""); err != nil {
+	// location is optional; currentYear is required. With no location, exactly two
+	// binds are sent: the event term and the current-year exclusion.
+	if _, err := c.ResolvePastEventNames(context.Background(), "OSSNA", "", "2026"); err != nil {
 		t.Fatalf("ResolvePastEventNames: %v", err)
 	}
-	if strings.Contains(drv.query, "NOT ILIKE") {
-		t.Error("no current-year filter should be added when currentYear is empty")
+	if len(drv.args) != 2 {
+		t.Errorf("want 2 binds (event term + current-year exclusion) with no location, got %v", drv.args)
 	}
-	if len(drv.args) != 1 {
-		t.Errorf("only the event term should bind when location/year are empty, got %v", drv.args)
+	if !strings.Contains(drv.query, "NOT ILIKE") {
+		t.Error("the required current-year exclusion must always be present")
+	}
+}
+
+func TestResolvePastEventNames_RequiresValidCurrentYear(t *testing.T) {
+	c := newFakeClient(t, &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}})
+	// A blank or malformed currentYear must be rejected — otherwise the past-editions
+	// guarantee silently breaks and the CURRENT edition could be returned.
+	for _, bad := range []string{"", "  ", "26", "20260", "abcd", "202x"} {
+		if _, err := c.ResolvePastEventNames(context.Background(), "KubeCon", "", bad); err == nil {
+			t.Errorf("currentYear %q must be rejected (needs a 4-digit year)", bad)
+		}
 	}
 }
 

@@ -26,11 +26,17 @@ There is NO arbitrary-SQL entry point (unlike the reference app's
 `snowflake_query(sql)`). The only method, `ResolvePastEventNames(eventTerm,
 locationTerm, currentYear)`, builds a FIXED, fully-parameterized `SELECT DISTINCT
 EVENT_NAME, EVENT_ID` against `ANALYTICS.PLATINUM_LFX_ONE.event_registrations`:
-caller terms bind as `ILIKE ?` / `NOT ILIKE ?` parameters (never interpolated into
-the SQL text), the current year excludes that edition, and a `LIMIT` caps the result.
-The database/schema/table are package constants; a defensive `ident` guard
-neutralizes any future config-sourced identifier so it can never inject SQL. So the
-package is structurally incapable of a write or an injection.
+caller terms bind as `ILIKE ? ESCAPE '\\'` / `NOT ILIKE ? ESCAPE '\\'` parameters
+(never interpolated into the SQL text). Each bind pattern escapes the ILIKE
+metacharacters (`\`, `%`, `_`) so a literal `%`/`_` in a term matches literally
+instead of acting as a wildcard — the ESCAPE literal is `'\\'` (two backslashes)
+because Snowflake parses it by single-quoted-string rules where `\\` is one
+backslash. `currentYear` is REQUIRED as a 4-digit year (it's the "past editions only"
+guarantee, so a blank/malformed value is rejected rather than silently dropping the
+exclusion), and a `LIMIT` caps the result. The database/schema/table are package
+constants; a defensive `ident` guard neutralizes any future config-sourced identifier
+so it can never inject SQL. So the package is structurally incapable of a write or an
+injection.
 
 **Source = PLATINUM, not Silver.** Per the email-channel design, the broker resolves
 event names from the curated `PLATINUM_LFX_ONE.event_registrations` (the reference
@@ -48,8 +54,13 @@ Key-pair (JWT) auth: the injected unencrypted PKCS8 RSA private key
 `parsePrivateKey` tolerates the common `.env`-injection mangling (wrapping quotes,
 literal `\n`/`\r\n` escapes, CRLF) since the key often arrives via an env-injected
 secret. The `*sql.DB` pool opens lazily on the first query (so an unreachable
-warehouse doesn't wedge `NewClient`), bounded by a per-query timeout. The DSN/config
-are never quoted into error messages.
+warehouse doesn't wedge `NewClient`), guarded by a mutex so concurrent first queries
+can't double-open or race `Close`, and bounded by a per-query timeout. The DSN/config
+are never quoted into error messages. The client does NOT retain the injected
+`Config` after construction: `NewClient` builds the DSN and drops the PEM, so the
+credential isn't held in two places (the built DSN necessarily embeds the signing key
+— unavoidable, since the driver needs it to connect — so the DSN is itself treated as
+secret).
 
 ## Dependency
 
