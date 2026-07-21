@@ -171,11 +171,15 @@ func campaignFromReddit(r *reddit.CampaignResult) *model.Campaign {
 	return c
 }
 
-// decodeBriefFields pulls the shared event fields out of the brief's opaque JSON
-// blobs. EventName is required by every platform's create contract.
+// decodeBriefFields pulls the shared event fields out of the brief. EventName is
+// required by every platform's create contract.
 func decodeBriefFields(brief *model.CampaignBrief) (briefFields, error) {
 	var bf briefFields
-	// EventDetails is the primary source; Copy may also carry a token.
+	// The event/course destination is the brief's TOP-LEVEL url field (design/brief.go),
+	// not a nested JSON key — use it as the RegistrationURL.
+	bf.RegistrationURL = strings.TrimSpace(brief.URL)
+	// EventDetails is the primary source for the remaining fields; Copy may also carry
+	// a token; a nested registrationUrl is a fallback only if the top-level url is empty.
 	for _, blob := range []json.RawMessage{brief.EventDetails, brief.Copy} {
 		if len(blob) == 0 {
 			continue
