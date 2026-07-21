@@ -2,6 +2,15 @@
 
 ## 2026-07-21
 
+**Update** — Route + authz for campaign_audiences (LFXV2-2783). Verified the audiences
+endpoints need NO new gateway wiring: they nest under `/briefs/{briefId}/audiences`, so
+the HTTPRoute `briefs(/.*)?` regex already forwards them and the single Heimdall
+`project-api` rule (`/projects/:projectId/briefs/**`) already authorizes them on
+`campaign_manager` (confirmed by running the RE2 regex against real audiences paths).
+Added explicit audiences rows to the route/rule PARITY test (parity_test.go accepted
+table) so a future narrowing of the briefs match/rule can't silently unroute or
+de-authorize them, and documented the inheritance in api-catalog.md. No chart change.
+
 **Update** — PR #40 follow-up review: two fixes. (1) `AudienceRepo.UpdateAudience` did
 `UPDATE` then a SEPARATE `GetAudience` re-read to return the row — a race where a
 concurrent version N+1 could land between the two statements and hand the first caller

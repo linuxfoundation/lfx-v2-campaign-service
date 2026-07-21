@@ -54,6 +54,8 @@ A campaign is subordinate to a brief. This is a **collection** under the brief (
 
 A **built campaign audience** is a pointer + provenance to a platform-side audience (its master-list id, applied suppression lists, and a human-readable inclusion summary) — not the audience's contents. It is a **collection** subordinate to a brief (a brief may drive several audiences over time / per platform). Writes are gated on `campaign_manager` and use optimistic concurrency: reads return an ETag, and `PATCH` requires `If-Match` (`428` when missing, `412` on mismatch). `PATCH` is a load-then-merge — a nil field is left unchanged; an explicit empty list clears it.
 
+Because these paths nest under `/briefs/{briefId}/`, they inherit the gateway wiring already in place for briefs: the HTTPRoute `briefs(/.*)?` path match forwards them, and the single Heimdall `project-api` rule (`/projects/:projectId/briefs/**`) authorizes them on `campaign_manager` — no separate route or rule entry is needed (LFXV2-2783). The route/rule parity test pins explicit audiences paths so a future narrowing of the briefs match/rule can't silently unroute or de-authorize them.
+
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/briefs/{briefId}/audiences` | `campaign_manager` | JSON | Create a built audience under the brief; returns ETag. |
