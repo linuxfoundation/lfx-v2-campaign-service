@@ -182,8 +182,12 @@ func audienceFromInput(projectID, briefID, id string, in *audiences.AudienceInpu
 }
 
 // audienceResult maps the domain model to the API response view (ETag mirrors version).
+// audienceETag renders the version as a quoted HTTP entity-tag (RFC 7232), matching
+// the brief service (a bare integer is not a valid entity-tag).
+func audienceETag(version int64) string { return `"` + strconv.FormatInt(version, 10) + `"` }
+
 func audienceResult(a *model.CampaignAudience) *audiences.Audience {
-	etag := strconv.FormatInt(a.Version, 10)
+	etag := audienceETag(a.Version)
 	res := &audiences.Audience{
 		ID:                 a.ID,
 		ProjectID:          a.ProjectID,

@@ -44,7 +44,10 @@ func (r *fakeAudienceRepo) GetAudience(_ context.Context, _, _, id string) (*mod
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
-	return a, nil
+	// Return a COPY, like PostgreSQL — otherwise the service's load-then-merge would
+	// mutate the stored row in place, hiding a bug where update forgets to persist.
+	cp := *a
+	return &cp, nil
 }
 
 func (r *fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.CampaignAudience, error) {
@@ -101,7 +104,7 @@ func TestAudienceService_CreateMapsInputAndDefaultsStatus(t *testing.T) {
 	if res.Status != string(model.AudienceBuilding) {
 		t.Errorf("status = %q, want building", res.Status)
 	}
-	if res.Etag == nil || *res.Etag != "1" || res.Version != 1 {
+	if res.Etag == nil || *res.Etag != `"1"` || res.Version != 1 {
 		t.Errorf("version/etag not set: %+v", res)
 	}
 	if len(res.SuppressionListIds) != 2 {
