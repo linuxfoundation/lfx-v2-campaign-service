@@ -2,13 +2,18 @@
 
 ## 2026-07-21
 
-**Update** — PR #40 follow-up review: fixed the campaign_audiences PATCH contract. The
-update method reused `AudienceInput`, where `platform` is Required — so the generated
-update validator rejected a status-only/suppression-only patch unless the caller also
-resent the immutable `platform`, defeating the "only supplied fields change" contract.
-Added a dedicated `AudienceUpdateInput` (all mutable fields optional, no `platform`),
-pointed `update-audience` at it, regenerated `gen/`, retyped `applyAudiencePatch`, and
-updated the service tests to send platform-free patches. design.md notes the split.
+**Update** — PR #40 follow-up review (two rounds): fixed the campaign_audiences PATCH
+contract. (1) The update method reused `AudienceInput`, where `platform` is Required —
+so the generated validator rejected a status-only/suppression-only patch unless the
+caller also resent the immutable `platform`, defeating the "only supplied fields change"
+contract. Added a dedicated `AudienceUpdateInput` (all mutable fields optional, no
+`platform`), pointed `update-audience` at it, regenerated `gen/`, retyped
+`applyAudiencePatch`. (2) But then every field being optional meant `{"audience":{}}`
+passed the validator as a no-op that still bumps version/updated_at → invalidates other
+clients' ETags → spurious 412s. Added a service-level `hasAudiencePatch` guard rejecting
+an all-omitted patch as a 400 (with a test asserting the version is NOT bumped). Updated
+the service tests to send platform-free patches and fixed the `AudienceInput` doc comment
+(it is the CREATE payload; updates use `AudienceUpdateInput`). design.md notes the split.
 
 **Update** — PR #40 review: extended the container startup tests to cover the new
 audiences service (typed-503 in both no-DB and cold-start-503 modes + successful

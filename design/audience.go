@@ -18,9 +18,10 @@ import (
 
 // ─── Audience types ───
 
-// AudienceInput is the mutable audience payload (create/update). The build result
-// (platform_master_list_id, suppression_list_ids, status) is set as the platform
-// build progresses; inclusion_summary is human-readable provenance.
+// AudienceInput is the CREATE payload (platform is required). Updates use the
+// dedicated AudienceUpdateInput below (all fields optional, no immutable platform).
+// The build result (platform_master_list_id, suppression_list_ids, status) is set as
+// the platform build progresses; inclusion_summary is human-readable provenance.
 var AudienceInput = Type("audience-input", func() {
 	Attribute("platform", String, "Platform the audience is built on", func() {
 		Enum("hubspot")

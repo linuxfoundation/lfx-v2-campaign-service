@@ -152,6 +152,29 @@ func TestAudienceService_Update_RequiresAndChecksIfMatch(t *testing.T) {
 	}
 }
 
+func TestAudienceService_Update_EmptyPatchRejected(t *testing.T) {
+	// An all-omitted patch is a no-op that would still bump version/updated_at and
+	// invalidate other clients' ETags — it must be rejected as a 400, not applied.
+	repo := newFakeAudienceRepo()
+	s := NewAudienceService(repo)
+	created, _ := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", Audience: &audiences.AudienceInput{Platform: "hubspot"},
+	})
+	_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("1"),
+		Audience: &audiences.AudienceUpdateInput{}, // no field set
+	})
+	var bad *audiences.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("an empty patch must be a 400 BadRequest, got %T: %v", err, err)
+	}
+	// The version must NOT have been bumped (the no-op write was refused).
+	got, _ := s.GetAudience(context.Background(), &audiences.GetAudiencePayload{ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID})
+	if got.Version != 1 {
+		t.Errorf("a rejected empty patch must not bump the version, got %d", got.Version)
+	}
+}
+
 func TestAudienceService_Get_NotFoundMaps404(t *testing.T) {
 	s := NewAudienceService(newFakeAudienceRepo())
 	_, err := s.GetAudience(context.Background(), &audiences.GetAudiencePayload{

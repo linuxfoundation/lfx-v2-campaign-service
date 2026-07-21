@@ -121,6 +121,14 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 	if verr != nil {
 		return nil, verr
 	}
+	// Reject an empty patch. Because every AudienceUpdateInput field is optional,
+	// `{"audience":{}}` passes the generated validator — but applying it changes
+	// nothing while still bumping version/updated_at, which would invalidate other
+	// clients' ETags and cause spurious 412s. A PATCH must supply at least one mutable
+	// field.
+	if !hasAudiencePatch(p.Audience) {
+		return nil, &audiences.BadRequestError{Code: "400", Message: "update must supply at least one field to change"}
+	}
 	// Load the stored row and MERGE only the provided (non-nil) fields onto it —
 	// otherwise an update that omits an optional field (platform_master_list_id,
 	// suppression_list_ids, inclusion_summary, status) would write empty/null and
@@ -137,6 +145,20 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 		return nil, mapAudienceErr(uerr)
 	}
 	return audienceResult(updated), nil
+}
+
+// hasAudiencePatch reports whether the patch carries at least one field to change.
+// A field counts as supplied when its pointer is non-nil or (for suppression_list_ids)
+// the slice is non-nil — an explicit `[]` is a real "clear all" change, matching
+// applyAudiencePatch's slice semantics. An all-omitted patch is a no-op and rejected.
+func hasAudiencePatch(in *audiences.AudienceUpdateInput) bool {
+	if in == nil {
+		return false
+	}
+	return in.PlatformMasterListID != nil ||
+		in.SuppressionListIds != nil ||
+		in.InclusionSummary != nil ||
+		in.Status != nil
 }
 
 // applyAudiencePatch merges the provided fields of in onto cur (PATCH semantics).
