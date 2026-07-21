@@ -171,6 +171,35 @@ func isServiceUnavailable(err error) bool {
 	return ok
 }
 
+// TestSetBackend_LateBinding verifies the container can inject the repo+encryptor
+// after construction (the DB cold-start path): a service booted with a nil repo
+// returns 503, and once SetBackend injects a live repo the same call succeeds —
+// without rebuilding the service (its routes are already mounted).
+func TestSetBackend_LateBinding(t *testing.T) {
+	s := NewConnectionService(nil, nil)
+	// Before the pool is ready: 503.
+	if _, err := s.GetGoogleAds(context.Background(), &conn.GetGoogleAdsPayload{ProjectID: "cncf"}); !isServiceUnavailable(err) {
+		t.Fatalf("expected 503 before backend is set, got %T (%v)", err, err)
+	}
+
+	// Inject a live repo+encryptor (as the background DB-init goroutine does).
+	k := make([]byte, crypto.KeySize)
+	if _, err := rand.Read(k); err != nil {
+		t.Fatalf("key: %v", err)
+	}
+	enc, err := crypto.NewAESGCM(k)
+	if err != nil {
+		t.Fatalf("enc: %v", err)
+	}
+	s.SetBackend(newFakeRepo(), enc)
+
+	// After the swap: the repo is consulted; a missing connection is NotFound, NOT
+	// 503 — proving the backend went live.
+	if _, err := s.GetGoogleAds(context.Background(), &conn.GetGoogleAdsPayload{ProjectID: "cncf"}); isServiceUnavailable(err) {
+		t.Fatalf("expected the live repo to be consulted after SetBackend, still got 503")
+	}
+}
+
 func TestUpdateGoogleAds_MissingIfMatchMapsToPreconditionRequired(t *testing.T) {
 	s := newTestService(t, newFakeRepo())
 	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{

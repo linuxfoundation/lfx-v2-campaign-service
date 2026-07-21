@@ -1,0 +1,37 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Enforce the built-audience invariant at the datastore, not only in the API.
+-- AudienceBuilt is DEFINED as "the platform master list exists", so a row with
+-- status='built' MUST carry a platform_master_list_id. The service layer already
+-- rejects this with a 400 on create/update, but that protects only the two API
+-- handlers — the platform build worker and any direct write / backfill could still
+-- flip status to 'built' while leaving the pointer NULL, producing a "built"
+-- audience that answers "what did we send to?" with nothing. This CHECK makes the
+-- database the source of truth; the API 400 is then a friendly early reject.
+--
+-- The repo writes an empty platform_master_list_id as SQL NULL (nullStr), so via the
+-- API the NULL test already covers the omitted + explicitly-cleared cases. But the DB
+-- is meant to be the source of truth for ALL writers (the build worker, backfills,
+-- direct writes) — and those could persist an empty or whitespace-only string that is
+-- NOT NULL. So require a genuinely non-blank pointer: reject '' and whitespace by
+-- trimming before the emptiness test.
+-- Note: use a regex for the non-blank test, NOT btrim(). btrim(text) with no character
+-- set strips only ordinary spaces (U+0020), so a tab/newline-only id would pass — but
+-- CampaignAudience.Validate() uses Go's strings.TrimSpace (all Unicode whitespace) and
+-- would reject it, leaving the DB and app inconsistent. `~ '[^[:space:]]'` requires at
+-- least one non-whitespace character, matching the app.
+ALTER TABLE campaign_audiences
+    ADD CONSTRAINT campaign_audiences_built_needs_master_list
+    CHECK (
+        status <> 'built'
+        OR (platform_master_list_id IS NOT NULL AND platform_master_list_id ~ '[^[:space:]]')
+    );
+
+-- Same datastore-source-of-truth reasoning for `platform`: the DSL Enum("hubspot")
+-- guards it only at request time, while `status` (migration 000005) already carries a
+-- CHECK. Constrain the enum at the DB too, so the build worker / a direct write / a
+-- backfill cannot persist an unsupported platform.
+ALTER TABLE campaign_audiences
+    ADD CONSTRAINT campaign_audiences_platform_valid
+    CHECK (platform IN ('hubspot'));

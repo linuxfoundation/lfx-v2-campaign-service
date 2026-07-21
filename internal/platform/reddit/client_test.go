@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
@@ -3705,12 +3706,22 @@ func TestBuiltinClientCheckRedirectReturnsErrUseLastResponse(t *testing.T) {
 	}
 }
 
-// TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller verifies that a
-// caller-supplied *http.Client WITHOUT a CheckRedirect gets the no-follow policy
-// enforced via a shallow copy on c.httpClient, while the caller's original client
-// is provably NOT mutated (its CheckRedirect stays nil).
+// TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller verifies the OBSERVABLE
+// guarantees when a caller supplies an *http.Client WITHOUT a CheckRedirect: the
+// client used enforces no-follow, the caller's original client is NOT mutated (its
+// CheckRedirect stays nil), and the client used preserves the caller's reusable
+// Transport/Jar/Timeout. (It does not — and cannot — distinguish a fresh build from
+// a value copy: both yield a distinct pointer with the same preserved fields. The
+// fresh build is chosen for layout-independence, not for an observable behavior.)
 func TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller(t *testing.T) {
-	supplied := &http.Client{Timeout: 5 * time.Second} // CheckRedirect nil
+	suppliedTransport := &http.Transport{}
+	suppliedJar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar.New: %v", err)
+	}
+	// CheckRedirect nil; Transport/Jar/Timeout set so we can assert each is carried.
+	supplied := &http.Client{Timeout: 5 * time.Second, Transport: suppliedTransport, Jar: suppliedJar}
+
 	c := NewClient(testCreds, testAccount, WithHTTPClient(supplied))
 
 	// The client actually used must enforce no-follow.
@@ -3720,17 +3731,24 @@ func TestWithHTTPClientEnforcesNoFollowWithoutMutatingCaller(t *testing.T) {
 	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
 		t.Errorf("enforced CheckRedirect = %v, want http.ErrUseLastResponse", got)
 	}
-	// The caller's original client must NOT be mutated: it must be a distinct copy
-	// and the caller's CheckRedirect must remain nil.
+	// The caller's original client must NOT be mutated: c.httpClient must be a
+	// distinct pointer (a fresh client, not a value copy) and the caller's
+	// CheckRedirect must remain nil.
 	if c.httpClient == supplied {
-		t.Error("c.httpClient must be a COPY of the supplied client, not the same pointer")
+		t.Error("c.httpClient must be a FRESH client, not the same pointer as the supplied one")
 	}
 	if supplied.CheckRedirect != nil {
 		t.Error("the caller's original client was mutated: CheckRedirect is no longer nil")
 	}
-	// The copy must preserve the supplied Timeout.
+	// The fresh client must preserve the supplied reusable fields.
 	if c.httpClient.Timeout != 5*time.Second {
-		t.Errorf("copied client Timeout = %v, want 5s (must preserve supplied fields)", c.httpClient.Timeout)
+		t.Errorf("fresh client Timeout = %v, want 5s (must preserve supplied fields)", c.httpClient.Timeout)
+	}
+	if c.httpClient.Transport != suppliedTransport {
+		t.Error("fresh client did not preserve the caller's Transport")
+	}
+	if c.httpClient.Jar != suppliedJar {
+		t.Error("fresh client did not preserve the caller's Jar")
 	}
 }
 
@@ -3749,9 +3767,10 @@ func TestWithHTTPClientOverridesExplicitCheckRedirect(t *testing.T) {
 	if got := c.httpClient.CheckRedirect(nil, nil); !errors.Is(got, http.ErrUseLastResponse) {
 		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse (no-follow enforced)", got)
 	}
-	// The caller's original client must be untouched (copy, not mutate).
+	// The caller's original client must be untouched: a fresh client is built, not
+	// used in place, when overriding CheckRedirect.
 	if c.httpClient == supplied {
-		t.Error("supplied client must be copied, not used in place, when overriding CheckRedirect")
+		t.Error("supplied client must be rebuilt as a fresh client, not used in place, when overriding CheckRedirect")
 	}
 	if got := supplied.CheckRedirect(nil, nil); !errors.Is(got, sentinel) {
 		t.Error("the caller's original client was mutated: its CheckRedirect no longer returns the caller policy")

@@ -8,11 +8,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
+	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
@@ -21,10 +24,44 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
-// startupDBTimeout bounds the database connection/ping during container init so
-// an unreachable or slow database fails the pod fast (and lets Kubernetes
-// restart it) rather than wedging startup indefinitely.
-const startupDBTimeout = 15 * time.Second
+// startupDBTimeout bounds ONE database migration+pool-open attempt. It is a var
+// (not a const) only so tests can shrink it; production never changes it.
+var startupDBTimeout = 15 * time.Second
+
+// dbRetryInterval is the pause between background DB-init attempts during a cold
+// start. A var for the same test-only reason.
+var dbRetryInterval = 3 * time.Second
+
+// setBackends is the interface the container needs to late-bind the database once
+// the pool opens. Both service types implement it.
+type readinessSetter interface {
+	SetReadinessDep(service.ReadinessChecker)
+}
+type backendSetter interface {
+	SetBackend(domain.ConnectionRepository, domain.Encryptor)
+}
+
+// briefBackendSetter is the interface the container needs to late-bind the brief
+// service's repos + orchestrator after a cold-start retry opens the pool. *BriefService
+// implements it. Kept separate from backendSetter (whose SetBackend has a different
+// signature) so the retry path can wire both.
+type briefBackendSetter interface {
+	SetBackend(domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *service.Orchestrator)
+}
+
+// audienceBackendSetter late-binds the audience repo after a cold-start retry.
+// *AudienceService implements it.
+type audienceBackendSetter interface {
+	SetBackend(domain.AudienceRepository)
+}
+
+// notReady is a ReadinessChecker that always reports not-ready. It is wired as
+// the health dependency during a cold start so /readyz returns 503 (not OK)
+// until the real pool is swapped in — distinct from the no-database mode, where
+// no dependency is wired and /readyz reports ready.
+type notReady struct{}
+
+func (notReady) Ready(context.Context) bool { return false }
 
 // dispatchDrainTimeout bounds how long Container.Close waits for in-flight
 // campaign dispatch to finish before the pool is closed. Together with the
@@ -80,18 +117,41 @@ type Container struct {
 	Service     svc.Service
 	Connections connsvc.Service
 	Briefs      briefsvc.Service
+	Audiences   audiencesvc.Service
 
+	// mu guards pool, which the background DB-init goroutine sets once the pool
+	// opens and Close reads on shutdown.
+	mu   sync.Mutex
 	pool *postgres.Pool
 	orch *service.Orchestrator
+
+	// cancelInit stops the background DB-init goroutine (nil when none runs).
+	cancelInit context.CancelFunc
+	// initDone is closed when the background goroutine exits, so Close can wait
+	// for it (nil when no goroutine runs).
+	initDone chan struct{}
 }
 
 // NewContainer creates and wires all application dependencies.
 //
-// If a database URL is configured, it runs migrations, opens the pool, and
-// wires the connection service against it. Otherwise the connection service is
-// still wired (with a nil repo) so its routes stay mounted and return the typed
-// 503 ServiceUnavailable from the OpenAPI contract instead of a bare 404; only
-// the health endpoints are backed by real data in that mode.
+// If a database URL is configured it runs migrations and opens the pool. On
+// SUCCESS everything is wired against the live pool immediately. On a TRANSIENT
+// failure (database unreachable / migration deadline) the container does NOT
+// fail the process: it boots the services in 503 mode (health reports not-ready,
+// connection endpoints return the typed 503) and retries migration+pool in the
+// BACKGROUND, swapping the live pool in once it opens. This is what makes the
+// deployment's ~90s startupProbe budget real: /readyz stays 503 during a DB cold
+// start and the pod is kept alive, rather than the process exiting at the first
+// 15s attempt and crash-looping.
+//
+// Config errors that a retry cannot fix (invalid database settings, a bad
+// credential-encryption key) still fail fast — those return an error and the
+// process exits.
+//
+// If no database URL is configured, the connection service is wired with a nil
+// repo so its routes stay mounted and return the typed 503 ServiceUnavailable
+// from the OpenAPI contract instead of a bare 404; the health endpoints report
+// ready in that mode.
 func NewContainer(cfg *config.Config) (*Container, error) {
 	slog.Info("initializing dependency container")
 
@@ -109,38 +169,80 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
 		c.Connections = service.NewConnectionService(nil, nil)
 		c.Briefs = service.NewBriefService(nil, nil, nil, nil)
+		c.Audiences = service.NewAudienceService(nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
 	}
 
+	// A bad credential-encryption key is a config error, not a transient DB
+	// problem, so fail fast (a retry can't fix it).
 	enc, err := crypto.NewAESGCMFromBase64(cfg.CredentialEncryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("init credential encryptor: %w", err)
 	}
 
-	startupCtx, cancel := context.WithTimeout(context.Background(), startupDBTimeout)
-	defer cancel()
+	// A malformed DATABASE_URL (e.g. a keyword DSN migrations can't consume) is a
+	// deterministic config error that NO retry can fix — fail fast rather than
+	// entering the background retry loop and 503-looping forever. (Transient
+	// DB-unavailability, by contrast, IS handled by the retry path below.)
+	if err := postgres.ValidateMigrationDSN(cfg.DatabaseURL); err != nil {
+		return nil, fmt.Errorf("database configuration: %w", err)
+	}
 
-	// golang-migrate's Up() takes no context, so bound it with the same startup
-	// deadline: run it in a goroutine and fail fast if the database is
-	// unreachable, rather than letting migration wedge boot indefinitely.
-	migrateErr := make(chan error, 1)
-	go func() { migrateErr <- postgres.Migrate(cfg.DatabaseURL) }()
-	select {
-	case err := <-migrateErr:
-		if err != nil {
-			return nil, fmt.Errorf("run migrations: %w", err)
+	// Fast path: one synchronous attempt. On success, wire everything now.
+	pool, initErr := initDatabase(context.Background(), cfg.DatabaseURL)
+	switch {
+	case initErr == nil:
+		c.setPool(pool)
+		c.wireLiveBackends(pool, enc, cfg)
+		if host := cfg.RedactedDatabaseHost(); host != "" {
+			slog.Info("dependency container initialized", "database", host)
+		} else {
+			slog.Info("dependency container initialized")
 		}
-	case <-startupCtx.Done():
-		return nil, fmt.Errorf("run migrations: %w", startupCtx.Err())
+		return c, nil
+	case postgres.IsPermanentMigrationErr(initErr):
+		// A dirty schema (or other permanent migration state) can NEVER be cleared by
+		// retrying — it needs an operator to inspect and force the version. Fail fast
+		// so the failure is loud (pod crash) rather than a silent 503 loop that burns
+		// the startup-probe budget and then restarts to the same broken state.
+		return nil, fmt.Errorf("database migration is in a permanent-failure state (needs manual recovery): %w", initErr)
+	default:
+		slog.Warn("database not ready at startup; booting in 503 mode and retrying in the background",
+			"error", initErr.Error())
 	}
 
-	pool, err := postgres.NewPool(startupCtx, cfg.DatabaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("open database pool: %w", err)
-	}
-	c.pool = pool
+	// Transient failure: boot in 503 mode. Wire the health dependency to notReady
+	// (so /readyz reports 503, unlike the no-database mode), the connection service
+	// with a nil repo, and the brief service with nil repos (its routes stay mounted
+	// and return the typed 503). The background goroutine late-binds the live
+	// pool/repos into ALL THREE (connection, brief, health readiness) once it opens,
+	// so brief + job routes go live without a pod restart.
+	campaign := service.NewCampaignService(notReady{})
+	connections := service.NewConnectionService(nil, enc)
+	briefs := service.NewBriefService(nil, nil, nil, nil)
+	auds := service.NewAudienceService(nil)
+	c.Service = campaign
+	c.Connections = connections
+	c.Briefs = briefs
+	c.Audiences = auds
 
+	initCtx, cancel := context.WithCancel(context.Background())
+	c.cancelInit = cancel
+	c.initDone = make(chan struct{})
+	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections, briefs, auds)
+
+	return c, nil
+}
+
+// wireLiveBackends wires all services against a live pool: the connection service
+// (repo + encryptor), the brief service and its async orchestrator (brief/campaign/
+// job repos; no dispatchers registered yet, so a startup warning notes campaigns
+// record jobs but perform no upstream dispatch), and the campaign/health service so
+// /readyz reflects DB connectivity. It also recovers jobs orphaned by a prior pod
+// restart and starts the periodic recovery sweeper. Shared by the fast path (and,
+// once brief/orchestrator late-binding exists, reusable from the retry path).
+func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
 	repo := postgres.NewConnectionRepo(pool)
 	c.Connections = service.NewConnectionService(repo, enc)
 	briefRepo := postgres.NewBriefRepo(pool)
@@ -159,12 +261,15 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	c.Audiences = service.NewAudienceService(postgres.NewAudienceRepo(pool))
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
 	// dispatch goroutine lived only in that process, so fail them forward now
 	// rather than leaving them non-terminal forever. Bounded by the startup
 	// deadline; a failure here is logged but not fatal (the service can still run).
-	if n, rerr := jobRepo.FailStuckJobs(startupCtx, "job did not complete before a service restart"); rerr != nil {
+	recoverCtx, cancel := context.WithTimeout(context.Background(), startupDBTimeout)
+	defer cancel()
+	if n, rerr := jobRepo.FailStuckJobs(recoverCtx, "job did not complete before a service restart"); rerr != nil {
 		slog.Warn("failed to recover stuck jobs on startup", "error", rerr)
 	} else if n > 0 {
 		slog.Info("recovered stuck jobs on startup", "count", n)
@@ -177,18 +282,156 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
-
-	if host := cfg.RedactedDatabaseHost(); host != "" {
-		slog.Info("dependency container initialized", "database", host)
-	} else {
-		slog.Info("dependency container initialized")
-	}
-	return c, nil
 }
 
-// Close releases any resources held by the container. It first drains in-flight
-// campaign dispatch so a dispatch that already created an upstream campaign
-// isn't cut off before it persists, THEN closes the database pool.
+// retryDatabaseInit keeps attempting migration+pool-open until it succeeds or the
+// context is cancelled (shutdown). On success it late-binds the live pool into ALL
+// the mounted services — connection, brief (repos + orchestrator), and health
+// readiness — and runs the same stuck-job recovery + periodic sweeper the fast path
+// does, so /readyz flips to healthy AND the connection + brief/job routes go live
+// without a pod restart.
+func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter, bb briefBackendSetter, ab audienceBackendSetter) {
+	defer close(c.initDone)
+
+	for attempt := 1; ; attempt++ {
+		pool, err := initDatabase(ctx, cfg.DatabaseURL)
+		if err == nil {
+			c.setPool(pool)
+			// Late-bind the connection service.
+			b.SetBackend(postgres.NewConnectionRepo(pool), enc)
+			// Late-bind the brief service (repos + orchestrator) so brief/job routes go
+			// live, and run the stuck-job recovery + start the periodic sweeper — the
+			// same work wireLiveBackends does on the fast path.
+			briefRepo := postgres.NewBriefRepo(pool)
+			campaignRepo := postgres.NewCampaignRepo(pool)
+			jobRepo := postgres.NewJobRepo(pool)
+			dispatchers := map[model.Provider]service.PlatformDispatcher{}
+			if len(dispatchers) == 0 {
+				slog.Warn("no platform dispatchers registered; campaign creation will record jobs but perform no upstream dispatch")
+			}
+			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
+			// Safe without a lock: Close() waits on <-c.initDone (closed when this
+			// goroutine returns) before it reads c.orch, so this write happens-before
+			// that read.
+			c.orch = orch
+			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
+			ab.SetBackend(postgres.NewAudienceRepo(pool))
+			// Derive from ctx (the init context Close cancels), NOT context.Background():
+			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
+			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the
+			// bounded shutdown budget by up to startupDBTimeout. The timeout still bounds a
+			// slow query during normal startup.
+			recoverCtx, cancelRecover := context.WithTimeout(ctx, startupDBTimeout)
+			if n, rerr := jobRepo.FailStuckJobs(recoverCtx, "job did not complete before a service restart"); rerr != nil {
+				slog.Warn("failed to recover stuck jobs on startup", "error", rerr)
+			} else if n > 0 {
+				slog.Info("recovered stuck jobs on startup", "count", n)
+			}
+			cancelRecover()
+			orch.StartRecoverySweeper()
+			// Flip readiness LAST, so /readyz only reports healthy after the brief
+			// service is fully wired (avoids a window where /readyz is OK but brief
+			// routes still 503).
+			r.SetReadinessDep(pool)
+			if host := cfg.RedactedDatabaseHost(); host != "" {
+				slog.Info("database now ready; connection + brief endpoints live", "database", host, "attempts", attempt)
+			} else {
+				slog.Info("database now ready; connection + brief endpoints live", "attempts", attempt)
+			}
+			return
+		}
+		// A permanent migration state (dirty schema) will never clear by retrying, so
+		// stop the loop and surface it loudly. /readyz stays at 503 with no live pool,
+		// but the ERROR log makes the reason unambiguous instead of an endless silent
+		// "will retry" stream — an operator must force the migration version.
+		if postgres.IsPermanentMigrationErr(err) {
+			slog.Error("background database initialization hit a permanent migration failure (needs manual recovery); stopping retries",
+				"attempt", attempt, "error", err.Error())
+			return
+		}
+		slog.Warn("background database initialization attempt failed; will retry",
+			"attempt", attempt, "retryIn", dbRetryInterval.String(), "error", err.Error())
+
+		select {
+		case <-ctx.Done():
+			slog.Info("stopping background database initialization (shutdown)")
+			return
+		case <-time.After(dbRetryInterval):
+		}
+	}
+}
+
+// setPool stores the live pool under the lock (Close reads it on shutdown).
+func (c *Container) setPool(pool *postgres.Pool) {
+	c.mu.Lock()
+	c.pool = pool
+	c.mu.Unlock()
+}
+
+// initDatabase runs migrations and opens the pool within a single bounded
+// attempt. golang-migrate's Up() takes no context, so it is bounded by running
+// it under the same deadline. Returns the live pool or an error.
+func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
+	ctx, cancel := context.WithTimeout(parent, startupDBTimeout)
+	defer cancel()
+
+	// Open the pool FIRST: NewPool does a context-bounded Ping (pool.go), so when the
+	// database is unreachable this fails fast within the deadline. golang-migrate's
+	// Up() takes no context and blocks until the DB responds, so running it against a
+	// down database would hang past the deadline — and because the caller retries,
+	// each hung attempt would leak another migration goroutine and race concurrent
+	// migrations. Gating Migrate behind a successful (reachable) Ping ensures Migrate
+	// only runs when the DB is actually up, where it connects immediately, so no
+	// migration goroutine is ever left blocked and retries never overlap.
+	pool, err := postgres.NewPool(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database pool: %w", err)
+	}
+
+	// Migrate only after a reachable ping (above), so it connects immediately rather
+	// than blocking against a down DB. It can still run long on a reachable DB if a
+	// migration is slow or lock-blocked, and golang-migrate's Up() takes no context,
+	// so bound it with the startup deadline: run it under migrateMu (only ONE
+	// migration ever runs at a time, so a retry can't start a second while a prior is
+	// still finishing) and return on the deadline. On timeout the in-flight migration
+	// keeps running under the lock; the next retry blocks on migrateMu until it
+	// finishes rather than launching an overlapping one.
+	migrateDone := make(chan error, 1)
+	go func() {
+		migrateMu.Lock()
+		defer migrateMu.Unlock()
+		migrateDone <- postgres.Migrate(dsn)
+	}()
+	select {
+	case mErr := <-migrateDone:
+		if mErr != nil {
+			pool.Close()
+			return nil, fmt.Errorf("run migrations: %w", mErr)
+		}
+	case <-ctx.Done():
+		pool.Close()
+		return nil, fmt.Errorf("run migrations: %w", ctx.Err())
+	}
+	// A successful migrateDone can win the select even if ctx was ALSO cancelled
+	// (Go picks a ready case pseudo-randomly when both fire together). Returning a
+	// live pool here would let retryDatabaseInit late-bind backends, start the
+	// sweeper, and flip readiness AFTER Close cancelled init — the exact pool swap
+	// Close means to prevent. Re-check the context and fail closed if it's done.
+	if err := ctx.Err(); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+	return pool, nil
+}
+
+// migrateMu serializes golang-migrate runs so a retry never starts a second
+// migration while a prior (possibly deadline-abandoned) one is still finishing.
+var migrateMu sync.Mutex
+
+// Close releases any resources held by the container. It first stops the background
+// DB-init goroutine (if a cold start is still retrying), then drains in-flight
+// campaign dispatch so a dispatch that already created an upstream campaign isn't
+// cut off before it persists, THEN closes the database pool.
 //
 // Orchestrator.Shutdown runs two separately-budgeted phases: a clean drain
 // bounded by dispatchDrainTimeout, then (only if that elapses) a post-cancel
@@ -198,6 +441,13 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 // would have zero budget and the pool could close while a just-cancelled
 // dispatch is still finalizing job/campaign state.
 func (c *Container) Close(ctx context.Context) error {
+	// Stop the background DB-init goroutine first (if the container booted in 503
+	// mode and is still retrying), and wait for it to exit so it can't open/swap a
+	// pool after we've decided to shut down.
+	if c.cancelInit != nil {
+		c.cancelInit()
+		<-c.initDone
+	}
 	// Capture the orchestrator shutdown error but do NOT early-return on it: the
 	// pool must still be closed even if the drain timed out with dispatches still
 	// running. Returning the error (rather than swallowing it) makes a shutdown
@@ -210,8 +460,11 @@ func (c *Container) Close(ctx context.Context) error {
 			shutdownErr = fmt.Errorf("drain in-flight dispatch: %w", err)
 		}
 	}
-	if c.pool != nil {
-		c.pool.Close()
+	c.mu.Lock()
+	pool := c.pool
+	c.mu.Unlock()
+	if pool != nil {
+		pool.Close()
 	}
 	return shutdownErr
 }

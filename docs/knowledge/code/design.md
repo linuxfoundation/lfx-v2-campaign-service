@@ -9,14 +9,24 @@ resource: "design"
 
 Package design contains the DSL for the campaign service Goa API generation.
 
-It defines three services: the health service (`readyz`/`livez`), the
-connections service (per-provider singleton credential CRUD), and the briefs
-service. The briefs service models the Project → Brief → Campaigns hierarchy:
-brief CRUD (the funnel unit, carrying `program_type`), asynchronous campaign
-creation (`POST .../campaigns` returns a job to poll), and campaign read/update.
-Every method is gated on `campaign_manager` at the gateway via `JWTAuth`, which
-can reject any request with a `BadRequest` (400) — so every brief method
-declares `BadRequest` regardless of whether it accepts a body. The binding
-`platforms` selection is constrained to the known provider enum.
+It defines four services: the health service (`readyz`/`livez`), the
+connections service (per-provider singleton credential CRUD), the briefs
+service, and the audiences service. The briefs service models the Project →
+Brief → Campaigns hierarchy: brief CRUD (the funnel unit, carrying
+`program_type`), asynchronous campaign creation (`POST .../campaigns` returns a
+job to poll), and campaign read/update. The audiences service (`design/audience.go`,
+LFXV2-2773) models built campaign audiences nested under a brief
+(`.../briefs/{briefId}/audiences`): create, get, list, and update-as-PATCH (a
+load-then-merge where a nil field is unchanged; suppression lists are cleared via an
+explicit `clear_suppression_lists` boolean, since an empty array can't round-trip through
+the generated client's `omitempty` tag),
+with optimistic concurrency via ETag/If-Match (`428` when missing, `412` on
+mismatch). PATCH takes a dedicated `AudienceUpdateInput` (all fields optional, no
+immutable `platform`) rather than the create-time `AudienceInput` (where `platform`
+is required) — so a status-only or suppression-only patch is valid without resending
+the immutable platform. Every method is gated on `campaign_manager` at the gateway via
+`JWTAuth`, which can reject any request with a `BadRequest` (400) — so every brief
+and audience method declares `BadRequest` regardless of whether it accepts a body.
+The binding `platforms` selection is constrained to the known provider enum.
 
 See [design](../../../design).

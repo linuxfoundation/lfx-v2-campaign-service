@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -20,7 +21,14 @@ import (
 
 // BriefService implements the generated briefs service interface, delegating to
 // the brief/campaign repositories and the async orchestrator.
+//
+// The collaborators are guarded by mu so the container can LATE-BIND them after a
+// cold-start DB retry succeeds (SetBackend), just like ConnectionService: the
+// routes are mounted at boot against this instance, so the retry must mutate it in
+// place rather than swap the instance. Handlers snapshot the collaborators under the
+// lock (deps) and never dereference the fields directly.
 type BriefService struct {
+	mu        sync.RWMutex
 	briefs    domain.BriefRepository
 	campaigns domain.CampaignRepository
 	jobs      domain.JobRepository
@@ -37,18 +45,44 @@ func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j do
 	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch}
 }
 
-// ensureAvailable returns the typed 503 ServiceUnavailable error when the
-// service has no database wired (DATABASE_URL unset). The brief routes are still
-// mounted in that mode so runtime matches the published OpenAPI contract,
-// consistent with the connection service.
-func (s *BriefService) ensureAvailable() error {
+// SetBackend late-binds the brief/campaign/job repositories and the orchestrator
+// after a cold-start DB retry opens the pool, so the brief and job routes go live
+// without a pod restart (mirrors ConnectionService.SetBackend). Guarded by mu against
+// concurrent handler reads.
+func (s *BriefService) SetBackend(b domain.BriefRepository, c domain.CampaignRepository, j domain.JobRepository, orch *Orchestrator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.briefs, s.campaigns, s.jobs, s.orch = b, c, j, orch
+}
+
+// deps snapshots the collaborators under the read lock so a handler works against a
+// consistent set even if SetBackend fires mid-request.
+func (s *BriefService) deps() (domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *Orchestrator) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.briefs, s.campaigns, s.jobs, s.orch
+}
+
+// ready snapshots the collaborators under the read lock and returns the typed 503
+// ServiceUnavailable error when the service has no database wired (DATABASE_URL
+// unset, or a cold start that hasn't finished retrying). Handlers call this once and
+// use the returned locals, so they work against a consistent set even if SetBackend
+// fires mid-request and never dereference the fields directly. The brief routes are
+// still mounted in the unavailable mode so runtime matches the published OpenAPI
+// contract, consistent with the connection service.
+func (s *BriefService) ready() (domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *Orchestrator, error) {
 	// Check every collaborator the service methods dereference, not just briefs:
-	// in the no-database mode they are all nil together, but guarding only briefs
-	// would nil-panic if the service were ever partially wired.
-	if s.briefs == nil || s.campaigns == nil || s.jobs == nil || s.orch == nil {
-		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "brief storage is not configured"}
+	// in the no-database (and cold-start) mode they are all nil together, but
+	// guarding only briefs would nil-panic if the service were ever partially wired.
+	b, c, j, orch := s.deps()
+	if b == nil || c == nil || j == nil || orch == nil {
+		// Availability-neutral wording (matches the connection service): in
+		// cold-start mode the database IS configured but the backend hasn't
+		// bound yet, so "not configured" would wrongly tell operators to change
+		// config during a transient startup window.
+		return nil, nil, nil, nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "brief storage is unavailable"}
 	}
-	return nil
+	return b, c, j, orch, nil
 }
 
 // JWTAuth mirrors the connection service: it records the authenticated actor
@@ -66,7 +100,8 @@ func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JW
 // ─── Briefs ───
 
 func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPayload) (*briefs.Brief, error) {
-	if err := s.ensureAvailable(); err != nil {
+	briefRepo, _, _, _, err := s.ready()
+	if err != nil {
 		return nil, err
 	}
 	in := p.Brief
@@ -81,7 +116,7 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
 	}
-	created, err := s.briefs.CreateBrief(ctx, b)
+	created, err := briefRepo.CreateBrief(ctx, b)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -95,10 +130,11 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 }
 
 func (s *BriefService) GetBrief(ctx context.Context, p *briefs.GetBriefPayload) (*briefs.Brief, error) {
-	if err := s.ensureAvailable(); err != nil {
+	briefRepo, _, _, _, err := s.ready()
+	if err != nil {
 		return nil, err
 	}
-	b, err := s.briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
+	b, err := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -106,7 +142,8 @@ func (s *BriefService) GetBrief(ctx context.Context, p *briefs.GetBriefPayload) 
 }
 
 func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPayload) (*briefs.Brief, error) {
-	if err := s.ensureAvailable(); err != nil {
+	briefRepo, _, _, _, err := s.ready()
+	if err != nil {
 		return nil, err
 	}
 	version, err := parseBriefIfMatch(p.IfMatch)
@@ -126,7 +163,7 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
 	}
-	updated, uerr := s.briefs.ReplaceBrief(ctx, b, version)
+	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version)
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -134,14 +171,15 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 }
 
 func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefPayload) (*briefs.Brief, error) {
-	if err := s.ensureAvailable(); err != nil {
+	briefRepo, _, _, _, err := s.ready()
+	if err != nil {
 		return nil, err
 	}
 	version, err := parseBriefIfMatch(p.IfMatch)
 	if err != nil {
 		return nil, err
 	}
-	b, aerr := s.briefs.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version)
+	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version)
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
@@ -149,19 +187,21 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 }
 
 func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPayload) error {
-	if err := s.ensureAvailable(); err != nil {
+	briefRepo, _, _, _, err := s.ready()
+	if err != nil {
 		return err
 	}
-	return mapBriefErr(s.briefs.ArchiveBrief(ctx, p.ProjectID, p.BriefID))
+	return mapBriefErr(briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID))
 }
 
 // ─── Campaigns ───
 
 func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCampaignsPayload) (*briefs.JobCreateResponse, error) {
-	if err := s.ensureAvailable(); err != nil {
+	briefRepo, _, _, orch, err := s.ready()
+	if err != nil {
 		return nil, err
 	}
-	brief, err := s.briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
+	brief, err := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -194,7 +234,7 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	// (which resets it to draft, bumping version) or archive committing between this
 	// read and job creation makes Start fail (domain.ErrStaleApproval → 409) rather
 	// than launching paid campaigns from a stale "approved" snapshot.
-	jobID, err := s.orch.Start(ctx, brief, brief.Version, platforms, marshalAny(p.Input.Config))
+	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, marshalAny(p.Input.Config))
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -203,10 +243,11 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 }
 
 func (s *BriefService) GetCampaign(ctx context.Context, p *briefs.GetCampaignPayload) (*briefs.Campaign, error) {
-	if err := s.ensureAvailable(); err != nil {
+	_, campaignRepo, _, _, err := s.ready()
+	if err != nil {
 		return nil, err
 	}
-	c, err := s.campaigns.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	c, err := campaignRepo.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -214,7 +255,8 @@ func (s *BriefService) GetCampaign(ctx context.Context, p *briefs.GetCampaignPay
 }
 
 func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampaignPayload) (*briefs.Campaign, error) {
-	if err := s.ensureAvailable(); err != nil {
+	_, campaignRepo, _, _, err := s.ready()
+	if err != nil {
 		return nil, err
 	}
 	version, err := parseBriefIfMatch(p.IfMatch)
@@ -225,7 +267,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// (name, status, config). ReplaceCampaign writes every column, so budget,
 	// dates, platform, and result must be carried over from the stored row or a
 	// config-only edit would zero them out.
-	existing, gerr := s.campaigns.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	existing, gerr := campaignRepo.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
@@ -239,7 +281,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
-	updated, uerr := s.campaigns.ReplaceCampaign(ctx, existing, version)
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version)
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -247,10 +289,11 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 }
 
 func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*briefs.JobPollResponse, error) {
-	if err := s.ensureAvailable(); err != nil {
+	_, _, jobRepo, _, err := s.ready()
+	if err != nil {
 		return nil, err
 	}
-	j, err := s.jobs.GetJob(ctx, p.ProjectID, p.JobID)
+	j, err := jobRepo.GetJob(ctx, p.ProjectID, p.JobID)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}

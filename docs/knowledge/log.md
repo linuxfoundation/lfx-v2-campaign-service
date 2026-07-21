@@ -2,6 +2,7 @@
 
 ## 2026-07-21
 
+<<<<<<< HEAD
 **Update** — HubSpot client v3-contract fixes (PR #35 review, copilot; verified
 against HubSpot's OpenAPI specs). (1) `PatchEmailSettings`/`SetSendList` now PATCH the
 DRAFT route `/marketing/v3/emails/{id}/draft` — the base `/{id}` route mutates the
@@ -18,8 +19,288 @@ distinguish a may-have-committed outcome from a definite 4xx. (5) 429/error resp
 bodies are drained (bounded) before close so the keep-alive connection is reused on
 retry. (6) Added multi-page pagination tests (cursor + offset forwarding, aggregation,
 termination) for all three list-walkers.
+=======
+**Update** — PR #40 review (round 11): two fixes. (1) Archived-brief lifecycle
+inconsistency (cursor): `ListAudiences` 404s on an archived parent brief, but
+`GetAudience`/`UpdateAudience` only matched the audience row and never re-checked the
+brief was active — so after archiving, list failed while get/patch still succeeded on
+the same nested resource. Added an `EXISTS(active brief)` predicate to `GetAudience`'s
+query (Update loads via Get, so the patch path is covered too), consistent with List +
+Create. (2) Doc drift: `internal-infrastructure-postgres.md` still showed the old
+`btrim(...) <> ''` 000006 constraint; updated it to the `~ '[^[:space:]]'` expression.
+
+**Update** — PR #40 review (copilot, round 10, after David's approval): two fixes.
+(1) UpdateAudience checked If-Match only via the repo's atomic write, AFTER the merge +
+built-invariant Validate() — so a patch valid against the client's fetched version but
+content-invalid once merged onto a NEWER stored version returned 400 instead of 412
+(stale ETag). Added an explicit `cur.Version != version → 412` check right after
+GetAudience (before merge/validate); the repo's atomic check still catches a read→write
+race. Added a regression test (`TestAudienceService_Update_StaleIfMatchIs412NotContent400`).
+(2) The built-invariant CHECK (000006) used `btrim(x) <> ''`, which strips only ordinary
+spaces — a tab/newline-only master-list id passed the DB CHECK but `Validate()`
+(strings.TrimSpace) rejects it. Switched to `platform_master_list_id ~ '[^[:space:]]'`
+(requires a non-whitespace char), matching the app.
+
+**Update** — PR #40 review (copilot, round 9): two fixes. (1) Cross-tenant integrity gap:
+`campaign_audiences.brief_id` referenced only `campaign_briefs(id)`, so the copied
+`project_id` was unchecked — a worker/backfill/direct write could persist an audience
+whose `project_id` differed from its brief's, and `GetAudience` (trusts the stored
+`project_id` for tenant scoping) could expose it under the wrong tenant. Added migration
+000007: a composite FK `(brief_id, project_id) → campaign_briefs(id, project_id)` (plus
+the `UNIQUE (id, project_id)` on campaign_briefs the composite FK requires). The API
+create path already guarded this via `INSERT … WHERE EXISTS` an active project-scoped
+brief; the FK makes the DB the source of truth for all writers. (2) Doc drift: updated
+`cmd-campaign-service.md` to say `buildMux` mounts health/campaign, connection, brief,
+AND audience servers (it said only health + connection).
+
+**Update** — PR #40 human review (David CHANGES_REQUESTED + Rashad). Fixed the one
+blocking defect: `CreateAudience` stored `created_by` as the JSONB literal `null` for an
+unattributed row — `actorFromCtx` returns a typed-nil `*model.Actor` that slips past
+`marshalAny(any)`'s `v == nil` guard (a typed nil boxed in an interface is not `== nil`)
+and JSON-marshals to `"null"`. Added a `marshalActor(*model.Actor)` helper that checks
+the concrete pointer, so no actor → SQL NULL. Also (agreeing with both reviewers) added a
+DB CHECK `campaign_audiences_platform_valid` (`platform IN ('hubspot')`) to migration
+000006 so the platform enum is datastore-enforced like `status`, not only at request
+time. Clarified `audienceFromInput` status handling to an explicit if/else (behaviorally
+identical — `StatusOrDefault()` was already a no-op when set — but a reviewer misread the
+unconditional call as an overwrite; the false positive is now un-misreadable). Dropped
+the dead `id` parameter from `audienceFromInput`. Added tests: nil-actor→NULL created_by,
+and explicit-status-preserved-on-create.
+
+**Update** — PR #40 follow-up review: two fixes. (1) The "explicit empty list clears
+suppressions" contract couldn't round-trip: `suppression_list_ids` is an optional array,
+so the generated client encodes it `json:"...,omitempty"` and a non-nil `[]string{}` is
+dropped on the wire — the clear silently didn't work. Replaced the empty-slice signal with
+an explicit `clear_suppression_lists` boolean in `AudienceUpdateInput` (always encodes;
+takes precedence over a supplied list), regenerated `gen/`, updated `applyAudiencePatch`/
+`hasAudiencePatch`, and added a service test for replace/clear/precedence. (2) `mapAudienceErr`
+mapped `ErrNotFound` → "the audience was not found", but on create/list that error comes
+from a missing/cross-project/archived PARENT BRIEF — made the shared message
+resource-neutral ("the audience or its parent brief was not found").
+
+**Update** — Route + authz for campaign_audiences (LFXV2-2783). Verified the audiences
+endpoints need NO new gateway wiring: they nest under `/briefs/{briefId}/audiences`, so
+the HTTPRoute `briefs(/.*)?` regex already forwards them and the single Heimdall
+`project-api` rule (`/projects/:projectId/briefs/**`) already authorizes them on
+`campaign_manager` (confirmed by running the RE2 regex against real audiences paths).
+Added explicit audiences rows to the route/rule PARITY test (parity_test.go accepted
+table) so a future narrowing of the briefs match/rule can't silently unroute or
+de-authorize them, and documented the inheritance in api-catalog.md. No chart change.
+
+**Update** — PR #40 follow-up review: two fixes. (1) `AudienceRepo.UpdateAudience` did
+`UPDATE` then a SEPARATE `GetAudience` re-read to return the row — a race where a
+concurrent version N+1 could land between the two statements and hand the first caller
+the other writer's row + ETag. Switched to `UPDATE … RETURNING audienceCols` scanned
+atomically, so the caller always gets the state its OWN write produced; the re-read
+survives only on the no-row path to classify 404 vs 412 (it never becomes the returned
+row, so it can't race). (2) Tightened the migration-000006 CHECK to reject blank/
+whitespace master-list ids (`btrim(...) <> ''`), not just NULL — via the API empties are
+written as NULL, but a direct/build-worker write could persist `''`, and the DB is meant
+to be the source of truth for all writers.
+
+**Update** — PR #40 review: updated `internal-container.md` to include the audiences
+service in the no-DB and cold-start-503/late-binding mode enumerations (it was still
+listing only connection + brief). The container wires `AudienceService` in all four
+paths and late-binds it via `AudienceService.SetBackend` (same RWMutex/`ready()` pattern
+as the brief service), so the OKF concept now matches the container behavior.
+
+**Update** — PR #40 follow-up review: enforce the built-audience invariant. `AudienceBuilt`
+is DEFINED as "the platform master list exists", but `status:"built"` was accepted with no
+`platform_master_list_id` — persisting a row that claims a list its pointer is NULL. Added
+`CampaignAudience.Validate()` (built ⇒ non-empty master-list id, evaluated on the EFFECTIVE
+status) and call it before persisting on BOTH create AND update-after-merge, so no path (a
+create with built+no-id, a status-only patch to built on an id-less row, or clearing the id
+on an already-built row) can leave "built" meaning nothing — each is now a 400. Model +
+service tests cover all three. Backed the app-level 400 with a DB CHECK constraint
+(migration 000006: `status <> 'built' OR platform_master_list_id IS NOT NULL`) so the
+platform build worker and direct writes can't violate it either — the datastore is the
+source of truth, the API 400 a friendly early reject. (Reviewer-sim follow-ups: fixed a
+godoc regression where `audienceValidationErr`'s doc comment detached `mapAudienceErr`'s;
+documented the deliberate content-400-before-concurrency-412 precedence in UpdateAudience.)
+
+**Update** — PR #40 follow-up review (two rounds): fixed the campaign_audiences PATCH
+contract. (1) The update method reused `AudienceInput`, where `platform` is Required —
+so the generated validator rejected a status-only/suppression-only patch unless the
+caller also resent the immutable `platform`, defeating the "only supplied fields change"
+contract. Added a dedicated `AudienceUpdateInput` (all mutable fields optional, no
+`platform`), pointed `update-audience` at it, regenerated `gen/`, retyped
+`applyAudiencePatch`. (2) But then every field being optional meant `{"audience":{}}`
+passed the validator as a no-op that still bumps version/updated_at → invalidates other
+clients' ETags → spurious 412s. Added a service-level `hasAudiencePatch` guard rejecting
+an all-omitted patch as a 400 (with a test asserting the version is NOT bumped). Updated
+the service tests to send platform-free patches and fixed the `AudienceInput` doc comment
+(it is the CREATE payload; updates use `AudienceUpdateInput`). design.md notes the split.
+
+**Update** — PR #40 review: extended the container startup tests to cover the new
+audiences service (typed-503 in both no-DB and cold-start-503 modes + successful
+`SetBackend` late-binding), and updated the architecture index for accuracy —
+`design.md` now says four services and describes the audiences service, and
+`api-catalog.md` gained a Campaign Audiences section listing the four nested routes.
+
+**Creation** — Added the campaign_audiences Goa API (LFXV2-2782, epic LFXV2-2770) on
+top of the existing DB layer (migration 000005 + model.CampaignAudience +
+AudienceRepository + repo). `design/audience.go` defines the audiences service
+(create/get/list/update) nested under a brief
+(`/projects/{project_id}/briefs/{brief_id}/audiences[/{audience_id}]`), reusing the
+shared design helpers (bearerToken/projectIDAttr/briefIDAttr/ifMatchAttr, JWTAuth,
+the standard error set). Regenerated gen/ via goa. `internal/service/audience.go`
+implements the handlers: maps payloads ↔ model, optimistic-concurrency update gated on
+If-Match (same strong-validator parsing as briefs), ETag = version, typed error
+mapping, and RWMutex `SetBackend` late-binding + typed-503 mode mirroring the brief
+service. Wired into the container (no-db / 503-boot / live / cold-start-retry paths)
+and mounted in the server (`buildMux` + a route-mount test asserting
+`GET …/audiences` resolves non-404 + a nil-endpoints fail-loud case). Service-layer
+tests cover create/defaults/If-Match(428/412/success)/404/late-binding. Full gate green.
+>>>>>>> origin/main
 
 ## 2026-07-20
+
+**Update** — Fixed "briefs stay broken after a cold-start DB retry" (PR #28 review,
+cursor High, surfaced after #11 merged into #28). After #11 added the brief service +
+orchestrator to the container, the 503-mode background retry only late-bound the
+CONNECTION service + readiness — it never re-wired the BRIEF service, so brief/job
+routes returned 503 for the whole pod lifetime while `/readyz` flipped to healthy
+(readiness OK but routes 503 — worse than "unavailable"). Fixed: (1) gave
+`BriefService` a `SetBackend(briefs, campaigns, jobs, orch)` late-binding setter
+guarded by an RWMutex, with handlers now snapshotting collaborators via `ready()`
+(so a mid-request swap can't race); (2) the retry goroutine now fully re-wires — brief
+`SetBackend` + orchestrator + `FailStuckJobs` + `StartRecoverySweeper` — and flips
+readiness LAST so `/readyz` never reports OK while brief routes still 503; (3) 503-mode
+boot now wires a nil-repo brief service (routes mounted → typed 503, not a nil panic).
+Added `TestBriefService_SetBackend_LateBinding` + a container 503-mode assertion.
+Race-clean.
+
+**Update** — Documented the Traefik `RegularExpression` HTTPRoute version requirement
+(PR #28 review, copilot). Copilot claimed Traefik's Gateway API provider doesn't
+support `RegularExpression` path matches (only Exact/PathPrefix) → the project-nested
+route would be silently unrouted. VERIFIED WRONG against Traefik's source
+(`buildPathRule`, every v3.1.0+ tag): a `RegularExpression` match is translated to a
+native `PathRegexp(...)` rule (RE2/Go-regexp), GA, not gated. BUT two real nuances:
+(1) **v3.0.x does NOT support it** (returns "unsupported path match"), so it requires
+Traefik >= v3.1.0 — now stated in the template comment + concept doc; (2) the feature
+is NOT in Traefik's Gateway API conformance report even though the code implements
+it, so the render alone doesn't prove routing — added a note to verify the deployed
+HTTPRoute's `Accepted` status condition is True. Replaced the vague "custom
+conformance" wording. No route change (works on the platform's v3.1.0+ gateway).
+NOTE: no other LFX service uses RegularExpression HTTPRoute (query-service uses
+PathPrefix/Exact) because they route on their own top-level prefix; campaign-service
+can't (project-service owns /projects/), hence the regex.
+
+**Update** — Corrected the "re-run after a partial migration is harmless" doc claim
+(PR #28 review, copilot). The container concept doc and the `Migrate` doc comment
+said migrations are idempotent so a re-run after a partial is harmless — but that's
+wrong for a PARTIAL (dirty) migration: golang-migrate marks the schema dirty
+precisely because partial migration SQL is not assumed idempotent, and a re-run then
+hits `ErrDirty` (needs manual `force`, exactly the permanent-failure path documented
+above). Reworded both to scope the "skipped/harmless" claim to a CLEAN schema and
+describe partial failure as the dirty/manual-recovery state.
+
+**Update** — Fail fast on a PERMANENT migration failure instead of 503-looping
+forever (PR #28 review, copilot + cursor). The 503-mode retry loop retried
+`initDatabase` on ANY error — so a dirty schema (`migrate.ErrDirty`, set when a prior
+migration failed partway) would loop forever behind a 503, with no fail-fast signal.
+A dirty schema can't clear by re-running Migrate; it needs an operator to force the
+version. Added `postgres.IsPermanentMigrationErr` (classifies a wrapped
+`migrate.ErrDirty`); the synchronous fast path now returns an error (process exits
+loud) and the background retry loop logs ERROR + stops looping on it. Connectivity /
+lock / deadline failures are deliberately still transient (they retry). Note: the
+overlapping-migration half of these findings was already fixed earlier (migrateMu +
+pool-first-then-Migrate); these older bot comments predate that. Test added.
+
+**Update** — Made the pgx DSN-parse errors DSN-free (PR #28 review, copilot). Both
+`NewPool` and `ValidateMigrationDSN` wrapped `pgxpool.ParseConfig`'s error with `%w`;
+NewContainer propagates it and main logs it, so a malformed credential-bearing
+DATABASE_URL risked logging the connection string. VERIFIED that pgx's
+`ParseConfigError` already redacts the password (`redactPW`) across every malformed
+DSN shape I probed (bad port, space-in-host→url.Parse-fails-falls-to-keyword-regex,
+bad connect_timeout/sslmode, keyword form) — so the finding's literal "leaks the
+password" claim is not currently true. BUT we shouldn't depend on a dependency's
+best-effort redaction for a secret, so wrapped both sites in a `dsnParseError` whose
+Error() renders a STATIC DSN-free message and whose Unwrap() keeps the pgx cause for
+errors.Is/As + diagnostics. Test asserts a password/DSN never reaches Error() while
+the cause stays unwrappable.
+
+**Update** — Added the route/rule PARITY test (PR #28 review, copilot). The PR
+described an RE2 route/RuleSet parity regression guard, but none was committed — the
+HTTPRoute regex and the Heimdall RuleSet path list are two hand-maintained matchers
+with nothing coupling them, so a drift (a forwarded-but-unruled path) would skip the
+campaign_manager FGA check unnoticed. Added `TestRouteRuleSetParity`
+(`charts/lfx-v2-campaign-service/parity_test.go`): renders both templates via `helm
+template`, extracts the RE2 regex + the RuleSet's project-nested patterns (translating
+Traefik `:projectId`/`*`/`**`), and asserts a curated accepted/rejected path table
+matches identically in both matchers (skips if helm absent; fails on render error).
+Verified non-vacuous by flipping an expectation. httproute concept doc updated.
+
+**Update** — Scoped the parity test to the campaign_manager rule (PR #28 review,
+copilot). `extractRulePatterns` treated ANY `/projects/` path anywhere in the RuleSet
+as "authorized", so a path moved into an allow_all/deny_all/differently-scoped rule
+would still satisfy parity — but the actual invariant is campaign_manager on
+project:{projectId}, not just "some rule matches". Now extraction is scoped to the
+`project-api` rule BLOCK (isolated from its `- id:` to the next), and a new
+`TestProjectAPIRuleEnforcesCampaignManager` (also called from both parity tests)
+asserts that rule's authorizer is openfga_check with relation campaign_manager +
+object project:{projectId}. A rule downgrade/re-scope now fails the security test.
+
+**Update** — Strengthened the parity test to couple to matcher CONTENT (PR #28
+review, copilot). The curated table only sampled fixed paths, so a one-sided
+matcher edit that no case exercised (copilot's example: adding `tiktok-ads/metrics`
+to the route regex only) would still pass. Added `TestRouteRuleSetParityWitnesses`:
+it enumerates concrete example paths from the route regex's AST (`regexp/syntax`
+walker — one witness per alternation leaf, `[^/]+`/`.*` collapsed to literals) and
+requires each to be RULED, and builds a witness from every RuleSet pattern and
+requires the route to FORWARD it. A route-only new branch now yields an unruled
+witness → fail; a RuleSet-only entry yields an unforwarded witness → fail. Verified
+against copilot's exact scenario (`/projects/x/tiktok-ads/metrics` is caught).
+
+**Update** — Bounded the migration step with the startup deadline (PR #28 follow-up
+review, cursor Medium). After the earlier pool-first fix, `initDatabase` still ran
+`postgres.Migrate` (no context) synchronously with no time bound, so a reachable
+but slow/lock-blocked migration could block `NewContainer` indefinitely. Now
+Migrate runs in a goroutine under a package `migrateMu` (serializes runs so a retry
+never starts a second migration while a prior deadline-abandoned one is finishing)
+and the caller returns on the startup deadline. Also cleaned a union-merge artifact
+in this log (duplicated oversized-body line).
+
+**Update** — Hardened the #28 503-mode cold-start fix after review (cursor HIGH +
+copilot). (1) `initDatabase` started `postgres.Migrate` (uncancellable Up()) in a
+goroutine and returned on the 15s deadline WITHOUT waiting — so the retry loop
+launched another migration while the previous was still blocked, leaking goroutines
+and racing concurrent migrations. Reworked to open the pool FIRST (NewPool does a
+context-bounded Ping) and run Migrate only after a reachable ping, so Migrate never
+blocks against a down DB and retries never overlap. (2) A malformed DATABASE_URL
+(keyword DSN) is deterministic, so `NewContainer` now fails fast via
+`postgres.ValidateMigrationDSN` instead of 503-looping forever. (3) Corrected the
+service.go comments/doc that claimed a NIL readiness dep makes /readyz not-ready —
+a nil dep is treated as READY (no-DB mode); cold-start uses the non-nil notReady{}
+checker. (4) The connection 503 message "not configured" → "unavailable" (during
+cold start the DB is configured, just unavailable). Tests + concept doc updated.
+
+**Update** — Made the DB cold-start startupProbe budget real (PR #28 review,
+LFXV2-2558). `NewContainer` capped migration+pool init at 15s and `main` exited
+on failure, so an unreachable DB at boot crash-looped the pod and the ~90s
+startupProbe budget never applied. Now a *transient* DB-init failure boots the
+services in 503 mode (a `notReady` health dep so `/readyz` returns 503, distinct
+from no-DB mode; connection service nil-repo) and a background goroutine retries
+migration/pool, swapping the live pool/repo in via `SetReadinessDep`/`SetBackend`
+(mutex-guarded against concurrent request reads) once it opens. Config errors
+(invalid DB settings, bad encryption key) still fail fast. `Close` cancels the
+retry goroutine. Updated the container + deployment concept docs and the
+startupProbe comment.
+**Creation** — Added the `campaign_audiences` resource — DB layer (LFXV2-2773 subtask
+2781, email epic LFXV2-2770). Migration `000005` creates `campaign_audiences` (a built
+audience subordinate to a brief: `brief_id` FK to `campaign_briefs`, columns store a
+POINTER + provenance — `platform_master_list_id`, `suppression_list_ids`,
+`inclusion_summary`, `status` building/built/failed, `version` — NOT the audience
+contents, which stay in HubSpot). This is the "B2" decision: a built audience is a
+first-class, inspectable, reusable, versioned LFX resource. Added `model.CampaignAudience`
+(+ AudienceStatus, StatusOrDefault), `domain.AudienceRepository` interface, and
+`postgres.AudienceRepo` (create/get/list/update; project-scoped; optimistic-concurrency
+update gated on version → ErrPreconditionFailed, matching ReplaceCampaign). Indexed on
+brief_id + project_id (no natural uniqueness — a brief may have many audiences). The
+Goa API/handlers + route/rule wiring are the sibling subtasks (2782/2783); the repo
+isn't consumed until the service exists. Model unit test added; per repo convention
+(no DB unit tests here — repos are covered via service-layer fakes) the migration is
+validated on boot. Whole-module build/vet/test green; concept doc + log updated.
 
 **Update** — Idempotency-lookup errors no longer silently fall through to dispatch
 (PR #11 review, cursor Medium). In `dispatchPlatform`, the fast path treated ANY
@@ -71,6 +352,7 @@ follow-up to apply the same URL-suppression there. (2) Corrected the stale
 method" after the 3xx gate was re-added. (3) Documented CreateCampaign's
 non-standard `(non-nil result, non-nil error)` contract so callers inspect the
 result on error (for reconcile) instead of discarding it.
+<<<<<<< HEAD
 **Creation** — Added the `internal/platform/hubspot` Go package (email-channel
 scaffold, LFXV2-2778 under epic LFXV2-2770). HubSpot's auth is the simplest of any
 client — a STATIC private-app bearer token (no OAuth token-exchange flow), attached
@@ -94,6 +376,24 @@ recipients via `contactIlsLists` (ILS list ids) ONLY — HubSpot removed the leg
 so the client never emits it. Sends a complete `to` (contactIds cleared) with the ILS
 send list + its suppressions. filterBranch shape invariants stay with the
 audience-builder (LFXV2-2774), not this client. Full gate green.
+=======
+**Creation** — Added the `internal/platform/snowflake` Go package (email channel,
+LFXV2-2772 under epic LFXV2-2770): a READ-ONLY Snowflake client that resolves
+past-edition EVENT_NAME/EVENT_ID from `ANALYTICS.PLATINUM_LFX_ONE.event_registrations`
+for HubSpot BEHAVIORAL_EVENT filters. Read-only BY CONSTRUCTION — no arbitrary-SQL
+entry point (unlike the reference app's `snowflake_query(sql)`); the one method
+`ResolvePastEventNames` builds a fixed, fully-parameterized SELECT DISTINCT (terms
+bind as ILIKE ?/NOT ILIKE ?, never interpolated; identifiers are constants guarded by
+`ident`; LIMIT-capped). Source is PLATINUM (not the reference's Silver_Segment).
+Fail-closed on error/empty (callers must NOT substitute guessed names). Key-pair (JWT)
+auth via injected PKCS8 PEM, with `.env`-mangling tolerance (quotes/`\n`/CRLF); pool
+opens lazily; DSN never quoted into errors. Tested with a hand-rolled in-process
+database/sql driver fake (no new test dep) — 9 cases asserting query shape,
+injection-safety, fail-closed, and key parsing. **DEPENDENCY:** adds
+`github.com/snowflakedb/gosnowflake` v1.19.1 (the only official Go Snowflake driver;
+no shared Go Snowflake service exists — the LFX One UI's Snowflake service is
+TypeScript). Concept doc + code index added; `go mod tidy` run.
+>>>>>>> origin/main
 
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
@@ -199,6 +499,22 @@ campaign.start_date_time/end_date_time. Concept doc + code index updated. Campai
 creation (:mutate), metrics/keywords/audience, and keyword actions follow in
 GA-2..GA-5.
 
+**Update** — Routed the project-nested campaign API through the gateway and gave it
+real authz (PR #28, LFXV2-2558). The chart previously routed only `/campaigns`, so
+the actual contract paths (`/projects/{projectId}/…`) were unreachable. httproute
+now uses a `RegularExpression` match selecting this service's project-nested
+subpaths (`connection-*`, `briefs`, `jobs`, `{provider}/metrics`,
+`google-ads/keywords|audience`, `hubspot`), leaving `project-service`'s `/projects/`
+routes untouched. ruleset replaces the `/campaigns` `deny_all` placeholders with a
+single `project-api` rule gating every routed family on the project
+`campaign_manager` relation (`openfga_check` scoped to `project:{projectId}`, D2),
+with `oidc` + `anonymous_authenticator` paired (openfga_check is what rejects the
+anonymous subject) and an `allow_all` fallback when OpenFGA is disabled (local dev).
+A separate `campaigns-placeholder` rule keeps the still-routed `/campaigns` /
+`/_campaigns/*` prefixes fail-closed (`deny_all`), preserving the chart↔route parity
+invariant (every heimdall-routed path has a matching rule). deployment readiness
+`failureThreshold` relaxed 1→3 for CloudNativePG cold start. Concepts updated:
+`httproute`, `ruleset`.
 **Update** — Also strengthened the no-follow regression tests (meta + twitter):
 they injected a nil-`CheckRedirect` client, which couldn't prove the override is
 UNCONDITIONAL (a "fill only nil callbacks" impl would pass). Now they inject a
@@ -254,6 +570,21 @@ request signed for the original URL). Added a shared `noFollow`
 (`http.ErrUseLastResponse`) policy set on the default client and enforced
 unconditionally after options via a shallow copy (so a caller's client isn't
 mutated) — matching the reddit/linkedin/googleads clients. Regression tests added.
+**Update** — Reddit no-follow enforcement now builds a fresh `*http.Client` for a
+`WithHTTPClient`-supplied client instead of value-copying it (LFXV2-2641).
+`NewClient` did `hc := *c.httpClient; hc.CheckRedirect = noFollow`. The rebuild
+carries over only the caller's documented exported fields (Transport, Jar, Timeout)
+and sets `CheckRedirect: noFollow`, so it depends on the type's public API rather
+than the struct's internal shape (layout-independent) and won't silently carry any
+future unexported field. NOTE: this is NOT a race fix — on the repo's Go target
+`http.Client` is just those four exported fields with no internal synchronization
+state, so the old value copy was also correct (`go vet` copylocks does not flag
+it). It's a defensive/clarity change. Strengthened the no-follow test to assert
+Jar preservation (in addition to Transport/Timeout) and the caller-not-mutated
+guarantee. Scope: reddit only — reddit is the sole client on main enforcing
+no-follow on a caller-supplied client (merged via PR #27). The separately-proposed
+PRs #30 (meta) and #31 (twitter), still open against main, ADD no-follow to those
+clients and construct the client the same way.
 
 ## 2026-07-15
 

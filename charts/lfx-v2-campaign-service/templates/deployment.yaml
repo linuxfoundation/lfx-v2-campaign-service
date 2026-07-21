@@ -128,7 +128,11 @@ spec:
             httpGet:
               path: /readyz
               port: web
-            failureThreshold: 1
+            # Once /readyz reflects the DB pool (connection PRs), a single
+            # transient ping failure — e.g. a CloudNativePG failover — should not
+            # immediately flip the pod NotReady. Tolerate a few consecutive
+            # failures before removing it from the Service endpoints.
+            failureThreshold: 3
             periodSeconds: 10
             # Align with readinessProbeTimeout (2s) in internal/service, plus
             # margin for HTTP handling. Kubernetes default is 1s.
@@ -137,7 +141,13 @@ spec:
             httpGet:
               path: /readyz
               port: web
-            failureThreshold: 30
+            # ~90s budget for a cold start where the DB (CloudNativePG) may still
+            # be coming up. This is real because the process no longer exits when
+            # the DB is unreachable at boot: NewContainer boots in 503 mode and
+            # retries migration/pool in the background, so /readyz stays 503 (not a
+            # crash) until the DB is up and this probe keeps the pod alive across
+            # the window. See internal/container/container.go.
+            failureThreshold: 90
             periodSeconds: 1
             timeoutSeconds: 3
       {{- with .Values.topologySpreadConstraints }}

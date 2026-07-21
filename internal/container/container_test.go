@@ -5,11 +5,13 @@ package container
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
+	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -18,6 +20,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// validEncryptionKey is a base64-encoded 32-byte AES-256 key for tests (not a
+// secret; all-zero bytes).
+func validEncryptionKey() string {
+	return base64.StdEncoding.EncodeToString(make([]byte, 32))
+}
+
+// shrinkDBTimers shrinks the DB-init timers for the duration of a test so the
+// cold-start-retry path doesn't wait real seconds.
+func shrinkDBTimers(t *testing.T) {
+	t.Helper()
+	origTimeout, origInterval := startupDBTimeout, dbRetryInterval
+	startupDBTimeout = 200 * time.Millisecond
+	dbRetryInterval = 50 * time.Millisecond
+	t.Cleanup(func() {
+		startupDBTimeout = origTimeout
+		dbRetryInterval = origInterval
+	})
+}
 
 // TestShutdownBudgetComposes verifies the two graceful-shutdown phases sum to at
 // most the overall budget, so the sequential srv.Shutdown then Container.Close
@@ -139,6 +160,26 @@ func TestNewContainer_NoDatabase(t *testing.T) {
 	require.NotNil(t, cont)
 	assert.NotNil(t, cont.Service)
 	assert.NotNil(t, cont.Connections)
+	assert.NotNil(t, cont.Briefs)
+	// The audiences service is wired with a nil repo so its routes stay mounted and
+	// return the typed 503 advertised by the contract, not a bare 404. Prove that by
+	// exercising a handler and asserting the typed ServiceUnavailable error.
+	require.NotNil(t, cont.Audiences)
+	_, aerr := cont.Audiences.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "proj-1", BriefID: "brief-1", Audience: &audiences.AudienceInput{Platform: "meta"},
+	})
+	var unavail *audiences.ConnServiceUnavailableError
+	require.ErrorAs(t, aerr, &unavail, "audiences must return the typed 503 when no DB is configured")
+
+	// Late-binding: once a backend is set (as the cold-start retry does), the same
+	// handler stops returning 503 and reaches the repo.
+	cont.Audiences.(audienceBackendSetter).SetBackend(fakeAudienceRepo{})
+	got, aerr := cont.Audiences.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "proj-1", BriefID: "brief-1", Audience: &audiences.AudienceInput{Platform: "meta"},
+	})
+	require.NoError(t, aerr, "after SetBackend the audiences handler must reach the repo")
+	require.NotNil(t, got)
+
 	require.NoError(t, cont.Close(context.Background()))
 }
 
@@ -176,4 +217,103 @@ func TestNewContainer_IncompletePGSettings(t *testing.T) {
 	assert.Contains(t, err.Error(), "PGDATABASE")
 	assert.Contains(t, err.Error(), "PGPASSWORD")
 	assert.NotContains(t, err.Error(), "password=")
+}
+
+// TestNewContainer_UnreachableDBBootsIn503Mode verifies the cold-start fix: when
+// the database is configured but unreachable, NewContainer does NOT fail — it
+// returns a wired container (503 mode) so the process boots, and a background
+// goroutine retries. This is what makes the startupProbe budget real.
+func TestNewContainer_UnreachableDBBootsIn503Mode(t *testing.T) {
+	shrinkDBTimers(t)
+	cfg := &config.Config{
+		Host: "*",
+		Port: "8080",
+		// Port 1 has nothing listening → connection refused (transient, retryable).
+		DatabaseURL:             "postgres://app@127.0.0.1:1/campaign?sslmode=disable",
+		CredentialEncryptionKey: validEncryptionKey(),
+	}
+
+	cont, err := NewContainer(cfg)
+	require.NoError(t, err, "an unreachable DB must NOT fail startup — boot in 503 mode")
+	require.NotNil(t, cont)
+	assert.NotNil(t, cont.Service, "campaign service must be wired (reports not-ready)")
+	assert.NotNil(t, cont.Connections, "connection service must be wired (returns 503)")
+	assert.NotNil(t, cont.Briefs, "brief service must be wired in 503 mode (its routes return 503, not a nil panic)")
+	// The audiences service must also be wired in 503 mode and return the typed 503
+	// (not a nil-repo panic) until the cold-start retry late-binds a real backend.
+	require.NotNil(t, cont.Audiences, "audiences service must be wired in 503 mode")
+	_, aerr := cont.Audiences.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "proj-1", BriefID: "brief-1", Audience: &audiences.AudienceInput{Platform: "meta"},
+	})
+	var unavail *audiences.ConnServiceUnavailableError
+	require.ErrorAs(t, aerr, &unavail, "during a cold start audiences must return the typed 503")
+	// The health service must report NOT ready while the pool is still coming up
+	// (distinct from no-DB mode, which reports ready).
+	assert.False(t, cont.Service.(interface{ ServiceReady() bool }).ServiceReady(),
+		"during a cold start /readyz must report not-ready, not OK")
+	// Close must stop the background goroutine cleanly (no hang, no panic).
+	require.NoError(t, cont.Close(context.Background()))
+}
+
+// TestNewContainer_BadEncryptionKeyFailsFast verifies a config error (not a
+// transient DB problem) still fails fast — the process should exit, not boot.
+func TestNewContainer_BadEncryptionKeyFailsFast(t *testing.T) {
+	shrinkDBTimers(t)
+	cfg := &config.Config{
+		Host:                    "*",
+		Port:                    "8080",
+		DatabaseURL:             "postgres://app@127.0.0.1:1/campaign?sslmode=disable",
+		CredentialEncryptionKey: "not-a-valid-base64-32-byte-key",
+	}
+
+	cont, err := NewContainer(cfg)
+	assert.Nil(t, cont)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "credential encryptor")
+}
+
+// TestNewContainer_MalformedDSNFailsFast verifies a keyword-form DATABASE_URL (a
+// deterministic config error no retry can fix) fails fast rather than entering the
+// 503-mode retry loop — distinct from a transient unreachable DB, which boots 503.
+func TestNewContainer_MalformedDSNFailsFast(t *testing.T) {
+	shrinkDBTimers(t)
+	cfg := &config.Config{
+		Host: "*",
+		Port: "8080",
+		// A keyword DSN migrations can't consume — deterministic, not transient.
+		DatabaseURL:             "host=127.0.0.1 user=app dbname=campaign",
+		CredentialEncryptionKey: validEncryptionKey(),
+	}
+
+	cont, err := NewContainer(cfg)
+	assert.Nil(t, cont, "a malformed DSN must fail fast, not boot in 503 mode")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database configuration")
+}
+
+// TestNotReady verifies the cold-start health placeholder always reports
+// not-ready (so /readyz stays 503 until the real pool is swapped in).
+func TestNotReady(t *testing.T) {
+	assert.False(t, notReady{}.Ready(context.Background()))
+}
+
+// fakeAudienceRepo is a minimal domain.AudienceRepository for the container's
+// late-binding assertion: CreateAudience echoes the row back so the handler's
+// success path (audienceResult) runs without a real database.
+type fakeAudienceRepo struct{}
+
+func (fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
+	return a, nil
+}
+
+func (fakeAudienceRepo) GetAudience(_ context.Context, _, _, _ string) (*model.CampaignAudience, error) {
+	return &model.CampaignAudience{}, nil
+}
+
+func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.CampaignAudience, error) {
+	return nil, nil
+}
+
+func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
+	return a, nil
 }
