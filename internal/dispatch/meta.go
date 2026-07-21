@@ -78,10 +78,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	}
 
 	var cfg metaConfig
-	if len(config) > 0 {
-		if err := json.Unmarshal(config, &cfg); err != nil {
-			return nil, notCreated(fmt.Errorf("decode meta campaign config: %w", err))
-		}
+	if err := unmarshalPlatformConfig(config, "metaConfig", &cfg); err != nil {
+		return nil, notCreated(err)
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
@@ -95,9 +93,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		CurrencyOffset: cfg.CurrencyOffset,
 	}
 	in := meta.CampaignInput{
-		EventName:       bf.EventName,
-		EventSlug:       brief.EventSlug,
-		Project:         bf.Project,
+		EventName: bf.EventName,
+		EventSlug: brief.EventSlug,
+		// Project stamped from the authenticated scope, not caller JSON (api-catalog).
+		Project:         brief.ProjectID,
 		RegistrationURL: bf.RegistrationURL,
 		HSToken:         bf.HSToken,
 		Objective:       cfg.Objective,
@@ -113,13 +112,12 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, account, d.opts...)
 
-	// Same claim contract as the other adapters: a client (nil, err) means nothing was
-	// (or may have been) created → notCreated releases the claim; a non-nil partial
-	// result + err (ambiguous / post-campaign failure) is handed back with the upstream
-	// id so the orchestrator retains the claim and records the recoverable orphan.
+	// Release the claim ONLY when result==nil. An ambiguous create (or a post-campaign
+	// failure) returns a non-nil partial whose CampaignID may be empty but still means
+	// "may exist" — gating on an empty CampaignID would wrongly release the claim.
 	result, cerr := client.CreateCampaign(ctx, in)
 	if cerr != nil {
-		if result == nil || result.CampaignID == "" {
+		if result == nil {
 			return nil, notCreated(fmt.Errorf("meta campaign creation failed before any upstream create: %w", cerr))
 		}
 		return campaignFromMeta(result), fmt.Errorf("meta campaign creation UNCONFIRMED: %w", cerr)
@@ -132,6 +130,7 @@ func campaignFromMeta(r *meta.CampaignResult) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
+		Status:             campaignStatusCreated,
 	}
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw

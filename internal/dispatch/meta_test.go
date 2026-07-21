@@ -100,11 +100,11 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
 	)
 	// CurrencyOffset set → the preflight skips currency-code derivation.
-	cfg := json.RawMessage(`{
+	cfg := json.RawMessage(`{"metaConfig":{
 		"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic",
 		"geoTargets":["US"],"currencyOffset":100,
 		"variants":[{"headline":"KubeCon 2099","primaryText":"Join us — it's great","description":"Cloud native event"}]
-	}`)
+	}}`)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
