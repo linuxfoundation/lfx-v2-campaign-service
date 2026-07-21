@@ -2,6 +2,16 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot cursor decode + dedup clarity (PR #35 review round 10, copilot/cursor).
+(1) HubSpot returns `paging.next.after` already percent-encoded (e.g. `MjA%3D`); feeding
+it straight back through `url.Values.Encode` double-encoded the `%` (→ `MjA%253D`),
+corrupting page-2 of `SearchEmails`/`ListEventDefinitions`. Added `decodeCursor`
+(QueryUnescape-once, unchanged on non-encoded tokens, falls back to the raw token on
+error) and use it in both cursor paginators. Added `TestSearchEmails_DecodesEncodedCursor`.
+(2) Clarified `SearchLists` loop-detection: `seen`/`newThisPage` intentionally track the
+RAW server rows independently of the contact filter (progress ≠ what we keep). (3) Fixed a
+dangling doc-comment in `client_test.go`.
+
 **Update** — HubSpot defensive filter tolerates omitted objectTypeId (PR #35 review
 round 9, cursor). The round-8 client-side check dropped any hit whose `ObjectTypeID` !=
 "0-1" — but a HubSpot response can OMIT `objectTypeId`, leaving it empty, which would

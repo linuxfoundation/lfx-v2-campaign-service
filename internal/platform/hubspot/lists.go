@@ -117,10 +117,13 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			return nil, fmt.Errorf("hubspot: decode list search: %w", err)
 		}
-		// Track whether this page introduced any list id we hadn't already collected.
-		// A page that repeats only ids we've seen means the server is looping (same
-		// rows across requests) — returning success would hand back duplicates, so we
-		// error like the cursor paginators do on a stuck cursor.
+		// Loop-detection is tracked over the RAW server rows, independently of the
+		// contact filter: a page makes progress if it carries ANY list id we hadn't
+		// already seen (whether or not we keep it). Marking `seen` for every raw id —
+		// including filtered non-contact ids — is deliberate: it detects the server
+		// repeating a page, and a filtered id will never later reappear as a contact,
+		// so nothing collectible is lost. Only the contact filter decides what enters
+		// `out`; it does NOT affect progress accounting.
 		newThisPage := 0
 		for i := range resp.Lists {
 			id := resp.Lists[i].ListID
@@ -129,11 +132,9 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			}
 			seen[id] = struct{}{}
 			newThisPage++
-			// Defense-in-depth: the request already constrains to contacts via the
-			// server-side objectTypeId filter, so drop a hit only if it is EXPLICITLY a
-			// different type. A hit with an empty/omitted objectTypeId is trusted (the
-			// server already filtered) rather than dropped — otherwise a response that
-			// omits the field would silently lose valid contact lists.
+			// Defense-in-depth on top of the server-side objectTypeId filter: drop a
+			// hit only if its type is EXPLICITLY non-contact. An empty/omitted type is
+			// trusted (the server already filtered) rather than dropped.
 			if ot := resp.Lists[i].ObjectTypeID; ot != "" && ot != contactObjectTID {
 				continue
 			}
@@ -292,11 +293,13 @@ func (c *Client) ListEventDefinitions(ctx context.Context) ([]EventDefinition, e
 			return out, nil
 		}
 		// A non-advancing cursor would re-fetch the same page forever, duplicating
-		// results until the page cap — refuse to loop on it.
-		if resp.Paging.Next.After == after {
+		// results until the page cap — refuse to loop on it. Decode the returned cursor
+		// once so an already-encoded token isn't double-encoded on the next request.
+		next := decodeCursor(resp.Paging.Next.After)
+		if next == after {
 			return nil, fmt.Errorf("hubspot: ListEventDefinitions cursor did not advance (repeated after token)")
 		}
-		after = resp.Paging.Next.After
+		after = next
 	}
 	return nil, fmt.Errorf("hubspot: ListEventDefinitions exceeded %d pages; refusing to page unbounded", maxListPages)
 }

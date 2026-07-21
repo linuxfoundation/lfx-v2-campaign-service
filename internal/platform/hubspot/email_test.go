@@ -114,6 +114,27 @@ func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 	}
 }
 
+func TestSearchEmails_DecodesEncodedCursor(t *testing.T) {
+	// HubSpot returns paging.next.after already percent-encoded (e.g. "MjA%3D").
+	// The next request must send the DECODED token ("MjA="), not a double-encoded
+	// "MjA%253D" — url.Values re-encodes it once on the way out.
+	var afters []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		afters = append(afters, r.URL.Query().Get("after")) // already url-decoded by net/http
+		if r.URL.Query().Get("after") == "" {
+			_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"A","subject":"x"}],"paging":{"next":{"after":"MjA%3D"}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"B","subject":"y"}]}`)
+	})
+	if _, err := c.SearchEmails(context.Background(), ""); err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(afters) != 2 || afters[1] != "MjA=" {
+		t.Errorf("page-2 after must be the decoded cursor \"MjA=\", got %q (afters=%v)", afters[len(afters)-1], afters)
+	}
+}
+
 func TestSearchEmails_StuckCursorErrors(t *testing.T) {
 	// A server that echoes the same `after` token must not loop forever duplicating
 	// the page — the walker errors on a non-advancing cursor.

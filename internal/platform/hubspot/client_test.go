@@ -244,7 +244,8 @@ func TestDoRequest_Mutating5xxIsUnconfirmed(t *testing.T) {
 
 func TestIsUnconfirmed_TransportErrorOnlyWhenMutating(t *testing.T) {
 	// A transport failure on a MUTATING request is UNCONFIRMED (may have landed); on
-	// an idempotent read it landed no mutation, so it's safely retryable — not.
+	// an idempotent read it landed no mutation, so it's safely retryable and NOT
+	// reported as unconfirmed.
 	mut := &transportError{Method: http.MethodPost, Path: "/x", Err: io.ErrUnexpectedEOF, Mutating: true}
 	if !IsUnconfirmed(mut) {
 		t.Error("a mutating transportError must be UNCONFIRMED")
