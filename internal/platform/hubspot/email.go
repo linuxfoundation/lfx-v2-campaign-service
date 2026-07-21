@@ -135,10 +135,10 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 		// A malformed/truncated 2xx body reaches here AFTER HubSpot may have already
 		// created the draft. Mark it UNCONFIRMED (not a plain decode error) so the
 		// caller verifies rather than blind-retrying into a duplicate clone.
-		return nil, fmt.Errorf("hubspot: clone email UNCONFIRMED (2xx with an undecodable body — a draft may have been created; verify before retrying): %w", err)
+		return nil, unconfirmed("hubspot: clone email UNCONFIRMED (2xx with an undecodable body — a draft may have been created; verify before retrying)", err)
 	}
 	if e.ID == "" {
-		return nil, fmt.Errorf("hubspot: clone email UNCONFIRMED (2xx with no id — a draft may have been created; verify before retrying)")
+		return nil, unconfirmed("hubspot: clone email UNCONFIRMED (2xx with no id — a draft may have been created; verify before retrying)", nil)
 	}
 	e.AppURL = c.emailEditURL(e.ID)
 	return &e, nil
@@ -226,7 +226,7 @@ func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]a
 		// A PATCH is mutating: an undecodable 2xx body means HubSpot may already have
 		// applied the change, so surface it as UNCONFIRMED (like CloneEmail) rather
 		// than a plain decode error, so callers verify instead of blind-retrying.
-		return nil, fmt.Errorf("hubspot: patch email %s UNCONFIRMED (2xx with an undecodable body — the update may have applied; verify before retrying): %w", id, err)
+		return nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with an undecodable body — the update may have applied; verify before retrying)", id), err)
 	}
 	if e.ID == "" {
 		e.ID = id // some PATCH responses omit the id; keep the caller's

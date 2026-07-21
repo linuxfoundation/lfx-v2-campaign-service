@@ -163,7 +163,7 @@ func (c *Client) CreateList(ctx context.Context, name string, filterBranch json.
 		// A 2xx create with no parseable listId is UNCONFIRMED: HubSpot may have
 		// created the list, so a caller must verify by name rather than blind-retry
 		// (which would duplicate it).
-		return nil, fmt.Errorf("hubspot: create list %q UNCONFIRMED (a list may have been created; verify before retrying): %w", name, derr)
+		return nil, unconfirmed(fmt.Sprintf("hubspot: create list %q UNCONFIRMED (a list may have been created; verify before retrying)", name), derr)
 	}
 	return l, nil
 }

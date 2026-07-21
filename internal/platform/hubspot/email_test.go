@@ -46,6 +46,26 @@ func TestSearchEmails_FiltersAndBuildsAppURL(t *testing.T) {
 	}
 }
 
+func TestClone_Post2xxUnconfirmedIsRecognizedByHelper(t *testing.T) {
+	// A mutating 2xx with no id / undecodable body is labeled UNCONFIRMED in the text
+	// AND must make IsUnconfirmed(err) true, so a caller using the helper alone won't
+	// blind-retry into a duplicate clone.
+	cNoID, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"name":"clone but no id"}`)
+	})
+	_, err := cNoID.CloneEmail(context.Background(), "src", "copy")
+	if !IsUnconfirmed(err) {
+		t.Errorf("a 2xx-no-id clone must be IsUnconfirmed, got %T: %v", err, err)
+	}
+	cBad, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{not json`)
+	})
+	_, err = cBad.CloneEmail(context.Background(), "src", "copy")
+	if !IsUnconfirmed(err) {
+		t.Errorf("an undecodable 2xx clone must be IsUnconfirmed, got %T: %v", err, err)
+	}
+}
+
 func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 	// Page 1 returns paging.next.after; page 2 omits it. The walker must forward the
 	// cursor, aggregate both pages, and terminate — a match on page 2 must not be lost.

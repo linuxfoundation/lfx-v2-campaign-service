@@ -217,12 +217,39 @@ type apiError struct {
 // apiError) returns false: it cleanly did nothing. External callers use this to
 // decide "verify before retrying" vs "safe to retry / definitely failed".
 func IsUnconfirmed(err error) bool {
+	var ue *unconfirmedError
+	if errors.As(err, &ue) {
+		return true
+	}
 	var ae *apiError
 	if errors.As(err, &ae) {
 		return ae.Ambiguous
 	}
 	var te *transportError
 	return errors.As(err, &te)
+}
+
+// unconfirmedError marks a POST-2xx ambiguous outcome: the request returned a 2xx,
+// but the reply had no id or an undecodable body, so the mutation MAY have been
+// applied. Callers of a create/clone/patch must treat it like an ambiguous apiError
+// (verify, don't blind-retry) — IsUnconfirmed recognizes it. A nil cause is allowed
+// (the 2xx-no-id case has no underlying error).
+type unconfirmedError struct {
+	msg string
+	err error
+}
+
+func (e *unconfirmedError) Error() string {
+	if e.err != nil {
+		return e.msg + ": " + e.err.Error()
+	}
+	return e.msg
+}
+func (e *unconfirmedError) Unwrap() error { return e.err }
+
+// unconfirmed builds an *unconfirmedError (cause may be nil).
+func unconfirmed(msg string, cause error) error {
+	return &unconfirmedError{msg: msg, err: cause}
 }
 
 // isAmbiguousMutatingStatus reports whether a status code on a MUTATING request
