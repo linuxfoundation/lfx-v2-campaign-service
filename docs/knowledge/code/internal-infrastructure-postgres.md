@@ -53,5 +53,14 @@ applied file.
   platform build worker and direct writes from persisting an inconsistent "built" row.
   The `btrim` guard rejects `''`/whitespace too (the API writes empties as NULL, but a
   direct writer could persist a blank string).
+- `000007` — composite tenant foreign key on `campaign_audiences`: replaces the
+  `brief_id`-only FK with `(brief_id, project_id) REFERENCES campaign_briefs (id,
+  project_id)` (and adds the `UNIQUE (id, project_id)` on `campaign_briefs` a composite
+  FK requires). The old FK validated only the brief id, so a worker/backfill/direct
+  write could persist an audience whose copied `project_id` differed from its brief's —
+  and `GetAudience`, which trusts the stored `project_id` for tenant scoping, could then
+  expose it under the wrong tenant. The API create path already guards this (`INSERT …
+  WHERE EXISTS` an active brief scoped by project+brief); the FK makes the datastore the
+  source of truth for all writers.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).

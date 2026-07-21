@@ -2,6 +2,18 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 review (copilot, round 9): two fixes. (1) Cross-tenant integrity gap:
+`campaign_audiences.brief_id` referenced only `campaign_briefs(id)`, so the copied
+`project_id` was unchecked — a worker/backfill/direct write could persist an audience
+whose `project_id` differed from its brief's, and `GetAudience` (trusts the stored
+`project_id` for tenant scoping) could expose it under the wrong tenant. Added migration
+000007: a composite FK `(brief_id, project_id) → campaign_briefs(id, project_id)` (plus
+the `UNIQUE (id, project_id)` on campaign_briefs the composite FK requires). The API
+create path already guarded this via `INSERT … WHERE EXISTS` an active project-scoped
+brief; the FK makes the DB the source of truth for all writers. (2) Doc drift: updated
+`cmd-campaign-service.md` to say `buildMux` mounts health/campaign, connection, brief,
+AND audience servers (it said only health + connection).
+
 **Update** — PR #40 human review (David CHANGES_REQUESTED + Rashad). Fixed the one
 blocking defect: `CreateAudience` stored `created_by` as the JSONB literal `null` for an
 unattributed row — `actorFromCtx` returns a typed-nil `*model.Actor` that slips past
