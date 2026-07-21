@@ -330,7 +330,9 @@ func isFourDigitYear(s string) bool {
 // likeContains builds a `%term%` ILIKE pattern that matches term as a LITERAL
 // substring. It escapes the pattern metacharacters `\`, `%`, and `_` (backslash
 // first, so it doesn't double-escape the ones it adds) to pair with the query's
-// `ESCAPE '\'`. Without this, a term of `%` or `_` would act as a wildcard and match
+// `escapeClause` (which emits `ESCAPE '\\'` — two backslashes in the SQL text, since
+// Snowflake parses the ESCAPE literal by single-quoted-string rules where `\\` is one
+// backslash). Without this, a term of `%` or `_` would act as a wildcard and match
 // nearly every EVENT_NAME — the same "match everything" case the empty-term guard
 // blocks.
 func likeContains(term string) string {
