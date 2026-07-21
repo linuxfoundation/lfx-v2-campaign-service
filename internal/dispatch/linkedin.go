@@ -76,10 +76,8 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	}
 
 	var cfg linkedinConfig
-	if len(config) > 0 {
-		if err := json.Unmarshal(config, &cfg); err != nil {
-			return nil, notCreated(fmt.Errorf("decode linkedin campaign config: %w", err))
-		}
+	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
+		return nil, notCreated(err)
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
@@ -104,10 +102,11 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	}
 
 	in := linkedin.CampaignInput{
-		EventName:        bf.EventName,
-		RegistrationURL:  bf.RegistrationURL,
-		HSToken:          bf.HSToken,
-		Project:          bf.Project,
+		EventName:       bf.EventName,
+		RegistrationURL: bf.RegistrationURL,
+		HSToken:         bf.HSToken,
+		// Project stamped from the authenticated scope, not caller JSON (api-catalog).
+		Project:          brief.ProjectID,
 		BudgetUSD:        cfg.BudgetUSD,
 		LifetimeBudget:   cfg.LifetimeBudget,
 		StartDate:        cfg.StartDate,
@@ -120,13 +119,15 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 
 	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
 
-	// Same claim contract as the reddit adapter: a client (nil, err) means nothing was
-	// (or may have been) created → notCreated releases the claim; a non-nil partial
-	// result + err (ambiguous / mid-variant) is handed back with the upstream id so
-	// the orchestrator retains the claim and records the recoverable orphan.
+	// Release the claim ONLY when result==nil (definitely nothing created). Do NOT
+	// gate on an empty CampaignID: LinkedIn returns a NON-NIL result even on a
+	// DEFINITE campaign failure once the campaign GROUP was created (a permanent
+	// resource carrying CampaignGroupID) — and on an ambiguous campaign create it
+	// returns a non-nil name-only partial with an empty CampaignID. Both must RETAIN
+	// the claim so a retry doesn't duplicate the group/campaign.
 	result, cerr := client.CreateCampaign(ctx, in)
 	if cerr != nil {
-		if result == nil || result.CampaignID == "" {
+		if result == nil {
 			return nil, notCreated(fmt.Errorf("linkedin campaign creation failed before any upstream create: %w", cerr))
 		}
 		return campaignFromLinkedIn(result), fmt.Errorf("linkedin campaign creation UNCONFIRMED: %w", cerr)
@@ -134,11 +135,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	return campaignFromLinkedIn(result), nil
 }
 
-// campaignFromLinkedIn maps the client result to the persistence model.
+// campaignFromLinkedIn maps the client result to the persistence model (upstream id,
+// name, result blob, and a "created" status on success — see campaignFromReddit).
 func campaignFromLinkedIn(r *linkedin.CampaignResult) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
+		Status:             campaignStatusCreated,
 	}
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw

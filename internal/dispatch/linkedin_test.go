@@ -100,13 +100,13 @@ func TestLinkedIn_DispatchSuccessMapsResult(t *testing.T) {
 		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
 	)
-	cfg := json.RawMessage(`{
+	cfg := json.RawMessage(`{"linkedInConfig":{
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",
 		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
 		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
-	}`)
+	}}`)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
