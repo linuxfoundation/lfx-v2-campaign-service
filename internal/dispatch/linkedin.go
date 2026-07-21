@@ -17,8 +17,10 @@ import (
 // linkedinCreds is the credential shape stored (encrypted) for a LinkedIn
 // connection. LinkedIn authenticates with a single OAuth2 bearer access token; this
 // adapter unmarshals the decrypted blob into this struct itself.
+// linkedinCreds mirrors LinkedinAdsCredentials's field name (no json tag) — the
+// persisted JSON key is the Go field name (AccessToken), see redditCreds.
 type linkedinCreds struct {
-	AccessToken string `json:"accessToken"`
+	AccessToken string
 }
 
 // linkedinConfig is the per-platform campaign config the caller passes for LinkedIn

@@ -19,7 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 )
 
-const goodLinkedInCreds = `{"accessToken":"tok"}`
+const goodLinkedInCreds = `{"AccessToken":"tok"}`
 
 func activeLinkedInConn(creds string) *model.Connection {
 	return &model.Connection{
@@ -42,7 +42,7 @@ func TestLinkedIn_PreCreateErrorsReleaseClaim(t *testing.T) {
 		{"missing connection", fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{}},
 		{"no stored credentials", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, Status: model.StatusActive}}, identityEncryptor{}},
 		{"decrypt fails", fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, errEncryptor{}},
-		{"empty access token", fakeConnReader{conn: activeLinkedInConn(`{"accessToken":""}`)}, identityEncryptor{}},
+		{"empty access token", fakeConnReader{conn: activeLinkedInConn(`{"AccessToken":""}`)}, identityEncryptor{}},
 		{"inactive connection", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, AccountID: "1", EncryptedCredentials: []byte(goodLinkedInCreds), ProviderConfig: map[string]string{"org_id": "o"}, Status: model.StatusInactive}}, identityEncryptor{}},
 		{"missing org id", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, AccountID: "1", EncryptedCredentials: []byte(goodLinkedInCreds), Status: model.StatusActive}}, identityEncryptor{}},
 	}
