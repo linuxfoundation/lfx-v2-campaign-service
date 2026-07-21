@@ -123,16 +123,20 @@ func TestNewClient_ValidatesConfig(t *testing.T) {
 	}
 }
 
-func TestNewClient_DefaultsToPlatinum(t *testing.T) {
-	c, err := NewClient(testConfig(t))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+func TestSource_IsAlwaysPlatinum(t *testing.T) {
+	// The query source is not caller-configurable: it always targets the
+	// authoritative PLATINUM constants, so a misconfigured caller can't resolve
+	// names from a different dataset.
+	if defaultDatabase != "ANALYTICS" || defaultSchema != "PLATINUM_LFX_ONE" {
+		t.Errorf("source constants drifted: %s.%s", defaultDatabase, defaultSchema)
 	}
-	if c.cfg.Database != defaultDatabase || c.cfg.Schema != defaultSchema {
-		t.Errorf("defaults = %s.%s, want %s.%s", c.cfg.Database, c.cfg.Schema, defaultDatabase, defaultSchema)
+	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}}
+	c := newFakeClient(t, drv)
+	if _, err := c.ResolvePastEventNames(context.Background(), "OSSNA", "", ""); err != nil {
+		t.Fatalf("ResolvePastEventNames: %v", err)
 	}
-	if defaultSchema != "PLATINUM_LFX_ONE" {
-		t.Errorf("schema must be PLATINUM_LFX_ONE, got %s", defaultSchema)
+	if !strings.Contains(drv.query, "ANALYTICS.PLATINUM_LFX_ONE.event_registrations") {
+		t.Errorf("query must target the authoritative PLATINUM source:\n%s", drv.query)
 	}
 }
 
@@ -172,7 +176,7 @@ func TestResolvePastEventNames_QueryShapeAndRows(t *testing.T) {
 	if strings.Contains(q, "KubeCon") || strings.Contains(q, "North America") || strings.Contains(q, "2026") {
 		t.Errorf("query interpolated a caller term (SQL-injection risk):\n%s", q)
 	}
-	// The three ILIKE bind args carry the wildcards.
+	// The three ILIKE bind args carry the wildcards (terms here have no metachars).
 	wantArgs := []driver.Value{"%KubeCon%", "%North America%", "%2026%"}
 	if len(drv.args) != 3 {
 		t.Fatalf("args = %v, want 3 bind params", drv.args)
@@ -182,6 +186,42 @@ func TestResolvePastEventNames_QueryShapeAndRows(t *testing.T) {
 			t.Errorf("arg[%d] = %v, want %v", i, drv.args[i], w)
 		}
 	}
+}
+
+func TestResolvePastEventNames_EscapesLikeMetacharacters(t *testing.T) {
+	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}}
+	c := newFakeClient(t, drv)
+	// A term containing ILIKE metacharacters must be escaped so it matches
+	// literally, not as a wildcard (otherwise "%"/"_" match nearly everything —
+	// the same "match everything" case the empty-term guard blocks).
+	if _, err := c.ResolvePastEventNames(context.Background(), `50%_off\x`, "", ""); err != nil {
+		t.Fatalf("ResolvePastEventNames: %v", err)
+	}
+	// backslash doubled, then % and _ escaped, wrapped in literal %…%.
+	want := driver.Value(`%50\%\_off\\x%`)
+	if len(drv.args) != 1 || drv.args[0] != want {
+		t.Errorf("escaped bind arg = %v, want %v", drv.args, want)
+	}
+	// The query must declare the ESCAPE clause that pairs with the escaping.
+	if !strings.Contains(drv.query, `ESCAPE '\'`) {
+		t.Errorf("query must declare ESCAPE '\\':\n%s", drv.query)
+	}
+}
+
+func TestClient_ConcurrentFirstUse(t *testing.T) {
+	// The lazy pool open must be race-free: many goroutines hitting the first query
+	// at once must not double-open or race Close (exercised under `go test -race`).
+	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}}
+	c := newFakeClient(t, drv)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = c.ResolvePastEventNames(context.Background(), "KubeCon", "", "")
+		}()
+	}
+	wg.Wait()
 }
 
 func TestResolvePastEventNames_OmitsOptionalFilters(t *testing.T) {

@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	sf "github.com/snowflakedb/gosnowflake"
@@ -44,24 +45,29 @@ const (
 
 // Config is the injected Snowflake connection configuration. PrivateKeyPEM is the
 // unencrypted PKCS8 RSA private key in PEM form (the JWT signer). Warehouse/Role are
-// optional. Database/Schema default to the PLATINUM source when empty.
+// optional.
+//
+// The query SOURCE (database/schema/table) is NOT configurable: event resolution
+// always targets the authoritative ANALYTICS.PLATINUM_LFX_ONE.event_registrations via
+// package constants, so a misconfigured caller can never silently resolve names from a
+// different dataset. The DSN's session database/schema are set to the same constants.
 type Config struct {
 	Account       string
 	User          string
 	PrivateKeyPEM string
 	Warehouse     string
 	Role          string
-	Database      string
-	Schema        string
 }
 
 // Client is a read-only Snowflake client. It holds a lazily-opened *sql.DB (a
 // connection pool); it is safe for concurrent use.
 type Client struct {
 	cfg    Config
-	db     *sql.DB
 	dsn    string
 	opener func(dsn string) (*sql.DB, error) // injectable for tests
+
+	mu sync.Mutex // guards db (lazy open + Close)
+	db *sql.DB
 }
 
 // Event is one resolved past-edition registration event.
@@ -82,18 +88,15 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Database == "" {
-		cfg.Database = defaultDatabase
-	}
-	if cfg.Schema == "" {
-		cfg.Schema = defaultSchema
-	}
 
+	// The session database/schema are pinned to the authoritative constants — the
+	// same source the fully-qualified query targets — so they are never
+	// caller-overridable.
 	sfCfg := &sf.Config{
 		Account:       cfg.Account,
 		User:          cfg.User,
-		Database:      cfg.Database,
-		Schema:        cfg.Schema,
+		Database:      defaultDatabase,
+		Schema:        defaultSchema,
 		Warehouse:     cfg.Warehouse,
 		Role:          cfg.Role,
 		Authenticator: sf.AuthTypeJwt,
@@ -126,8 +129,11 @@ func withOpener(o func(dsn string) (*sql.DB, error)) Option {
 	return func(c *Client) { c.opener = o }
 }
 
-// pool lazily opens the *sql.DB (connection pool) on first use.
+// pool lazily opens the *sql.DB (connection pool) on first use. Guarded by mu so
+// concurrent first queries can't double-open (leaking a *sql.DB) or race Close.
 func (c *Client) pool() (*sql.DB, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.db != nil {
 		return c.db, nil
 	}
@@ -139,10 +145,15 @@ func (c *Client) pool() (*sql.DB, error) {
 	return db, nil
 }
 
-// Close releases the connection pool.
+// Close releases the connection pool. Guarded by mu (and nils the handle) so it
+// can't race a concurrent lazy open or a second Close.
 func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.db != nil {
-		return c.db.Close()
+		err := c.db.Close()
+		c.db = nil
+		return err
 	}
 	return nil
 }
@@ -153,9 +164,11 @@ func (c *Client) Close() error {
 // BEHAVIORAL_EVENT filter values, so this is the single source of truth for them —
 // callers must NOT substitute guessed/remembered names (fail-closed on error/empty).
 //
-// The query is fully parameterized (no term is interpolated into SQL); ILIKE
-// wildcards are added around the bind values. currentYear excludes that edition
-// (e.g. "2026"). A blank eventTerm is rejected (it would match everything).
+// The query is fully parameterized (no term is interpolated into SQL); each term is
+// wrapped as a `%term%` ILIKE pattern with its metacharacters escaped (see
+// likeContains) so a literal `%` or `_` in a term matches literally instead of acting
+// as a wildcard. currentYear excludes that edition (e.g. "2026"). A blank eventTerm is
+// rejected (it would match everything).
 func (c *Client) ResolvePastEventNames(ctx context.Context, eventTerm, locationTerm, currentYear string) ([]Event, error) {
 	eventTerm = strings.TrimSpace(eventTerm)
 	if eventTerm == "" {
@@ -167,19 +180,20 @@ func (c *Client) ResolvePastEventNames(ctx context.Context, eventTerm, locationT
 		return nil, err
 	}
 
-	// Fully-qualified, read-only SELECT DISTINCT. Only bind parameters vary; the
-	// identifiers are constants (never caller-controlled). LIMIT bounds the result.
+	// Fully-qualified, read-only SELECT DISTINCT against the AUTHORITATIVE source
+	// (package constants, never caller-controlled). Only bind parameters vary; LIMIT
+	// bounds the result. ESCAPE '\' pairs with likeContains's metacharacter escaping.
 	q := fmt.Sprintf(`SELECT DISTINCT EVENT_NAME, EVENT_ID
 FROM %s.%s.%s
-WHERE EVENT_NAME ILIKE ?`, ident(c.cfg.Database), ident(c.cfg.Schema), ident(eventTable))
-	args := []any{"%" + eventTerm + "%"}
+WHERE EVENT_NAME ILIKE ? ESCAPE '\'`, ident(defaultDatabase), ident(defaultSchema), ident(eventTable))
+	args := []any{likeContains(eventTerm)}
 	if locationTerm = strings.TrimSpace(locationTerm); locationTerm != "" {
-		q += "\n  AND EVENT_NAME ILIKE ?"
-		args = append(args, "%"+locationTerm+"%")
+		q += "\n  AND EVENT_NAME ILIKE ? ESCAPE '\\'"
+		args = append(args, likeContains(locationTerm))
 	}
 	if currentYear = strings.TrimSpace(currentYear); currentYear != "" {
-		q += "\n  AND EVENT_NAME NOT ILIKE ?"
-		args = append(args, "%"+currentYear+"%")
+		q += "\n  AND EVENT_NAME NOT ILIKE ? ESCAPE '\\'"
+		args = append(args, likeContains(currentYear))
 	}
 	q += fmt.Sprintf("\nORDER BY EVENT_NAME\nLIMIT %d", maxEventRows)
 
@@ -238,6 +252,17 @@ func parsePrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 		return nil, fmt.Errorf("snowflake: private key is not an RSA key")
 	}
 	return rsaKey, nil
+}
+
+// likeContains builds a `%term%` ILIKE pattern that matches term as a LITERAL
+// substring. It escapes the pattern metacharacters `\`, `%`, and `_` (backslash
+// first, so it doesn't double-escape the ones it adds) to pair with the query's
+// `ESCAPE '\'`. Without this, a term of `%` or `_` would act as a wildcard and match
+// nearly every EVENT_NAME — the same "match everything" case the empty-term guard
+// blocks.
+func likeContains(term string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return "%" + r.Replace(term) + "%"
 }
 
 // ident guards a database/schema/table identifier: these are package constants
