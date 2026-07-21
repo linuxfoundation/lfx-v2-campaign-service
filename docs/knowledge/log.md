@@ -525,6 +525,21 @@ request signed for the original URL). Added a shared `noFollow`
 (`http.ErrUseLastResponse`) policy set on the default client and enforced
 unconditionally after options via a shallow copy (so a caller's client isn't
 mutated) — matching the reddit/linkedin/googleads clients. Regression tests added.
+**Update** — Reddit no-follow enforcement now builds a fresh `*http.Client` for a
+`WithHTTPClient`-supplied client instead of value-copying it (LFXV2-2641).
+`NewClient` did `hc := *c.httpClient; hc.CheckRedirect = noFollow`. The rebuild
+carries over only the caller's documented exported fields (Transport, Jar, Timeout)
+and sets `CheckRedirect: noFollow`, so it depends on the type's public API rather
+than the struct's internal shape (layout-independent) and won't silently carry any
+future unexported field. NOTE: this is NOT a race fix — on the repo's Go target
+`http.Client` is just those four exported fields with no internal synchronization
+state, so the old value copy was also correct (`go vet` copylocks does not flag
+it). It's a defensive/clarity change. Strengthened the no-follow test to assert
+Jar preservation (in addition to Transport/Timeout) and the caller-not-mutated
+guarantee. Scope: reddit only — reddit is the sole client on main enforcing
+no-follow on a caller-supplied client (merged via PR #27). The separately-proposed
+PRs #30 (meta) and #31 (twitter), still open against main, ADD no-follow to those
+clients and construct the client the same way.
 
 ## 2026-07-15
 
