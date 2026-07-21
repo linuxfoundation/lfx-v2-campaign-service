@@ -419,7 +419,7 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 			t.Fatalf("internal error: enumerated witness %q does not match its own route regex", w)
 		}
 		if !anyRuleMatches(ruleMatchers, w) {
-			t.Errorf("route regex forwards %q but NO RuleSet entry authorizes it — one-sided route edit (unauthenticated bypass)", w)
+			t.Errorf("route regex forwards %q but NO RuleSet entry authorizes it — one-sided route edit (Heimdall default-deny makes this path UNREACHABLE through the gateway)", w)
 		}
 	}
 

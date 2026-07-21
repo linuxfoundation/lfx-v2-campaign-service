@@ -55,8 +55,10 @@ leaf) and requires each to be authorized by a RuleSet entry, and builds a witnes
 from every RuleSet pattern and requires the route to forward it. This is what
 catches a ONE-SIDED matcher edit — e.g. adding `tiktok-ads/metrics` to only the
 route regex yields the witness `/projects/x/tiktok-ads/metrics`, which matches the
-route but no rule, failing the build rather than silently opening an unauthenticated
-bypass. (The test skips when `helm` is absent but fails on a render error.)
+route but no rule, failing the build. Heimdall is default-deny (a request matching
+no rule is REJECTED), so such drift makes the routed endpoint UNREACHABLE through
+the gateway — not an unauthenticated bypass; the parity test catches it before it
+ships either way. (The test skips when `helm` is absent but fails on a render error.)
 
 Path extraction is SCOPED to the `project-api` rule block (not "any `/projects/` path
 in the RuleSet"), and a separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
