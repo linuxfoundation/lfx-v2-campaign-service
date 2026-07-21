@@ -46,13 +46,14 @@ applied file.
   the `status` CHECK on 000005 — the DSL `Enum("hubspot")` guards it only at request
   time, so a direct/worker write could otherwise persist an unsupported platform. Plus
   the CHECK constraint `campaign_audiences_built_needs_master_list`
-  (`status <> 'built' OR (platform_master_list_id IS NOT NULL AND btrim(...) <> '')`)
+  (`status <> 'built' OR (platform_master_list_id IS NOT NULL AND platform_master_list_id ~ '[^[:space:]]')`)
   enforcing the built-audience invariant at the datastore: `built` means the platform
   master list exists, so a built row must carry a genuinely non-blank pointer. The
   service layer already 400s this on create/update, but the constraint also stops the
   platform build worker and direct writes from persisting an inconsistent "built" row.
-  The `btrim` guard rejects `''`/whitespace too (the API writes empties as NULL, but a
-  direct writer could persist a blank string).
+  The `~ '[^[:space:]]'` test requires at least one non-whitespace character — it rejects
+  `''` AND tab/newline-only ids, matching the app's `strings.TrimSpace` (a plain
+  `btrim(...) <> ''` would only strip ordinary spaces, letting a tab/newline id through).
 - `000007` — composite tenant foreign key on `campaign_audiences`: replaces the
   `brief_id`-only FK with `(brief_id, project_id) REFERENCES campaign_briefs (id,
   project_id)` (and adds the `UNIQUE (id, project_id)` on `campaign_briefs` a composite

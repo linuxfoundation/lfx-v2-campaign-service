@@ -64,8 +64,17 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 
 // GetAudience returns one audience by id, scoped to (project, brief), or ErrNotFound.
 func (r *AudienceRepo) GetAudience(ctx context.Context, projectID, briefID, id string) (*model.CampaignAudience, error) {
-	q := `SELECT ` + audienceCols + ` FROM campaign_audiences
-		WHERE id=$1 AND brief_id=$2 AND project_id=$3`
+	// Require an ACTIVE parent brief, consistent with ListAudiences and CreateAudience:
+	// once a brief is archived its audiences are no longer part of the live lifecycle, so
+	// get/update must 404 rather than list 404-ing while get/patch still succeed on the
+	// same nested resource. The EXISTS keeps this a single round-trip. (Update loads via
+	// this method, so guarding Get covers the patch path too.)
+	q := `SELECT ` + audienceCols + ` FROM campaign_audiences ca
+		WHERE ca.id=$1 AND ca.brief_id=$2 AND ca.project_id=$3
+		AND EXISTS (
+			SELECT 1 FROM campaign_briefs b
+			WHERE b.id=ca.brief_id AND b.project_id=ca.project_id AND b.status <> 'archived'
+		)`
 	a, err := scanAudience(r.db.QueryRow(ctx, q, id, briefID, projectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

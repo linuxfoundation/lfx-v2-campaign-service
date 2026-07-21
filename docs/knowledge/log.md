@@ -2,6 +2,15 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 review (round 11): two fixes. (1) Archived-brief lifecycle
+inconsistency (cursor): `ListAudiences` 404s on an archived parent brief, but
+`GetAudience`/`UpdateAudience` only matched the audience row and never re-checked the
+brief was active — so after archiving, list failed while get/patch still succeeded on
+the same nested resource. Added an `EXISTS(active brief)` predicate to `GetAudience`'s
+query (Update loads via Get, so the patch path is covered too), consistent with List +
+Create. (2) Doc drift: `internal-infrastructure-postgres.md` still showed the old
+`btrim(...) <> ''` 000006 constraint; updated it to the `~ '[^[:space:]]'` expression.
+
 **Update** — PR #40 review (copilot, round 10, after David's approval): two fixes.
 (1) UpdateAudience checked If-Match only via the repo's atomic write, AFTER the merge +
 built-invariant Validate() — so a patch valid against the client's fetched version but
