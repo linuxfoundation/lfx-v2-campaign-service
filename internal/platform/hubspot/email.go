@@ -47,7 +47,10 @@ type Email struct {
 // treated as the zero time (sorts last), and ties fall back to the id for determinism.
 func sortEmailsByUpdatedDesc(emails []Email) {
 	parsed := func(s string) time.Time {
-		t, err := time.Parse(time.RFC3339, s)
+		// RFC3339Nano parses BOTH plain and subsecond timestamps (HubSpot sends
+		// millisecond `.000Z` values); plain RFC3339 would fail on those and treat a
+		// valid timestamp as the zero time, corrupting the order.
+		t, err := time.Parse(time.RFC3339Nano, s)
 		if err != nil {
 			return time.Time{}
 		}

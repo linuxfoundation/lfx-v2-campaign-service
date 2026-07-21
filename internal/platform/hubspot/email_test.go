@@ -148,8 +148,11 @@ func TestSearchEmails_SortsByParsedInstantNotLexical(t *testing.T) {
 	// (= 2025-12-31T23:30:00Z, OLDER) sorts lexically AFTER `2026-01-01T00:00:00Z`.
 	// Parsing to instants puts the truly-newer Z email first.
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// "newest" carries SUBSECOND precision (HubSpot's millisecond format) — it must
+		// still parse (RFC3339Nano) and sort first, not fall to the zero-time bucket.
 		_, _ = io.WriteString(w, `{"results":[`+
 			`{"id":"older","name":"A","subject":"x","updatedAt":"2026-01-01T00:30:00+01:00"},`+
+			`{"id":"newest","name":"A","subject":"x","updatedAt":"2026-06-01T12:00:00.123Z"},`+
 			`{"id":"newer","name":"A","subject":"x","updatedAt":"2026-01-01T00:00:00Z"}`+
 			`]}`)
 	})
@@ -157,8 +160,9 @@ func TestSearchEmails_SortsByParsedInstantNotLexical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchEmails: %v", err)
 	}
-	if len(got) != 2 || got[0].ID != "newer" || got[1].ID != "older" {
-		t.Errorf("must sort by parsed instant (newer first), got %v", []string{got[0].ID, got[1].ID})
+	ids := []string{got[0].ID, got[1].ID, got[2].ID}
+	if len(got) != 3 || ids[0] != "newest" || ids[1] != "newer" || ids[2] != "older" {
+		t.Errorf("must sort by parsed instant incl. subsecond (newest,newer,older), got %v", ids)
 	}
 }
 
