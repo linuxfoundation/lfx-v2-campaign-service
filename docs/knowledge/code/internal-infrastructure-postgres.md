@@ -42,11 +42,12 @@ applied file.
   (create/get/list/update, project-scoped, optimistic-concurrency update via
   `ErrPreconditionFailed`) implements `domain.AudienceRepository`.
 - `000006` — CHECK constraint `campaign_audiences_built_needs_master_list`
-  (`status <> 'built' OR platform_master_list_id IS NOT NULL`) enforcing the
-  built-audience invariant at the datastore: `built` means the platform master list
-  exists, so a built row must carry its pointer. The service layer already 400s this
-  on create/update, but the constraint also stops the platform build worker and direct
-  writes from persisting an inconsistent "built" row. (The repo writes an empty id as
-  NULL, so the NULL test covers omitted + explicitly-cleared.)
+  (`status <> 'built' OR (platform_master_list_id IS NOT NULL AND btrim(...) <> '')`)
+  enforcing the built-audience invariant at the datastore: `built` means the platform
+  master list exists, so a built row must carry a genuinely non-blank pointer. The
+  service layer already 400s this on create/update, but the constraint also stops the
+  platform build worker and direct writes from persisting an inconsistent "built" row.
+  The `btrim` guard rejects `''`/whitespace too (the API writes empties as NULL, but a
+  direct writer could persist a blank string).
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).

@@ -10,8 +10,15 @@
 -- audience that answers "what did we send to?" with nothing. This CHECK makes the
 -- database the source of truth; the API 400 is then a friendly early reject.
 --
--- The repo writes an empty platform_master_list_id as SQL NULL (nullStr), so the
--- NULL test covers both the omitted and the explicitly-cleared cases.
+-- The repo writes an empty platform_master_list_id as SQL NULL (nullStr), so via the
+-- API the NULL test already covers the omitted + explicitly-cleared cases. But the DB
+-- is meant to be the source of truth for ALL writers (the build worker, backfills,
+-- direct writes) — and those could persist an empty or whitespace-only string that is
+-- NOT NULL. So require a genuinely non-blank pointer: reject '' and whitespace by
+-- trimming before the emptiness test.
 ALTER TABLE campaign_audiences
     ADD CONSTRAINT campaign_audiences_built_needs_master_list
-    CHECK (status <> 'built' OR platform_master_list_id IS NOT NULL);
+    CHECK (
+        status <> 'built'
+        OR (platform_master_list_id IS NOT NULL AND btrim(platform_master_list_id) <> '')
+    );

@@ -126,32 +126,39 @@ func (r *AudienceRepo) ListAudiences(ctx context.Context, projectID, briefID str
 // UpdateAudience replaces the mutable fields under an optimistic-concurrency guard on
 // expectedVersion (ErrPreconditionFailed on mismatch, ErrNotFound when absent).
 func (r *AudienceRepo) UpdateAudience(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
+	// UPDATE ... RETURNING returns the row THIS statement wrote, atomically — so the
+	// caller always gets the state + ETag produced by its OWN write. A separate
+	// post-update re-read would race: a concurrent version N+1 could land between the
+	// UPDATE and the read, handing this caller the other writer's row and ETag.
 	q := `UPDATE campaign_audiences SET
 		platform_master_list_id=$1, suppression_list_ids=$2, inclusion_summary=$3,
 		status=$4, version=version+1, updated_at=now()
-		WHERE id=$5 AND brief_id=$6 AND project_id=$7 AND version=$8`
-	tag, err := r.db.Exec(ctx, q,
+		WHERE id=$5 AND brief_id=$6 AND project_id=$7 AND version=$8
+		RETURNING ` + audienceCols
+	updated, err := scanAudience(r.db.QueryRow(ctx, q,
 		nullStr(a.PlatformMasterListID), nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary),
 		string(a.StatusOrDefault()), a.ID, a.BriefID, a.ProjectID, expectedVersion,
-	)
-	if err != nil {
+	))
+	if err == nil {
+		return updated, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("update audience: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		// Distinguish "absent" from "version mismatch" by re-reading, and surface a
-		// transient re-fetch error rather than masking it as a precondition failure
-		// (consistent with ReplaceCampaign / ConnectionRepo.Update).
-		_, gerr := r.GetAudience(ctx, a.ProjectID, a.BriefID, a.ID)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
-		}
+	// No row matched the (id, brief, project, version) predicate. Distinguish "absent"
+	// from "version mismatch" by re-reading (this read is only for classifying the
+	// no-op — it never becomes the returned row — so it can't race the success path),
+	// and surface a transient re-fetch error rather than masking it as a precondition
+	// failure (consistent with ReplaceCampaign / ConnectionRepo.Update).
+	_, gerr := r.GetAudience(ctx, a.ProjectID, a.BriefID, a.ID)
+	switch {
+	case errors.Is(gerr, domain.ErrNotFound):
+		return nil, domain.ErrNotFound
+	case gerr != nil:
+		return nil, gerr
+	default:
+		return nil, domain.ErrPreconditionFailed
 	}
-	return r.GetAudience(ctx, a.ProjectID, a.BriefID, a.ID)
 }
 
 // scanAudience reads one campaign_audiences row in audienceCols order.

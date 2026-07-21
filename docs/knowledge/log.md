@@ -2,6 +2,17 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 follow-up review: two fixes. (1) `AudienceRepo.UpdateAudience` did
+`UPDATE` then a SEPARATE `GetAudience` re-read to return the row — a race where a
+concurrent version N+1 could land between the two statements and hand the first caller
+the other writer's row + ETag. Switched to `UPDATE … RETURNING audienceCols` scanned
+atomically, so the caller always gets the state its OWN write produced; the re-read
+survives only on the no-row path to classify 404 vs 412 (it never becomes the returned
+row, so it can't race). (2) Tightened the migration-000006 CHECK to reject blank/
+whitespace master-list ids (`btrim(...) <> ''`), not just NULL — via the API empties are
+written as NULL, but a direct/build-worker write could persist `''`, and the DB is meant
+to be the source of truth for all writers.
+
 **Update** — PR #40 review: updated `internal-container.md` to include the audiences
 service in the no-DB and cold-start-503/late-binding mode enumerations (it was still
 listing only connection + brief). The container wires `AudienceService` in all four
