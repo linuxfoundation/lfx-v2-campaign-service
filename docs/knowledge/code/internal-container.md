@@ -14,9 +14,11 @@ opens an instrumented `postgres.Pool`, and wires the services against it: the
 connection service (with its repo and the AES-GCM credential encryptor), the
 brief service and its async orchestrator (brief/campaign/job repos), the
 audiences service (its audience repo — the campaign_audiences resource), and the
-campaign/health service so `/readyz` reflects DB connectivity. No platform
-dispatchers are registered yet, so campaign creation records jobs but performs
-no upstream dispatch (a startup warning notes this). Without a database URL the
+campaign/health service so `/readyz` reflects DB connectivity. The per-provider
+PlatformDispatcher adapters are registered via `registerDispatchers` (see
+internal/dispatch), so campaign creation actually dispatches to the ad platforms;
+a provider without an adapter yet is logged at startup (`logMissingDispatchers`) and
+its jobs report "no dispatcher registered". Without a database URL the
 health service still starts and the connection, brief, and audiences routes
 return typed `503` responses rather than unmounted `404`s.
 
