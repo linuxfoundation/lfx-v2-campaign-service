@@ -230,6 +230,9 @@ func TestParseRetryAfter_SecondsAndHTTPDate(t *testing.T) {
 		{"empty", "", 0, false},
 		{"garbage", "soon", 0, false},
 		{"zero seconds", "0", 0, false},
+		// A huge value must saturate to a positive over-cap duration, NOT overflow to
+		// a non-positive one (which would bypass the over-cap abort).
+		{"overflow-huge", "999999999999999999999999", time.Duration(overCapSeconds) * time.Second, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

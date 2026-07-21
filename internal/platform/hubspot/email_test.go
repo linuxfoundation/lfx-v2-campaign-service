@@ -246,6 +246,25 @@ func TestSetSendList_LegacyExcludeIsNumeric(t *testing.T) {
 	}
 }
 
+func TestSetSendList_ILSTrimsSendListID(t *testing.T) {
+	// A whitespace-padded ILS send-list id must be trimmed before it goes into
+	// contactIlsLists — a padded id would be sent raw and HubSpot could reject it,
+	// leaving the email with no recipients.
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c.SetSendList(context.Background(), "999", "  ils-123  ", nil, true); err != nil {
+		t.Fatalf("SetSendList: %v", err)
+	}
+	ils := body["to"].(map[string]any)["contactIlsLists"].(map[string]any)
+	inc, _ := ils["include"].([]any)
+	if len(inc) != 1 || inc[0] != "ils-123" {
+		t.Errorf("ILS include must be the trimmed id, got %v", inc)
+	}
+}
+
 func TestSetSendList_RejectsEmptyIDs(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("no request expected on invalid input")

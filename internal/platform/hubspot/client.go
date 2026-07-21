@@ -409,6 +409,13 @@ func (c *Client) parseRetryAfter(ra string) (time.Duration, bool) {
 		return 0, false
 	}
 	if secs, err := parsePositiveInt(ra); err == nil && secs > 0 {
+		// Clamp before the *time.Second multiply: a huge value would otherwise
+		// overflow time.Duration and could wrap to a non-positive result, bypassing
+		// the over-cap abort. retryAfter treats anything > maxRetryWait as "over cap",
+		// so any value past the cap collapses to the same abort signal — no overflow.
+		if secs > overCapSeconds {
+			secs = overCapSeconds
+		}
 		return time.Duration(secs) * time.Second, true
 	}
 	if t, err := http.ParseTime(ra); err == nil {
@@ -419,7 +426,16 @@ func (c *Client) parseRetryAfter(ra string) (time.Duration, bool) {
 	return 0, false
 }
 
-// parsePositiveInt parses a non-negative integer string (Retry-After seconds).
+// overCapSeconds is a ceiling for a parsed Retry-After (seconds): safely far above
+// maxRetryWait (60s) yet small enough that overCapSeconds*time.Second stays within
+// int64 (MaxInt64/1e9 ≈ 9.2e9 seconds; 1<<31 ≈ 2.1e9 is well under that). Any value
+// at this ceiling already trips the over-cap abort, so saturating here is lossless
+// for the decision.
+const overCapSeconds = 1 << 31
+
+// parsePositiveInt parses a non-negative integer string (Retry-After seconds). It
+// caps accumulation at overCapSeconds so a very long digit string can't overflow int
+// and wrap negative — the caller treats anything over the cap as "over cap" anyway.
 func parsePositiveInt(s string) (int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -431,6 +447,9 @@ func parsePositiveInt(s string) (int, error) {
 			return 0, fmt.Errorf("non-numeric Retry-After")
 		}
 		n = n*10 + int(r-'0')
+		if n > overCapSeconds {
+			n = overCapSeconds // saturate; further digits can't reduce it
+		}
 	}
 	return n, nil
 }

@@ -198,7 +198,8 @@ func (c *Client) PatchEmailSettings(ctx context.Context, id string, s EmailSetti
 // A COMPLETE `to` object is sent (contactIds cleared) so no stale clone-source
 // recipients remain. MUTATING.
 func (c *Client) SetSendList(ctx context.Context, id, sendListID string, suppressionListIDs []string, isILS bool) (*Email, error) {
-	if strings.TrimSpace(id) == "" || strings.TrimSpace(sendListID) == "" {
+	sendListID = strings.TrimSpace(sendListID)
+	if strings.TrimSpace(id) == "" || sendListID == "" {
 		return nil, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and send-list id")
 	}
 	to := map[string]any{
@@ -207,6 +208,8 @@ func (c *Client) SetSendList(ctx context.Context, id, sendListID string, suppres
 	}
 	suppress := cleanIDs(suppressionListIDs)
 	if isILS {
+		// sendListID is trimmed above — a whitespace-padded ILS id would otherwise be
+		// sent raw and HubSpot could reject it, leaving the email with no recipients.
 		to["contactIlsLists"] = map[string]any{"include": []string{sendListID}, "exclude": suppress}
 	} else {
 		// Legacy lists are numeric on BOTH sides. REJECT a non-numeric send-list id
@@ -215,7 +218,7 @@ func (c *Client) SetSendList(ctx context.Context, id, sendListID string, suppres
 		// leaving the email with NO recipients (the same silent-empty failure the
 		// ILS-namespace routing guards against). strconv.Atoi doesn't trim, so trim
 		// first.
-		n, err := strconv.Atoi(strings.TrimSpace(sendListID))
+		n, err := strconv.Atoi(sendListID) // already trimmed above
 		if err != nil {
 			return nil, fmt.Errorf("hubspot: SetSendList legacy send-list id %q is not numeric (a non-numeric id would clear all recipients)", sendListID)
 		}
