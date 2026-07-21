@@ -303,7 +303,12 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// that read.
 			c.orch = orch
 			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
-			recoverCtx, cancelRecover := context.WithTimeout(context.Background(), startupDBTimeout)
+			// Derive from ctx (the init context Close cancels), NOT context.Background():
+			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
+			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the
+			// bounded shutdown budget by up to startupDBTimeout. The timeout still bounds a
+			// slow query during normal startup.
+			recoverCtx, cancelRecover := context.WithTimeout(ctx, startupDBTimeout)
 			if n, rerr := jobRepo.FailStuckJobs(recoverCtx, "job did not complete before a service restart"); rerr != nil {
 				slog.Warn("failed to recover stuck jobs on startup", "error", rerr)
 			} else if n > 0 {

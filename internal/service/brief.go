@@ -76,7 +76,11 @@ func (s *BriefService) ready() (domain.BriefRepository, domain.CampaignRepositor
 	// guarding only briefs would nil-panic if the service were ever partially wired.
 	b, c, j, orch := s.deps()
 	if b == nil || c == nil || j == nil || orch == nil {
-		return nil, nil, nil, nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "brief storage is not configured"}
+		// Availability-neutral wording (matches the connection service): in
+		// cold-start mode the database IS configured but the backend hasn't
+		// bound yet, so "not configured" would wrongly tell operators to change
+		// config during a transient startup window.
+		return nil, nil, nil, nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "brief storage is unavailable"}
 	}
 	return b, c, j, orch, nil
 }

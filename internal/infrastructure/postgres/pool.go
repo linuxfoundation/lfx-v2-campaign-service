@@ -158,35 +158,36 @@ func ValidateMigrationDSN(dsn string) error {
 	if _, err := pgxURL(dsn); err != nil {
 		return err
 	}
-	// Also verify the URL actually parses, so a syntactically broken URL like
-	// "postgres://[bad" is caught here rather than deep in NewPool. Only the
-	// postgres/postgresql schemes are what NewPool consumes (pgxpool.ParseConfig
-	// doesn't understand golang-migrate's internal "pgx5://" scheme), so restrict the
-	// parse check to those — a "pgx5://" DSN passed the prefix check above.
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		if _, err := pgxpool.ParseConfig(dsn); err != nil {
-			// DSN-free wrapper: this message is surfaced to callers/logs, and the DSN
-			// carries the DB password. See dsnParseError.
-			return &dsnParseError{context: "DATABASE_URL is not a parseable postgres URL", err: err}
-		}
+	// Also verify the URL actually parses with the SAME parser NewPool uses, so a
+	// syntactically broken URL like "postgres://[bad" is caught here rather than
+	// deep in NewPool. pgxURL above already rejected every scheme NewPool can't
+	// open (keyword DSNs and the internal "pgx5://"), so anything reaching here is
+	// a postgres/postgresql URL that pgxpool.ParseConfig must accept.
+	if _, err := pgxpool.ParseConfig(dsn); err != nil {
+		// DSN-free wrapper: this message is surfaced to callers/logs, and the DSN
+		// carries the DB password. See dsnParseError.
+		return &dsnParseError{context: "DATABASE_URL is not a parseable postgres URL", err: err}
 	}
 	return nil
 }
 
-// pgxURL converts a URL-scheme DSN to the "pgx5://" scheme golang-migrate's
-// driver expects. A "postgres://" / "postgresql://" DSN is rewritten; an
-// already-"pgx5://" DSN is passed through. A keyword DSN ("host=… user=…") has
-// no URL scheme golang-migrate can parse and is rejected with a clear error.
+// pgxURL converts a URL-scheme DATABASE_URL to the "pgx5://" scheme
+// golang-migrate's driver expects. A "postgres://" / "postgresql://" DSN is
+// rewritten. Any other form is rejected with a clear error: a keyword DSN
+// ("host=… user=…") has no URL scheme golang-migrate can parse, and a raw
+// "pgx5://" DSN — golang-migrate's INTERNAL scheme — is NOT accepted as input.
+// NewPool opens the same DATABASE_URL via pgxpool.ParseConfig, which cannot
+// parse "pgx5://", so passing it through here would let a "pgx5://" URL clear
+// ValidateMigrationDSN and then fail every pool open as a "transient" error,
+// retrying the 503 cold-start loop forever with no fail-fast. The only
+// legitimate source of "pgx5://" is this function's own translation.
 func pgxURL(dsn string) (string, error) {
 	for _, prefix := range []string{"postgresql://", "postgres://"} {
 		if strings.HasPrefix(dsn, prefix) {
 			return "pgx5://" + strings.TrimPrefix(dsn, prefix), nil
 		}
 	}
-	if strings.HasPrefix(dsn, "pgx5://") {
-		return dsn, nil
-	}
-	return "", fmt.Errorf("DATABASE_URL must be a URL DSN (postgres://…) for migrations; keyword DSNs are not supported")
+	return "", fmt.Errorf("DATABASE_URL must be a postgres:// or postgresql:// URL; keyword DSNs and the internal pgx5:// scheme are not supported")
 }
 
 // ensure the pgx5 migrate driver is linked.

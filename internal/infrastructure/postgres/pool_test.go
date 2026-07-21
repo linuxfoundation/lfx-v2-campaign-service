@@ -23,7 +23,6 @@ func TestPgxURL_RewritesURLSchemes(t *testing.T) {
 	cases := map[string]string{
 		"postgres://u:p@host:5432/db":   "pgx5://u:p@host:5432/db",
 		"postgresql://u:p@host:5432/db": "pgx5://u:p@host:5432/db",
-		"pgx5://u:p@host:5432/db":       "pgx5://u:p@host:5432/db",
 	}
 	for in, want := range cases {
 		got, err := pgxURL(in)
@@ -45,17 +44,30 @@ func TestPgxURL_RejectsKeywordDSN(t *testing.T) {
 	}
 }
 
+func TestPgxURL_RejectsRawPgx5DSN(t *testing.T) {
+	// "pgx5://" is golang-migrate's INTERNAL scheme, produced only by pgxURL's own
+	// translation. NewPool opens the same DATABASE_URL via pgxpool.ParseConfig,
+	// which cannot parse "pgx5://" — so accepting a raw "pgx5://" input would let it
+	// clear ValidateMigrationDSN and then 503-loop forever on every pool open. It
+	// must be rejected up front as a deterministic config error.
+	if _, err := pgxURL("pgx5://u:p@host:5432/db"); err == nil {
+		t.Error("pgxURL(pgx5:// DSN) = nil error, want a clear rejection")
+	}
+}
+
 func TestValidateMigrationDSN(t *testing.T) {
 	// Valid URL DSNs pass (no connection is attempted).
-	for _, ok := range []string{"postgres://app@host:5432/db?sslmode=disable", "postgresql://u:p@h/d", "pgx5://u@h/d"} {
+	for _, ok := range []string{"postgres://app@host:5432/db?sslmode=disable", "postgresql://u:p@h/d"} {
 		if err := ValidateMigrationDSN(ok); err != nil {
 			t.Errorf("ValidateMigrationDSN(%q) = %v, want nil", ok, err)
 		}
 	}
-	// A keyword DSN (no URL scheme) and a syntactically MALFORMED URL both fail up
-	// front — the malformed one passes the prefix check but must be caught by the
+	// A keyword DSN (no URL scheme), a syntactically MALFORMED URL, and a raw
+	// "pgx5://" DSN (migrate's internal scheme, which pgxpool can't open — see
+	// TestPgxURL_RejectsRawPgx5DSN) all fail up front rather than 503-looping:
+	// the malformed one passes the prefix check but must be caught by the
 	// parseability check, not deferred to NewPool/Migrate.
-	for _, bad := range []string{"host=localhost user=u dbname=d", "postgres://[bad", "not a dsn at all"} {
+	for _, bad := range []string{"host=localhost user=u dbname=d", "postgres://[bad", "not a dsn at all", "pgx5://u@h/d"} {
 		if err := ValidateMigrationDSN(bad); err == nil {
 			t.Errorf("ValidateMigrationDSN(%q) = nil, want an error", bad)
 		}
