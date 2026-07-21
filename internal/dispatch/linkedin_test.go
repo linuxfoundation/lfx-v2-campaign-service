@@ -118,3 +118,53 @@ func TestLinkedIn_DispatchSuccessMapsResult(t *testing.T) {
 		t.Error("campaign name + result blob should be populated")
 	}
 }
+
+func TestLinkedIn_ForeignAccountIDRejected(t *testing.T) {
+	// A caller adAccountId that doesn't match the connection's account must be
+	// rejected up front (pre-create) — appending it to the allowlist would defeat the
+	// client's cross-tenant fail-closed check.
+	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{})
+	cfg := json.RawMessage(`{"linkedInConfig":{"adAccountId":"999999999","targetingProfile":"x","targetingProfiles":[{"id":"x","label":"X"}]}}`)
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	var nuc interface{ NoUpstreamCreate() bool }
+	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a foreign adAccountId must be rejected pre-create, got %T: %v", err, err)
+	}
+}
+
+func TestLinkedIn_AmbiguousCreateRetainsClaim(t *testing.T) {
+	// A 5xx on the campaign-group create is ambiguous → the linkedin client returns a
+	// non-nil partial (empty CampaignID). The adapter must retain the claim.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on a create POST
+	}))
+	defer srv.Close()
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
+	)
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err == nil {
+		t.Fatal("expected an error from an ambiguous create")
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
+		t.Error("an ambiguous create must NOT be NoUpstreamCreate — the claim must be retained")
+	}
+	if camp == nil {
+		t.Error("an ambiguous create must return a non-nil campaign for orphan recording")
+	}
+}

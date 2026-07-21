@@ -88,6 +88,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// bits the caller supplied in config (targeting profiles / exclusions the
 	// connection doesn't persist). The single account is always present so
 	// AdAccountID defaults resolve.
+	// The runtime allowlist is sourced ONLY from the connection's own account. Do NOT
+	// append a caller-supplied adAccountId — that would defeat the client's
+	// cross-tenant fail-closed check (targeting.go), letting any account reachable by
+	// the bearer token be treated as authorized and paired with this connection's org.
+	// A caller override is therefore only honored when it MATCHES the connection's
+	// account; any other value is rejected before an upstream call.
 	runtime := linkedin.RuntimeConfig{
 		DefaultAccountID:   accountID,
 		DefaultOrgID:       orgID,
@@ -95,10 +101,8 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		TargetingProfiles:  cfg.TargetingProfiles,
 		EmployerExclusions: cfg.EmployerExclusions,
 	}
-	// If the caller overrode the account, make sure it's known to the runtime config
-	// (the client rejects an AdAccountID not in the accounts list).
 	if id := strings.TrimSpace(cfg.AdAccountID); id != "" && id != accountID {
-		runtime.Accounts = append(runtime.Accounts, linkedin.Account{AccountID: id, OrgID: orgID})
+		return nil, notCreated(fmt.Errorf("linkedin adAccountId %q does not match the connection's account %q — cross-account campaigns are not allowed", id, accountID))
 	}
 
 	in := linkedin.CampaignInput{
