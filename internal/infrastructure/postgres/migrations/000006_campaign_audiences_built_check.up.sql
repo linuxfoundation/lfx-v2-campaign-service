@@ -16,11 +16,16 @@
 -- direct writes) — and those could persist an empty or whitespace-only string that is
 -- NOT NULL. So require a genuinely non-blank pointer: reject '' and whitespace by
 -- trimming before the emptiness test.
+-- Note: use a regex for the non-blank test, NOT btrim(). btrim(text) with no character
+-- set strips only ordinary spaces (U+0020), so a tab/newline-only id would pass — but
+-- CampaignAudience.Validate() uses Go's strings.TrimSpace (all Unicode whitespace) and
+-- would reject it, leaving the DB and app inconsistent. `~ '[^[:space:]]'` requires at
+-- least one non-whitespace character, matching the app.
 ALTER TABLE campaign_audiences
     ADD CONSTRAINT campaign_audiences_built_needs_master_list
     CHECK (
         status <> 'built'
-        OR (platform_master_list_id IS NOT NULL AND btrim(platform_master_list_id) <> '')
+        OR (platform_master_list_id IS NOT NULL AND platform_master_list_id ~ '[^[:space:]]')
     );
 
 -- Same datastore-source-of-truth reasoning for `platform`: the DSL Enum("hubspot")

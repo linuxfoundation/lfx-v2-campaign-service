@@ -145,15 +145,24 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 	if gerr != nil {
 		return nil, mapAudienceErr(gerr)
 	}
+	// Check the If-Match version against the LOADED row BEFORE merging + validating.
+	// A stale If-Match means the client is patching a version it never saw, so any
+	// content check would be judging the patch against the wrong base — return 412 so
+	// the client refetches and retries. Example: v1 is built-with-id, a concurrent write
+	// makes v2 building-without-id; a stale `If-Match: "1"` patch that sets status=built
+	// is VALID against v1 but merged onto v2 has no id — that must be a 412 (stale), not
+	// a 400 (malformed). The repo's atomic version check (below) still catches a race
+	// between this read and the write; this early check just gives the right code for a
+	// version already known to be stale at read time.
+	if cur.Version != version {
+		return nil, &audiences.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
+	}
 	applyAudiencePatch(cur, p.Audience)
 	// Re-validate the MERGED row: a patch that sets status=built on a row with no
 	// master-list id, or clears the id on an already-built row, would leave "built"
-	// meaning nothing. Reject as a 400 before persisting.
-	//
-	// Precedence is deliberate: this content-400 runs BEFORE the repo's optimistic-
-	// concurrency check (412 on a stale If-Match). A built-with-no-id patch is malformed
-	// at ANY version, so failing fast with 400 is correct — returning 412 would only
-	// send the client to refetch and retry a request that is still inherently invalid.
+	// meaning nothing. Reject as a 400 before persisting. (This now runs only when the
+	// version matched, so a content-400 here is a genuinely-malformed patch, not a
+	// stale-version artifact.)
 	if verr := cur.Validate(); verr != nil {
 		return nil, audienceValidationErr(verr)
 	}

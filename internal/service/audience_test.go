@@ -264,6 +264,38 @@ func TestAudienceService_Update_BuiltInvariantEnforcedAfterMerge(t *testing.T) {
 	}
 }
 
+func TestAudienceService_Update_StaleIfMatchIs412NotContent400(t *testing.T) {
+	// A patch that is VALID against the version the client fetched, but content-invalid
+	// once merged onto a NEWER stored version, must return 412 (stale ETag → refetch),
+	// not 400 — the If-Match version is checked against the loaded row before the
+	// merge/content validation.
+	repo := newFakeAudienceRepo()
+	s := NewAudienceService(repo)
+	created, _ := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Audience: &audiences.AudienceInput{Platform: "hubspot", Status: strptr("built"), PlatformMasterListID: strptr("m-1")},
+	})
+	// v1 = built with id "m-1". A concurrent writer clears the id + reverts to building,
+	// producing v2 = building, no id (simulated by mutating the stored row directly).
+	stored := repo.items[created.ID]
+	stored.PlatformMasterListID = ""
+	stored.Status = model.AudienceBuilding
+	stored.Version = 2
+
+	// A stale `If-Match: "1"` patch that sets status=built (no id supplied): this WOULD
+	// be valid against v1 (which still had the id), but merged onto v2 it has no id.
+	// It must be a 412 (stale version), NOT a 400 (content) — the client just needs to
+	// refetch v2 and reconsider.
+	_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("1"),
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built")},
+	})
+	var preFail *audiences.PreconditionFailedError
+	if !errors.As(err, &preFail) {
+		t.Fatalf("a stale If-Match that's only invalid after merge must be 412, got %T: %v", err, err)
+	}
+}
+
 // parseAudienceIfMatch is a separate copy of the strong-validator parser (mirroring
 // parseBriefIfMatch); the service emits QUOTED ETags, so exercise the full response-to-
 // If-Match round trip — bare version, strong quoted entity-tag, surrounding whitespace,

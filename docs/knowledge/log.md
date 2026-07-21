@@ -2,6 +2,18 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 review (copilot, round 10, after David's approval): two fixes.
+(1) UpdateAudience checked If-Match only via the repo's atomic write, AFTER the merge +
+built-invariant Validate() — so a patch valid against the client's fetched version but
+content-invalid once merged onto a NEWER stored version returned 400 instead of 412
+(stale ETag). Added an explicit `cur.Version != version → 412` check right after
+GetAudience (before merge/validate); the repo's atomic check still catches a read→write
+race. Added a regression test (`TestAudienceService_Update_StaleIfMatchIs412NotContent400`).
+(2) The built-invariant CHECK (000006) used `btrim(x) <> ''`, which strips only ordinary
+spaces — a tab/newline-only master-list id passed the DB CHECK but `Validate()`
+(strings.TrimSpace) rejects it. Switched to `platform_master_list_id ~ '[^[:space:]]'`
+(requires a non-whitespace char), matching the app.
+
 **Update** — PR #40 review (copilot, round 9): two fixes. (1) Cross-tenant integrity gap:
 `campaign_audiences.brief_id` referenced only `campaign_briefs(id)`, so the copied
 `project_id` was unchecked — a worker/backfill/direct write could persist an audience
