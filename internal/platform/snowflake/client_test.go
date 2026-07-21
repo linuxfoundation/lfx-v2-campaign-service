@@ -121,6 +121,15 @@ func TestNewClient_ValidatesConfig(t *testing.T) {
 	if _, err := NewClient(Config{Account: "a", User: "u", PrivateKeyPEM: "not a key"}); err == nil {
 		t.Error("bad private key should error")
 	}
+	// Whitespace-only account/user must be rejected (they'd trim to empty).
+	if _, err := NewClient(Config{Account: "  ", User: "u", PrivateKeyPEM: genPKCS8PEM(t)}); err == nil {
+		t.Error("whitespace-only account should error")
+	}
+	// A padded-but-valid account/user must be accepted (trimmed, not rejected, and
+	// not flowed untrimmed into the DSN).
+	if _, err := NewClient(Config{Account: "  acct  ", User: "  user  ", PrivateKeyPEM: genPKCS8PEM(t)}); err != nil {
+		t.Errorf("a padded account/user should be trimmed and accepted: %v", err)
+	}
 }
 
 func TestSource_IsAlwaysPlatinum(t *testing.T) {

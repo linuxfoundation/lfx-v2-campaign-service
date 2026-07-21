@@ -47,6 +47,15 @@ const (
 	// string literal in which backslash IS an escape character, so a single literal
 	// backslash must be written as '\\' in the SQL text.
 	escapeClause = `ESCAPE '\\'`
+
+	// maxOpenConns caps concurrent Snowflake sessions the pool opens. This is a
+	// low-QPS read path, so a small bound protects the warehouse from a session
+	// storm under concurrent resolution (database/sql defaults to unlimited).
+	maxOpenConns = 4
+
+	// connMaxIdleTime releases idle sessions so the pool doesn't pin warehouse
+	// sessions between infrequent resolves.
+	connMaxIdleTime = 5 * time.Minute
 )
 
 // Config is the injected Snowflake connection configuration. PrivateKeyPEM is the
@@ -92,7 +101,12 @@ type Event struct {
 // config error), building the DSN, but does NOT connect — the pool opens lazily on
 // the first query so an unreachable warehouse doesn't wedge construction.
 func NewClient(cfg Config, opts ...Option) (*Client, error) {
-	if strings.TrimSpace(cfg.Account) == "" || strings.TrimSpace(cfg.User) == "" {
+	// Trim the identity fields once and use the TRIMMED values everywhere — otherwise
+	// a whitespace-padded account/user passes the non-blank check but flows untrimmed
+	// into the DSN, producing an invalid connection string.
+	account := strings.TrimSpace(cfg.Account)
+	user := strings.TrimSpace(cfg.User)
+	if account == "" || user == "" {
 		return nil, fmt.Errorf("snowflake: account and user are required")
 	}
 	key, err := parsePrivateKey(cfg.PrivateKeyPEM)
@@ -104,12 +118,12 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	// same source the fully-qualified query targets — so they are never
 	// caller-overridable.
 	sfCfg := &sf.Config{
-		Account:       cfg.Account,
-		User:          cfg.User,
+		Account:       account,
+		User:          user,
 		Database:      defaultDatabase,
 		Schema:        defaultSchema,
-		Warehouse:     cfg.Warehouse,
-		Role:          cfg.Role,
+		Warehouse:     strings.TrimSpace(cfg.Warehouse),
+		Role:          strings.TrimSpace(cfg.Role),
 		Authenticator: sf.AuthTypeJwt,
 		PrivateKey:    key,
 	}
@@ -151,6 +165,13 @@ func (c *Client) pool() (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("snowflake: open pool: %w", err)
 	}
+	// Bound the pool: database/sql defaults to UNLIMITED open connections, so under
+	// concurrent audience resolution each query could open another Snowflake session
+	// (the row limit and per-query timeout don't cap session count). This is a
+	// low-QPS read path, so a small cap is plenty and protects the warehouse.
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxOpenConns)
+	db.SetConnMaxIdleTime(connMaxIdleTime)
 	c.db = db
 	return db, nil
 }
