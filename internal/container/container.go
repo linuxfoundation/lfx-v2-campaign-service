@@ -399,6 +399,15 @@ func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
 		pool.Close()
 		return nil, fmt.Errorf("run migrations: %w", ctx.Err())
 	}
+	// A successful migrateDone can win the select even if ctx was ALSO cancelled
+	// (Go picks a ready case pseudo-randomly when both fire together). Returning a
+	// live pool here would let retryDatabaseInit late-bind backends, start the
+	// sweeper, and flip readiness AFTER Close cancelled init — the exact pool swap
+	// Close means to prevent. Re-check the context and fail closed if it's done.
+	if err := ctx.Err(); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
 	return pool, nil
 }
 
