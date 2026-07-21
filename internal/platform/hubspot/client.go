@@ -104,6 +104,10 @@ type Client struct {
 
 	// retryBaseDelay is injectable so tests avoid real per-retry sleeps.
 	retryBaseDelay time.Duration
+
+	// now is injectable so tests can compute an HTTP-date Retry-After delay
+	// deterministically. Defaults to time.Now.
+	now func() time.Time
 }
 
 // Option customizes a Client at construction time.
@@ -149,6 +153,12 @@ func withRetryBaseDelay(d time.Duration) Option {
 	return func(c *Client) { c.retryBaseDelay = d }
 }
 
+// withClock overrides the clock so tests can compute an HTTP-date Retry-After delay
+// deterministically.
+func withClock(now func() time.Time) Option {
+	return func(c *Client) { c.now = now }
+}
+
 // NewClient constructs a Client from injected credentials and account config.
 // Redirect following is force-disabled on the client actually used — including one
 // supplied via WithHTTPClient — by building a FRESH *http.Client carrying only the
@@ -162,6 +172,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		appBaseURL:     AppBaseURL,
 		httpClient:     &http.Client{Timeout: requestTimeout, CheckRedirect: noFollow},
 		retryBaseDelay: retryBaseDelay,
+		now:            time.Now,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -366,24 +377,46 @@ func (c *Client) readErrorSnapshot(resp *http.Response) string {
 	return string(b)
 }
 
-// retryAfter computes the 429 backoff: honor a server-declared Retry-After
-// (seconds) when present, else exponential backoff off retryBaseDelay, clamped to
-// maxRetryWait+1 so the caller aborts on an over-cap server value.
+// retryAfter computes the 429 backoff: honor a server-declared Retry-After when
+// present, else exponential backoff off retryBaseDelay. An over-cap server value is
+// returned as maxRetryWait+1s to signal "over cap" so the caller aborts.
+//
+// Retry-After has TWO valid forms (RFC 7231): a delay in seconds ("120") OR an
+// HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT"). HubSpot can send either; parsing only
+// the seconds form silently dropped an HTTP-date and fell back to exponential
+// backoff, ignoring the server's stated reset time.
 func (c *Client) retryAfter(resp *http.Response, attempt int) time.Duration {
-	if ra := resp.Header.Get("Retry-After"); ra != "" {
-		if secs, err := parsePositiveInt(ra); err == nil && secs > 0 {
-			d := time.Duration(secs) * time.Second
-			if d > maxRetryWait {
-				return maxRetryWait + time.Second // signal "over cap" to the caller
-			}
-			return d
+	if d, ok := c.parseRetryAfter(resp.Header.Get("Retry-After")); ok {
+		if d > maxRetryWait {
+			return maxRetryWait + time.Second // signal "over cap" to the caller
 		}
+		return d
 	}
 	d := c.retryBaseDelay * time.Duration(1<<uint(attempt))
 	if d > maxRetryWait {
 		d = maxRetryWait
 	}
 	return d
+}
+
+// parseRetryAfter parses a Retry-After header value in either RFC 7231 form —
+// delay-seconds or an HTTP-date — into a positive wait. Returns ok=false when the
+// header is absent/blank/unparseable or the resulting delay is not positive (a
+// past/now HTTP-date), so the caller falls back to exponential backoff.
+func (c *Client) parseRetryAfter(ra string) (time.Duration, bool) {
+	ra = strings.TrimSpace(ra)
+	if ra == "" {
+		return 0, false
+	}
+	if secs, err := parsePositiveInt(ra); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(ra); err == nil {
+		if d := t.Sub(c.now()); d > 0 {
+			return d, true
+		}
+	}
+	return 0, false
 }
 
 // parsePositiveInt parses a non-negative integer string (Retry-After seconds).

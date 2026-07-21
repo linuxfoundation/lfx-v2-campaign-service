@@ -204,3 +204,27 @@ func TestSetSendList_RejectsEmptyIDs(t *testing.T) {
 		t.Error("empty send-list id should be rejected")
 	}
 }
+
+func TestSetSendList_RejectsNonNumericLegacyID(t *testing.T) {
+	// A non-numeric legacy (non-ILS) send-list id must be rejected BEFORE the PATCH:
+	// silently dropping it would send an empty include and HubSpot would clear all
+	// recipients while returning success (a silent no-recipient send).
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no PATCH expected when the legacy send-list id is non-numeric")
+	})
+	if _, err := c.SetSendList(context.Background(), "999", "not-a-number", nil, false); err == nil {
+		t.Error("a non-numeric legacy send-list id must be rejected, not turned into an empty-recipient PATCH")
+	}
+	// A whitespace-padded numeric id must be accepted (Atoi doesn't trim; we do).
+	var patched bool
+	c2, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		patched = true
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c2.SetSendList(context.Background(), "999", " 12345 ", nil, false); err != nil {
+		t.Errorf("a padded numeric legacy id should be accepted: %v", err)
+	}
+	if !patched {
+		t.Error("expected a PATCH for a valid padded numeric id")
+	}
+}

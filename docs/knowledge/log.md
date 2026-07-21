@@ -67,7 +67,7 @@ key → double-create risk). Concept doc + code index added.
 ops (LFXV2-2780) on the client. `email.go`: SearchEmails/GetEmail (idempotent),
 CloneEmail, PatchEmailSettings, SetSendList. `lists.go`: SearchLists, GetList
 (includeFilters=true → filterBranch + processingType), CreateList (DYNAMIC,
-objectTypeId 0-1, opaque filterBranch), UpdateListFilters (PUT …/filter-branch),
+objectTypeId 0-1, opaque filterBranch), UpdateListFilters (PUT …/update-list-filters),
 ListEventDefinitions. Creates/clones are non-idempotent; a 2xx-with-no-id is
 UNCONFIRMED (a resource may exist → verify, don't blind-retry). LOAD-BEARING GOTCHA
 captured in SetSendList: an ILS list (any CRM-v3 processingType) MUST go in

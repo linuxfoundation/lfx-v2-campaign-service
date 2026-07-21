@@ -79,7 +79,7 @@ The ILS-vs-legacy decision is the caller's (from `GetList().ProcessingType`).
 `lists.go`: `SearchLists`, `GetList` (with `includeFilters=true` so the filterBranch
 + processingType come back — the latter drives the send-list routing above),
 `CreateList` (`POST /crm/v3/lists/` — DYNAMIC, contact objectTypeId `0-1`),
-`UpdateListFilters` (`PUT …/filter-branch`), and `ListEventDefinitions` (resolve
+`UpdateListFilters` (`PUT …/update-list-filters`), and `ListEventDefinitions` (resolve
 `fullyQualifiedName` for BEHAVIORAL_EVENT filters). `filterBranch` is passed through
 as OPAQUE JSON — HubSpot's shape invariants (OR-root with AND sub-branches, no nested
 ORs, `IN_LIST` not `LIST_MEMBERSHIP` in membership branches) belong to the

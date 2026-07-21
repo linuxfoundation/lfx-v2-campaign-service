@@ -144,7 +144,7 @@ func TestUpdateListFilters_PutsFilterBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateListFilters: %v", err)
 	}
-	if gotPath != "/crm/v3/lists/26991/filter-branch" {
+	if gotPath != "/crm/v3/lists/26991/update-list-filters" {
 		t.Errorf("path = %q", gotPath)
 	}
 	fb, _ := body["filterBranch"].(map[string]any)

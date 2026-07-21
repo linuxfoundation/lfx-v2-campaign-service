@@ -41,23 +41,45 @@ type List struct {
 	AppURL string `json:"-"`
 }
 
-// SearchLists returns contact lists whose name matches query. Read-only.
+// SearchLists returns ALL contact lists whose name matches query. Read-only. The
+// lists search API paginates with offset/hasMore, so this follows every page rather
+// than returning only the first — otherwise a portal with >count matching lists would
+// silently return an incomplete result despite the all-matches contract.
 func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) {
-	body := map[string]any{"query": query, "count": 20, "includeFilters": false}
-	raw, err := c.doRequest(ctx, http.MethodPost, listSearchPath, body, true)
-	if err != nil {
-		return nil, err
+	const pageSize = 100
+	out := make([]List, 0)
+	offset := 0
+	for page := 0; page < maxListPages; page++ {
+		body := map[string]any{"query": query, "count": pageSize, "offset": offset, "includeFilters": false}
+		raw, err := c.doRequest(ctx, http.MethodPost, listSearchPath, body, true)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Lists   []List `json:"lists"`
+			HasMore bool   `json:"hasMore"`
+			Offset  int    `json:"offset"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, fmt.Errorf("hubspot: decode list search: %w", err)
+		}
+		for i := range resp.Lists {
+			resp.Lists[i].AppURL = c.listURL(resp.Lists[i].ListID)
+			out = append(out, resp.Lists[i])
+		}
+		// Stop when the server says there's no more, or (defensively) when a page
+		// returns nothing or fails to advance the offset — either would otherwise
+		// loop forever.
+		if !resp.HasMore || len(resp.Lists) == 0 {
+			return out, nil
+		}
+		next := resp.Offset
+		if next <= offset {
+			next = offset + len(resp.Lists)
+		}
+		offset = next
 	}
-	var resp struct {
-		Lists []List `json:"lists"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, fmt.Errorf("hubspot: decode list search: %w", err)
-	}
-	for i := range resp.Lists {
-		resp.Lists[i].AppURL = c.listURL(resp.Lists[i].ListID)
-	}
-	return resp.Lists, nil
+	return nil, fmt.Errorf("hubspot: SearchLists exceeded %d pages; refusing to page unbounded", maxListPages)
 }
 
 // GetList fetches one list, including its filterBranch and processingType (needed to
@@ -124,7 +146,7 @@ func (c *Client) UpdateListFilters(ctx context.Context, listID string, filterBra
 		return fmt.Errorf("hubspot: UpdateListFilters requires a filterBranch")
 	}
 	body := map[string]any{"filterBranch": filterBranch}
-	if _, err := c.doRequest(ctx, http.MethodPut, listsPath+"/"+url.PathEscape(listID)+"/filter-branch", body, false); err != nil {
+	if _, err := c.doRequest(ctx, http.MethodPut, listsPath+"/"+url.PathEscape(listID)+"/update-list-filters", body, false); err != nil {
 		return fmt.Errorf("hubspot: update list %s filters: %w", listID, err)
 	}
 	return nil
@@ -138,22 +160,38 @@ type EventDefinition struct {
 	Name               string `json:"name"`
 }
 
-// ListEventDefinitions returns the portal's custom-event definitions. Read-only.
+// ListEventDefinitions returns ALL of the portal's custom-event definitions.
+// Read-only. The endpoint is cursor-paginated (paging.next.after), so this follows
+// every page — a portal with >limit definitions would otherwise silently lose the
+// later ones, and the audience builder could not resolve those events.
 func (c *Client) ListEventDefinitions(ctx context.Context) ([]EventDefinition, error) {
-	q := url.Values{}
-	q.Set("limit", "100")
-	q.Set("includeProperties", "true")
-	raw, err := c.doRequest(ctx, http.MethodGet, eventDefsPath+"?"+q.Encode(), nil, true)
-	if err != nil {
-		return nil, err
+	out := make([]EventDefinition, 0)
+	after := ""
+	for page := 0; page < maxListPages; page++ {
+		q := url.Values{}
+		q.Set("limit", "100")
+		q.Set("includeProperties", "true")
+		if after != "" {
+			q.Set("after", after)
+		}
+		raw, err := c.doRequest(ctx, http.MethodGet, eventDefsPath+"?"+q.Encode(), nil, true)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Results []EventDefinition `json:"results"`
+			Paging  *paging           `json:"paging"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, fmt.Errorf("hubspot: decode event definitions: %w", err)
+		}
+		out = append(out, resp.Results...)
+		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
+			return out, nil
+		}
+		after = resp.Paging.Next.After
 	}
-	var resp struct {
-		Results []EventDefinition `json:"results"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, fmt.Errorf("hubspot: decode event definitions: %w", err)
-	}
-	return resp.Results, nil
+	return nil, fmt.Errorf("hubspot: ListEventDefinitions exceeded %d pages; refusing to page unbounded", maxListPages)
 }
 
 // decodeListEnvelope decodes a list response, handling BOTH shapes HubSpot returns:

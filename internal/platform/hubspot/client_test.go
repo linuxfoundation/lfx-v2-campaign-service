@@ -212,6 +212,35 @@ func TestDoRequest_429OverCapRetryAfterAborts(t *testing.T) {
 	}
 }
 
+func TestParseRetryAfter_SecondsAndHTTPDate(t *testing.T) {
+	// Fixed "now" so an HTTP-date delay is deterministic.
+	now := time.Date(2026, 10, 21, 7, 0, 0, 0, time.UTC)
+	c := NewClient(testCreds(), testAccount(), withClock(func() time.Time { return now }))
+
+	cases := []struct {
+		name   string
+		header string
+		want   time.Duration
+		wantOK bool
+	}{
+		{"seconds", "120", 120 * time.Second, true},
+		{"http-date future", "Wed, 21 Oct 2026 07:28:00 GMT", 28 * time.Minute, true},
+		{"http-date past", "Wed, 21 Oct 2026 06:00:00 GMT", 0, false},
+		{"http-date now", "Wed, 21 Oct 2026 07:00:00 GMT", 0, false},
+		{"empty", "", 0, false},
+		{"garbage", "soon", 0, false},
+		{"zero seconds", "0", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := c.parseRetryAfter(tc.header)
+			if ok != tc.wantOK || (ok && got != tc.want) {
+				t.Errorf("parseRetryAfter(%q) = (%v, %v), want (%v, %v)", tc.header, got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
 func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	secretURL := "https://api.hubapi.com/crm/v3/lists/?hapikey=SECRET-abc123"
 	te := &transportError{
