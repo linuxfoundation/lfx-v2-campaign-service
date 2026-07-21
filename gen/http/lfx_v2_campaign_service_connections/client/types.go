@@ -7741,3 +7741,13 @@ func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionC
 	}
 	return
 }
+
+// ValidateMetaAdsConnectionConfigRequestBody runs the validations defined on
+// meta-ads-connection-configRequestBody
+func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigRequestBody) (err error) {
+	if utf8.RuneCountInString(body.AccountID) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 1, true))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.page_id", body.PageID, "^[0-9]+$"))
+	return
+}

@@ -383,8 +383,20 @@ var MetaAdsCredentials = Type("meta-ads-credentials", func() {
 
 var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
-	Attribute("account_id", String, "Meta ad account ID", func() { Example("act_193556282970417") })
-	Attribute("page_id", String, "Facebook page ID")
+	// account_id must be non-empty: an empty value is stored on an active connection
+	// and then always fails dispatch. MinLength(1) rejects "" at connection creation.
+	Attribute("account_id", String, "Meta ad account ID", func() {
+		Example("act_193556282970417")
+		MinLength(1)
+	})
+	// page_id must be a non-empty NUMERIC Facebook page id. Required alone only checks
+	// presence — {"page_id":""} would still pass, be stored active, and then always
+	// fail dispatch (the Meta client also rejects non-numeric page ids). The digit
+	// pattern surfaces both failure modes as a 4xx at connection creation.
+	Attribute("page_id", String, "Facebook page ID", func() {
+		Example("123456789012345")
+		Pattern(`^[0-9]+$`)
+	})
 	Attribute("app_id", String, "Meta app ID")
 	// page_id is required at connection time: the Meta dispatcher needs it to attach
 	// the promoted-object page, so an active connection without it would always fail

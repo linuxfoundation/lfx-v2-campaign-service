@@ -385,12 +385,27 @@ countries, pixel + page promoted objects, per-variant creative/ad fan-out).
 
 **Update** — Added the linkedin, meta, and twitter PlatformDispatcher adapters to
 `internal/dispatch` (LFXV2-2638 / 2640 / 2642), following the reddit template from the
+**Update** — Made `page_id` REQUIRED + validated in `MetaAdsConnectionConfig`
+(design/connection.go, PR #38 review): an active Meta connection with no/empty/
+non-numeric page id would always fail dispatch (the adapter needs it for the
+promoted-object page, and the Meta client rejects non-numeric page ids), so beyond
+`Required` we validate `page_id` with a digits-only `Pattern` and `account_id` with
+`MinLength(1)` — `Required` alone would let `{"page_id":""}` through. This surfaces the
+error as a 4xx at connection creation instead of a silent runtime failure. Regenerated
+the Goa API, dropped the now-non-pointer `cfg.PageID` deref in the connection service,
+updated internal-dispatch.md, and strengthened the meta happy-path dispatch test to
+assert the full mapping contract (objective→OUTCOME_SALES, lifetime budget in minor
+units, geo countries, pixel + page promoted objects, per-variant creative/ad fan-out).
+
+**Update** — Added the linkedin and meta PlatformDispatcher adapters to
+`internal/dispatch` (LFXV2-2638 / 2640), following the reddit template from the
 Creation entry below. Each reuses the shared `credsSource` (Get → Decrypt) and does
 its own per-platform interpretation: linkedin unmarshals a single OAuth2 accessToken +
 builds RuntimeConfig from the connection's AccountID + numeric `org_id`; meta uses an
 accessToken + AccountID (`act_...`) + `page_id`, budget in the account's currency (no
-FX); twitter uses an OAuth1 4-tuple + AccountID + `funding_instrument_id`. All four are
-registered in `container.registerDispatchers` (fast path + cold-start retry). Each has
+FX). Both are registered in `container.registerDispatchers` (fast path + cold-start
+retry) alongside reddit — three of the paid providers. The twitter adapter (OAuth1
+4-tuple, LFXV2-2642) is planned on a later branch and not yet registered. Each has
 pre-create/NoUpstreamCreate tests + a happy-path through the real client against an
 httptest server. Google Ads follows once its client (PR #33) lands; email/HubSpot is
 LFXV2-2777.

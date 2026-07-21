@@ -74,8 +74,10 @@ of how the DB comes up. A provider without a registered adapter records jobs tha
 report "no dispatcher registered" (logged as a startup warning via
 `logMissingDispatchers`); adapters land incrementally per platform.
 
-Registered so far: **reddit**, **linkedin**, **meta**, **twitter**. Google Ads follows
-once its client (PR #33) merges; the email (HubSpot) dispatcher is LFXV2-2777.
+Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**. Twitter
+(the OAuth1 4-tuple adapter, LFXV2-2642) is PLANNED — its dispatcher lands on a later
+branch/PR and is not yet registered here. Google Ads follows once its client (PR #33)
+merges; the email (HubSpot) dispatcher is LFXV2-2777.
 
 Each adapter interprets its own credential + config shape:
 - **reddit** — OAuth2 (clientId/secret/refreshToken); AccountID from the connection.
@@ -87,6 +89,7 @@ Each adapter interprets its own credential + config shape:
   promoted-object page, so requiring it at connection time surfaces a 4xx instead of a
   silent dispatch failure); Budget is in the ACCOUNT's currency (no FX), optional
   CurrencyOffset.
-- **twitter** — OAuth1 4-tuple; AccountConfig from AccountID + `funding_instrument_id`.
+- **twitter** (planned) — OAuth1 4-tuple; AccountConfig from AccountID +
+  `funding_instrument_id`.
 
 See [internal/dispatch](../../../internal/dispatch).

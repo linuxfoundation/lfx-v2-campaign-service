@@ -5583,6 +5583,14 @@ func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigReq
 	if body.PageID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("page_id", "body"))
 	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 1, true))
+		}
+	}
+	if body.PageID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.page_id", *body.PageID, "^[0-9]+$"))
+	}
 	return
 }
 
