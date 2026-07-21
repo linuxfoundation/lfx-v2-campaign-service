@@ -345,10 +345,14 @@ func resourceID(resourceName string) string {
 // budget/campaign failure — a mutating 3xx/5xx or a transport error, or a 2xx with
 // no resourceName — is reported UNCONFIRMED (verify before retrying) rather than a
 // clean failure, and once the budget exists its id is returned in a partial result
-// so the orphan is reconcilable. A definite 4xx (Google rejected it) is a clean
-// failure: nothing was created. A DUPLICATE_NAME 4xx on a retry with a stable
-// NameSuffix is surfaced as UNCONFIRMED-already-exists (the resource likely exists
-// from a prior attempt; reconcile by name rather than treating it as created here).
+// so the orphan is reconcilable. A definite 4xx means only THAT mutate was rejected,
+// NOT that nothing was created: a 4xx on the SECOND (campaign) mutate still leaves
+// the budget from the FIRST mutate committed, and the returned partial result
+// carries that budget id so the caller can reconcile the orphan. (Only a 4xx on the
+// first/budget mutate means nothing was created.) A DUPLICATE_NAME 4xx on a retry
+// with a stable NameSuffix is surfaced as UNCONFIRMED-already-exists (the resource
+// likely exists from a prior attempt; reconcile by name rather than treating it as
+// created here).
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
