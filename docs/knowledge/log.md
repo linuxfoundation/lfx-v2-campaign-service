@@ -2,6 +2,15 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot contact-list filtering correction (PR #35 review round 6, copilot).
+`SearchLists` had sent `objectTypeId: "0-1"` in the `POST /crm/v3/lists/search` body to
+constrain to contact lists — but `objectTypeId` is NOT a `ListSearchRequest` field (it's
+a per-hit RESPONSE property), so HubSpot ignored it and could return company/deal/custom
+lists with the same name. Removed the unsupported body field, added `ObjectTypeID` to the
+`List` struct, and filter each hit CLIENT-SIDE (`objectTypeId == "0-1"`) while continuing
+pagination. Added `TestSearchLists_FiltersToContactListsClientSide` (mixed 0-1/0-2/2-123
+fixture) and inverted the body assertion (must NOT send objectTypeId).
+
 **Update** — HubSpot input-normalization (PR #35 review round 4, cursor).
 `SearchEmails`/`SearchLists` trim the query before matching/forwarding (a padded term
 no longer silently returns no results), and `CloneEmail` trims `cloneName` and rejects
@@ -33,8 +42,11 @@ LIVE email, so draft edits were hitting the wrong endpoint. (2) `SetSendList` is
 ILS-ONLY: HubSpot's ILS migration removed functional support for the legacy
 `contactLists` recipient field after 2024-10-31, so the client never emits it (dropped
 the `isILS` param + the legacy numeric-id handling; callers resolve an ILS list id from
-the Lists API). (3) `SearchLists` now sends `objectTypeId: "0-1"` to constrain to
-contact lists, drops the invalid `includeFilters` search-body field, and reads
+the Lists API). (3) `SearchLists` constrains results to
+contact lists (`objectTypeId "0-1"`) by filtering each hit CLIENT-SIDE — the v3
+`ListSearchRequest` body has no `objectTypeId` field (it's a response property), so a
+server-side constraint isn't possible (see the round-6 entry). It also drops the invalid
+`includeFilters` search-body field, and reads
 membership size from `hs_list_size` (a STRING under `additionalProperties`, requested
 explicitly) — there is no top-level `size`, so `List.Size` was always 0. (4) A mutating
 429/3xx/5xx `apiError` is now flagged `Ambiguous`; new `IsUnconfirmed(err)` lets callers

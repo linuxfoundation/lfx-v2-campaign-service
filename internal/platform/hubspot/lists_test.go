@@ -19,8 +19,9 @@ func TestSearchLists_ReturnsAndBuildsURL(t *testing.T) {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		body = decodeBody(t, r)
-		// Size comes back as hs_list_size (a STRING) under additionalProperties.
-		_, _ = io.WriteString(w, `{"lists":[{"listId":"26991","name":"CNCF Master","additionalProperties":{"hs_list_size":"1200"}}]}`)
+		// Size comes back as hs_list_size (a STRING) under additionalProperties;
+		// objectTypeId is a per-hit RESPONSE property.
+		_, _ = io.WriteString(w, `{"lists":[{"listId":"26991","name":"CNCF Master","objectTypeId":"0-1","additionalProperties":{"hs_list_size":"1200"}}]}`)
 	})
 	got, err := c.SearchLists(context.Background(), "CNCF")
 	if err != nil {
@@ -35,10 +36,10 @@ func TestSearchLists_ReturnsAndBuildsURL(t *testing.T) {
 	if !strings.Contains(got[0].AppURL, "/lists/26991") {
 		t.Errorf("AppURL = %q", got[0].AppURL)
 	}
-	// The search body must constrain to contact lists (0-1), request hs_list_size,
-	// and NOT send includeFilters (not a valid search-body field).
-	if body["objectTypeId"] != "0-1" {
-		t.Errorf("search must set objectTypeId 0-1, got %v", body["objectTypeId"])
+	// The search body must request hs_list_size and NOT send objectTypeId or
+	// includeFilters (neither is a valid ListSearchRequest field).
+	if _, bad := body["objectTypeId"]; bad {
+		t.Error("search must NOT send objectTypeId (not a ListSearchRequest field; filtered client-side)")
 	}
 	if _, bad := body["includeFilters"]; bad {
 		t.Error("search must NOT send includeFilters (invalid on the search route)")
@@ -46,6 +47,26 @@ func TestSearchLists_ReturnsAndBuildsURL(t *testing.T) {
 	ap, _ := body["additionalProperties"].([]any)
 	if len(ap) != 1 || ap[0] != "hs_list_size" {
 		t.Errorf("search must request hs_list_size, got %v", body["additionalProperties"])
+	}
+}
+
+func TestSearchLists_FiltersToContactListsClientSide(t *testing.T) {
+	// The v3 search body can't constrain the object type, so the server may return
+	// company/deal/custom lists that match the name. SearchLists must keep only
+	// contact lists (objectTypeId 0-1).
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"lists":[`+
+			`{"listId":"1","name":"Ops","objectTypeId":"0-1"},`+
+			`{"listId":"2","name":"Ops","objectTypeId":"0-2"},`+
+			`{"listId":"3","name":"Ops","objectTypeId":"2-123"}`+
+			`]}`)
+	})
+	got, err := c.SearchLists(context.Background(), "Ops")
+	if err != nil {
+		t.Fatalf("SearchLists: %v", err)
+	}
+	if len(got) != 1 || got[0].ListID != "1" {
+		t.Errorf("must keep only the contact (0-1) list, got %+v", got)
 	}
 }
 
@@ -57,10 +78,10 @@ func TestSearchLists_FollowsOffsetPagination(t *testing.T) {
 		off := int(body["offset"].(float64))
 		offsets = append(offsets, off)
 		if off == 0 {
-			_, _ = io.WriteString(w, `{"lists":[{"listId":"1","name":"A"}],"hasMore":true,"offset":100}`)
+			_, _ = io.WriteString(w, `{"lists":[{"listId":"1","name":"A","objectTypeId":"0-1"}],"hasMore":true,"offset":100}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"lists":[{"listId":"2","name":"B"}],"hasMore":false,"offset":100}`)
+		_, _ = io.WriteString(w, `{"lists":[{"listId":"2","name":"B","objectTypeId":"0-1"}],"hasMore":false,"offset":100}`)
 	})
 	got, err := c.SearchLists(context.Background(), "q")
 	if err != nil {
@@ -80,7 +101,7 @@ func TestSearchLists_EmptyPageWithHasMoreErrors(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		off := int(decodeBody(t, r)["offset"].(float64))
 		if off == 0 {
-			_, _ = io.WriteString(w, `{"lists":[{"listId":"1","name":"A"}],"hasMore":true,"offset":100}`)
+			_, _ = io.WriteString(w, `{"lists":[{"listId":"1","name":"A","objectTypeId":"0-1"}],"hasMore":true,"offset":100}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"lists":[],"hasMore":true,"offset":200}`)

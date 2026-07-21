@@ -87,8 +87,9 @@ send list + `.exclude` = suppressions.
 
 ## CRM contact-list + event-definition operations (LFXV2-2780)
 
-`lists.go`: `SearchLists` (`POST /crm/v3/lists/search` — constrained to contact lists
-via `objectTypeId: "0-1"`, follows `offset`/`hasMore` pagination; `includeFilters` is
+`lists.go`: `SearchLists` (`POST /crm/v3/lists/search` — filters to contact lists
+(`objectTypeId "0-1"`) CLIENT-SIDE on each hit, since the v3 `ListSearchRequest` body
+has no `objectTypeId` field; follows `offset`/`hasMore` pagination; `includeFilters` is
 NOT a valid search-body field and is not sent), `GetList` (with `includeFilters=true`
 so the filterBranch + processingType come back),
 `CreateList` (`POST /crm/v3/lists/` — DYNAMIC, contact objectTypeId `0-1`),

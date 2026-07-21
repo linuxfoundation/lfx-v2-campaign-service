@@ -43,6 +43,10 @@ type List struct {
 	ListID         string `json:"listId"`
 	Name           string `json:"name"`
 	ProcessingType string `json:"processingType"`
+	// ObjectTypeID is the list's member object type ("0-1" = contacts). It is a
+	// RESPONSE property on each search hit (the v3 ListSearchRequest body has no
+	// objectTypeId field), so SearchLists filters on it client-side.
+	ObjectTypeID string `json:"objectTypeId"`
 	// Size is the normalized membership count (see resolveSize). Not decoded directly.
 	Size int `json:"-"`
 	// TopLevelSize decodes the GET/CREATE `size` integer (absent on search hits).
@@ -91,11 +95,11 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			"query":  query,
 			"count":  pageSize,
 			"offset": offset,
-			// Constrain to CONTACT lists (objectTypeId 0-1) so company/deal/custom
-			// lists aren't returned. `includeFilters` is NOT a search-body field
-			// (it's on the GET single-list route) — omitted. Request hs_list_size so
-			// the membership count comes back.
-			"objectTypeId":         contactObjectTID,
+			// objectTypeId is NOT a valid ListSearchRequest body field (it's a response
+			// property on each hit) — HubSpot would ignore it and return company/deal/
+			// custom lists too, so we filter to contacts (0-1) client-side below.
+			// `includeFilters` is likewise a GET-single-list field, not a search field.
+			// Request hs_list_size so the membership count comes back.
 			"additionalProperties": []string{hsListSizeProp},
 		}
 		raw, err := c.doRequest(ctx, http.MethodPost, listSearchPath, body, true)
@@ -111,6 +115,12 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			return nil, fmt.Errorf("hubspot: decode list search: %w", err)
 		}
 		for i := range resp.Lists {
+			// Contact-only contract enforced client-side: the search body can't
+			// constrain the object type, so drop any non-contact (company/deal/custom)
+			// list the server returned for the same name.
+			if resp.Lists[i].ObjectTypeID != contactObjectTID {
+				continue
+			}
 			resp.Lists[i].resolveSize()
 			resp.Lists[i].AppURL = c.listURL(resp.Lists[i].ListID)
 			out = append(out, resp.Lists[i])
