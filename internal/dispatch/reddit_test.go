@@ -1,0 +1,154 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package dispatch
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+)
+
+// ---- fakes ----------------------------------------------------------------
+
+// fakeConnReader returns a preset connection (or error) regardless of args.
+type fakeConnReader struct {
+	conn *model.Connection
+	err  error
+}
+
+func (f fakeConnReader) Get(context.Context, string, model.Provider) (*model.Connection, error) {
+	return f.conn, f.err
+}
+
+// identityEncryptor treats ciphertext as plaintext, so tests can put readable JSON in
+// EncryptedCredentials. errEncryptor always fails Decrypt.
+type identityEncryptor struct{}
+
+func (identityEncryptor) Encrypt(p []byte) ([]byte, error) { return p, nil }
+func (identityEncryptor) Decrypt(c []byte) ([]byte, error) { return c, nil }
+
+type errEncryptor struct{}
+
+func (errEncryptor) Encrypt(p []byte) ([]byte, error) { return p, nil }
+func (errEncryptor) Decrypt([]byte) ([]byte, error)   { return nil, errors.New("bad key") }
+
+func activeRedditConn(creds string) *model.Connection {
+	return &model.Connection{
+		Provider:             model.ProviderRedditAds,
+		AccountID:            "t2_acct",
+		EncryptedCredentials: []byte(creds),
+		Status:               model.StatusActive,
+	}
+}
+
+func testBrief() *model.CampaignBrief {
+	return &model.CampaignBrief{
+		ID:           "brief-1",
+		ProjectID:    "cncf",
+		EventSlug:    "kubecon-na-2026",
+		EventDetails: json.RawMessage(`{"eventName":"KubeCon NA 2026","registrationUrl":"https://events.example/kc","project":"cncf"}`),
+	}
+}
+
+const goodRedditCreds = `{"clientId":"cid","clientSecret":"sec","refreshToken":"rt"}`
+
+// ---- pre-create paths: must be NoUpstreamCreate (claim released) -----------
+
+func TestReddit_PreCreateErrorsReleaseClaim(t *testing.T) {
+	cases := []struct {
+		name string
+		repo connReader
+		enc  domain.Encryptor
+	}{
+		{"missing connection", fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{}},
+		{"repo error", fakeConnReader{err: errors.New("db down")}, identityEncryptor{}},
+		{"no stored credentials", fakeConnReader{conn: &model.Connection{Provider: model.ProviderRedditAds, Status: model.StatusActive}}, identityEncryptor{}},
+		{"decrypt fails", fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, errEncryptor{}},
+		{"incomplete credentials", fakeConnReader{conn: activeRedditConn(`{"clientId":"cid"}`)}, identityEncryptor{}},
+		{"inactive connection", fakeConnReader{conn: &model.Connection{Provider: model.ProviderRedditAds, AccountID: "t2_a", EncryptedCredentials: []byte(goodRedditCreds), Status: model.StatusInactive}}, identityEncryptor{}},
+		{"no account id", fakeConnReader{conn: &model.Connection{Provider: model.ProviderRedditAds, EncryptedCredentials: []byte(goodRedditCreds), Status: model.StatusActive}}, identityEncryptor{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewRedditDispatcher(tc.repo, tc.enc)
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, nil)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			var nuc interface{ NoUpstreamCreate() bool }
+			if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+				t.Errorf("a pre-create failure must be NoUpstreamCreate (claim released), got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+func TestReddit_BadConfigIsPreCreate(t *testing.T) {
+	d := NewRedditDispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{})
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, json.RawMessage(`{not json`))
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a malformed config must be a pre-create error, got %T: %v", err, err)
+	}
+}
+
+func TestReddit_BriefWithoutEventNameIsPreCreate(t *testing.T) {
+	b := testBrief()
+	b.EventDetails = json.RawMessage(`{"project":"cncf"}`) // no eventName
+	d := NewRedditDispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{})
+	_, err := d.Dispatch(context.Background(), b, model.ProviderRedditAds, nil)
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a brief with no eventName must be a pre-create error, got %T: %v", err, err)
+	}
+}
+
+// ---- happy path through an httptest reddit API ----------------------------
+
+func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
+	// A minimal Reddit API: OAuth token + campaign create (+ ad group). We only need
+	// the campaign create to return an id for the adapter's mapping assertion.
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "cmp_123"}})
+		case strings.Contains(r.URL.Path, "ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+		}
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+	)
+	cfg := json.RawMessage(`{"budgetUsd":50,"startDate":"2026-08-01","endDate":"2026-08-31","objective":"traffic","subreddits":["kubernetes"]}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "cmp_123" {
+		t.Fatalf("adapter must map the upstream campaign id, got %+v", camp)
+	}
+	if camp.CampaignName == "" {
+		t.Error("campaign name should be populated from the result")
+	}
+	if len(camp.Result) == 0 {
+		t.Error("the provider result blob should be captured")
+	}
+}
