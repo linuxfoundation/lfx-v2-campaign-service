@@ -18,10 +18,15 @@ import (
 // Reddit uses OAuth2 with a long-lived refresh token. This adapter unmarshals the
 // decrypted blob into this struct itself (credential shapes differ per platform, so
 // there is no shared typed-credentials abstraction).
+// redditCreds mirrors the generated RedditAdsCredentials field names EXACTLY (no json
+// tags). The connection service persists credentials via json.Marshal on the
+// tag-less generated struct, so the stored JSON keys are the Go field names
+// (PascalCase: ClientID/ClientSecret/RefreshToken). Matching them field-for-field
+// avoids relying on encoding/json's case-insensitive fallback.
 type redditCreds struct {
-	ClientID     string `json:"clientId"`
-	ClientSecret string `json:"clientSecret"`
-	RefreshToken string `json:"refreshToken"`
+	ClientID     string
+	ClientSecret string
+	RefreshToken string
 }
 
 // redditConfig is the per-platform campaign config the caller passes for Reddit in

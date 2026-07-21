@@ -60,7 +60,7 @@ func testBrief() *model.CampaignBrief {
 	}
 }
 
-const goodRedditCreds = `{"clientId":"cid","clientSecret":"sec","refreshToken":"rt"}`
+const goodRedditCreds = `{"ClientID":"cid","ClientSecret":"sec","RefreshToken":"rt"}`
 
 // ---- pre-create paths: must be NoUpstreamCreate (claim released) -----------
 
@@ -74,7 +74,7 @@ func TestReddit_PreCreateErrorsReleaseClaim(t *testing.T) {
 		{"repo error", fakeConnReader{err: errors.New("db down")}, identityEncryptor{}},
 		{"no stored credentials", fakeConnReader{conn: &model.Connection{Provider: model.ProviderRedditAds, Status: model.StatusActive}}, identityEncryptor{}},
 		{"decrypt fails", fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, errEncryptor{}},
-		{"incomplete credentials", fakeConnReader{conn: activeRedditConn(`{"clientId":"cid"}`)}, identityEncryptor{}},
+		{"incomplete credentials", fakeConnReader{conn: activeRedditConn(`{"ClientID":"cid"}`)}, identityEncryptor{}},
 		{"inactive connection", fakeConnReader{conn: &model.Connection{Provider: model.ProviderRedditAds, AccountID: "t2_a", EncryptedCredentials: []byte(goodRedditCreds), Status: model.StatusInactive}}, identityEncryptor{}},
 		{"no account id", fakeConnReader{conn: &model.Connection{Provider: model.ProviderRedditAds, EncryptedCredentials: []byte(goodRedditCreds), Status: model.StatusActive}}, identityEncryptor{}},
 	}
