@@ -124,12 +124,18 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	)
 	// NON-DEFAULT values for every mapped field: a lifetime budget, an explicit
 	// objective ("conversions" → OUTCOME_SALES + a numeric pixel promoted object), two
-	// geo targets, an explicit facebook-only placement, and two variants (→ two
-	// creatives + two ads). currencyOffset set → preflight skips FX derivation.
+	// geo targets, an explicit facebook-ONLY placement (InstagramFeed:false, overriding
+	// the client default that enables both feeds), and two variants (→ two creatives +
+	// two ads). currencyOffset set → preflight skips FX derivation.
+	//
+	// NOTE the placement keys: metaConfig.Placements is a meta.Placement, which has NO
+	// json tags, so the JSON keys are the Go field names (FacebookFeed/InstagramFeed) —
+	// lowercase "facebook"/"instagram" would be silently ignored and the client would
+	// apply its both-feeds default. We assert below that instagram is actually absent.
 	cfg := json.RawMessage(`{"metaConfig":{
 		"budget":2500,"lifetimeBudget":true,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"objective":"conversions","geoTargets":["US","GB"],"currencyOffset":100,
-		"pixelId":"555000111","placements":{"facebook":true,"instagram":false},
+		"pixelId":"555000111","placements":{"FacebookFeed":true,"InstagramFeed":false},
 		"variants":[
 			{"headline":"KubeCon 2099","primaryText":"Join us — it's great","description":"Cloud native event"},
 			{"headline":"Register now","primaryText":"Early bird pricing","description":"Save your seat"}
@@ -200,9 +206,15 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	if !strings.Contains(adsetBody, "555000111") { // numeric pixel on promoted_object
 		t.Errorf("adset body missing the pixel id 555000111\nbody: %s", adsetBody)
 	}
-	// facebook-only placement → publisher_platforms should include facebook, not instagram positions.
+	// facebook-only placement (InstagramFeed:false) → targeting must include facebook
+	// and must NOT include instagram. Asserting the ABSENCE is what proves the override
+	// was honored (a silently-ignored placement key would leave the default both-feeds
+	// on and instagram would appear here).
 	if !strings.Contains(adsetBody, "facebook") {
 		t.Errorf("adset targeting missing the facebook placement\nbody: %s", adsetBody)
+	}
+	if strings.Contains(adsetBody, "instagram") {
+		t.Errorf("adset targeting must NOT include instagram (InstagramFeed:false)\nbody: %s", adsetBody)
 	}
 	// The connection's page id (987654321) rides on each creative's object_story_spec.
 	creativeBody := find("/adcreatives")

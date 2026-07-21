@@ -404,9 +404,15 @@ mutating call), so beyond `Required` we validate `page_id` with a digits-only `P
 and `account_id` with `Pattern(^act_[0-9]+$)` — `Required`/`MinLength(1)` alone would let
 `{"page_id":""}` or `account_id:"foo"` through. This surfaces the error as a 4xx at
 connection creation instead of a silent runtime failure. Added table-driven API-level
-tests (`gen/.../server/meta_validation_test.go`, non-generated so it survives apigen)
-that exercise the GENERATED request-body validators: missing/empty/non-numeric page_id
-and non-`act_` account_id are rejected on both create and update; valid numeric ids pass.
+tests exercising the GENERATED request-body validators (missing/empty/non-numeric
+page_id and non-`act_` account_id rejected on both create and update; valid numeric ids
+pass) — in a NON-generated package `internal/apivalidation` that imports the exported
+validators, NOT under `gen/` (DO-NOT-EDIT boundary; a first attempt wrongly placed them
+there). Also fixed a vacuous placement assertion in the meta dispatch happy-path test:
+it used lowercase `facebook`/`instagram` JSON keys, but `meta.Placement` has no json
+tags so those were silently ignored and the client applied its both-feeds default —
+switched to the correct `FacebookFeed`/`InstagramFeed` keys and now assert instagram is
+ABSENT from targeting (proving the `InstagramFeed:false` override is honored).
 Also gave `CampaignCreateInput.platforms` a deterministic UNIQUE `Example`
 ([google-ads, meta-ads]) — Goa's auto-example otherwise repeated the first enum value
 (duplicate `reddit-ads`), which the handler rejects, so a consumer copying the published
