@@ -2,6 +2,16 @@
 
 ## 2026-07-21
 
+**Update** — GA budget-name reconcile guidance qualified (PR #33 review, copilot). The
+`campaignNamePartial` comment + `internal-platform-googleads.md` claimed the budget and
+campaign names always DIFFER, so `CampaignBudgetName` is the budget reconcile key. That's
+true only PRE-attachment: a non-shared (`explicitlyShared=false`) budget's name
+SYNCHRONIZES to the campaign name once the campaign attaches, so at a campaign-stage
+ambiguous failure the budget's current name is unknown (may be `campaignName`). The code
+already handles this — the budget-stage partial (`budgetPartial`) carries
+`CampaignBudgetID`, so past attachment reconciliation is by ID, not name — this just
+corrects the comment/doc to say so (no behavior change).
+
 **Update** — GA error-body snapshot no longer pins the full response (PR #33 review,
 copilot). `doRequest` built `apiError.Body` as `string(raw)[:maxErrorBodyChars]` — the
 400-char substring shared the up-to-`maxResponseBytes` backing array, so every retained

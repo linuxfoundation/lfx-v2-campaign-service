@@ -132,10 +132,14 @@ because the throttled request may already have committed — a `transportError`,
 2xx with no `resourceName`) is reported UNCONFIRMED (verify before retrying) with a
 partial result carrying whatever exists so an orphan is reconcilable. The partial
 carries BOTH deterministic names (`CampaignName` and `CampaignBudgetName`) alongside
-any known ids — and the two names DIFFER (`LFX | Budget | …` vs `LFX | Search
-Campaign | …`), so a caller reconciling a possibly-orphaned BUDGET before an id is
-known must use `CampaignBudgetName`; carrying only the campaign name would leave that
-budget unfindable. A definite 4xx means only THAT `:mutate` was rejected — for a
+any known ids. Before attachment the two names DIFFER (`LFX | Budget | …` vs `LFX |
+Search Campaign | …`), so a caller reconciling a possibly-orphaned BUDGET **at the
+budget stage** (no id yet) uses `CampaignBudgetName`. IMPORTANT: once the campaign
+attaches, a non-shared (`explicitlyShared=false`) budget's name SYNCHRONIZES to the
+campaign name — so at a CAMPAIGN-stage ambiguous failure the budget's current name is
+unknown (it may already be `campaignName`). That is exactly why the budget-stage
+partial also carries `CampaignBudgetID`: past attachment, reconcile the budget by ID,
+not by its original name. A definite 4xx means only THAT `:mutate` was rejected — for a
 campaign-create 4xx the budget from the first mutate still exists, so the partial
 carries `campaignBudgetId` for reconcile/cleanup (it is NOT "nothing was created"
 overall). Before the FIRST mutate, an already-cancelled context is caught explicitly

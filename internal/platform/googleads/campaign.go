@@ -413,10 +413,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// campaignNamePartial carries BOTH deterministic names (no ids yet) so an
 	// ambiguous/duplicate budget or campaign create is reconcilable by name rather
-	// than discarded. Both names are needed because they DIFFER: a possibly-orphaned
-	// budget is looked up by CampaignBudgetName, a campaign by CampaignName — carrying
-	// only the campaign name would leave a created-but-unconfirmed budget
-	// unreconcilable. Mirrors the meta/twitter name-only partials.
+	// than discarded. CampaignBudgetName is the reliable reconcile key ONLY for a
+	// PRE-ATTACHMENT (budget-stage) failure — before the campaign attaches, the budget
+	// carries `budgetName`. Once the campaign attaches, a non-shared
+	// (explicitlyShared=false) budget's name SYNCHRONIZES to the campaign name, so at a
+	// campaign-stage ambiguous failure the budget's current name is unknown (it may be
+	// campaignName). That is why the budget-stage partial (`budgetPartial`) also carries
+	// CampaignBudgetID: past attachment, reconcile the budget by ID, not name. Mirrors
+	// the meta/twitter name-only partials.
 	campaignNamePartial := func() *CampaignResult {
 		return &CampaignResult{
 			Platform:           "google-ads",
