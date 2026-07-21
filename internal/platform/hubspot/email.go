@@ -95,7 +95,7 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 
 // GetEmail fetches one marketing email by id. Read-only (idempotent).
 func (c *Client) GetEmail(ctx context.Context, id string) (*Email, error) {
-	if strings.TrimSpace(id) == "" {
+	if id = strings.TrimSpace(id); id == "" {
 		return nil, fmt.Errorf("hubspot: GetEmail requires a non-empty id")
 	}
 	raw, err := c.doRequest(ctx, http.MethodGet, emailsPath+"/"+url.PathEscape(id), nil, true)
@@ -129,9 +129,11 @@ type cloneEmailRequest struct {
 // failure must NOT blind-retry (that would create a second draft). An ambiguous
 // error / a 2xx with no id is surfaced as UNCONFIRMED so the caller verifies.
 func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*Email, error) {
-	if strings.TrimSpace(sourceID) == "" {
+	if sourceID = strings.TrimSpace(sourceID); sourceID == "" {
 		return nil, fmt.Errorf("hubspot: CloneEmail requires a non-empty source id")
 	}
+	// sourceID is trimmed above — a whitespace-padded id posted raw in the clone
+	// body could be rejected by HubSpot, causing a silent staging failure.
 	body := cloneEmailRequest{ID: sourceID, CloneName: cloneName, Language: "en"}
 	raw, err := c.doRequest(ctx, http.MethodPost, emailsPath+"/clone", body, false)
 	if err != nil {
@@ -169,7 +171,7 @@ type EmailSettings struct {
 // PatchEmailSettings updates subject and sender (from-name / reply-to) on a draft.
 // MUTATING.
 func (c *Client) PatchEmailSettings(ctx context.Context, id string, s EmailSettings) (*Email, error) {
-	if strings.TrimSpace(id) == "" {
+	if id = strings.TrimSpace(id); id == "" {
 		return nil, fmt.Errorf("hubspot: PatchEmailSettings requires a non-empty id")
 	}
 	payload := map[string]any{}
@@ -205,8 +207,9 @@ func (c *Client) PatchEmailSettings(ctx context.Context, id string, s EmailSetti
 // callers resolve an ILS list id from the Lists v3 API. A COMPLETE `to` object is
 // sent (contactIds cleared) so no stale clone-source recipients remain. MUTATING.
 func (c *Client) SetSendList(ctx context.Context, id, ilsListID string, suppressionListIDs []string) (*Email, error) {
+	id = strings.TrimSpace(id)
 	ilsListID = strings.TrimSpace(ilsListID)
-	if strings.TrimSpace(id) == "" || ilsListID == "" {
+	if id == "" || ilsListID == "" {
 		return nil, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and ILS send-list id")
 	}
 	to := map[string]any{

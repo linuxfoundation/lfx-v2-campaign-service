@@ -127,10 +127,11 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 	return nil, fmt.Errorf("hubspot: SearchLists exceeded %d pages; refusing to page unbounded", maxListPages)
 }
 
-// GetList fetches one list, including its filterBranch and processingType (needed to
-// route ILS-vs-legacy on the send-list PATCH). Read-only.
+// GetList fetches one list, including its filterBranch and processingType.
+// (processingType is retained on the returned List for callers; SetSendList itself is
+// ILS-only and does not route on it — the legacy-vs-ILS branch was removed.) Read-only.
 func (c *Client) GetList(ctx context.Context, listID string) (*List, error) {
-	if strings.TrimSpace(listID) == "" {
+	if listID = strings.TrimSpace(listID); listID == "" {
 		return nil, fmt.Errorf("hubspot: GetList requires a non-empty list id")
 	}
 	q := url.Values{}

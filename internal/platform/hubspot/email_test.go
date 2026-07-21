@@ -309,3 +309,36 @@ func TestSetSendList_RejectsEmptyIDs(t *testing.T) {
 		t.Error("empty/whitespace ILS send-list id should be rejected")
 	}
 }
+
+func TestSetSendList_TrimsEmailID(t *testing.T) {
+	// A whitespace-padded email id must be trimmed before it reaches the draft URL —
+	// a padded id sent raw yields "/emails/%20999%20/draft", a 404 that silently
+	// fails the send-list staging.
+	var gotPath string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c.SetSendList(context.Background(), "  999  ", "ils-123", nil); err != nil {
+		t.Fatalf("SetSendList: %v", err)
+	}
+	if gotPath != "/marketing/v3/emails/999/draft" {
+		t.Errorf("padded email id must be trimmed in the draft path, got %q", gotPath)
+	}
+}
+
+func TestCloneEmail_TrimsSourceID(t *testing.T) {
+	// A whitespace-padded source id must be trimmed before it is posted in the clone
+	// body — a padded id could be rejected by HubSpot, causing a silent clone failure.
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"clone-1"}`)
+	})
+	if _, err := c.CloneEmail(context.Background(), "  src-42  ", "My Clone"); err != nil {
+		t.Fatalf("CloneEmail: %v", err)
+	}
+	if body["id"] != "src-42" {
+		t.Errorf("clone body id must be the trimmed source id, got %v", body["id"])
+	}
+}
