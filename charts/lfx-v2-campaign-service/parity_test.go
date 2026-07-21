@@ -255,6 +255,12 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/briefs", true},
 		{"/projects/p1/briefs/b-42", true},
 		{"/projects/p1/briefs/b-42/campaigns/c-9", true},
+		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
+		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
+		// rule — no separate route/rule entry. These rows pin that coverage so a future
+		// narrowing of the briefs match/rule can't silently unroute or de-authorize it.
+		{"/projects/p1/briefs/b-42/audiences", true},
+		{"/projects/p1/briefs/b-42/audiences/a-9", true},
 		{"/projects/p1/jobs", true},
 		{"/projects/p1/jobs/j-1/status", true},
 		// --- accepted: hubspot base + descendants ---

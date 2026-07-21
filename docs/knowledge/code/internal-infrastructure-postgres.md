@@ -32,5 +32,36 @@ applied file.
   `campaign_jobs (updated_at) WHERE status IN ('queued','running')`, supporting
   the periodic stuck-job recovery sweep (`JobRepo.FailStuckJobs`) so it does not
   full-scan campaign_jobs as terminal job history grows.
+- `000005` — `campaign_audiences` table (email channel, epic LFXV2-2770): a built
+  audience subordinate to a brief (`brief_id` REFERENCES `campaign_briefs(id)`),
+  storing a POINTER + provenance (`platform_master_list_id`, `suppression_list_ids`,
+  `inclusion_summary`, `status` building/built/failed, `version`) to the audience
+  that physically lives in the platform (a HubSpot master list) — NOT its contents.
+  Indexed on `brief_id` and `project_id` (a brief may have many audiences, so there
+  is no natural uniqueness, hence both get their own index). `AudienceRepo`
+  (create/get/list/update, project-scoped, optimistic-concurrency update via
+  `ErrPreconditionFailed`) implements `domain.AudienceRepository`.
+- `000006` — CHECK constraint `campaign_audiences_platform_valid`
+  (`platform IN ('hubspot')`) enforcing the platform enum at the datastore, mirroring
+  the `status` CHECK on 000005 — the DSL `Enum("hubspot")` guards it only at request
+  time, so a direct/worker write could otherwise persist an unsupported platform. Plus
+  the CHECK constraint `campaign_audiences_built_needs_master_list`
+  (`status <> 'built' OR (platform_master_list_id IS NOT NULL AND platform_master_list_id ~ '[^[:space:]]')`)
+  enforcing the built-audience invariant at the datastore: `built` means the platform
+  master list exists, so a built row must carry a genuinely non-blank pointer. The
+  service layer already 400s this on create/update, but the constraint also stops the
+  platform build worker and direct writes from persisting an inconsistent "built" row.
+  The `~ '[^[:space:]]'` test requires at least one non-whitespace character — it rejects
+  `''` AND tab/newline-only ids, matching the app's `strings.TrimSpace` (a plain
+  `btrim(...) <> ''` would only strip ordinary spaces, letting a tab/newline id through).
+- `000007` — composite tenant foreign key on `campaign_audiences`: replaces the
+  `brief_id`-only FK with `(brief_id, project_id) REFERENCES campaign_briefs (id,
+  project_id)` (and adds the `UNIQUE (id, project_id)` on `campaign_briefs` a composite
+  FK requires). The old FK validated only the brief id, so a worker/backfill/direct
+  write could persist an audience whose copied `project_id` differed from its brief's —
+  and `GetAudience`, which trusts the stored `project_id` for tenant scoping, could then
+  expose it under the wrong tenant. The API create path already guards this (`INSERT …
+  WHERE EXISTS` an active brief scoped by project+brief); the FK makes the datastore the
+  source of truth for all writers.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).

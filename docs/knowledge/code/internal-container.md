@@ -12,12 +12,13 @@ Package container provides dependency injection for the application.
 When a database URL is configured it validates settings, runs migrations,
 opens an instrumented `postgres.Pool`, and wires the services against it: the
 connection service (with its repo and the AES-GCM credential encryptor), the
-brief service and its async orchestrator (brief/campaign/job repos), and the
+brief service and its async orchestrator (brief/campaign/job repos), the
+audiences service (its audience repo — the campaign_audiences resource), and the
 campaign/health service so `/readyz` reflects DB connectivity. No platform
 dispatchers are registered yet, so campaign creation records jobs but performs
 no upstream dispatch (a startup warning notes this). Without a database URL the
-health service still starts and the connection and brief routes return typed
-`503` responses rather than unmounted `404`s.
+health service still starts and the connection, brief, and audiences routes
+return typed `503` responses rather than unmounted `404`s.
 
 A database that is unreachable at boot does NOT crash the process. Config
 errors that a retry cannot fix fail fast (the process exits): invalid database
@@ -34,16 +35,18 @@ stops looping) refuse to 503-loop on it. But a *transient* failure (DB unreachab
 503 mode instead of returning an error: the health dependency is a `notReady`
 placeholder (a non-nil always-false checker — NOT nil, since a nil dep is treated
 as ready, so `/readyz` reports 503, distinct from the no-database mode which
-reports ready), and the connection AND brief services start with nil repos (their
-routes stay mounted and return the typed 503). A background goroutine then retries
-on `dbRetryInterval`, and once the pool opens it LATE-BINDS the live pool/repos into
-ALL the mounted services — the connection service (`SetBackend`), the brief service
-+ orchestrator (`BriefService.SetBackend`, guarded by an RWMutex; handlers snapshot
-their collaborators via `ready()` so a swap can't race a request), and health
-readiness (`SetReadinessDep`) — and runs the same stuck-job recovery + starts the
-periodic sweeper the fast path does. Readiness is flipped LAST, so `/readyz` never
-reports OK while brief/job routes still 503. So after a cold-start retry succeeds,
-the connection AND brief/job endpoints go live WITHOUT a pod restart.
+reports ready), and the connection, brief, AND audiences services start with nil
+repos (their routes stay mounted and return the typed 503). A background goroutine
+then retries on `dbRetryInterval`, and once the pool opens it LATE-BINDS the live
+pool/repos into ALL the mounted services — the connection service (`SetBackend`), the
+brief service + orchestrator (`BriefService.SetBackend`, guarded by an RWMutex;
+handlers snapshot their collaborators via `ready()` so a swap can't race a request),
+the audiences service (`AudienceService.SetBackend`, same RWMutex/`ready()` pattern),
+and health readiness (`SetReadinessDep`) — and runs the same stuck-job recovery +
+starts the periodic sweeper the fast path does. Readiness is flipped LAST, so
+`/readyz` never reports OK while brief/job routes still 503. So after a cold-start
+retry succeeds, the connection, brief/job, AND audiences endpoints go live WITHOUT a
+pod restart.
 
 `initDatabase` opens the pool FIRST (`NewPool` does a context-bounded `Ping`) and
 runs `Migrate` only after a reachable ping. This is deliberate: golang-migrate's

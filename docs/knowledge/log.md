@@ -1,5 +1,139 @@
 # Log
 
+## 2026-07-21
+
+**Update** — PR #40 review (round 11): two fixes. (1) Archived-brief lifecycle
+inconsistency (cursor): `ListAudiences` 404s on an archived parent brief, but
+`GetAudience`/`UpdateAudience` only matched the audience row and never re-checked the
+brief was active — so after archiving, list failed while get/patch still succeeded on
+the same nested resource. Added an `EXISTS(active brief)` predicate to `GetAudience`'s
+query (Update loads via Get, so the patch path is covered too), consistent with List +
+Create. (2) Doc drift: `internal-infrastructure-postgres.md` still showed the old
+`btrim(...) <> ''` 000006 constraint; updated it to the `~ '[^[:space:]]'` expression.
+
+**Update** — PR #40 review (copilot, round 10, after David's approval): two fixes.
+(1) UpdateAudience checked If-Match only via the repo's atomic write, AFTER the merge +
+built-invariant Validate() — so a patch valid against the client's fetched version but
+content-invalid once merged onto a NEWER stored version returned 400 instead of 412
+(stale ETag). Added an explicit `cur.Version != version → 412` check right after
+GetAudience (before merge/validate); the repo's atomic check still catches a read→write
+race. Added a regression test (`TestAudienceService_Update_StaleIfMatchIs412NotContent400`).
+(2) The built-invariant CHECK (000006) used `btrim(x) <> ''`, which strips only ordinary
+spaces — a tab/newline-only master-list id passed the DB CHECK but `Validate()`
+(strings.TrimSpace) rejects it. Switched to `platform_master_list_id ~ '[^[:space:]]'`
+(requires a non-whitespace char), matching the app.
+
+**Update** — PR #40 review (copilot, round 9): two fixes. (1) Cross-tenant integrity gap:
+`campaign_audiences.brief_id` referenced only `campaign_briefs(id)`, so the copied
+`project_id` was unchecked — a worker/backfill/direct write could persist an audience
+whose `project_id` differed from its brief's, and `GetAudience` (trusts the stored
+`project_id` for tenant scoping) could expose it under the wrong tenant. Added migration
+000007: a composite FK `(brief_id, project_id) → campaign_briefs(id, project_id)` (plus
+the `UNIQUE (id, project_id)` on campaign_briefs the composite FK requires). The API
+create path already guarded this via `INSERT … WHERE EXISTS` an active project-scoped
+brief; the FK makes the DB the source of truth for all writers. (2) Doc drift: updated
+`cmd-campaign-service.md` to say `buildMux` mounts health/campaign, connection, brief,
+AND audience servers (it said only health + connection).
+
+**Update** — PR #40 human review (David CHANGES_REQUESTED + Rashad). Fixed the one
+blocking defect: `CreateAudience` stored `created_by` as the JSONB literal `null` for an
+unattributed row — `actorFromCtx` returns a typed-nil `*model.Actor` that slips past
+`marshalAny(any)`'s `v == nil` guard (a typed nil boxed in an interface is not `== nil`)
+and JSON-marshals to `"null"`. Added a `marshalActor(*model.Actor)` helper that checks
+the concrete pointer, so no actor → SQL NULL. Also (agreeing with both reviewers) added a
+DB CHECK `campaign_audiences_platform_valid` (`platform IN ('hubspot')`) to migration
+000006 so the platform enum is datastore-enforced like `status`, not only at request
+time. Clarified `audienceFromInput` status handling to an explicit if/else (behaviorally
+identical — `StatusOrDefault()` was already a no-op when set — but a reviewer misread the
+unconditional call as an overwrite; the false positive is now un-misreadable). Dropped
+the dead `id` parameter from `audienceFromInput`. Added tests: nil-actor→NULL created_by,
+and explicit-status-preserved-on-create.
+
+**Update** — PR #40 follow-up review: two fixes. (1) The "explicit empty list clears
+suppressions" contract couldn't round-trip: `suppression_list_ids` is an optional array,
+so the generated client encodes it `json:"...,omitempty"` and a non-nil `[]string{}` is
+dropped on the wire — the clear silently didn't work. Replaced the empty-slice signal with
+an explicit `clear_suppression_lists` boolean in `AudienceUpdateInput` (always encodes;
+takes precedence over a supplied list), regenerated `gen/`, updated `applyAudiencePatch`/
+`hasAudiencePatch`, and added a service test for replace/clear/precedence. (2) `mapAudienceErr`
+mapped `ErrNotFound` → "the audience was not found", but on create/list that error comes
+from a missing/cross-project/archived PARENT BRIEF — made the shared message
+resource-neutral ("the audience or its parent brief was not found").
+
+**Update** — Route + authz for campaign_audiences (LFXV2-2783). Verified the audiences
+endpoints need NO new gateway wiring: they nest under `/briefs/{briefId}/audiences`, so
+the HTTPRoute `briefs(/.*)?` regex already forwards them and the single Heimdall
+`project-api` rule (`/projects/:projectId/briefs/**`) already authorizes them on
+`campaign_manager` (confirmed by running the RE2 regex against real audiences paths).
+Added explicit audiences rows to the route/rule PARITY test (parity_test.go accepted
+table) so a future narrowing of the briefs match/rule can't silently unroute or
+de-authorize them, and documented the inheritance in api-catalog.md. No chart change.
+
+**Update** — PR #40 follow-up review: two fixes. (1) `AudienceRepo.UpdateAudience` did
+`UPDATE` then a SEPARATE `GetAudience` re-read to return the row — a race where a
+concurrent version N+1 could land between the two statements and hand the first caller
+the other writer's row + ETag. Switched to `UPDATE … RETURNING audienceCols` scanned
+atomically, so the caller always gets the state its OWN write produced; the re-read
+survives only on the no-row path to classify 404 vs 412 (it never becomes the returned
+row, so it can't race). (2) Tightened the migration-000006 CHECK to reject blank/
+whitespace master-list ids (`btrim(...) <> ''`), not just NULL — via the API empties are
+written as NULL, but a direct/build-worker write could persist `''`, and the DB is meant
+to be the source of truth for all writers.
+
+**Update** — PR #40 review: updated `internal-container.md` to include the audiences
+service in the no-DB and cold-start-503/late-binding mode enumerations (it was still
+listing only connection + brief). The container wires `AudienceService` in all four
+paths and late-binds it via `AudienceService.SetBackend` (same RWMutex/`ready()` pattern
+as the brief service), so the OKF concept now matches the container behavior.
+
+**Update** — PR #40 follow-up review: enforce the built-audience invariant. `AudienceBuilt`
+is DEFINED as "the platform master list exists", but `status:"built"` was accepted with no
+`platform_master_list_id` — persisting a row that claims a list its pointer is NULL. Added
+`CampaignAudience.Validate()` (built ⇒ non-empty master-list id, evaluated on the EFFECTIVE
+status) and call it before persisting on BOTH create AND update-after-merge, so no path (a
+create with built+no-id, a status-only patch to built on an id-less row, or clearing the id
+on an already-built row) can leave "built" meaning nothing — each is now a 400. Model +
+service tests cover all three. Backed the app-level 400 with a DB CHECK constraint
+(migration 000006: `status <> 'built' OR platform_master_list_id IS NOT NULL`) so the
+platform build worker and direct writes can't violate it either — the datastore is the
+source of truth, the API 400 a friendly early reject. (Reviewer-sim follow-ups: fixed a
+godoc regression where `audienceValidationErr`'s doc comment detached `mapAudienceErr`'s;
+documented the deliberate content-400-before-concurrency-412 precedence in UpdateAudience.)
+
+**Update** — PR #40 follow-up review (two rounds): fixed the campaign_audiences PATCH
+contract. (1) The update method reused `AudienceInput`, where `platform` is Required —
+so the generated validator rejected a status-only/suppression-only patch unless the
+caller also resent the immutable `platform`, defeating the "only supplied fields change"
+contract. Added a dedicated `AudienceUpdateInput` (all mutable fields optional, no
+`platform`), pointed `update-audience` at it, regenerated `gen/`, retyped
+`applyAudiencePatch`. (2) But then every field being optional meant `{"audience":{}}`
+passed the validator as a no-op that still bumps version/updated_at → invalidates other
+clients' ETags → spurious 412s. Added a service-level `hasAudiencePatch` guard rejecting
+an all-omitted patch as a 400 (with a test asserting the version is NOT bumped). Updated
+the service tests to send platform-free patches and fixed the `AudienceInput` doc comment
+(it is the CREATE payload; updates use `AudienceUpdateInput`). design.md notes the split.
+
+**Update** — PR #40 review: extended the container startup tests to cover the new
+audiences service (typed-503 in both no-DB and cold-start-503 modes + successful
+`SetBackend` late-binding), and updated the architecture index for accuracy —
+`design.md` now says four services and describes the audiences service, and
+`api-catalog.md` gained a Campaign Audiences section listing the four nested routes.
+
+**Creation** — Added the campaign_audiences Goa API (LFXV2-2782, epic LFXV2-2770) on
+top of the existing DB layer (migration 000005 + model.CampaignAudience +
+AudienceRepository + repo). `design/audience.go` defines the audiences service
+(create/get/list/update) nested under a brief
+(`/projects/{project_id}/briefs/{brief_id}/audiences[/{audience_id}]`), reusing the
+shared design helpers (bearerToken/projectIDAttr/briefIDAttr/ifMatchAttr, JWTAuth,
+the standard error set). Regenerated gen/ via goa. `internal/service/audience.go`
+implements the handlers: maps payloads ↔ model, optimistic-concurrency update gated on
+If-Match (same strong-validator parsing as briefs), ETag = version, typed error
+mapping, and RWMutex `SetBackend` late-binding + typed-503 mode mirroring the brief
+service. Wired into the container (no-db / 503-boot / live / cold-start-retry paths)
+and mounted in the server (`buildMux` + a route-mount test asserting
+`GET …/audiences` resolves non-404 + a nil-endpoints fail-loud case). Service-layer
+tests cover create/defaults/If-Match(428/412/success)/404/late-binding. Full gate green.
+
 ## 2026-07-20
 
 **Update** — Fixed "briefs stay broken after a cold-start DB retry" (PR #28 review,
@@ -133,6 +267,22 @@ migration/pool, swapping the live pool/repo in via `SetReadinessDep`/`SetBackend
 (invalid DB settings, bad encryption key) still fail fast. `Close` cancels the
 retry goroutine. Updated the container + deployment concept docs and the
 startupProbe comment.
+**Creation** — Added the `campaign_audiences` resource — DB layer (LFXV2-2773 subtask
+2781, email epic LFXV2-2770). Migration `000005` creates `campaign_audiences` (a built
+audience subordinate to a brief: `brief_id` FK to `campaign_briefs`, columns store a
+POINTER + provenance — `platform_master_list_id`, `suppression_list_ids`,
+`inclusion_summary`, `status` building/built/failed, `version` — NOT the audience
+contents, which stay in HubSpot). This is the "B2" decision: a built audience is a
+first-class, inspectable, reusable, versioned LFX resource. Added `model.CampaignAudience`
+(+ AudienceStatus, StatusOrDefault), `domain.AudienceRepository` interface, and
+`postgres.AudienceRepo` (create/get/list/update; project-scoped; optimistic-concurrency
+update gated on version → ErrPreconditionFailed, matching ReplaceCampaign). Indexed on
+brief_id + project_id (no natural uniqueness — a brief may have many audiences). The
+Goa API/handlers + route/rule wiring are the sibling subtasks (2782/2783); the repo
+isn't consumed until the service exists. Model unit test added; per repo convention
+(no DB unit tests here — repos are covered via service-layer fakes) the migration is
+validated on boot. Whole-module build/vet/test green; concept doc + log updated.
+
 **Update** — Idempotency-lookup errors no longer silently fall through to dispatch
 (PR #11 review, cursor Medium). In `dispatchPlatform`, the fast path treated ANY
 non-nil error from `GetCampaignByPlatform` like "no row" and fell through to

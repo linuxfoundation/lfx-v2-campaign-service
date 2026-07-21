@@ -15,6 +15,14 @@ wired) into readiness with a ~2s timeout and returns `503` when the dependency
 is unhealthy. `GET /livez` remains process-only so database outages do not
 trigger Kubernetes restarts.
 
+`AudienceService` implements the built-audience endpoints (the "B2" resource,
+epic LFXV2-2770): create/get/list/update of a `campaign_audiences` row subordinate
+to a brief. An audience is a POINTER + provenance to a platform-side audience (a
+HubSpot master contact list), NOT its contents. Update is optimistic-concurrency
+gated on `If-Match` (same strong-validator parsing as briefs); the ETag mirrors the
+row version. Like the other services it late-binds via `SetBackend` after a
+cold-start DB retry and returns a typed `503` (routes mounted) when no repo is wired.
+
 `BriefService` implements brief CRUD and campaign endpoints. Campaign creation
 (`CreateCampaigns`) requires an approved brief, rejects empty and duplicate
 platform sets (a duplicate would create two paid upstream campaigns), then hands
