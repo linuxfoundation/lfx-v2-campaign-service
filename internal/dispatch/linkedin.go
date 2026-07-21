@@ -156,6 +156,14 @@ func campaignFromLinkedIn(r *linkedin.CampaignResult) *model.Campaign {
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
+	// LinkedIn can create the campaign GROUP but fail/leave-ambiguous the campaign
+	// itself, returning CampaignGroupID with an empty CampaignID. Don't lose that
+	// orphan: surface the group id as the platform id (prefixed so it's not mistaken
+	// for a campaign id) so the retained row is reconcilable. The full result (both
+	// ids) is also kept in Result.
+	if c.PlatformCampaignID == "" && r.CampaignGroupID != "" {
+		c.PlatformCampaignID = "group:" + r.CampaignGroupID
+	}
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
 	}

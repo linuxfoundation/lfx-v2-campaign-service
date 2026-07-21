@@ -168,3 +168,47 @@ func TestLinkedIn_AmbiguousCreateRetainsClaim(t *testing.T) {
 		t.Error("an ambiguous create must return a non-nil campaign for orphan recording")
 	}
 }
+
+func TestLinkedIn_GroupCreatedButCampaignFails_RecordsGroupOrphan(t *testing.T) {
+	// The campaign GROUP is created, then the campaign create 5xx's. The client
+	// returns a non-nil result with CampaignGroupID set + empty CampaignID. The
+	// adapter must retain the claim AND capture the group orphan (as group:<id>) so
+	// it's reconcilable.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:500"}`) // group created
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			w.WriteHeader(http.StatusBadGateway) // campaign create fails (group already exists)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
+	)
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
+		t.Error("a group-created failure must retain the claim, not release it")
+	}
+	if camp == nil || camp.PlatformCampaignID != "group:500" {
+		t.Errorf("the group orphan must be captured as group:<id>, got %+v", camp)
+	}
+}
