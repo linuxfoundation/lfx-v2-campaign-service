@@ -144,17 +144,25 @@ func TestClient_OverridesInjectedCheckRedirectWithoutMutatingCaller(t *testing.T
 	}))
 	defer srv.Close()
 
-	caller := &http.Client{} // CheckRedirect nil => would follow
+	// A NON-nil caller follow-policy: NewClient must override it (so the rebuilt
+	// client never invokes it) AND leave it intact on the caller's own client.
+	var callerPolicyInvoked bool
+	callerPolicy := func(_ *http.Request, _ []*http.Request) error {
+		callerPolicyInvoked = true
+		return nil // would follow
+	}
+	caller := &http.Client{CheckRedirect: callerPolicy}
 	c := NewClient(testCreds(), testAccount(), WithBaseURL(srv.URL), WithHTTPClient(caller))
 
 	if _, err := c.doRequest(context.Background(), http.MethodPost, "/crm/v3/lists/", map[string]string{"x": "y"}, false); err == nil {
 		t.Fatal("expected a 3xx to surface as an error with the injected client, got nil")
 	}
-	if followed {
-		t.Error("injected client followed the redirect — NewClient must override CheckRedirect")
+	if followed || callerPolicyInvoked {
+		t.Error("the rebuilt client used the caller's follow-policy — NewClient must override CheckRedirect")
 	}
-	if caller.CheckRedirect != nil {
-		t.Error("caller's *http.Client CheckRedirect was mutated — the override must build a fresh client")
+	// The caller's OWN client must be untouched: its non-nil policy still present.
+	if caller.CheckRedirect == nil {
+		t.Error("caller's *http.Client CheckRedirect was cleared — the override must build a fresh client, not mutate the caller")
 	}
 	if c.httpClient == caller {
 		t.Error("NewClient must use a fresh client, not the caller's pointer")

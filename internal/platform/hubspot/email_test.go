@@ -114,13 +114,18 @@ func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 	}
 }
 
-func TestGetEmail_2xxNoIDIsUnconfirmed(t *testing.T) {
+func TestGetEmail_2xxNoIDIsPlainErrorNotUnconfirmed(t *testing.T) {
+	// GetEmail is an idempotent GET, so a malformed 2xx is a plain error, NOT
+	// UNCONFIRMED (a read can't leave a mutation in doubt) — so it's safely retryable.
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"name":"no id here"}`)
 	})
 	_, err := c.GetEmail(context.Background(), "42")
-	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("a 2xx with no id must be UNCONFIRMED, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "malformed response") {
+		t.Errorf("a 2xx with no id must be a malformed-response error, got: %v", err)
+	}
+	if IsUnconfirmed(err) {
+		t.Error("a read (GetEmail) must NOT be UNCONFIRMED — it can't leave a mutation in doubt")
 	}
 }
 

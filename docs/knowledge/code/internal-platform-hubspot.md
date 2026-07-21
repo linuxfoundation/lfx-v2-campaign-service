@@ -66,10 +66,13 @@ NOT a first-class v3 field, so it is deliberately not offered — see LFXV2-2775
 `SetSendList`. Both `PatchEmailSettings` and `SetSendList` PATCH the DRAFT route
 (`/marketing/v3/emails/{id}/draft`) — the base `/{id}` route mutates the LIVE email,
 so draft edits must go through `/draft`. Creates/clones/PATCHes pass
-`idempotent=false` (no idempotency key → a retried 429 could double-create); a 2xx
-with no id (or an undecodable 2xx) on a clone/patch is surfaced as UNCONFIRMED, and a
-mutating 429/3xx/5xx apiError is flagged `Ambiguous` (see `IsUnconfirmed`), so the
-caller verifies rather than blind-retrying.
+`idempotent=false` (no idempotency key → a retried 429 could double-create). A clone
+with a 2xx-no-id, and a clone/PATCH with an UNDECODABLE 2xx body, are surfaced as
+UNCONFIRMED (a PATCH that returns a 2xx with no id just substitutes the requested id —
+the update applied, so that is NOT unconfirmed). A mutating 429/3xx/5xx apiError is
+flagged `Ambiguous` (see `IsUnconfirmed`), so the caller verifies rather than
+blind-retrying. A GET (read) is never UNCONFIRMED — a malformed read is a plain error,
+safely retryable.
 
 **`SetSendList` recipients (ILS-only):** a HubSpot email's recipient list goes in
 `contactIlsLists` (ILS list ids). HubSpot's ILS migration removed functional support

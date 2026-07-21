@@ -107,11 +107,11 @@ func (c *Client) GetEmail(ctx context.Context, id string) (*Email, error) {
 		return nil, fmt.Errorf("hubspot: decode email: %w", err)
 	}
 	if e.ID == "" {
-		// A 2xx with no id is a malformed success — treat as UNCONFIRMED so a caller
-		// verifies rather than assuming the email exists. Typed (unconfirmedError) so
-		// IsUnconfirmed(err) agrees with the "UNCONFIRMED" wording, consistent with
-		// the clone/create/patch paths.
-		return nil, unconfirmed(fmt.Sprintf("hubspot: GetEmail(%s) UNCONFIRMED (2xx with no id in the response)", id), nil)
+		// GetEmail is an idempotent GET, so a malformed 2xx cannot leave any mutation
+		// in an unconfirmed state — this is a plain malformed-response error (NOT an
+		// unconfirmedError), so IsUnconfirmed stays false and the read is safely
+		// retryable. (IsUnconfirmed is a mutating-outcome signal; a read can't commit.)
+		return nil, fmt.Errorf("hubspot: GetEmail(%s) returned a 2xx with no id (malformed response)", id)
 	}
 	e.AppURL = c.emailEditURL(e.ID)
 	return &e, nil
