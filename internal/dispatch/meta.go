@@ -16,8 +16,10 @@ import (
 
 // metaCreds is the credential shape stored (encrypted) for a Meta connection. Meta
 // authenticates with a single long-lived OAuth2 access token.
+// metaCreds mirrors MetaAdsCredentials's field name (no json tag) — the persisted
+// JSON key is the Go field name (AccessToken), see redditCreds.
 type metaCreds struct {
-	AccessToken string `json:"accessToken"`
+	AccessToken string
 }
 
 // metaConfig is the per-platform campaign config the caller passes for Meta in

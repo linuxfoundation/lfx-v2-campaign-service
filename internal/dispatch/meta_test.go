@@ -21,7 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 )
 
-const goodMetaCreds = `{"accessToken":"tok"}`
+const goodMetaCreds = `{"AccessToken":"tok"}`
 
 func activeMetaConn(creds string) *model.Connection {
 	return &model.Connection{
@@ -44,7 +44,7 @@ func TestMeta_PreCreateErrorsReleaseClaim(t *testing.T) {
 		{"missing connection", fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{}},
 		{"no stored credentials", fakeConnReader{conn: &model.Connection{Provider: model.ProviderMetaAds, Status: model.StatusActive}}, identityEncryptor{}},
 		{"decrypt fails", fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, errEncryptor{}},
-		{"empty access token", fakeConnReader{conn: activeMetaConn(`{"accessToken":""}`)}, identityEncryptor{}},
+		{"empty access token", fakeConnReader{conn: activeMetaConn(`{"AccessToken":""}`)}, identityEncryptor{}},
 		{"inactive connection", fakeConnReader{conn: &model.Connection{Provider: model.ProviderMetaAds, AccountID: "act_1", EncryptedCredentials: []byte(goodMetaCreds), ProviderConfig: map[string]string{"page_id": "p"}, Status: model.StatusInactive}}, identityEncryptor{}},
 		{"missing page id", fakeConnReader{conn: &model.Connection{Provider: model.ProviderMetaAds, AccountID: "act_1", EncryptedCredentials: []byte(goodMetaCreds), Status: model.StatusActive}}, identityEncryptor{}},
 	}
