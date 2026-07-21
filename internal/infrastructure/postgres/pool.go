@@ -129,6 +129,20 @@ func Migrate(dsn string) error {
 	defer func() { _, _ = m.Close() }()
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		// golang-migrate marks the schema version dirty (SetVersion(target, true))
+		// BEFORE running a migration's SQL, then returns the raw SQL/driver error if
+		// that SQL fails — NOT ErrDirty. So on the FIRST failing migration Up()
+		// returns the underlying error while the schema is already dirty, and only a
+		// SUBSEQUENT Up() (which hits the dirty pre-check) surfaces ErrDirty. Without
+		// this, the caller misclassifies that first permanent failure as transient,
+		// boots 503, and only fails fast on the next retry. Re-check the dirty state
+		// here so a newly-dirtied schema fails fast on the very first attempt.
+		var dirtyErr migrate.ErrDirty
+		if !errors.As(err, &dirtyErr) {
+			if v, dirty, verr := m.Version(); verr == nil && dirty {
+				return fmt.Errorf("apply migrations (schema left dirty): %w", migrate.ErrDirty{Version: int(v)})
+			}
+		}
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
