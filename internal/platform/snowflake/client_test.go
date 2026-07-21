@@ -177,7 +177,7 @@ func TestResolvePastEventNames_QueryShapeAndRows(t *testing.T) {
 		"ANALYTICS.PLATINUM_LFX_ONE.event_registrations",
 		"EVENT_NAME ILIKE ?",
 		"EVENT_NAME NOT ILIKE ?",
-		"LIMIT 500",
+		"LIMIT 501", // maxEventRows+1, so truncation is DETECTABLE
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query missing %q\nquery:\n%s", want, q)
@@ -250,6 +250,22 @@ func TestResolvePastEventNames_OmitsOptionalLocation(t *testing.T) {
 	}
 	if !strings.Contains(drv.query, "NOT ILIKE") {
 		t.Error("the required current-year exclusion must always be present")
+	}
+}
+
+func TestResolvePastEventNames_FailsClosedOnTruncation(t *testing.T) {
+	// The query fetches maxEventRows+1; if that many rows come back, more than the
+	// cap matched, so the method must fail closed (not silently return a truncated,
+	// incomplete audience).
+	rows := make([][]driver.Value, maxEventRows+1)
+	for i := range rows {
+		rows[i] = []driver.Value{fmt.Sprintf("Event %d", i), fmt.Sprintf("ev-%d", i)}
+	}
+	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}, rows: rows}
+	c := newFakeClient(t, drv)
+	_, err := c.ResolvePastEventNames(context.Background(), "Event", "", "2026")
+	if err == nil || !strings.Contains(err.Error(), "narrow the search term") {
+		t.Errorf("an over-broad term must fail closed, got: %v", err)
 	}
 }
 

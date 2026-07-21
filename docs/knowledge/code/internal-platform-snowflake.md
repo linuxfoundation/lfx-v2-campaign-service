@@ -33,7 +33,9 @@ instead of acting as a wildcard — the ESCAPE literal is `'\\'` (two backslashe
 because Snowflake parses it by single-quoted-string rules where `\\` is one
 backslash. `currentYear` is REQUIRED as a 4-digit year (it's the "past editions only"
 guarantee, so a blank/malformed value is rejected rather than silently dropping the
-exclusion), and a `LIMIT` caps the result. The database/schema/table are package
+exclusion). The query fetches `maxEventRows+1` so truncation is DETECTABLE: if more
+than the cap match, it FAILS CLOSED ("narrow the search term") rather than silently
+returning a partial (incomplete) audience. The database/schema/table are package
 constants; a defensive `ident` guard neutralizes any future config-sourced identifier
 so it can never inject SQL. So the package is structurally incapable of a write or an
 injection.

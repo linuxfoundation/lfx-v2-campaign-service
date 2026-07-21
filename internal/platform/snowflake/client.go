@@ -234,7 +234,11 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 	}
 	q += "\n  AND EVENT_NAME NOT ILIKE ? " + escapeClause
 	args = append(args, likeContains(currentYear))
-	q += fmt.Sprintf("\nORDER BY EVENT_NAME\nLIMIT %d", maxEventRows)
+	// Fetch ONE more than the cap so we can DETECT truncation rather than silently
+	// return a partial set. Returning the first maxEventRows as an apparent success
+	// would drop valid event filters (an incomplete audience) — which conflicts with
+	// the fail-closed contract, so an over-broad term is an error, not a quiet trim.
+	q += fmt.Sprintf("\nORDER BY EVENT_NAME\nLIMIT %d", maxEventRows+1)
 
 	qctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -257,6 +261,11 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("snowflake: iterate event rows: %w", err)
+	}
+	if len(out) > maxEventRows {
+		// More than the cap matched: fail closed rather than return a silently
+		// truncated (incomplete) audience.
+		return nil, fmt.Errorf("snowflake: event term %q matched more than %d editions; narrow the search term", eventTerm, maxEventRows)
 	}
 	return out, nil
 }
