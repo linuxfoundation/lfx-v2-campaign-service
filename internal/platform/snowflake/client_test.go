@@ -221,6 +221,25 @@ func TestResolvePastEventNames_EscapesLikeMetacharacters(t *testing.T) {
 	}
 }
 
+func TestClient_ResolveAfterCloseFails(t *testing.T) {
+	// After Close, a resolve must NOT silently open a fresh pool (which shutdown
+	// would never close) — it must fail closed.
+	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}}
+	c := newFakeClient(t, drv)
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := c.ResolvePastEventNames(context.Background(), "KubeCon", "", "2026"); err == nil {
+		t.Error("a resolve after Close must fail, not re-open the pool")
+	}
+	// Close before first use must also block a later open.
+	c2 := newFakeClient(t, &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}})
+	_ = c2.Close()
+	if _, err := c2.pool(); err == nil {
+		t.Error("pool() after a pre-use Close must fail, not open a fresh pool")
+	}
+}
+
 func TestClient_ConcurrentFirstUse(t *testing.T) {
 	// The lazy pool open must be race-free: many goroutines hitting the first query
 	// at once must not double-open or race Close (exercised under `go test -race`).

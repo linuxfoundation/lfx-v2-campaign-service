@@ -86,8 +86,9 @@ type Client struct {
 	dsn    string
 	opener func(dsn string) (*sql.DB, error) // injectable for tests
 
-	mu sync.Mutex // guards db (lazy open + Close)
-	db *sql.DB
+	mu     sync.Mutex // guards db + closed (lazy open + Close)
+	db     *sql.DB
+	closed bool
 }
 
 // Event is one resolved past-edition registration event.
@@ -158,6 +159,12 @@ func withOpener(o func(dsn string) (*sql.DB, error)) Option {
 func (c *Client) pool() (*sql.DB, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Refuse to (re)open after Close — otherwise a resolve that raced Close (or ran
+	// after it) would silently open a FRESH pool that shutdown will never close,
+	// leaking Snowflake sessions and defeating cleanup.
+	if c.closed {
+		return nil, fmt.Errorf("snowflake: client is closed")
+	}
 	if c.db != nil {
 		return c.db, nil
 	}
@@ -181,6 +188,7 @@ func (c *Client) pool() (*sql.DB, error) {
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.closed = true // even if the pool was never opened, block a later lazy open
 	if c.db != nil {
 		err := c.db.Close()
 		c.db = nil
