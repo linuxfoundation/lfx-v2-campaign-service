@@ -2,6 +2,12 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 review: updated `internal-container.md` to include the audiences
+service in the no-DB and cold-start-503/late-binding mode enumerations (it was still
+listing only connection + brief). The container wires `AudienceService` in all four
+paths and late-binds it via `AudienceService.SetBackend` (same RWMutex/`ready()` pattern
+as the brief service), so the OKF concept now matches the container behavior.
+
 **Update** — PR #40 follow-up review: enforce the built-audience invariant. `AudienceBuilt`
 is DEFINED as "the platform master list exists", but `status:"built"` was accepted with no
 `platform_master_list_id` — persisting a row that claims a list its pointer is NULL. Added
