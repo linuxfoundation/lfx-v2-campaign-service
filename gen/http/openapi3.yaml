@@ -7520,7 +7520,7 @@ components:
                     type: string
                     description: Meta ad account ID
                     example: act_193556282970417
-                    minLength: 1
+                    pattern: ^act_[0-9]+$
                 app_id:
                     type: string
                     description: Meta app ID

@@ -383,11 +383,13 @@ var MetaAdsCredentials = Type("meta-ads-credentials", func() {
 
 var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
-	// account_id must be non-empty: an empty value is stored on an active connection
-	// and then always fails dispatch. MinLength(1) rejects "" at connection creation.
+	// account_id must be the canonical Meta format act_<digits>: the Meta client
+	// rejects anything else before dispatch, so a non-conforming value (e.g. "foo",
+	// whitespace, or a bare number) stored on an active connection could never create a
+	// campaign. Validating the same Pattern here rejects it as a 4xx at creation.
 	Attribute("account_id", String, "Meta ad account ID", func() {
 		Example("act_193556282970417")
-		MinLength(1)
+		Pattern(`^act_[0-9]+$`)
 	})
 	// page_id must be a non-empty NUMERIC Facebook page id. Required alone only checks
 	// presence — {"page_id":""} would still pass, be stored active, and then always

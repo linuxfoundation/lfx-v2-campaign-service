@@ -396,6 +396,25 @@ the Goa API, dropped the now-non-pointer `cfg.PageID` deref in the connection se
 updated internal-dispatch.md, and strengthened the meta happy-path dispatch test to
 assert the full mapping contract (objective→OUTCOME_SALES, lifetime budget in minor
 units, geo countries, pixel + page promoted objects, per-variant creative/ad fan-out).
+**Update** — Made `page_id` + `account_id` REQUIRED and format-VALIDATED in
+`MetaAdsConnectionConfig` (design/connection.go, PR #38 review, three rounds): an active
+Meta connection with an unusable id would always fail dispatch (the Meta client rejects
+any `account_id` not matching `act_<digits>` and any non-numeric `page_id` before a
+mutating call), so beyond `Required` we validate `page_id` with a digits-only `Pattern`
+and `account_id` with `Pattern(^act_[0-9]+$)` — `Required`/`MinLength(1)` alone would let
+`{"page_id":""}` or `account_id:"foo"` through. This surfaces the error as a 4xx at
+connection creation instead of a silent runtime failure. Added table-driven API-level
+tests (`gen/.../server/meta_validation_test.go`, non-generated so it survives apigen)
+that exercise the GENERATED request-body validators: missing/empty/non-numeric page_id
+and non-`act_` account_id are rejected on both create and update; valid numeric ids pass.
+Also gave `CampaignCreateInput.platforms` a deterministic UNIQUE `Example`
+([google-ads, meta-ads]) — Goa's auto-example otherwise repeated the first enum value
+(duplicate `reddit-ads`), which the handler rejects, so a consumer copying the published
+OpenAPI example would hit a validation failure. Regenerated the Goa API, dropped the
+now-non-pointer `cfg.PageID` deref in the connection service, updated internal-dispatch.md,
+and strengthened the meta happy-path dispatch test to assert the full mapping contract
+(objective→OUTCOME_SALES, lifetime budget in minor units, geo countries, pixel + page
+promoted objects, per-variant creative/ad fan-out).
 
 **Update** — Added the linkedin and meta PlatformDispatcher adapters to
 `internal/dispatch` (LFXV2-2638 / 2640), following the reddit template from the
