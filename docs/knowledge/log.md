@@ -2,6 +2,18 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot sort-by-instant + drop error-body snapshot (PR #35 review round 15,
+copilot). (1) `sortEmailsByUpdatedDesc` now PARSES `updatedAt` as an RFC3339 instant
+before comparing — a raw lexical compare mis-orders equivalent instants with different
+offsets/fractional seconds (`2026-01-01T00:30:00+01:00` is OLDER than
+`2026-01-01T00:00:00Z` but sorts lexically after). Missing/malformed → zero time (sorts
+last); id tiebreak. Added `TestSearchEmails_SortsByParsedInstantNotLexical`. (2) Removed
+`apiError.Body` + `readErrorSnapshot` entirely: nothing in this package classifies on the
+body, and an EXPORTED Body field could leak upstream request material via reflection/JSON
+serialization of the error even though `Error()` omits it. Non-2xx responses are now just
+drained for connection reuse (googleads keeps a snapshot only because it parses error
+codes from it).
+
 **Update** — HubSpot remove dead Label field + doc fix (PR #35 review round 14, copilot).
 (1) Removed the unused `AccountConfig.Label` — it was documented as "surfaced on results"
 but this client's operations return raw Email/List objects with no result envelope to

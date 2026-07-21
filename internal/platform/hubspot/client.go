@@ -203,15 +203,15 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 
 // apiError is a non-2xx HubSpot response. Error() renders only method/path/status
 // — the response body is NOT echoed (a HubSpot error envelope can quote request
-// material), matching the reddit/googleads discipline. Body is retained solely for
-// internal classification (e.g. matching a specific HubSpot error category) and is
-// never surfaced by Error().
+// material), matching the reddit/googleads discipline. No response-body snapshot is
+// retained at all: nothing in this package classifies on the body, and an exported Body
+// field could leak upstream material through reflection/JSON serialization of the error
+// even though Error() omits it. (Google Ads keeps a bounded snapshot because it parses
+// error CODES from it; this client does not.)
 type apiError struct {
 	StatusCode int
 	Method     string
 	Path       string
-	// Body is a bounded snapshot retained for classification only; never rendered.
-	Body string
 	// Ambiguous is true when this error came from a MUTATING request whose status
 	// (429 / 3xx / 5xx) means the server MAY have applied the change. Callers of a
 	// non-idempotent op must treat an ambiguous apiError as UNCONFIRMED (verify,
@@ -421,9 +421,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		// 429: retry only an idempotent call; a mutating 429 may have committed.
 		if resp.StatusCode == http.StatusTooManyRequests {
 			if !idempotent || attempt >= retryMax {
-				snap := c.readErrorSnapshot(resp)
 				drainAndClose(resp)
-				return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: snap, Ambiguous: !idempotent}
+				return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Ambiguous: !idempotent}
 			}
 			wait := c.retryAfter(resp, attempt)
 			// Drain the (idempotent) 429 body before closing so the transport can
@@ -442,10 +441,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			snap := c.readErrorSnapshot(resp)
 			drainAndClose(resp)
 			return nil, &apiError{
-				StatusCode: resp.StatusCode, Method: method, Path: path, Body: snap,
+				StatusCode: resp.StatusCode, Method: method, Path: path,
 				Ambiguous: !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
 			}
 		}
@@ -476,14 +474,6 @@ func drainAndClose(resp *http.Response) {
 	const maxDrain = 4 << 10
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrain))
 	_ = resp.Body.Close()
-}
-
-// readErrorSnapshot reads a bounded prefix of a non-2xx body for internal
-// classification only (never surfaced by apiError.Error()).
-func (c *Client) readErrorSnapshot(resp *http.Response) string {
-	const maxErrSnapshot = 512
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrSnapshot))
-	return string(b)
 }
 
 // retryAfter computes the 429 backoff: honor a server-declared Retry-After when

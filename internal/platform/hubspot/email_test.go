@@ -143,6 +143,25 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	}
 }
 
+func TestSearchEmails_SortsByParsedInstantNotLexical(t *testing.T) {
+	// A lexical sort of RFC3339 strings is WRONG: `2026-01-01T00:30:00+01:00`
+	// (= 2025-12-31T23:30:00Z, OLDER) sorts lexically AFTER `2026-01-01T00:00:00Z`.
+	// Parsing to instants puts the truly-newer Z email first.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[`+
+			`{"id":"older","name":"A","subject":"x","updatedAt":"2026-01-01T00:30:00+01:00"},`+
+			`{"id":"newer","name":"A","subject":"x","updatedAt":"2026-01-01T00:00:00Z"}`+
+			`]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != "newer" || got[1].ID != "older" {
+		t.Errorf("must sort by parsed instant (newer first), got %v", []string{got[0].ID, got[1].ID})
+	}
+}
+
 func TestSearchEmails_DecodesEncodedCursor(t *testing.T) {
 	// HubSpot returns paging.next.after already percent-encoded (e.g. "MjA%3D").
 	// The next request must send the DECODED token ("MjA="), not a double-encoded

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -39,12 +40,23 @@ type Email struct {
 }
 
 // sortEmailsByUpdatedDesc orders emails most-recently-updated first, in place. The
-// updatedAt strings are RFC3339, which sort lexicographically in chronological order;
-// ties (or missing timestamps) fall back to the id for a deterministic order.
+// updatedAt values are PARSED as RFC3339 timestamps before comparing — a raw lexical
+// compare is wrong because equivalent instants can carry different offsets and optional
+// fractional seconds (e.g. `2026-01-01T00:30:00+01:00` is OLDER than
+// `2026-01-01T00:00:00Z` but sorts lexically after it). A missing/malformed timestamp is
+// treated as the zero time (sorts last), and ties fall back to the id for determinism.
 func sortEmailsByUpdatedDesc(emails []Email) {
+	parsed := func(s string) time.Time {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}
+		}
+		return t
+	}
 	sort.SliceStable(emails, func(i, j int) bool {
-		if emails[i].UpdatedAt != emails[j].UpdatedAt {
-			return emails[i].UpdatedAt > emails[j].UpdatedAt
+		ti, tj := parsed(emails[i].UpdatedAt), parsed(emails[j].UpdatedAt)
+		if !ti.Equal(tj) {
+			return ti.After(tj)
 		}
 		return emails[i].ID > emails[j].ID
 	})
