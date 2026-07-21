@@ -25,8 +25,9 @@ imports) and outside each `platform/*` package (avoiding an import cycle).
    the plaintext — credential shapes differ per platform (OAuth2 refresh tokens,
    OAuth1 4-tuples, static bearer tokens), so each adapter unmarshals the blob into
    its own credential struct.
-2. **Map inputs** (per-platform) — the adapter reads the brief's shared event fields
-   (eventName / registrationUrl from the brief's opaque JSON blobs) and the
+2. **Map inputs** (per-platform) — the adapter reads the brief's event destination
+   from its top-level `URL` field (with a nested `registrationUrl` in the opaque JSON
+   only as a fallback) and `eventName` from the opaque JSON blobs, plus the
    per-platform config (its OWN nested key — `redditConfig`/`linkedInConfig`/… — out
    of the single `CreateCampaigns` `Input.Config` envelope, via
    `unmarshalPlatformConfig`) onto the client's `CampaignInput`. The **Project** name
