@@ -85,19 +85,24 @@ send list + `.exclude` = suppressions.
 ## CRM contact-list + event-definition operations (LFXV2-2780)
 
 `lists.go`: `SearchLists` (`POST /crm/v3/lists/search` — constrained to contact lists
-via `objectTypeId: "0-1"`, follows `offset`/`hasMore` pagination; membership size
-comes back as `hs_list_size`, a STRING under `additionalProperties`, requested
-explicitly — there is no top-level `size` field; `includeFilters` is NOT a valid
-search-body field and is not sent), `GetList` (with `includeFilters=true` so the
-filterBranch + processingType come back),
+via `objectTypeId: "0-1"`, follows `offset`/`hasMore` pagination; `includeFilters` is
+NOT a valid search-body field and is not sent), `GetList` (with `includeFilters=true`
+so the filterBranch + processingType come back),
 `CreateList` (`POST /crm/v3/lists/` — DYNAMIC, contact objectTypeId `0-1`),
-`UpdateListFilters` (`PUT …/update-list-filters`), and `ListEventDefinitions` (resolve
-`fullyQualifiedName` for BEHAVIORAL_EVENT filters). `filterBranch` is passed through
-as OPAQUE JSON — HubSpot's shape invariants (OR-root with AND sub-branches, no nested
-ORs, `IN_LIST` not `LIST_MEMBERSHIP` in membership branches) belong to the
-audience-builder (LFXV2-2774), not this transport client. A create's 2xx-with-no-id
-is UNCONFIRMED. List/get responses are decoded from BOTH the `{"list":{…}}` wrapper
-and the bare top-level shape HubSpot variously returns.
+`UpdateListFilters` (`PUT …/update-list-filters`), and `ListEventDefinitions` (whose
+human label is nested under `labels.singular`/`.plural`, not a top-level field, and
+which does NOT request `includeProperties` — that payload is discarded). **List size
+has TWO shapes** (`List.resolveSize` normalizes both): GET/CREATE
+(`PublicObjectList`) carry a top-level integer `size`; SEARCH hits have no top-level
+size and instead expose `hs_list_size` as a STRING under `additionalProperties`,
+requested explicitly. `ListEventDefinitions` resolves `fullyQualifiedName` for
+BEHAVIORAL_EVENT filters.
+
+`filterBranch` is passed through as OPAQUE JSON — HubSpot's shape invariants (OR-root
+with AND sub-branches, no nested ORs, `IN_LIST` not `LIST_MEMBERSHIP` in membership
+branches) belong to the audience-builder (LFXV2-2774), not this transport client. A
+create's 2xx-with-no-id is UNCONFIRMED. List/get responses are decoded from BOTH the
+`{"list":{…}}` wrapper and the bare top-level shape HubSpot variously returns.
 
 ## Scope
 

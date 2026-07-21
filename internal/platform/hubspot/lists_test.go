@@ -97,8 +97,9 @@ func TestGetList_UnwrapsWrapperAndReturnsFilterBranch(t *testing.T) {
 
 func TestGetList_TopLevelShapeAlsoDecodes(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		// No `list` wrapper — fields at the top level.
-		_, _ = io.WriteString(w, `{"listId":"555","name":"Top"}`)
+		// No `list` wrapper — fields at the top level, including the integer `size`
+		// (GET/CREATE use a top-level size, unlike search hits' hs_list_size string).
+		_, _ = io.WriteString(w, `{"listId":"555","name":"Top","size":42}`)
 	})
 	l, err := c.GetList(context.Background(), "555")
 	if err != nil {
@@ -106,6 +107,9 @@ func TestGetList_TopLevelShapeAlsoDecodes(t *testing.T) {
 	}
 	if l.ListID != "555" {
 		t.Errorf("listId = %q", l.ListID)
+	}
+	if l.Size != 42 {
+		t.Errorf("GetList must decode the top-level integer size, got %d", l.Size)
 	}
 }
 
@@ -201,8 +205,13 @@ func TestListEventDefinitions_ReturnsFQNs(t *testing.T) {
 		if r.URL.Path != "/events/v3/event-definitions" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
+		// The real HubSpot envelope nests the label under labels.singular/plural,
+		// NOT a top-level `label` string, and must NOT set includeProperties.
+		if r.URL.Query().Get("includeProperties") != "" {
+			t.Error("ListEventDefinitions must not request includeProperties")
+		}
 		_, _ = io.WriteString(w, `{"results":[
-			{"fullyQualifiedName":"pe8112310_event_registration","label":"Reg","name":"event_registration"}
+			{"fullyQualifiedName":"pe8112310_event_registration","name":"event_registration","labels":{"singular":"Registration","plural":"Registrations"}}
 		]}`)
 	})
 	defs, err := c.ListEventDefinitions(context.Background())
@@ -210,7 +219,10 @@ func TestListEventDefinitions_ReturnsFQNs(t *testing.T) {
 		t.Fatalf("ListEventDefinitions: %v", err)
 	}
 	if len(defs) != 1 || defs[0].FullyQualifiedName != "pe8112310_event_registration" {
-		t.Errorf("defs = %+v", defs)
+		t.Fatalf("defs = %+v", defs)
+	}
+	if defs[0].Label != "Registration" {
+		t.Errorf("Label must be decoded from labels.singular, got %q", defs[0].Label)
 	}
 }
 

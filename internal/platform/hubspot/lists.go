@@ -31,16 +31,24 @@ const (
 )
 
 // List is the subset of a HubSpot contact list this client surfaces.
+//
+// Membership size comes back in TWO different shapes depending on the endpoint:
+//   - GET / CREATE (PublicObjectList) expose a TOP-LEVEL integer `size` (TopLevelSize);
+//   - SEARCH hits have no top-level size — they expose `hs_list_size` as a STRING
+//     under `additionalProperties`, and only when requested.
+//
+// Size normalizes both (resolveSize): the top-level integer wins when present, else
+// the additionalProperties string is parsed.
 type List struct {
 	ListID         string `json:"listId"`
 	Name           string `json:"name"`
 	ProcessingType string `json:"processingType"`
-	// Size is the list membership count. HubSpot does NOT return a top-level `size`
-	// on a list object; it returns `hs_list_size` as a STRING under
-	// `additionalProperties`, and only when requested. setSizeFrom parses it.
+	// Size is the normalized membership count (see resolveSize). Not decoded directly.
 	Size int `json:"-"`
-	// AdditionalProperties captures the requested extra props (e.g. hs_list_size),
-	// which HubSpot returns as string values.
+	// TopLevelSize decodes the GET/CREATE `size` integer (absent on search hits).
+	TopLevelSize *int `json:"size,omitempty"`
+	// AdditionalProperties captures the requested extra props (e.g. hs_list_size on
+	// search hits), which HubSpot returns as string values.
 	AdditionalProperties map[string]string `json:"additionalProperties,omitempty"`
 	// FilterBranch is only populated by GetList (includeFilters=true).
 	FilterBranch json.RawMessage `json:"filterBranch,omitempty"`
@@ -48,13 +56,18 @@ type List struct {
 	AppURL string `json:"-"`
 }
 
-// hsListSizeProp is the additionalProperties key HubSpot uses for a list's
+// hsListSizeProp is the additionalProperties key HubSpot uses for a search hit's
 // membership size (a decimal string).
 const hsListSizeProp = "hs_list_size"
 
-// setSizeFromProps parses hs_list_size (a string under additionalProperties) into
-// Size. A missing/blank/unparseable value leaves Size at 0.
-func (l *List) setSizeFromProps() {
+// resolveSize sets Size from whichever shape the endpoint returned: the top-level
+// integer `size` (GET/CREATE) if present, else the `hs_list_size` string under
+// additionalProperties (SEARCH). A missing/unparseable value leaves Size at 0.
+func (l *List) resolveSize() {
+	if l.TopLevelSize != nil {
+		l.Size = *l.TopLevelSize
+		return
+	}
 	if s, ok := l.AdditionalProperties[hsListSizeProp]; ok {
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
 			l.Size = n
@@ -95,7 +108,7 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			return nil, fmt.Errorf("hubspot: decode list search: %w", err)
 		}
 		for i := range resp.Lists {
-			resp.Lists[i].setSizeFromProps()
+			resp.Lists[i].resolveSize()
 			resp.Lists[i].AppURL = c.listURL(resp.Lists[i].ListID)
 			out = append(out, resp.Lists[i])
 		}
@@ -185,11 +198,19 @@ func (c *Client) UpdateListFilters(ctx context.Context, listID string, filterBra
 }
 
 // EventDefinition is a HubSpot custom-event definition. fullyQualifiedName is the
-// value the audience builder needs for a BEHAVIORAL_EVENT filter's eventTypeId.
+// value the audience builder needs for a BEHAVIORAL_EVENT filter's eventTypeId. The
+// human label lives under a nested `labels` object (singular/plural), NOT a top-level
+// `label` string — Label surfaces labels.singular for callers.
 type EventDefinition struct {
 	FullyQualifiedName string `json:"fullyQualifiedName"`
-	Label              string `json:"label"`
 	Name               string `json:"name"`
+	// Labels is HubSpot's nested label object (BehavioralEventTypeDefinitionLabels).
+	Labels struct {
+		Singular string `json:"singular"`
+		Plural   string `json:"plural"`
+	} `json:"labels"`
+	// Label is the singular label, populated from Labels for caller convenience.
+	Label string `json:"-"`
 }
 
 // ListEventDefinitions returns ALL of the portal's custom-event definitions.
@@ -202,7 +223,10 @@ func (c *Client) ListEventDefinitions(ctx context.Context) ([]EventDefinition, e
 	for page := 0; page < maxListPages; page++ {
 		q := url.Values{}
 		q.Set("limit", "100")
-		q.Set("includeProperties", "true")
+		// includeProperties is deliberately NOT set: EventDefinition doesn't retain a
+		// definition's property list, and requesting it serializes potentially large
+		// property payloads for every event on every page (pushing toward the client's
+		// 10 MiB response cap) for data we discard.
 		if after != "" {
 			q.Set("after", after)
 		}
@@ -216,6 +240,9 @@ func (c *Client) ListEventDefinitions(ctx context.Context) ([]EventDefinition, e
 		}
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			return nil, fmt.Errorf("hubspot: decode event definitions: %w", err)
+		}
+		for i := range resp.Results {
+			resp.Results[i].Label = resp.Results[i].Labels.Singular
 		}
 		out = append(out, resp.Results...)
 		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
@@ -248,6 +275,7 @@ func (c *Client) decodeListEnvelope(raw []byte, op string) (*List, error) {
 		}
 		l = &top
 	}
+	l.resolveSize() // GET/CREATE carry a top-level integer `size`
 	l.AppURL = c.listURL(l.ListID)
 	return l, nil
 }
