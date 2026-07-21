@@ -145,8 +145,11 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 	}
 	// sourceID/cloneName are trimmed above — a whitespace-padded id posted raw could
 	// be rejected by HubSpot (a silent staging failure), and a padded name would
-	// produce a misnamed draft (CreateList normalizes names the same way).
-	body := cloneEmailRequest{ID: sourceID, CloneName: cloneName, Language: "en"}
+	// produce a misnamed draft (CreateList normalizes names the same way). Language is
+	// deliberately omitted (omitempty) so HubSpot preserves the SOURCE draft's locale —
+	// this method promises a faithful clone and takes no locale parameter, so forcing
+	// "en" would silently re-language a non-English source.
+	body := cloneEmailRequest{ID: sourceID, CloneName: cloneName}
 	raw, err := c.doRequest(ctx, http.MethodPost, emailsPath+"/clone", body, false)
 	if err != nil {
 		return nil, fmt.Errorf("hubspot: clone email from %s: %w", sourceID, err)

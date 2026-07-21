@@ -161,8 +161,12 @@ func TestCloneEmail_SendsIDAndCloneName(t *testing.T) {
 	if e.ID != "999" {
 		t.Errorf("clone id = %q, want 999", e.ID)
 	}
-	if body["id"] != "123" || body["cloneName"] != "KubeCon Invite" || body["language"] != "en" {
+	if body["id"] != "123" || body["cloneName"] != "KubeCon Invite" {
 		t.Errorf("clone body = %v", body)
+	}
+	// language is omitted so HubSpot preserves the source draft's locale.
+	if _, ok := body["language"]; ok {
+		t.Errorf("clone body must omit language (preserve source locale), got %v", body["language"])
 	}
 }
 
