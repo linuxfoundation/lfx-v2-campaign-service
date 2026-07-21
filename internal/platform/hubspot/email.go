@@ -4,7 +4,6 @@
 package hubspot
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -317,26 +316,24 @@ func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]a
 	if err != nil {
 		return nil, fmt.Errorf("hubspot: patch email %s draft: %w", id, err)
 	}
-	// A JSON `null` (or empty) body decodes into `e` WITHOUT error, leaving it
-	// zero-valued — so the id-fallback below would substitute the caller's id and
-	// report a phantom success for a malformed response. A PATCH is mutating, so treat
-	// a null/empty body as UNCONFIRMED (the update may have applied) rather than
-	// success. `bytes.TrimSpace` handles surrounding whitespace around a bare `null`.
-	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || string(trimmed) == "null" {
-		return nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with a null/empty body — the update may have applied; verify before retrying)", id), nil)
-	}
-	var e Email
+	// Decode into a POINTER: a JSON `null` body unmarshals into a *Email as nil
+	// WITHOUT error (Go's null-into-pointer semantics), which is exactly how we detect
+	// it — cleaner than string-matching the raw bytes. A PATCH is mutating, so a null
+	// body means the update MAY have applied; surface it as UNCONFIRMED (verify, don't
+	// blind-retry) rather than as a phantom success via the id-fallback below.
+	var e *Email
 	if err := json.Unmarshal(raw, &e); err != nil {
-		// A PATCH is mutating: an undecodable 2xx body means HubSpot may already have
-		// applied the change, so surface it as UNCONFIRMED (like CloneEmail) rather
-		// than a plain decode error, so callers verify instead of blind-retrying.
+		// An undecodable 2xx body: same UNCONFIRMED treatment (the change may have landed).
 		return nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with an undecodable body — the update may have applied; verify before retrying)", id), err)
+	}
+	if e == nil {
+		return nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with a null body — the update may have applied; verify before retrying)", id), nil)
 	}
 	if e.ID == "" {
 		e.ID = id // some PATCH responses omit the id; keep the caller's
 	}
 	e.AppURL = c.emailEditURL(e.ID)
-	return &e, nil
+	return e, nil
 }
 
 // emailEditURL builds a human-facing edit link. Empty when the portal id is unset.
