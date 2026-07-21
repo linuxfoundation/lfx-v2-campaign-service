@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -135,8 +136,9 @@ func TestReddit_AmbiguousCreateRetainsClaim(t *testing.T) {
 	d := NewRedditDispatcher(
 		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
 		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2026-08-01","endDate":"2026-08-31","objective":"traffic","subreddits":["kubernetes"]}}`)
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"]}}`)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg)
 	if err == nil {
 		t.Fatal("expected an error from an ambiguous create")
@@ -184,9 +186,10 @@ func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
 	d := NewRedditDispatcher(
 		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
 		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
 	// Per-platform config is nested under the platform key in the envelope.
-	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2026-08-01","endDate":"2026-08-31","objective":"traffic","subreddits":["kubernetes"]}}`)
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"]}}`)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
