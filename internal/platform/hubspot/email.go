@@ -56,7 +56,9 @@ const maxListPages = 200
 // (case-insensitive), most-recently-updated first. Read-only (idempotent). It follows
 // paging.next.after across ALL pages, so a match beyond the first page is not missed.
 func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error) {
-	needle := strings.ToLower(query)
+	// Trim before matching — a padded term like " kubecon " must still match
+	// "KubeCon Invite" rather than silently returning no results.
+	needle := strings.ToLower(strings.TrimSpace(query))
 	out := make([]Email, 0)
 	after := ""
 	for page := 0; page < maxListPages; page++ {
@@ -138,8 +140,12 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 	if sourceID = strings.TrimSpace(sourceID); sourceID == "" {
 		return nil, fmt.Errorf("hubspot: CloneEmail requires a non-empty source id")
 	}
-	// sourceID is trimmed above — a whitespace-padded id posted raw in the clone
-	// body could be rejected by HubSpot, causing a silent staging failure.
+	if cloneName = strings.TrimSpace(cloneName); cloneName == "" {
+		return nil, fmt.Errorf("hubspot: CloneEmail requires a non-empty clone name")
+	}
+	// sourceID/cloneName are trimmed above — a whitespace-padded id posted raw could
+	// be rejected by HubSpot (a silent staging failure), and a padded name would
+	// produce a misnamed draft (CreateList normalizes names the same way).
 	body := cloneEmailRequest{ID: sourceID, CloneName: cloneName, Language: "en"}
 	raw, err := c.doRequest(ctx, http.MethodPost, emailsPath+"/clone", body, false)
 	if err != nil {

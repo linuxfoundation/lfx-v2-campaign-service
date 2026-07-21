@@ -2,6 +2,12 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot input-normalization (PR #35 review round 4, cursor).
+`SearchEmails`/`SearchLists` trim the query before matching/forwarding (a padded term
+no longer silently returns no results), and `CloneEmail` trims `cloneName` and rejects
+an empty-after-trim name (consistent with `CreateList`), so a padded name can't produce
+a misnamed draft.
+
 **Update** — HubSpot paginator hardening (PR #35 review round 3, cursor).
 `SearchEmails` and `ListEventDefinitions` now error on a non-advancing cursor (a
 repeated `paging.next.after` token) instead of re-fetching the same page until the cap

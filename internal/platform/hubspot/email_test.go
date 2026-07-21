@@ -343,6 +343,29 @@ func TestSetSendList_TrimsEmailID(t *testing.T) {
 	}
 }
 
+func TestSearchEmails_TrimsQuery(t *testing.T) {
+	// A padded query must still match — " kubecon " should find "KubeCon Invite".
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"KubeCon Invite","subject":"x"}]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "  kubecon  ")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Errorf("padded query must match, got %+v", got)
+	}
+}
+
+func TestCloneEmail_RejectsEmptyName(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request expected on invalid input")
+	})
+	if _, err := c.CloneEmail(context.Background(), "123", "   "); err == nil {
+		t.Error("a whitespace-only clone name must be rejected")
+	}
+}
+
 func TestCloneEmail_TrimsSourceID(t *testing.T) {
 	// A whitespace-padded source id must be trimmed before it is posted in the clone
 	// body — a padded id could be rejected by HubSpot, causing a silent clone failure.

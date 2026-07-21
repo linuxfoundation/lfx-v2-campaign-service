@@ -81,6 +81,9 @@ func (l *List) resolveSize() {
 // silently return an incomplete result despite the all-matches contract.
 func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) {
 	const pageSize = 100
+	// Trim before forwarding — a padded term would otherwise fail to match names it
+	// should, silently returning no lists.
+	query = strings.TrimSpace(query)
 	out := make([]List, 0)
 	offset := 0
 	for page := 0; page < maxListPages; page++ {
