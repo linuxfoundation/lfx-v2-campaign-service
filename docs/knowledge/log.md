@@ -2,6 +2,13 @@
 
 ## 2026-07-21
 
+**Update** — GA CampaignInput gains EventSlug (PR #33 review, dealako). Added a plumbed
+`EventSlug` field to `googleads.CampaignInput` for struct parity with the meta/twitter/
+reddit clients (which build UTM click-through params from it). GA's CreateCampaign builds
+only a PAUSED shell today (no ad/final URL), so the field is accepted but not yet
+consumed; GA-3+ ad creation will use it. Reserved now so the platform-agnostic input
+shape stays stable.
+
 **Update** — PR #40 review (round 11): two fixes. (1) Archived-brief lifecycle
 inconsistency (cursor): `ListAudiences` 404s on an archived parent brief, but
 `GetAudience`/`UpdateAudience` only matched the audience row and never re-checked the

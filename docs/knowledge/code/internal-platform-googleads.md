@@ -101,7 +101,10 @@ finite (NaN/Inf rejected — NaN passes every ordered comparison, so it would
 otherwise slip through and create a zero-unit budget) and must round to a positive
 `amountMicros` (a sub-micro value like 0.0000001 is > 0 but converts to 0 micros);
 and BOTH Project AND EventName must be non-empty (independently — mirrors the
-meta/twitter/reddit clients). Project is the canonical attribution key the data
+meta/twitter/reddit clients). `CampaignInput.EventSlug` is carried for struct parity
+with those clients (they build UTM click-through params from it on the ad's final URL)
+but is NOT consumed here yet — CreateCampaign builds only a PAUSED shell with no ad/
+final URL; GA-3+ ad creation will use it. Project is the canonical attribution key the data
 pipeline parses out of the campaign name, so a campaign with only one segment is
 mis-attributed, not just "less descriptive". Caller-supplied name segments are
 sanitized (`sanitizeNamePart`) to strip the `|` delimiter AND any control character

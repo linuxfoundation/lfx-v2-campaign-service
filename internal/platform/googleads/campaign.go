@@ -77,6 +77,13 @@ type CampaignInput struct {
 	// campaign names. Caller-supplied and otherwise unbounded, so it is trimmed and
 	// the composed names are length-capped before any create call.
 	EventName string
+	// EventSlug is the URL-safe event identifier, carried for struct parity with the
+	// meta/twitter/reddit clients (which use it to build UTM click-through params on
+	// the ad's final URL). GA's CreateCampaign only builds a PAUSED search-campaign
+	// shell today — no ad groups / keywords / final URLs — so this field is accepted
+	// but not yet consumed; GA-3+ (ad/keyword creation) will use it for the same UTM
+	// handling. Reserved now so the platform-agnostic input shape is stable.
+	EventSlug string
 	// Project is folded into the composed name alongside EventName.
 	Project string
 	// Budget is the campaign daily budget in whole units of the ad ACCOUNT's
