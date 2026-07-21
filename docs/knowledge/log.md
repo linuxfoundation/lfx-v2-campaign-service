@@ -160,6 +160,31 @@ bodies are drained (bounded) before close so the keep-alive connection is reused
 retry. (6) Added multi-page pagination tests (cursor + offset forwarding, aggregation,
 termination) for all three list-walkers.
 
+**Update** — GA budget-name reconcile guidance qualified (PR #33 review, copilot). The
+`campaignNamePartial` comment + `internal-platform-googleads.md` claimed the budget and
+campaign names always DIFFER, so `CampaignBudgetName` is the budget reconcile key. That's
+true only PRE-attachment: a non-shared (`explicitlyShared=false`) budget's name
+SYNCHRONIZES to the campaign name once the campaign attaches, so at a campaign-stage
+ambiguous failure the budget's current name is unknown (may be `campaignName`). The code
+already handles this — the budget-stage partial (`budgetPartial`) carries
+`CampaignBudgetID`, so past attachment reconciliation is by ID, not name — this just
+corrects the comment/doc to say so (no behavior change).
+
+**Update** — GA error-body snapshot no longer pins the full response (PR #33 review,
+copilot). `doRequest` built `apiError.Body` as `string(raw)[:maxErrorBodyChars]` — the
+400-char substring shared the up-to-`maxResponseBytes` backing array, so every retained
+apiError pinned the whole body. Now the raw BYTES are sliced to the cap first and only
+the bounded slice is converted to string (a fresh allocation), so the snapshot retains at
+most `maxErrorBodyChars`. Error-code parsing still runs against the FULL raw body first,
+so duplicate/field-error classification is unchanged. Added
+`TestDoRequest_ErrorBodySnapshotIsBounded`.
+
+**Update** — GA CampaignInput gains EventSlug (PR #33 review, dealako). Added a plumbed
+`EventSlug` field to `googleads.CampaignInput` for struct parity with the meta/twitter/
+reddit clients (which build UTM click-through params from it). GA's CreateCampaign builds
+only a PAUSED shell today (no ad/final URL), so the field is accepted but not yet
+consumed; GA-3+ ad creation will use it. Reserved now so the platform-agnostic input
+shape stays stable.
 
 **Update** — PR #40 review (round 11): two fixes. (1) Archived-brief lifecycle
 inconsistency (cursor): `ListAudiences` 404s on an archived parent brief, but
@@ -532,7 +557,112 @@ injection-safety, fail-closed, and key parsing. **DEPENDENCY:** adds
 `github.com/snowflakedb/gosnowflake` v1.19.1 (the only official Go Snowflake driver;
 no shared Go Snowflake service exists — the LFX One UI's Snowflake service is
 TypeScript). Concept doc + code index added; `go mod tidy` run.
+**Update** — Two more GA-2 partial/pre-send fixes (PR #33 review, copilot). (1) The
+ambiguous/duplicate BUDGET partial exposed only `CampaignName`, but the resource that
+may exist is a budget created under a DIFFERENT name (`LFX | Budget | …`) — with no id
+yet, a caller couldn't reconcile it. Added `CampaignBudgetName` to `CampaignResult`
+and populated it in every partial. (2) A pre-send contract hole: with a CACHED OAuth
+token, an already-cancelled context reached `httpClient.Do`, got wrapped as a
+`transportError`, and was reported UNCONFIRMED — but nothing was sent, so it's a clean
+failure. Added an explicit `ctx.Err()` check immediately before the first mutate →
+`(nil, err)`. (Without a cached token the token fetch surfaced the ctx error pre-send
+anyway; the cached-token path reaches Do directly, hence the explicit guard.) Tests
+added for both (the pre-send test warms the token cache first).
 
+**Update** — Added `networkSettings` to the GA-2 SEARCH campaign create (PR #33
+review, copilot — verified against v23 docs before applying). A SEARCH campaign that
+targets NO network is rejected with
+`CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK`, and an omitted
+`networkSettings` resolves to exactly that (proto3 bools default false) — Google
+documents no protective default and every official create sample sets it. The
+rejection lands on `campaigns:mutate` AFTER the budget commits, so it would orphan the
+budget. Now sends `networkSettings{targetGoogleSearch: true, targetSearchNetwork:
+false, targetContentNetwork: false}` — Google Search only (conservative for a PAUSED
+broker shell; targetSearchNetwork=true would require targetGoogleSearch AND opt into
+Search Partners). Happy-path test now asserts the networkSettings block. Concept doc
+updated.
+
+**Update** — Corrected the GA-2 name-length limits after re-verifying the v23 docs
+(PR #33 review round 3, copilot — TWO contradictory claims: one said 255, one said
+128; BOTH wrong for Campaign). Authoritative from the v23 System Limits table + RPC
+field refs: `Campaign.name` = up to **256 CHARACTERS** (`StringLengthError.TOO_LONG`);
+`CampaignBudget.name` = **1..255 UTF-8 BYTES** (trimmed). Different number AND unit.
+My earlier "128 chars" campaign cap was simply wrong (over-strict, rejecting valid
+names). Fixed: `maxCampaignNameRunes=256` (validated via `utf8.RuneCountInString`),
+`maxBudgetNameBytes=255` (validated via `len`); `validateEntityName` now takes the
+measured length + unit label so each name is measured in its correct unit (a
+multibyte name would otherwise slip past the budget's byte ceiling). Also confirmed
+v23 forbids NUL/LF/CR in `Campaign.name` — already handled by the control-char
+stripping in `sanitizeNamePart`. Replaced the 128-overflow test with a byte-limit
+preflight test + a units (bytes-vs-runes) test. LESSON: when two AI reviewers give
+contradictory numbers, verify against the primary source before implementing either.
+
+**Update** — Fixed several GA-2 correctness bugs from PR #33 review (copilot +
+cursor), verified against the v23 docs: (1) campaign create now sets the REQUIRED
+`containsEuPoliticalAdvertising: DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING` —
+omitting it fails every create with FieldError.REQUIRED (and since 2026-04-01 an
+undeclared account has ALL mutates rejected), which would have orphaned the budget.
+(2) The campaign duplicate check used `DUPLICATE_NAME` (the BUDGET code); campaigns
+use `CampaignError.DUPLICATE_CAMPAIGN_NAME` — split into isDuplicateBudgetNameErr /
+isDuplicateCampaignNameErr so the campaign branch actually fires. (3) A mutating
+429 is now UNCONFIRMED (doRequest suppresses its retry precisely because it may
+have committed — was mis-classified as a clean failure → double-create risk). (4)
+Error codes are now parsed from the FULL body in doRequest and retained on
+`apiError.ErrorCodes`; hasErrorCode reads that field instead of re-parsing the
+truncated `Body` (a real error JSON exceeds maxErrorBodyChars, so the old on-demand
+parse of the truncated snapshot silently dropped codes, breaking all duplicate
+detection). (5) A ctx check between the budget and campaign mutates skips the
+campaign create on a done context, returning the budget as a reconcilable partial.
+(6) Clarified docs: a campaign-create 4xx doesn't mean nothing was created (the
+budget exists); the non-shared-budget name-reuse-on-retry corollary is undocumented
+so retry-safety relies on a stable NameSuffix. Concept doc + index updated (GA-1→GA-2).
+
+**Update** — Second GA-2 review round on PR #33 (5 fixes): (1) split the name-length
+limit into `maxBudgetNameLen=255` / `maxCampaignNameLen=128` and validate each name
+against its own limit — v23 permits a 255-char budget name but only 128 for a
+campaign, so the collapsed single limit let a 129–255-char campaign name pass
+preflight and get rejected by the paid campaigns:mutate AFTER the budget was
+created (avoidable orphan). (2) Require BOTH Project AND EventName independently (was
+either-or): Project is the attribution key the pipeline parses from the name, so a
+one-segment name is mis-attributed. (3) Added `sanitizeNamePart` to strip the `|`
+delimiter from caller segments before composing — a raw `|` would inject extra
+pipe-fields and break name-based reconciliation/attribution. (4) `firstResourceName`
+now returns (resourceName, id) and errors on a present-but-MALFORMED resourceName
+(no id segment, e.g. `customers/1/campaigns/`) → UNCONFIRMED, instead of continuing
+with an empty unreconcilable id. (5) Fixed the RejectsBadInput test (its budget
+cases now set Project+EventName so they exercise the budget checks, not the new
+attribution checks that run first) + added tests for the 128-overflow, pipe-strip,
+malformed-resourceName, and firstResourceName cases. Concept doc updated.
+
+**Update** — GA-2 PR #33 follow-up (copilot): renamed `CampaignInput.BudgetUSD` →
+`Budget` (and `maxBudgetUSD` → `maxBudget`). Google applies `amountMicros` in the ad
+account's OWN currency and this client does no FX conversion, so the `USD` suffix
+was a false promise — 50 on a EUR account is 50 EUR/day, not ~54. Field comment now
+states it's account-currency (NOT USD), and the budget-created step no longer
+hardcodes a `$` sign. Mirrors the meta client, which renamed the same field for the
+same reason. No behavior change (the value was already sent as-is).
+
+**Update** — GA-2 PR #33 follow-up (cursor Bugbot): the both-fields-required check
+validated the RAW input (`strings.TrimSpace`), but composeName only includes a
+segment when its `sanitizeNamePart` is non-empty — so a delimiter-only value like
+`"|||"` passed validation yet sanitized to nothing, dropping the Project segment
+while still creating a paid budget/campaign. Fixed by validating the SANITIZED
+value (`sanitizeNamePart(in.Project/EventName) == ""`) so validation and
+composition stay consistent; added pipe-only test cases.
+
+**Creation** — Added Google Ads campaign creation (GA-2, LFXV2-2637) in
+`internal/platform/googleads/campaign.go`: `CreateCampaign` creates a PAUSED SEARCH
+campaign as two sequential `:mutate` calls — a non-shared STANDARD `campaignBudget`
+(amountMicros = budget×1e6) then a `campaign` referencing it with a `manualCpc {}`
+bidding strategy. Both resource ids surfaced. Because `:mutate` has no idempotency
+key, added `createOutcomeAmbiguous` (5xx/transport ambiguous always; 3xx only on a
+mutating method) + `isDuplicateNameErr` (4xx DUPLICATE_NAME → already-exists) +
+machine-readable error-code parsing (`error.details[GoogleAdsFailure].errors[].errorCode`,
+body never surfaced, codes bounded): an ambiguous or 2xx-no-resourceName outcome →
+UNCONFIRMED + reconcilable partial (carries the budget id once created); a definite
+4xx → clean failure. Deterministic composed names so a retry collides on
+DUPLICATE_NAME rather than double-creating. Table-driven httptest coverage for
+every branch. Concept doc updated.
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through
 `createOutcomeAmbiguous`, but a 2xx response with an empty `id` fell through to a

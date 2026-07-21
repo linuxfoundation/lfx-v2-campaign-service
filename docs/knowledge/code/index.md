@@ -9,7 +9,7 @@
 * [internal/platform/linkedin](internal-platform-linkedin.md) - LinkedIn Marketing API client: OAuth2 dark-post campaigns with targeting and up-front validation.
 * [internal/platform/meta](internal-platform-meta.md) - Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation.
 * [internal/platform/twitter](internal-platform-twitter.md) - X (Twitter) Ads v12 client: OAuth 1.0a signing and the campaign -> line_item -> promoted_tweet creation flow.
-* [internal/platform/googleads](internal-platform-googleads.md) - Google Ads API REST client (GA-1 scaffold): OAuth2 refresh-token auth, request layer with 429 retry, and GAQL search.
+* [internal/platform/googleads](internal-platform-googleads.md) - Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), and PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2).
 * [internal/platform/hubspot](internal-platform-hubspot.md) - HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def operations.
 * [internal/platform/snowflake](internal-platform-snowflake.md) - Read-only Snowflake client (email channel): resolves past-edition EVENT_NAME strings from PLATINUM_LFX_ONE for HubSpot BEHAVIORAL_EVENT filters.
 * [internal/service](internal-service.md) - Campaign service business logic, including Readyz (DB-backed readiness) and Livez (process-only liveness).
