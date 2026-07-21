@@ -2,6 +2,17 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot client hardening (PR #35 review round 2, copilot/cursor).
+(1) All id entry points trim-and-reassign before use (`GetEmail`,
+`PatchEmailSettings`, `SetSendList`, `CloneEmail`, `GetList`, `UpdateListFilters`) —
+a whitespace-padded id sent raw yields a 404/rejection that silently fails staging.
+(2) `SearchLists` now errors on an empty page while `hasMore=true` instead of
+returning a silent partial (a truncated audience list under-targets); the cap-exceeded
+paths deliberately keep returning an error (all-or-error contract, never a silent
+partial). (3) Corrected the `transportError` doc: it is ambiguous ONLY for a MUTATING
+call (`IsUnconfirmed` returns `transportError.Mutating`); an idempotent read/search
+that failed in transit is safely retryable.
+
 **Update** — HubSpot client v3-contract fixes (PR #35 review, copilot; verified
 against HubSpot's OpenAPI specs). (1) `PatchEmailSettings`/`SetSendList` now PATCH the
 DRAFT route `/marketing/v3/emails/{id}/draft` — the base `/{id}` route mutates the

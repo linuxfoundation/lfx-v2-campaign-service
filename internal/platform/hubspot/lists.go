@@ -112,14 +112,21 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			resp.Lists[i].AppURL = c.listURL(resp.Lists[i].ListID)
 			out = append(out, resp.Lists[i])
 		}
-		// Stop when the server says there's no more, or (defensively) when a page
-		// returns nothing or fails to advance the offset — either would otherwise
-		// loop forever.
-		if !resp.HasMore || len(resp.Lists) == 0 {
+		// Done when the server says there's no more.
+		if !resp.HasMore {
 			return out, nil
+		}
+		// hasMore=true but an empty page means the server can't advance us to the
+		// remaining results — returning `out` here would be a SILENT partial, which
+		// this all-or-error contract refuses (a truncated list under-targets an
+		// audience). Surface it as an error instead.
+		if len(resp.Lists) == 0 {
+			return nil, fmt.Errorf("hubspot: SearchLists got an empty page with hasMore=true (cannot complete)")
 		}
 		next := resp.Offset
 		if next <= offset {
+			// Defensive: a non-advancing server offset would otherwise loop forever;
+			// advance past the rows we just consumed.
 			next = offset + len(resp.Lists)
 		}
 		offset = next
@@ -185,7 +192,7 @@ func (c *Client) CreateList(ctx context.Context, name string, filterBranch json.
 // UpdateListFilters replaces the filterBranch on an existing list. MUTATING
 // (a PUT replace is not idempotent-retriable here: a 429 mid-replace could apply).
 func (c *Client) UpdateListFilters(ctx context.Context, listID string, filterBranch json.RawMessage) error {
-	if strings.TrimSpace(listID) == "" {
+	if listID = strings.TrimSpace(listID); listID == "" {
 		return fmt.Errorf("hubspot: UpdateListFilters requires a non-empty list id")
 	}
 	if len(filterBranch) == 0 {

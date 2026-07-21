@@ -74,6 +74,37 @@ func TestSearchLists_FollowsOffsetPagination(t *testing.T) {
 	}
 }
 
+func TestSearchLists_EmptyPageWithHasMoreErrors(t *testing.T) {
+	// hasMore=true with an empty page means the server can't advance us — returning a
+	// silent partial would under-target the audience, so this must be a hard error.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		off := int(decodeBody(t, r)["offset"].(float64))
+		if off == 0 {
+			_, _ = io.WriteString(w, `{"lists":[{"listId":"1","name":"A"}],"hasMore":true,"offset":100}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"lists":[],"hasMore":true,"offset":200}`)
+	})
+	if _, err := c.SearchLists(context.Background(), "q"); err == nil {
+		t.Fatal("an empty page with hasMore=true must error, not return a silent partial")
+	}
+}
+
+func TestUpdateListFilters_TrimsListID(t *testing.T) {
+	// A whitespace-padded list id must be trimmed before it reaches the URL path.
+	var gotPath string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if err := c.UpdateListFilters(context.Background(), "  42  ", json.RawMessage(`{"filterBranchType":"OR"}`)); err != nil {
+		t.Fatalf("UpdateListFilters: %v", err)
+	}
+	if gotPath != "/crm/v3/lists/42/update-list-filters" {
+		t.Errorf("padded list id must be trimmed in the path, got %q", gotPath)
+	}
+}
+
 func TestGetList_UnwrapsWrapperAndReturnsFilterBranch(t *testing.T) {
 	var gotQuery string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

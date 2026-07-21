@@ -44,7 +44,10 @@ googleads/reddit/meta/twitter clients:
   renders only method/path/status — the response body is retained for internal
   classification but NEVER surfaced (a HubSpot error envelope can quote request
   material). A round-trip failure after the request was plausibly sent, or a 2xx
-  whose body can't be read, is a `transportError` (AMBIGUOUS); its `Error()` peels
+  whose body can't be read, is a `transportError`; it is ambiguous ONLY for a
+  MUTATING call (`IsUnconfirmed` returns `transportError.Mutating`) — an idempotent
+  read/search that failed in transit landed no mutation and is safely retryable. Its
+  `Error()` peels
   every nested `*url.Error` layer (`safeCause`) so the request URL — which can carry
   query secrets — never leaks, while `Unwrap()` keeps the cause for `errors.Is/As`.
   A DNS/connect-time dial failure (`isPreSendDialError`) is a clean pre-send error
