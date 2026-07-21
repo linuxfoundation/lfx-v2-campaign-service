@@ -71,6 +71,10 @@ func (a *CampaignAudience) StatusOrDefault() AudienceStatus {
 // with no id, or clearing the id on an already-built row — can leave the stored row
 // claiming a list that isn't pointed at. It evaluates the EFFECTIVE status
 // (StatusOrDefault), so an omitted status on create (→ building) is fine.
+//
+// This app-level check gives a friendly 400; the same invariant is ALSO enforced at the
+// datastore by a CHECK constraint (migration 000006) so the build worker and any direct
+// write cannot violate it either.
 func (a *CampaignAudience) Validate() error {
 	if a.StatusOrDefault() == AudienceBuilt && strings.TrimSpace(a.PlatformMasterListID) == "" {
 		return ErrAudienceBuiltNeedsMasterList

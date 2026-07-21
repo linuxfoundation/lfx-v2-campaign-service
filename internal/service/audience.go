@@ -148,6 +148,11 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 	// Re-validate the MERGED row: a patch that sets status=built on a row with no
 	// master-list id, or clears the id on an already-built row, would leave "built"
 	// meaning nothing. Reject as a 400 before persisting.
+	//
+	// Precedence is deliberate: this content-400 runs BEFORE the repo's optimistic-
+	// concurrency check (412 on a stale If-Match). A built-with-no-id patch is malformed
+	// at ANY version, so failing fast with 400 is correct — returning 412 would only
+	// send the client to refetch and retry a request that is still inherently invalid.
 	if verr := cur.Validate(); verr != nil {
 		return nil, audienceValidationErr(verr)
 	}
@@ -269,14 +274,15 @@ func parseAudienceIfMatch(ifMatch *string) (int64, error) {
 	return v, nil
 }
 
-// mapAudienceErr maps domain errors to the generated audiences API error types,
-// preserving already-typed audiences errors.
 // audienceValidationErr maps a domain model-validation failure to a typed 400. The
-// message is the model error's own text (safe, human-readable, no internal detail).
+// message is the model error's own text (safe, human-readable, no internal detail —
+// the offending field name it names is the public API attribute).
 func audienceValidationErr(err error) error {
 	return &audiences.BadRequestError{Code: "400", Message: err.Error()}
 }
 
+// mapAudienceErr maps domain errors to the generated audiences API error types,
+// preserving already-typed audiences errors.
 func mapAudienceErr(err error) error {
 	switch {
 	case err == nil:

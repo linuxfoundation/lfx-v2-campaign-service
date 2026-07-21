@@ -9,7 +9,12 @@ is DEFINED as "the platform master list exists", but `status:"built"` was accept
 status) and call it before persisting on BOTH create AND update-after-merge, so no path (a
 create with built+no-id, a status-only patch to built on an id-less row, or clearing the id
 on an already-built row) can leave "built" meaning nothing — each is now a 400. Model +
-service tests cover all three.
+service tests cover all three. Backed the app-level 400 with a DB CHECK constraint
+(migration 000006: `status <> 'built' OR platform_master_list_id IS NOT NULL`) so the
+platform build worker and direct writes can't violate it either — the datastore is the
+source of truth, the API 400 a friendly early reject. (Reviewer-sim follow-ups: fixed a
+godoc regression where `audienceValidationErr`'s doc comment detached `mapAudienceErr`'s;
+documented the deliberate content-400-before-concurrency-412 precedence in UpdateAudience.)
 
 **Update** — PR #40 follow-up review (two rounds): fixed the campaign_audiences PATCH
 contract. (1) The update method reused `AudienceInput`, where `platform` is Required —
