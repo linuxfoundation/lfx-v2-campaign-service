@@ -385,9 +385,11 @@ maps the brief's event fields + the per-platform `config` onto `reddit.CampaignI
 calls the client, and maps the result → `model.Campaign`. Claim contract: pre-create
 failures (missing/invalid connection, config/credential errors, or a client `(nil,
 err)`) are wrapped `notCreated` → a `preCreateError` implementing
-`NoUpstreamCreate()`, so the orchestrator RELEASES the claim; a client partial-result
-+ error (ambiguous create) is handed back with the upstream id so the claim is
-RETAINED and the orphan recorded. Registered in `internal/container`
+`NoUpstreamCreate()`, so the orchestrator RELEASES the claim; ANY non-nil client
+result + error (ambiguous create — the decision keys on result!=nil, NOT on a
+populated id, since an ambiguous create returns a name-only partial whose id may be
+empty) is handed back so the claim is RETAINED and the orphan recorded. Registered in
+`internal/container`
 (`registerDispatchers`, called from both the fast path and the cold-start retry path);
 `logMissingDispatchers` warns for ad providers still without an adapter. Concept doc +
 index added; dispatch/container/service tests green (-race).

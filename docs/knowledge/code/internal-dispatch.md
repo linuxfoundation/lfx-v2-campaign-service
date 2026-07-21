@@ -26,12 +26,17 @@ imports) and outside each `platform/*` package (avoiding an import cycle).
    OAuth1 4-tuples, static bearer tokens), so each adapter unmarshals the blob into
    its own credential struct.
 2. **Map inputs** (per-platform) — the adapter reads the brief's shared event fields
-   (eventName / registrationUrl / project from the brief's opaque JSON blobs) and the
-   per-platform `config json.RawMessage` (budget, dates, objective, targeting — the
-   caller's `CreateCampaigns` `Input.Config`) onto the client's `CampaignInput`.
-3. **Call the client** and map the result → `model.Campaign` (upstream id, name, and
-   the provider result blob in `Result`). The orchestrator fills
-   project/brief/job/platform/status.
+   (eventName / registrationUrl from the brief's opaque JSON blobs) and the
+   per-platform config (its OWN nested key — `redditConfig`/`linkedInConfig`/… — out
+   of the single `CreateCampaigns` `Input.Config` envelope, via
+   `unmarshalPlatformConfig`) onto the client's `CampaignInput`. The **Project** name
+   segment is stamped from the authenticated `brief.ProjectID`, NOT from caller JSON
+   (it's the data pipeline's attribution join key — see docs/api-catalog.md).
+3. **Call the client** and map the result → `model.Campaign` (upstream id, name, the
+   provider result blob in `Result`, and — on SUCCESS — a `created` status, since the
+   orchestrator does not set a status on success and `UpsertCampaign` writes it
+   verbatim). The orchestrator fills project/brief/job/platform (and, for a retained
+   ambiguous orphan, a `pending` status).
 
 ## The claim contract (release vs retain)
 
@@ -40,15 +45,19 @@ decides, from the returned error, whether to RELEASE the claim (retry-safe) or R
 it (a blind retry could double-create). Adapters drive that decision:
 
 - A failure that happened BEFORE any upstream create — missing/invalid/undecryptable
-  connection, config/validation errors, incomplete credentials — is wrapped as a
-  `preCreateError` (via `notCreated`), which implements `NoUpstreamCreate() bool`. The
-  orchestrator detects it with `errors.As` and RELEASES the claim.
-- A client that returns `(nil, err)` means nothing was (or may have been) created —
-  the adapter wraps it `notCreated` too.
-- A client that returns a non-nil partial result alongside an error (the create is
-  ambiguous / may have landed) is handed back with the upstream id populated and a
-  non-nil error, so the orchestrator RETAINS the claim and records the recoverable
-  orphan.
+  connection, config/validation errors, incomplete credentials, or a client `(nil,
+  err)` — is wrapped as a `preCreateError` (via `notCreated`), which implements
+  `NoUpstreamCreate() bool`. The orchestrator detects it with `errors.As` and RELEASES
+  the claim.
+- Any NON-NIL client result returned alongside an error means something may have
+  landed upstream, so the adapter hands the campaign back with the error and the
+  orchestrator RETAINS the claim. The decision keys on `result == nil` ALONE — NOT on
+  whether the campaign id is populated: an ambiguous first-create (or a 2xx with no
+  id) returns a non-nil, name-only partial whose `PlatformCampaignID` is EMPTY, and
+  that still must retain the claim (LinkedIn even returns a non-nil result carrying a
+  `CampaignGroupID` on a definite campaign failure, because the group is permanent).
+  The retained row is recorded as a recoverable orphan; its upstream id may be empty
+  until reconciled.
 
 ## Registration
 

@@ -146,7 +146,19 @@ func TestReddit_AmbiguousCreateRetainsClaim(t *testing.T) {
 		t.Error("an ambiguous create must NOT be NoUpstreamCreate — the claim must be retained")
 	}
 	if camp == nil {
-		t.Error("an ambiguous create must return a non-nil campaign so the orchestrator records the orphan")
+		t.Fatal("an ambiguous create must return a non-nil campaign so the orchestrator records the orphan")
+	}
+	// The retained orphan carries the reconcile signal: the deterministic campaign
+	// name (so it can be looked up) and the provider result blob — even though the
+	// upstream id is empty on an ambiguous create.
+	if camp.CampaignName == "" {
+		t.Error("the retained campaign must carry the deterministic name for reconciliation")
+	}
+	if camp.PlatformCampaignID != "" {
+		t.Errorf("an ambiguous create yields no upstream id yet, got %q", camp.PlatformCampaignID)
+	}
+	if len(camp.Result) == 0 {
+		t.Error("the retained campaign should carry the provider result blob (steps) for reconciliation")
 	}
 }
 
