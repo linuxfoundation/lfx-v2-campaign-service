@@ -243,6 +243,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 // /readyz reflects DB connectivity. It also recovers jobs orphaned by a prior pod
 // restart and starts the periodic recovery sweeper. Shared by the fast path (and,
 // once brief/orchestrator late-binding exists, reusable from the retry path).
+
 // registerDispatchers builds the per-provider PlatformDispatcher map from the
 // connection repo + encryptor. Adapters resolve+decrypt each project's connection
 // themselves. Called from BOTH the fast path and the cold-start retry path so the
@@ -255,11 +256,14 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor) ma
 	}
 }
 
-// adPlatformProviders is the set of ad providers a brief can select; any without a
-// registered dispatcher is logged at startup so the gap is visible in production.
+// adPlatformProviders is the full set of paid providers a brief can select (per the
+// CreateCampaigns contract); any without a registered dispatcher is logged at startup
+// so the gap is visible in production. MicrosoftAds is included even though no adapter
+// exists yet — CreateCampaigns accepts it, so a Microsoft selection would otherwise
+// fail silently with "no dispatcher registered" and never be surfaced here.
 var adPlatformProviders = []model.Provider{
 	model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds,
-	model.ProviderRedditAds, model.ProviderTwitterAds,
+	model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds,
 }
 
 // logMissingDispatchers warns about ad providers that have no adapter yet — those

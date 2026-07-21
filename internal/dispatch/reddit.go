@@ -43,13 +43,12 @@ type redditConfig struct {
 	VideoGoal         string             `json:"videoGoal"`
 }
 
-// briefFields is the subset of a brief's JSON blobs this adapter reads. The brief
-// stores event data as opaque JSON (EventDetails/Copy/etc.); the caller-facing
-// contract for those keys is shared across platforms and owned by the brief service.
+// briefFields is the subset of a brief's JSON blobs the adapters read. The brief
+// stores event data as opaque JSON (EventDetails/Copy). Project is deliberately NOT
+// here — it must come from the authenticated brief.ProjectID, not caller JSON.
 type briefFields struct {
 	EventName       string `json:"eventName"`
 	RegistrationURL string `json:"registrationUrl"`
-	Project         string `json:"project"`
 	HSToken         string `json:"hsToken"`
 }
 
@@ -91,10 +90,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	}
 
 	var cfg redditConfig
-	if len(config) > 0 {
-		if err := json.Unmarshal(config, &cfg); err != nil {
-			return nil, notCreated(fmt.Errorf("decode reddit campaign config: %w", err))
-		}
+	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
+		return nil, notCreated(err)
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
@@ -102,11 +99,15 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	}
 
 	in := reddit.CampaignInput{
-		EventName:         bf.EventName,
-		EventSlug:         brief.EventSlug,
-		RegistrationURL:   bf.RegistrationURL,
-		HSToken:           bf.HSToken,
-		Project:           bf.Project,
+		EventName:       bf.EventName,
+		EventSlug:       brief.EventSlug,
+		RegistrationURL: bf.RegistrationURL,
+		HSToken:         bf.HSToken,
+		// Project is stamped from the AUTHENTICATED project scope (brief.ProjectID),
+		// never from caller-controlled brief JSON — the Project name segment is the
+		// data pipeline's attribution join key (docs/api-catalog.md), so it must be
+		// the canonical LFX slug, not free text.
+		Project:           brief.ProjectID,
 		BudgetUSD:         cfg.BudgetUSD,
 		StartDate:         cfg.StartDate,
 		EndDate:           cfg.EndDate,
@@ -127,33 +128,37 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		d.opts...,
 	)
 
-	// The reddit client's contract: it returns (nil, err) ONLY when nothing was (or
-	// may have been) created — a validation/pre-send/definite-4xx failure. Once a
-	// campaign is created or its create is ambiguous, it returns a non-nil partial
-	// result alongside the error. So:
-	//   - (nil, err)          → pre-create; wrap notCreated so the claim releases.
-	//   - (result, err)       → possibly created; return the campaign id + error so
-	//                           the orchestrator retains the claim and records the orphan.
-	//   - (result, nil)       → success.
+	// The reddit client's contract: (nil, err) ONLY when NOTHING was (or may have
+	// been) created — a validation/pre-send/definite-4xx failure. Otherwise it
+	// returns a NON-NIL partial result alongside the error (an ambiguous create, or a
+	// 2xx with no id, gives a name-only result whose CampaignID is EMPTY but which
+	// still means "may exist"). So the release decision keys on result==nil ALONE —
+	// NOT on an empty CampaignID, which would wrongly release the claim on an
+	// ambiguous partial and risk a duplicate on retry.
+	//   - (nil, err)      → pre-create; notCreated releases the claim.
+	//   - (result, err)   → may exist; return the (possibly id-less) campaign + error
+	//                       so the orchestrator retains the claim and records the orphan.
+	//   - (result, nil)   → success.
 	result, cerr := client.CreateCampaign(ctx, in)
 	if cerr != nil {
-		if result == nil || result.CampaignID == "" {
+		if result == nil {
 			return nil, notCreated(fmt.Errorf("reddit campaign creation failed before any upstream create: %w", cerr))
 		}
-		// Ambiguous / partial: hand back the campaign carrying the upstream id so the
-		// orchestrator can stamp the recoverable orphan; the error stays non-nil.
 		return campaignFromReddit(result), fmt.Errorf("reddit campaign creation UNCONFIRMED: %w", cerr)
 	}
 	return campaignFromReddit(result), nil
 }
 
 // campaignFromReddit maps the client result to the persistence model. The
-// orchestrator fills project/brief/job/platform/status; this sets what only the
-// dispatcher knows (upstream id, name, provider result blob).
+// orchestrator fills project/brief/job/platform (and, for a retained ambiguous
+// orphan, status); this sets what only the dispatcher knows — upstream id, name, the
+// provider result blob, and a "created" status on the success path (the orchestrator
+// does not set one on success, and UpsertCampaign writes Status verbatim).
 func campaignFromReddit(r *reddit.CampaignResult) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
+		Status:             campaignStatusCreated,
 	}
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
@@ -165,7 +170,7 @@ func campaignFromReddit(r *reddit.CampaignResult) *model.Campaign {
 // blobs. EventName is required by every platform's create contract.
 func decodeBriefFields(brief *model.CampaignBrief) (briefFields, error) {
 	var bf briefFields
-	// EventDetails is the primary source; Copy may also carry a project/token.
+	// EventDetails is the primary source; Copy may also carry a token.
 	for _, blob := range []json.RawMessage{brief.EventDetails, brief.Copy} {
 		if len(blob) == 0 {
 			continue
@@ -179,9 +184,6 @@ func decodeBriefFields(brief *model.CampaignBrief) (briefFields, error) {
 		}
 		if bf.RegistrationURL == "" {
 			bf.RegistrationURL = partial.RegistrationURL
-		}
-		if bf.Project == "" {
-			bf.Project = partial.Project
 		}
 		if bf.HSToken == "" {
 			bf.HSToken = partial.HSToken

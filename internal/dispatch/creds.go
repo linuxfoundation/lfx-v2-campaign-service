@@ -11,6 +11,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -92,3 +93,36 @@ func (e *preCreateError) NoUpstreamCreate() bool { return true }
 // notCreated wraps err as a preCreateError (the request definitely did not create
 // anything upstream).
 func notCreated(err error) error { return &preCreateError{err: err} }
+
+// campaignStatusCreated is the status stamped on a campaign row after a successful
+// upstream create. The orchestrator does NOT set a status on success (it only sets
+// "pending" for a retained ambiguous orphan), and CampaignRepo.UpsertCampaign writes
+// Status verbatim — so the dispatcher must supply a non-empty status or the row
+// persists with an empty one.
+const campaignStatusCreated = "created"
+
+// unmarshalPlatformConfig extracts ONE platform's nested config object from the
+// per-request config envelope and unmarshals it into dst. The CreateCampaigns
+// request carries a single `config` blob for all selected platforms, with each
+// platform's params nested under its own key (redditConfig / linkedInConfig /
+// metaConfig / twitterConfig — see docs/api-catalog.md). Unmarshalling the whole
+// envelope directly into a platform struct would silently read nothing (or the wrong
+// keys). An absent key is not an error — it yields a zero-value config. A present but
+// malformed value is an error.
+func unmarshalPlatformConfig(envelope []byte, key string, dst any) error {
+	if len(envelope) == 0 {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(envelope, &m); err != nil {
+		return fmt.Errorf("decode campaign config envelope: %w", err)
+	}
+	raw, ok := m[key]
+	if !ok || len(raw) == 0 {
+		return nil // no per-platform config supplied; zero value is fine
+	}
+	if err := json.Unmarshal(raw, dst); err != nil {
+		return fmt.Errorf("decode %s: %w", key, err)
+	}
+	return nil
+}

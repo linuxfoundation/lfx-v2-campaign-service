@@ -114,6 +114,42 @@ func TestReddit_BriefWithoutEventNameIsPreCreate(t *testing.T) {
 
 // ---- happy path through an httptest reddit API ----------------------------
 
+func TestReddit_AmbiguousCreateRetainsClaim(t *testing.T) {
+	// An ambiguous campaign create (5xx) makes the reddit client return a NON-NIL
+	// name-only partial (empty CampaignID) + error. The adapter must return that
+	// campaign + a non-NoUpstreamCreate error so the orchestrator RETAINS the claim
+	// (a released claim would let a retry duplicate the maybe-created campaign).
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{}}) // no existing-by-name
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on the campaign POST
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+	)
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2026-08-01","endDate":"2026-08-31","objective":"traffic","subreddits":["kubernetes"]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg)
+	if err == nil {
+		t.Fatal("expected an error from an ambiguous create")
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
+		t.Error("an ambiguous create must NOT be NoUpstreamCreate — the claim must be retained")
+	}
+	if camp == nil {
+		t.Error("an ambiguous create must return a non-nil campaign so the orchestrator records the orphan")
+	}
+}
+
 func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
 	// A minimal Reddit API: OAuth token + campaign create (+ ad group). We only need
 	// the campaign create to return an id for the adapter's mapping assertion.
@@ -137,7 +173,8 @@ func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
 		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
 		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
 	)
-	cfg := json.RawMessage(`{"budgetUsd":50,"startDate":"2026-08-01","endDate":"2026-08-31","objective":"traffic","subreddits":["kubernetes"]}`)
+	// Per-platform config is nested under the platform key in the envelope.
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2026-08-01","endDate":"2026-08-31","objective":"traffic","subreddits":["kubernetes"]}}`)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
@@ -150,5 +187,15 @@ func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
 	}
 	if len(camp.Result) == 0 {
 		t.Error("the provider result blob should be captured")
+	}
+	// A successful create must carry a non-empty status (the orchestrator doesn't set
+	// one on success, and UpsertCampaign writes it verbatim).
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("status = %q, want %q", camp.Status, campaignStatusCreated)
+	}
+	// The campaign name must carry the AUTHENTICATED project slug (brief.ProjectID
+	// "cncf"), stamped by the adapter — not free text from the brief JSON.
+	if !strings.Contains(camp.CampaignName, "cncf") {
+		t.Errorf("campaign name must include the authenticated project slug, got %q", camp.CampaignName)
 	}
 }
