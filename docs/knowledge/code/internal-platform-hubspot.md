@@ -14,8 +14,10 @@ timestamp: "2026-07-20T00:00:00Z"
 # internal/platform/hubspot
 
 Package hubspot is the HubSpot API client for the EMAIL channel (LFXV2-2770). It
-drives HubSpot's email surface: marketing-email clone/patch/content-set, CRM
-contact-list CRUD, and event-definition lookups. Credentials and account
+drives HubSpot's email surface: marketing-email search/get/clone and draft-update
+(subject + sender — email content-setting is deferred to LFXV2-2775), CRM
+contact-list search/get/create/filter-update (no delete), and event-definition
+lookups. Credentials and account
 configuration are injected via `NewClient`; the package never reads environment
 variables or touches the database. In production the bearer token comes from a
 decrypted stored `hubspot_connections` connection (`private_app_token`).

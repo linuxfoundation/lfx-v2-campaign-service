@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 // Package hubspot is a Go client for the HubSpot API. It drives the email
-// channel's HubSpot surface: marketing-email clone/patch/content-set, CRM
-// contact-list CRUD, and event-definition lookups. Credentials and account
+// channel's HubSpot surface: marketing-email search/get/clone and draft-update
+// (subject + sender; email content-setting is deferred to LFXV2-2775), CRM
+// contact-list search/get/create/filter-update (no delete), and event-definition
+// lookups. Credentials and account
 // configuration are injected via NewClient; the package never reads environment
 // variables or touches the database. In production the bearer token comes from a
 // decrypted stored connection (`hubspot_connections.private_app_token`).
