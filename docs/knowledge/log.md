@@ -2,6 +2,137 @@
 
 ## 2026-07-20
 
+**Update** — Fixed "briefs stay broken after a cold-start DB retry" (PR #28 review,
+cursor High, surfaced after #11 merged into #28). After #11 added the brief service +
+orchestrator to the container, the 503-mode background retry only late-bound the
+CONNECTION service + readiness — it never re-wired the BRIEF service, so brief/job
+routes returned 503 for the whole pod lifetime while `/readyz` flipped to healthy
+(readiness OK but routes 503 — worse than "unavailable"). Fixed: (1) gave
+`BriefService` a `SetBackend(briefs, campaigns, jobs, orch)` late-binding setter
+guarded by an RWMutex, with handlers now snapshotting collaborators via `ready()`
+(so a mid-request swap can't race); (2) the retry goroutine now fully re-wires — brief
+`SetBackend` + orchestrator + `FailStuckJobs` + `StartRecoverySweeper` — and flips
+readiness LAST so `/readyz` never reports OK while brief routes still 503; (3) 503-mode
+boot now wires a nil-repo brief service (routes mounted → typed 503, not a nil panic).
+Added `TestBriefService_SetBackend_LateBinding` + a container 503-mode assertion.
+Race-clean.
+
+**Update** — Documented the Traefik `RegularExpression` HTTPRoute version requirement
+(PR #28 review, copilot). Copilot claimed Traefik's Gateway API provider doesn't
+support `RegularExpression` path matches (only Exact/PathPrefix) → the project-nested
+route would be silently unrouted. VERIFIED WRONG against Traefik's source
+(`buildPathRule`, every v3.1.0+ tag): a `RegularExpression` match is translated to a
+native `PathRegexp(...)` rule (RE2/Go-regexp), GA, not gated. BUT two real nuances:
+(1) **v3.0.x does NOT support it** (returns "unsupported path match"), so it requires
+Traefik >= v3.1.0 — now stated in the template comment + concept doc; (2) the feature
+is NOT in Traefik's Gateway API conformance report even though the code implements
+it, so the render alone doesn't prove routing — added a note to verify the deployed
+HTTPRoute's `Accepted` status condition is True. Replaced the vague "custom
+conformance" wording. No route change (works on the platform's v3.1.0+ gateway).
+NOTE: no other LFX service uses RegularExpression HTTPRoute (query-service uses
+PathPrefix/Exact) because they route on their own top-level prefix; campaign-service
+can't (project-service owns /projects/), hence the regex.
+
+**Update** — Corrected the "re-run after a partial migration is harmless" doc claim
+(PR #28 review, copilot). The container concept doc and the `Migrate` doc comment
+said migrations are idempotent so a re-run after a partial is harmless — but that's
+wrong for a PARTIAL (dirty) migration: golang-migrate marks the schema dirty
+precisely because partial migration SQL is not assumed idempotent, and a re-run then
+hits `ErrDirty` (needs manual `force`, exactly the permanent-failure path documented
+above). Reworded both to scope the "skipped/harmless" claim to a CLEAN schema and
+describe partial failure as the dirty/manual-recovery state.
+
+**Update** — Fail fast on a PERMANENT migration failure instead of 503-looping
+forever (PR #28 review, copilot + cursor). The 503-mode retry loop retried
+`initDatabase` on ANY error — so a dirty schema (`migrate.ErrDirty`, set when a prior
+migration failed partway) would loop forever behind a 503, with no fail-fast signal.
+A dirty schema can't clear by re-running Migrate; it needs an operator to force the
+version. Added `postgres.IsPermanentMigrationErr` (classifies a wrapped
+`migrate.ErrDirty`); the synchronous fast path now returns an error (process exits
+loud) and the background retry loop logs ERROR + stops looping on it. Connectivity /
+lock / deadline failures are deliberately still transient (they retry). Note: the
+overlapping-migration half of these findings was already fixed earlier (migrateMu +
+pool-first-then-Migrate); these older bot comments predate that. Test added.
+
+**Update** — Made the pgx DSN-parse errors DSN-free (PR #28 review, copilot). Both
+`NewPool` and `ValidateMigrationDSN` wrapped `pgxpool.ParseConfig`'s error with `%w`;
+NewContainer propagates it and main logs it, so a malformed credential-bearing
+DATABASE_URL risked logging the connection string. VERIFIED that pgx's
+`ParseConfigError` already redacts the password (`redactPW`) across every malformed
+DSN shape I probed (bad port, space-in-host→url.Parse-fails-falls-to-keyword-regex,
+bad connect_timeout/sslmode, keyword form) — so the finding's literal "leaks the
+password" claim is not currently true. BUT we shouldn't depend on a dependency's
+best-effort redaction for a secret, so wrapped both sites in a `dsnParseError` whose
+Error() renders a STATIC DSN-free message and whose Unwrap() keeps the pgx cause for
+errors.Is/As + diagnostics. Test asserts a password/DSN never reaches Error() while
+the cause stays unwrappable.
+
+**Update** — Added the route/rule PARITY test (PR #28 review, copilot). The PR
+described an RE2 route/RuleSet parity regression guard, but none was committed — the
+HTTPRoute regex and the Heimdall RuleSet path list are two hand-maintained matchers
+with nothing coupling them, so a drift (a forwarded-but-unruled path) would skip the
+campaign_manager FGA check unnoticed. Added `TestRouteRuleSetParity`
+(`charts/lfx-v2-campaign-service/parity_test.go`): renders both templates via `helm
+template`, extracts the RE2 regex + the RuleSet's project-nested patterns (translating
+Traefik `:projectId`/`*`/`**`), and asserts a curated accepted/rejected path table
+matches identically in both matchers (skips if helm absent; fails on render error).
+Verified non-vacuous by flipping an expectation. httproute concept doc updated.
+
+**Update** — Scoped the parity test to the campaign_manager rule (PR #28 review,
+copilot). `extractRulePatterns` treated ANY `/projects/` path anywhere in the RuleSet
+as "authorized", so a path moved into an allow_all/deny_all/differently-scoped rule
+would still satisfy parity — but the actual invariant is campaign_manager on
+project:{projectId}, not just "some rule matches". Now extraction is scoped to the
+`project-api` rule BLOCK (isolated from its `- id:` to the next), and a new
+`TestProjectAPIRuleEnforcesCampaignManager` (also called from both parity tests)
+asserts that rule's authorizer is openfga_check with relation campaign_manager +
+object project:{projectId}. A rule downgrade/re-scope now fails the security test.
+
+**Update** — Strengthened the parity test to couple to matcher CONTENT (PR #28
+review, copilot). The curated table only sampled fixed paths, so a one-sided
+matcher edit that no case exercised (copilot's example: adding `tiktok-ads/metrics`
+to the route regex only) would still pass. Added `TestRouteRuleSetParityWitnesses`:
+it enumerates concrete example paths from the route regex's AST (`regexp/syntax`
+walker — one witness per alternation leaf, `[^/]+`/`.*` collapsed to literals) and
+requires each to be RULED, and builds a witness from every RuleSet pattern and
+requires the route to FORWARD it. A route-only new branch now yields an unruled
+witness → fail; a RuleSet-only entry yields an unforwarded witness → fail. Verified
+against copilot's exact scenario (`/projects/x/tiktok-ads/metrics` is caught).
+
+**Update** — Bounded the migration step with the startup deadline (PR #28 follow-up
+review, cursor Medium). After the earlier pool-first fix, `initDatabase` still ran
+`postgres.Migrate` (no context) synchronously with no time bound, so a reachable
+but slow/lock-blocked migration could block `NewContainer` indefinitely. Now
+Migrate runs in a goroutine under a package `migrateMu` (serializes runs so a retry
+never starts a second migration while a prior deadline-abandoned one is finishing)
+and the caller returns on the startup deadline. Also cleaned a union-merge artifact
+in this log (duplicated oversized-body line).
+
+**Update** — Hardened the #28 503-mode cold-start fix after review (cursor HIGH +
+copilot). (1) `initDatabase` started `postgres.Migrate` (uncancellable Up()) in a
+goroutine and returned on the 15s deadline WITHOUT waiting — so the retry loop
+launched another migration while the previous was still blocked, leaking goroutines
+and racing concurrent migrations. Reworked to open the pool FIRST (NewPool does a
+context-bounded Ping) and run Migrate only after a reachable ping, so Migrate never
+blocks against a down DB and retries never overlap. (2) A malformed DATABASE_URL
+(keyword DSN) is deterministic, so `NewContainer` now fails fast via
+`postgres.ValidateMigrationDSN` instead of 503-looping forever. (3) Corrected the
+service.go comments/doc that claimed a NIL readiness dep makes /readyz not-ready —
+a nil dep is treated as READY (no-DB mode); cold-start uses the non-nil notReady{}
+checker. (4) The connection 503 message "not configured" → "unavailable" (during
+cold start the DB is configured, just unavailable). Tests + concept doc updated.
+
+**Update** — Made the DB cold-start startupProbe budget real (PR #28 review,
+LFXV2-2558). `NewContainer` capped migration+pool init at 15s and `main` exited
+on failure, so an unreachable DB at boot crash-looped the pod and the ~90s
+startupProbe budget never applied. Now a *transient* DB-init failure boots the
+services in 503 mode (a `notReady` health dep so `/readyz` returns 503, distinct
+from no-DB mode; connection service nil-repo) and a background goroutine retries
+migration/pool, swapping the live pool/repo in via `SetReadinessDep`/`SetBackend`
+(mutex-guarded against concurrent request reads) once it opens. Config errors
+(invalid DB settings, bad encryption key) still fail fast. `Close` cancels the
+retry goroutine. Updated the container + deployment concept docs and the
+startupProbe comment.
 **Update** — Idempotency-lookup errors no longer silently fall through to dispatch
 (PR #11 review, cursor Medium). In `dispatchPlatform`, the fast path treated ANY
 non-nil error from `GetCampaignByPlatform` like "no row" and fell through to
@@ -157,6 +288,22 @@ campaign.start_date_time/end_date_time. Concept doc + code index updated. Campai
 creation (:mutate), metrics/keywords/audience, and keyword actions follow in
 GA-2..GA-5.
 
+**Update** — Routed the project-nested campaign API through the gateway and gave it
+real authz (PR #28, LFXV2-2558). The chart previously routed only `/campaigns`, so
+the actual contract paths (`/projects/{projectId}/…`) were unreachable. httproute
+now uses a `RegularExpression` match selecting this service's project-nested
+subpaths (`connection-*`, `briefs`, `jobs`, `{provider}/metrics`,
+`google-ads/keywords|audience`, `hubspot`), leaving `project-service`'s `/projects/`
+routes untouched. ruleset replaces the `/campaigns` `deny_all` placeholders with a
+single `project-api` rule gating every routed family on the project
+`campaign_manager` relation (`openfga_check` scoped to `project:{projectId}`, D2),
+with `oidc` + `anonymous_authenticator` paired (openfga_check is what rejects the
+anonymous subject) and an `allow_all` fallback when OpenFGA is disabled (local dev).
+A separate `campaigns-placeholder` rule keeps the still-routed `/campaigns` /
+`/_campaigns/*` prefixes fail-closed (`deny_all`), preserving the chart↔route parity
+invariant (every heimdall-routed path has a matching rule). deployment readiness
+`failureThreshold` relaxed 1→3 for CloudNativePG cold start. Concepts updated:
+`httproute`, `ruleset`.
 **Update** — Also strengthened the no-follow regression tests (meta + twitter):
 they injected a nil-`CheckRedirect` client, which couldn't prove the override is
 UNCONDITIONAL (a "fill only nil callbacks" impl would pass). Now they inject a

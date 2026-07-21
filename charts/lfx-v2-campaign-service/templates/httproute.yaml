@@ -15,7 +15,52 @@ spec:
   hostnames:
     - "lfx-api.{{ .Values.lfx.domain }}"
   rules:
-    # Main application endpoints (with authentication)
+    # Project-nested campaign API (the approved contract — every endpoint is
+    # /projects/{projectId}/…, gated on the project `campaign_manager` relation).
+    #
+    # project-service owns `PathPrefix: /projects/`, so we cannot claim that
+    # prefix. The distinguishing token (connection-*, briefs, jobs, the metrics
+    # provider segment, hubspot) sits AFTER the variable {projectId}, which a
+    # PathPrefix/Exact match cannot reach past. We therefore use a
+    # RegularExpression path match to select exactly this service's project-nested
+    # subpaths; project-service's /projects/ routes are unaffected (Traefik resolves
+    # overlap by match specificity — the regex only matches campaign subpaths).
+    #
+    # REQUIRES Traefik >= v3.1.0 (the platform gateway): its Gateway API provider
+    # translates a `RegularExpression` HTTPRoute path match into a native
+    # `PathRegexp(...)` router rule (RE2 / Go regexp flavor) — verified in Traefik's
+    # source (buildPathRule) for every v3.1.0+ tag. NOTE: v3.0.x does NOT support it
+    # (it returns "unsupported path match"), and the feature is not listed in
+    # Traefik's Gateway API conformance report even though the code implements it —
+    # so after deploy, confirm this HTTPRoute's `Accepted` status condition is True
+    # rather than assuming the render alone means it routes.
+    #
+    # The trailing wildcard is per-family and MUST mirror the RuleSet
+    # (ruleset.yaml `project-api`) exactly, or the route would forward sub-paths
+    # Heimdall has no rule for (a route/rule parity violation — an unruled path is
+    # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
+    # only they get the free `(/.*)?` tail here. The connection-* family is ruled
+    # for exactly the base, /test, and /set-credential sub-paths; per-provider
+    # /metrics and google-ads/keywords|audience are ruled at the base path only.
+    - matches:
+      - path:
+          type: RegularExpression
+          value: ^/projects/[^/]+/(connection-(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads|microsoft-ads|hubspot)(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))$
+      {{- if .Values.heimdall.enabled }}
+      filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: heimdall-forward-body
+      {{- end }}
+      backendRefs:
+        - group: ''
+          kind: Service
+          name: {{ .Chart.Name }}
+          port: {{ .Values.service.port }}
+          weight: 1
+    # OpenAPI spec + reserved placeholder prefix (served directly by the service).
     - matches:
       - path:
           type: Exact

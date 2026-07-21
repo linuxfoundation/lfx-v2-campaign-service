@@ -10,6 +10,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 
 	"goa.design/goa/v3/security"
 
@@ -83,6 +84,12 @@ func actorFromToken(token string) *model.Actor {
 // thin adapters (see connection.go) that convert the typed Goa payloads to and
 // from the generic domain model and call the core helpers here.
 type ConnectionService struct {
+	// mu guards repo and enc, which can be swapped in after construction: during
+	// a database cold start the service boots with a nil repo (every method
+	// returns 503) and the container injects the live repo+encryptor via
+	// SetBackend once the pool opens. Probe/handler requests read them
+	// concurrently with that swap, so access is guarded.
+	mu   sync.RWMutex
 	repo domain.ConnectionRepository
 	enc  domain.Encryptor
 }
@@ -93,104 +100,132 @@ var (
 )
 
 // NewConnectionService constructs a ConnectionService. A nil repo is valid: it
-// signals the database is not configured, so every method returns the typed 503
-// ServiceUnavailable (see ensureAvailable) instead of panicking on a nil repo.
+// signals the database is not configured OR not yet ready, so every method
+// returns the typed 503 ServiceUnavailable (see resolveBackend) instead of
+// panicking on a nil repo.
 func NewConnectionService(repo domain.ConnectionRepository, enc domain.Encryptor) *ConnectionService {
 	return &ConnectionService{repo: repo, enc: enc}
 }
 
-// ensureAvailable returns the typed 503 ServiceUnavailable error when the
-// service has no database wired (DATABASE_URL unset). The routes are still
-// mounted in that mode so runtime matches the published OpenAPI contract; this
-// guard keeps every handler from dereferencing a nil repo.
-func (s *ConnectionService) ensureAvailable() error {
-	if s.repo == nil {
-		return &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is not configured"}
+// SetBackend swaps in (or clears) the repository and encryptor after
+// construction. Used by the container to inject the database-backed repo once
+// the pool opens during a cold start, flipping the connection endpoints from 503
+// to live. Safe for concurrent use with the request handlers.
+func (s *ConnectionService) SetBackend(repo domain.ConnectionRepository, enc domain.Encryptor) {
+	s.mu.Lock()
+	s.repo = repo
+	s.enc = enc
+	s.mu.Unlock()
+}
+
+// backend returns the current repo and encryptor under the read lock.
+func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encryptor) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.repo, s.enc
+}
+
+// resolveBackend returns the repo+encryptor for one request, or the typed 503
+// ServiceUnavailable error when the service has no database wired (DATABASE_URL
+// unset) or the pool is still coming up. Reading both once per request (rather
+// than re-reading s.repo/s.enc field-by-field) avoids racing the container's
+// SetBackend swap mid-handler. The routes are still mounted in the unavailable
+// mode so runtime matches the published OpenAPI contract.
+func (s *ConnectionService) resolveBackend() (domain.ConnectionRepository, domain.Encryptor, error) {
+	repo, enc := s.backend()
+	if repo == nil {
+		return nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is unavailable"}
 	}
-	return nil
+	return repo, enc, nil
 }
 
 // createConn encrypts credentials, persists a new connection, and returns the
 // generic domain result. Adapters build the *model.Connection (minus
 // credentials) and pass the plaintext credential JSON separately.
 func (s *ConnectionService) createConn(ctx context.Context, c *model.Connection, creds any) (*model.Connection, error) {
-	if err := s.ensureAvailable(); err != nil {
+	repo, enc, err := s.resolveBackend()
+	if err != nil {
 		return nil, err
 	}
 	plain, err := credentialJSON(creds)
 	if err != nil {
 		return nil, err
 	}
-	ct, err := s.enc.Encrypt(plain)
+	ct, err := enc.Encrypt(plain)
 	if err != nil {
 		return nil, &conn.InternalServerError{Code: "500", Message: "failed to encrypt credentials"}
 	}
 	c.EncryptedCredentials = ct
-	created, cerr := s.repo.Create(ctx, c)
+	created, cerr := repo.Create(ctx, c)
 	return created, mapErr(cerr)
 }
 
 // getConn fetches the project's connection for a provider.
 func (s *ConnectionService) getConn(ctx context.Context, projectID string, p model.Provider) (*model.Connection, error) {
-	if err := s.ensureAvailable(); err != nil {
+	repo, _, err := s.resolveBackend()
+	if err != nil {
 		return nil, err
 	}
-	c, err := s.repo.Get(ctx, projectID, p)
-	return c, mapErr(err)
+	c, gerr := repo.Get(ctx, projectID, p)
+	return c, mapErr(gerr)
 }
 
 // updateConn replaces config, gated on the If-Match version.
 func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection, ifMatch *string) (*model.Connection, error) {
-	if err := s.ensureAvailable(); err != nil {
+	repo, _, err := s.resolveBackend()
+	if err != nil {
 		return nil, err
 	}
 	version, err := parseIfMatch(ifMatch)
 	if err != nil {
 		return nil, err
 	}
-	updated, uerr := s.repo.Update(ctx, c, version)
+	updated, uerr := repo.Update(ctx, c, version)
 	return updated, mapErr(uerr)
 }
 
 // setCredential encrypts and replaces the stored credential.
 func (s *ConnectionService) setCredential(ctx context.Context, projectID string, p model.Provider, creds any, by *model.Actor) error {
-	if err := s.ensureAvailable(); err != nil {
+	repo, enc, err := s.resolveBackend()
+	if err != nil {
 		return err
 	}
 	plain, err := credentialJSON(creds)
 	if err != nil {
 		return err
 	}
-	ct, err := s.enc.Encrypt(plain)
+	ct, err := enc.Encrypt(plain)
 	if err != nil {
 		return &conn.InternalServerError{Code: "500", Message: "failed to encrypt credentials"}
 	}
 	// The repo returns the updated connection (with the bumped version) so the
 	// new ETag is available; the set-credential response is 204 today, so it is
 	// not emitted here — surfacing it is a small design follow-up.
-	_, serr := s.repo.SetCredential(ctx, projectID, p, ct, by)
+	_, serr := repo.SetCredential(ctx, projectID, p, ct, by)
 	return mapErr(serr)
 }
 
 // deleteConn soft-deletes the connection.
 func (s *ConnectionService) deleteConn(ctx context.Context, projectID string, p model.Provider) error {
-	if err := s.ensureAvailable(); err != nil {
+	repo, _, err := s.resolveBackend()
+	if err != nil {
 		return err
 	}
 	// Record who performed the soft delete for the inline audit trail, consistent
 	// with Create/Update/SetCredential (connections are not indexed, so attribution
 	// lives inline in updated_by).
-	return mapErr(s.repo.Delete(ctx, projectID, p, actorFromCtx(ctx)))
+	return mapErr(repo.Delete(ctx, projectID, p, actorFromCtx(ctx)))
 }
 
 // testConn verifies the stored credential against the provider. Upstream
 // verification is not yet implemented; it reports the connection exists and is
 // pending real verification (LFXV2-2556 follow-up / provider adapters).
 func (s *ConnectionService) testConn(ctx context.Context, projectID string, p model.Provider) (*conn.ConnectionTestResult, error) {
-	if err := s.ensureAvailable(); err != nil {
+	repo, _, err := s.resolveBackend()
+	if err != nil {
 		return nil, err
 	}
-	c, err := s.repo.Get(ctx, projectID, p)
+	c, err := repo.Get(ctx, projectID, p)
 	if err != nil {
 		return nil, mapErr(err)
 	}
