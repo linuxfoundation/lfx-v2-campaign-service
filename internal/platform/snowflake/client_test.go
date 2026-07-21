@@ -5,6 +5,8 @@ package snowflake
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -299,10 +301,25 @@ func TestParsePrivateKey_ToleratesEnvMangling(t *testing.T) {
 }
 
 func TestParsePrivateKey_RejectsNonRSA(t *testing.T) {
-	// A valid PKCS8 block but not RSA would be rejected; here just confirm an EC-ish
-	// wrong-type body errors at parse (garbage DER -> parse error is sufficient).
+	// A VALID PKCS8 key that is not RSA must be rejected at the type assertion (the
+	// RSA-only authentication contract). Generate a real EC P-256 key, marshal it as
+	// PKCS8, and assert rejection — so the non-RSA branch is actually exercised (a
+	// malformed DER would fail earlier, at ParsePKCS8PrivateKey, and never reach it).
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("gen EC key: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(ecKey)
+	if err != nil {
+		t.Fatalf("marshal EC key: %v", err)
+	}
+	ecPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	if _, err := parsePrivateKey(ecPEM); err == nil {
+		t.Error("a valid non-RSA (EC) PKCS8 key must be rejected by the RSA-only contract")
+	}
+	// A malformed DER still errors (at the parse step) — keep that covered too.
 	if _, err := parsePrivateKey("-----BEGIN PRIVATE KEY-----\nMEE=\n-----END PRIVATE KEY-----"); err == nil {
-		t.Error("a non-PKCS8/RSA key must error")
+		t.Error("a malformed PKCS8 body must error")
 	}
 }
 
