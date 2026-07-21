@@ -139,9 +139,12 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 	return audienceResult(updated), nil
 }
 
-// applyAudiencePatch merges the provided (non-nil) fields of in onto cur. A nil
-// pointer / empty slice means "leave unchanged"; platform is immutable (ignored on
-// update). This makes update a partial modification rather than a full overwrite.
+// applyAudiencePatch merges the provided fields of in onto cur (PATCH semantics).
+// A nil pointer / OMITTED slice leaves a field unchanged. Note the slice distinction:
+// an OMITTED suppression_list_ids (JSON key absent → nil slice) is left unchanged,
+// but an EXPLICIT empty array (`[]`) is a non-nil empty slice that DOES apply and
+// clears the suppressions — an intentional "remove all" rather than a no-op. platform
+// is immutable and ignored on update.
 func applyAudiencePatch(cur *model.CampaignAudience, in *audiences.AudienceInput) {
 	if in == nil {
 		return

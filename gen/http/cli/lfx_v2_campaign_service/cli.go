@@ -851,7 +851,7 @@ func lfxV2CampaignServiceAudiencesUsage() {
 	fmt.Fprintln(os.Stderr, `    create-audience: Create a built-audience record under a brief.`)
 	fmt.Fprintln(os.Stderr, `    get-audience: Get one audience under a brief; returns ETag.`)
 	fmt.Fprintln(os.Stderr, `    list-audiences: List a brief's audiences (newest first).`)
-	fmt.Fprintln(os.Stderr, `    update-audience: Update an audience's build result/status (requires If-Match).`)
+	fmt.Fprintln(os.Stderr, `    update-audience: Partially update an audience's build result/status (requires If-Match; only supplied fields change).`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-audiences COMMAND --help\n", os.Args[0])
@@ -939,7 +939,7 @@ func lfxV2CampaignServiceAudiencesUpdateAudienceUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Update an audience's build result/status (requires If-Match).`)
+	fmt.Fprintln(os.Stderr, `Partially update an audience's build result/status (requires If-Match; only supplied fields change).`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)

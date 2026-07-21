@@ -56,7 +56,7 @@ func New(
 			{"CreateAudience", "POST", "/projects/{project_id}/briefs/{brief_id}/audiences"},
 			{"GetAudience", "GET", "/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}"},
 			{"ListAudiences", "GET", "/projects/{project_id}/briefs/{brief_id}/audiences"},
-			{"UpdateAudience", "PUT", "/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}"},
+			{"UpdateAudience", "PATCH", "/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}"},
 		},
 		CreateAudience: NewCreateAudienceHandler(e.CreateAudience, mux, decoder, encoder, errhandler, formatter),
 		GetAudience:    NewGetAudienceHandler(e.GetAudience, mux, decoder, encoder, errhandler, formatter),
@@ -265,7 +265,7 @@ func MountUpdateAudienceHandler(mux goahttp.Muxer, h http.Handler) {
 			h.ServeHTTP(w, r)
 		}
 	}
-	mux.Handle("PUT", "/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}", f)
+	mux.Handle("PATCH", "/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}", f)
 }
 
 // NewUpdateAudienceHandler creates a HTTP handler which loads the HTTP request

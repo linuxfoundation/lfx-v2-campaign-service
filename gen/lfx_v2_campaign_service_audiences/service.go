@@ -22,7 +22,8 @@ type Service interface {
 	GetAudience(context.Context, *GetAudiencePayload) (res *Audience, err error)
 	// List a brief's audiences (newest first).
 	ListAudiences(context.Context, *ListAudiencesPayload) (res *ListAudiencesResult, err error)
-	// Update an audience's build result/status (requires If-Match).
+	// Partially update an audience's build result/status (requires If-Match; only
+	// supplied fields change).
 	UpdateAudience(context.Context, *UpdateAudiencePayload) (res *Audience, err error)
 }
 

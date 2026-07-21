@@ -553,7 +553,7 @@ func (c *Client) BuildUpdateAudienceRequest(ctx context.Context, v any) (*http.R
 		audienceID = p.AudienceID
 	}
 	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: UpdateAudienceLfxV2CampaignServiceAudiencesPath(projectID, briefID, audienceID)}
-	req, err := http.NewRequest("PUT", u.String(), nil)
+	req, err := http.NewRequest("PATCH", u.String(), nil)
 	if err != nil {
 		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-audiences", "update-audience", u.String(), err)
 	}

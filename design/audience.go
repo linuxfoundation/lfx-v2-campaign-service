@@ -127,7 +127,7 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 	})
 
 	Method("update-audience", func() {
-		Description("Update an audience's build result/status (requires If-Match).")
+		Description("Partially update an audience's build result/status (requires If-Match; only supplied fields change).")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -142,7 +142,7 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
-			PUT("/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}")
+			PATCH("/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}")
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })

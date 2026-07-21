@@ -945,11 +945,11 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
-        put:
+        patch:
             tags:
                 - lfx-v2-campaign-service-audiences
             summary: update-audience lfx-v2-campaign-service-audiences
-            description: Update an audience's build result/status (requires If-Match).
+            description: Partially update an audience's build result/status (requires If-Match; only supplied fields change).
             operationId: lfx-v2-campaign-service-audiences#update-audience
             parameters:
                 - name: project_id
