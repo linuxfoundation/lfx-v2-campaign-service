@@ -388,6 +388,22 @@ func TestPatchEmailSettings_EmptyIsRejected(t *testing.T) {
 	}
 }
 
+func TestPatchEmail_NullBodyIsUnconfirmed(t *testing.T) {
+	// A 2xx JSON `null` body decodes into the Email struct WITHOUT error (zero-valued),
+	// so the id-fallback would otherwise report a phantom success. A PATCH is mutating,
+	// so a null/empty body must be UNCONFIRMED (the update may have applied).
+	sub := strptr("New subject")
+	for _, body := range []string{`null`, ` null `, ``} {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		})
+		_, err := c.PatchEmailSettings(context.Background(), "999", EmailSettings{Subject: sub})
+		if err == nil || !IsUnconfirmed(err) {
+			t.Errorf("a %q PATCH body must be UNCONFIRMED, got %v", body, err)
+		}
+	}
+}
+
 // Recipients are set ONLY via contactIlsLists (legacy contactLists was removed by
 // HubSpot's ILS migration after 2024-10-31), and the PATCH targets the /draft route.
 func TestSetSendList_ILSOnlyOnDraftRoute(t *testing.T) {

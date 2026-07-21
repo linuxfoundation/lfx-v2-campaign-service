@@ -4,6 +4,7 @@
 package hubspot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -315,6 +316,14 @@ func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]a
 	raw, err := c.doRequest(ctx, http.MethodPatch, emailsPath+"/"+url.PathEscape(id)+"/draft", payload, false)
 	if err != nil {
 		return nil, fmt.Errorf("hubspot: patch email %s draft: %w", id, err)
+	}
+	// A JSON `null` (or empty) body decodes into `e` WITHOUT error, leaving it
+	// zero-valued — so the id-fallback below would substitute the caller's id and
+	// report a phantom success for a malformed response. A PATCH is mutating, so treat
+	// a null/empty body as UNCONFIRMED (the update may have applied) rather than
+	// success. `bytes.TrimSpace` handles surrounding whitespace around a bare `null`.
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with a null/empty body — the update may have applied; verify before retrying)", id), nil)
 	}
 	var e Email
 	if err := json.Unmarshal(raw, &e); err != nil {

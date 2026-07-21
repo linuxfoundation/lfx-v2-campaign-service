@@ -2,6 +2,14 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot round-22 (PR #35 review, copilot). (1) `patchEmail`: a 2xx JSON
+`null` (or empty) body decodes into the Email struct WITHOUT error (zero-valued), so the
+id-fallback would report a PHANTOM success for a malformed response. A PATCH is mutating,
+so a null/empty body is now UNCONFIRMED (the update may have applied). Added
+`TestPatchEmail_NullBodyIsUnconfirmed`. (2) Doc: corrected the round-20 log entry that
+still said `properties=…` (the code uses repeated `includedProperties`), and added a
+missing blank line before a `**Creation**` heading that was folding two log entries.
+
 **Update** — HubSpot round-21 (PR #35 review, cursor). (1) Switched the field restriction
 from a CRM-style comma-separated `properties` string to REPEATED `includedProperties`
 entries — the marketing-emails LIST endpoint uses that shape, not the CRM `properties`
@@ -15,8 +23,9 @@ Tests added for the SearchLists malformed case. (Also merged main to pick up #33
 `sort=-updatedAt` on SearchEmails — verified against HubSpot's v3 docs that `sort` IS a
 valid GET /marketing/v3/emails param (round 13 wrongly dropped it; another bot flip-flop,
 like objectTypeId). Client-side parsed-instant sort stays as the guarantee. (2) Added a
-`properties=name,subject,updatedAt` param — the list endpoint returns FULL email content
-by default, so at limit=100 rich templates could blow the response cap. (3) SearchEmails
+repeated `includedProperties` values for name, subject, and updatedAt — the list
+endpoint returns FULL email content by default, so at limit=100 rich templates could blow
+the response cap. (3) SearchEmails
 and ListEventDefinitions now ERROR on a malformed 2xx (`{}`/`null` → Results==nil, no
 paging) instead of returning a clean empty success that hides a broken response (an empty
 portal returns `{"results":[]}`, non-nil, still returns 0). (4) Removed the dead
@@ -526,6 +535,7 @@ follow-up to apply the same URL-suppression there. (2) Corrected the stale
 method" after the 3xx gate was re-added. (3) Documented CreateCampaign's
 non-standard `(non-nil result, non-nil error)` contract so callers inspect the
 result on error (for reconcile) instead of discarding it.
+
 **Creation** — Added the `internal/platform/hubspot` Go package (email-channel
 scaffold, LFXV2-2778 under epic LFXV2-2770). HubSpot's auth is the simplest of any
 client — a STATIC private-app bearer token (no OAuth token-exchange flow), attached
