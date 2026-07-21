@@ -90,8 +90,10 @@ type AccountConfig struct {
 	// PortalID is the HubSpot portal (hub) id. Optional; only used to build app
 	// links for created assets.
 	PortalID string
-	// Label is a human-readable account label surfaced on results.
-	Label string
+	// NOTE: no Label field. The sibling ad clients (meta/reddit) surface an account
+	// label on their campaign-result types, but this client's operations return raw
+	// Email/List objects with no result envelope to carry it — a Label config here
+	// would be silently ignored. Add it back alongside a result type that reads it.
 }
 
 // Client is a HubSpot API client. It is safe for concurrent use (it holds no

@@ -2,6 +2,15 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot remove dead Label field + doc fix (PR #35 review round 14, copilot).
+(1) Removed the unused `AccountConfig.Label` — it was documented as "surfaced on results"
+but this client's operations return raw Email/List objects with no result envelope to
+carry it, and nothing read `c.account.Label` (the meta/reddit clients DO surface it on
+their campaign-result types; hubspot has none yet). A no-op config field misleads callers,
+so it's gone until there's a result type that reads it. (2) Doc: `CreateList` endpoint in
+internal-platform-hubspot.md now shows the canonical no-trailing-slash `/crm/v3/lists`
+(matching the round-13 code fix).
+
 **Update** — HubSpot endpoint-contract fixes (PR #35 review round 13, copilot).
 (1) `SearchEmails` dropped the `sort=-updatedAt` query param — it's not a documented
 field on `GET /marketing/v3/emails` (it belongs to the revisions endpoint) so HubSpot

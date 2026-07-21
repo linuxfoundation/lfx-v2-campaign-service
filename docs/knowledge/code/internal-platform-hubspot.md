@@ -94,7 +94,8 @@ defense-in-depth; follows `offset`/`hasMore` pagination with a repeated-page gua
 `includeFilters` is a GET-single-list field, NOT a search field, and is not sent),
 `GetList` (with `includeFilters=true`
 so the filterBranch + processingType come back),
-`CreateList` (`POST /crm/v3/lists/` — DYNAMIC, contact objectTypeId `0-1`),
+`CreateList` (`POST /crm/v3/lists` — canonical no-trailing-slash path, since the client
+refuses redirects; DYNAMIC, contact objectTypeId `0-1`),
 `UpdateListFilters` (`PUT …/update-list-filters`), and `ListEventDefinitions` (whose
 human label is nested under `labels.singular`/`.plural`, not a top-level field, and
 which does NOT request `includeProperties` — that payload is discarded). **List size

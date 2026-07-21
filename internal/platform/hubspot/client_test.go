@@ -22,7 +22,7 @@ func testCreds() Credentials {
 }
 
 func testAccount() AccountConfig {
-	return AccountConfig{PortalID: "8112310", Label: "Test"}
+	return AccountConfig{PortalID: "8112310"}
 }
 
 // newTestClient wires a client against an httptest server whose handler is
