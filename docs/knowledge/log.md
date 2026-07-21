@@ -2,6 +2,14 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot defensive filter tolerates omitted objectTypeId (PR #35 review
+round 9, cursor). The round-8 client-side check dropped any hit whose `ObjectTypeID` !=
+"0-1" — but a HubSpot response can OMIT `objectTypeId`, leaving it empty, which would
+drop valid contact lists (the server-side filter already guaranteed they're contacts).
+Now the defensive check drops a hit only if its type is EXPLICITLY non-contact (`ot != ""
+&& ot != "0-1"`); an empty/omitted type is trusted. Test updated with an omitted-type
+fixture row that must be kept.
+
 **Update** — HubSpot contact-list filter RESTORED server-side (PR #35 review round 8,
 copilot — REVERSES round 6). VERIFIED against HubSpot's official v3 docs:
 `objectTypeId` IS a valid `ListSearchRequest` body field — the docs give the exact

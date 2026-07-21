@@ -129,10 +129,12 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			}
 			seen[id] = struct{}{}
 			newThisPage++
-			// Defense-in-depth: the request already constrains to contacts via
-			// objectTypeId, but skip any non-contact hit anyway so a server-side change
-			// can't leak company/deal/custom lists into a contact audience.
-			if resp.Lists[i].ObjectTypeID != contactObjectTID {
+			// Defense-in-depth: the request already constrains to contacts via the
+			// server-side objectTypeId filter, so drop a hit only if it is EXPLICITLY a
+			// different type. A hit with an empty/omitted objectTypeId is trusted (the
+			// server already filtered) rather than dropped — otherwise a response that
+			// omits the field would silently lose valid contact lists.
+			if ot := resp.Lists[i].ObjectTypeID; ot != "" && ot != contactObjectTID {
 				continue
 			}
 			resp.Lists[i].resolveSize()

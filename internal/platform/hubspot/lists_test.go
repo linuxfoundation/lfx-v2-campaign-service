@@ -52,22 +52,28 @@ func TestSearchLists_ReturnsAndBuildsURL(t *testing.T) {
 }
 
 func TestSearchLists_FiltersToContactListsClientSide(t *testing.T) {
-	// The v3 search body can't constrain the object type, so the server may return
-	// company/deal/custom lists that match the name. SearchLists must keep only
-	// contact lists (objectTypeId 0-1).
+	// Defense-in-depth on top of the server-side objectTypeId filter: an EXPLICIT
+	// non-contact type is dropped, but a hit with an empty/omitted objectTypeId is
+	// KEPT (the server already constrained to contacts — dropping it would lose valid
+	// contact lists when HubSpot omits the field).
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"lists":[`+
 			`{"listId":"1","name":"Ops","objectTypeId":"0-1"},`+
 			`{"listId":"2","name":"Ops","objectTypeId":"0-2"},`+
-			`{"listId":"3","name":"Ops","objectTypeId":"2-123"}`+
+			`{"listId":"3","name":"Ops","objectTypeId":"2-123"},`+
+			`{"listId":"4","name":"Ops"}`+ // objectTypeId omitted → trusted, kept
 			`]}`)
 	})
 	got, err := c.SearchLists(context.Background(), "Ops")
 	if err != nil {
 		t.Fatalf("SearchLists: %v", err)
 	}
-	if len(got) != 1 || got[0].ListID != "1" {
-		t.Errorf("must keep only the contact (0-1) list, got %+v", got)
+	ids := make([]string, len(got))
+	for i, l := range got {
+		ids[i] = l.ListID
+	}
+	if len(got) != 2 || ids[0] != "1" || ids[1] != "4" {
+		t.Errorf("must keep the 0-1 list and the omitted-type list, drop 0-2/2-123; got %v", ids)
 	}
 }
 
