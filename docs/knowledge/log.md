@@ -2,6 +2,19 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot contact-list filter RESTORED server-side (PR #35 review round 8,
+copilot — REVERSES round 6). VERIFIED against HubSpot's official v3 docs:
+`objectTypeId` IS a valid `ListSearchRequest` body field — the docs give the exact
+example `{"query":"HubSpot","processingTypes":["MANUAL"],"objectTypeId":"0-1"}`. Round 6
+had claimed the opposite (that it's a response-only property) and the server-side filter
+was dropped in favor of client-side only; that was based on a wrong API claim from a
+self-contradicting bot review. `SearchLists` now sends `objectTypeId: "0-1"` in the
+request again (server-side filter), KEEPING the per-hit `ObjectTypeID` check as
+defense-in-depth, and restored the body assertion (`objectTypeId == "0-1"`). The
+`TestSearchLists_FiltersToContactListsClientSide` defensive test stays. NOTE for future
+reviewers: this is settled against the HubSpot docs — do not remove the server-side
+`objectTypeId` again.
+
 **Update** — HubSpot dedup + cap coverage (PR #35 review round 7, cursor/copilot).
 `SearchLists` (offset paginator) now tracks seen list ids and errors when a non-empty
 page adds no NEW ids (server repeating a page), matching the cursor paginators'
@@ -9,14 +22,13 @@ stuck-cursor guard — previously it could return duplicate rows. Added a bounda
 for the 10 MiB response cap: a body AT the limit succeeds, limit+1 is a `transportError`,
 and an over-cap MUTATING call stays `IsUnconfirmed`.
 
-**Update** — HubSpot contact-list filtering correction (PR #35 review round 6, copilot).
-`SearchLists` had sent `objectTypeId: "0-1"` in the `POST /crm/v3/lists/search` body to
-constrain to contact lists — but `objectTypeId` is NOT a `ListSearchRequest` field (it's
-a per-hit RESPONSE property), so HubSpot ignored it and could return company/deal/custom
-lists with the same name. Removed the unsupported body field, added `ObjectTypeID` to the
-`List` struct, and filter each hit CLIENT-SIDE (`objectTypeId == "0-1"`) while continuing
-pagination. Added `TestSearchLists_FiltersToContactListsClientSide` (mixed 0-1/0-2/2-123
-fixture) and inverted the body assertion (must NOT send objectTypeId).
+**Update** — HubSpot contact-list filtering (PR #35 review round 6, copilot). [SUPERSEDED
+by round 8 — see the top entry.] This round removed the server-side `objectTypeId` filter
+on a bot claim that it wasn't a valid `ListSearchRequest` field. That claim was WRONG
+(HubSpot's docs document the field), so round 8 restored the server-side filter. What
+survives from this round: `ObjectTypeID` was added to the `List` struct and a per-hit
+client-side check + `TestSearchLists_FiltersToContactListsClientSide` were added — both
+KEPT as defense-in-depth alongside the server-side filter.
 
 **Update** — HubSpot input-normalization (PR #35 review round 4, cursor).
 `SearchEmails`/`SearchLists` trim the query before matching/forwarding (a padded term
@@ -50,9 +62,9 @@ ILS-ONLY: HubSpot's ILS migration removed functional support for the legacy
 `contactLists` recipient field after 2024-10-31, so the client never emits it (dropped
 the `isILS` param + the legacy numeric-id handling; callers resolve an ILS list id from
 the Lists API). (3) `SearchLists` constrains results to
-contact lists (`objectTypeId "0-1"`) by filtering each hit CLIENT-SIDE — the v3
-`ListSearchRequest` body has no `objectTypeId` field (it's a response property), so a
-server-side constraint isn't possible (see the round-6 entry). It also drops the invalid
+contact lists via the `objectTypeId "0-1"` request field (a valid `ListSearchRequest`
+field — see the round-8 entry; a round-6 detour briefly moved this client-side before it
+was restored server-side). It also drops the invalid
 `includeFilters` search-body field, and reads
 membership size from `hs_list_size` (a STRING under `additionalProperties`, requested
 explicitly) — there is no top-level `size`, so `List.Size` was always 0. (4) A mutating

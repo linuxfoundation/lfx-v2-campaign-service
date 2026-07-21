@@ -36,10 +36,11 @@ func TestSearchLists_ReturnsAndBuildsURL(t *testing.T) {
 	if !strings.Contains(got[0].AppURL, "/lists/26991") {
 		t.Errorf("AppURL = %q", got[0].AppURL)
 	}
-	// The search body must request hs_list_size and NOT send objectTypeId or
-	// includeFilters (neither is a valid ListSearchRequest field).
-	if _, bad := body["objectTypeId"]; bad {
-		t.Error("search must NOT send objectTypeId (not a ListSearchRequest field; filtered client-side)")
+	// The search body must constrain to contact lists server-side (objectTypeId 0-1 —
+	// a valid ListSearchRequest field), request hs_list_size, and NOT send
+	// includeFilters (a GET-single-list field, invalid on the search route).
+	if body["objectTypeId"] != "0-1" {
+		t.Errorf("search must send objectTypeId 0-1, got %v", body["objectTypeId"])
 	}
 	if _, bad := body["includeFilters"]; bad {
 		t.Error("search must NOT send includeFilters (invalid on the search route)")

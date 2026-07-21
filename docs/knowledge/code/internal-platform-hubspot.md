@@ -87,10 +87,12 @@ send list + `.exclude` = suppressions.
 
 ## CRM contact-list + event-definition operations (LFXV2-2780)
 
-`lists.go`: `SearchLists` (`POST /crm/v3/lists/search` — filters to contact lists
-(`objectTypeId "0-1"`) CLIENT-SIDE on each hit, since the v3 `ListSearchRequest` body
-has no `objectTypeId` field; follows `offset`/`hasMore` pagination; `includeFilters` is
-NOT a valid search-body field and is not sent), `GetList` (with `includeFilters=true`
+`lists.go`: `SearchLists` (`POST /crm/v3/lists/search` — constrains to contact lists
+SERVER-SIDE via the `objectTypeId "0-1"` request field (a valid `ListSearchRequest`
+field per HubSpot's v3 docs), with a per-hit `ObjectTypeID` check kept as
+defense-in-depth; follows `offset`/`hasMore` pagination with a repeated-page guard;
+`includeFilters` is a GET-single-list field, NOT a search field, and is not sent),
+`GetList` (with `includeFilters=true`
 so the filterBranch + processingType come back),
 `CreateList` (`POST /crm/v3/lists/` — DYNAMIC, contact objectTypeId `0-1`),
 `UpdateListFilters` (`PUT …/update-list-filters`), and `ListEventDefinitions` (whose

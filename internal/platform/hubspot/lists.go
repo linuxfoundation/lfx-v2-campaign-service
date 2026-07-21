@@ -96,11 +96,13 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			"query":  query,
 			"count":  pageSize,
 			"offset": offset,
-			// objectTypeId is NOT a valid ListSearchRequest body field (it's a response
-			// property on each hit) — HubSpot would ignore it and return company/deal/
-			// custom lists too, so we filter to contacts (0-1) client-side below.
-			// `includeFilters` is likewise a GET-single-list field, not a search field.
-			// Request hs_list_size so the membership count comes back.
+			// Constrain to CONTACT lists server-side. objectTypeId IS a valid
+			// ListSearchRequest field — HubSpot's v3 docs give the exact example
+			// {"query":"HubSpot","processingTypes":["MANUAL"],"objectTypeId":"0-1"}. The
+			// per-hit ObjectTypeID check below is kept as defense-in-depth. `includeFilters`
+			// is a GET-single-list field, NOT a search field, so it is not sent. Request
+			// hs_list_size so the membership count comes back.
+			"objectTypeId":         contactObjectTID,
 			"additionalProperties": []string{hsListSizeProp},
 		}
 		raw, err := c.doRequest(ctx, http.MethodPost, listSearchPath, body, true)
@@ -127,9 +129,9 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			}
 			seen[id] = struct{}{}
 			newThisPage++
-			// Contact-only contract enforced client-side: the search body can't
-			// constrain the object type, so drop any non-contact (company/deal/custom)
-			// list the server returned for the same name.
+			// Defense-in-depth: the request already constrains to contacts via
+			// objectTypeId, but skip any non-contact hit anyway so a server-side change
+			// can't leak company/deal/custom lists into a contact audience.
 			if resp.Lists[i].ObjectTypeID != contactObjectTID {
 				continue
 			}
