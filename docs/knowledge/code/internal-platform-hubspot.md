@@ -41,9 +41,11 @@ googleads/reddit/meta/twitter clients:
   caller's client is never mutated. A 3xx is surfaced, not followed.
 - **Bounded reads** (`maxResponseBody+1`, 10 MiB).
 - **Typed body-free errors:** a non-2xx surfaces an `apiError` whose `Error()`
-  renders only method/path/status — the response body is retained for internal
-  classification but NEVER surfaced (a HubSpot error envelope can quote request
-  material). A round-trip failure after the request was plausibly sent, or a 2xx
+  renders only method/path/status — the response body is NOT retained at all (the
+  request layer drains it for connection reuse but keeps no snapshot). Nothing in this
+  client classifies on the body, and retaining it on an exported field could leak a
+  HubSpot error envelope's request material via reflection/JSON of the error even though
+  `Error()` omits it. A round-trip failure after the request was plausibly sent, or a 2xx
   whose body can't be read, is a `transportError`; it is ambiguous ONLY for a
   MUTATING call (`IsUnconfirmed` returns `transportError.Mutating`) — an idempotent
   read/search that failed in transit landed no mutation and is safely retryable. Its
