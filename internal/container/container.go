@@ -252,7 +252,8 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 // dispatcher registered" for that platform (logged as a startup warning).
 func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor) map[model.Provider]service.PlatformDispatcher {
 	return map[model.Provider]service.PlatformDispatcher{
-		model.ProviderRedditAds: dispatch.NewRedditDispatcher(repo, enc),
+		model.ProviderRedditAds:   dispatch.NewRedditDispatcher(repo, enc),
+		model.ProviderLinkedInAds: dispatch.NewLinkedInDispatcher(repo, enc),
 	}
 }
 
