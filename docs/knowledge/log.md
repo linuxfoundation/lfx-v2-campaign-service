@@ -2,6 +2,12 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 review: extended the container startup tests to cover the new
+audiences service (typed-503 in both no-DB and cold-start-503 modes + successful
+`SetBackend` late-binding), and updated the architecture index for accuracy —
+`design.md` now says four services and describes the audiences service, and
+`api-catalog.md` gained a Campaign Audiences section listing the four nested routes.
+
 **Creation** — Added the campaign_audiences Goa API (LFXV2-2782, epic LFXV2-2770) on
 top of the existing DB layer (migration 000005 + model.CampaignAudience +
 AudienceRepository + repo). `design/audience.go` defines the audiences service

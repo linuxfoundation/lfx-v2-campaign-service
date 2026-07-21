@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -159,6 +160,26 @@ func TestNewContainer_NoDatabase(t *testing.T) {
 	require.NotNil(t, cont)
 	assert.NotNil(t, cont.Service)
 	assert.NotNil(t, cont.Connections)
+	assert.NotNil(t, cont.Briefs)
+	// The audiences service is wired with a nil repo so its routes stay mounted and
+	// return the typed 503 advertised by the contract, not a bare 404. Prove that by
+	// exercising a handler and asserting the typed ServiceUnavailable error.
+	require.NotNil(t, cont.Audiences)
+	_, aerr := cont.Audiences.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "proj-1", BriefID: "brief-1", Audience: &audiences.AudienceInput{Platform: "meta"},
+	})
+	var unavail *audiences.ConnServiceUnavailableError
+	require.ErrorAs(t, aerr, &unavail, "audiences must return the typed 503 when no DB is configured")
+
+	// Late-binding: once a backend is set (as the cold-start retry does), the same
+	// handler stops returning 503 and reaches the repo.
+	cont.Audiences.(audienceBackendSetter).SetBackend(fakeAudienceRepo{})
+	got, aerr := cont.Audiences.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "proj-1", BriefID: "brief-1", Audience: &audiences.AudienceInput{Platform: "meta"},
+	})
+	require.NoError(t, aerr, "after SetBackend the audiences handler must reach the repo")
+	require.NotNil(t, got)
+
 	require.NoError(t, cont.Close(context.Background()))
 }
 
@@ -218,6 +239,14 @@ func TestNewContainer_UnreachableDBBootsIn503Mode(t *testing.T) {
 	assert.NotNil(t, cont.Service, "campaign service must be wired (reports not-ready)")
 	assert.NotNil(t, cont.Connections, "connection service must be wired (returns 503)")
 	assert.NotNil(t, cont.Briefs, "brief service must be wired in 503 mode (its routes return 503, not a nil panic)")
+	// The audiences service must also be wired in 503 mode and return the typed 503
+	// (not a nil-repo panic) until the cold-start retry late-binds a real backend.
+	require.NotNil(t, cont.Audiences, "audiences service must be wired in 503 mode")
+	_, aerr := cont.Audiences.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+		ProjectID: "proj-1", BriefID: "brief-1", Audience: &audiences.AudienceInput{Platform: "meta"},
+	})
+	var unavail *audiences.ConnServiceUnavailableError
+	require.ErrorAs(t, aerr, &unavail, "during a cold start audiences must return the typed 503")
 	// The health service must report NOT ready while the pool is still coming up
 	// (distinct from no-DB mode, which reports ready).
 	assert.False(t, cont.Service.(interface{ ServiceReady() bool }).ServiceReady(),
@@ -266,4 +295,25 @@ func TestNewContainer_MalformedDSNFailsFast(t *testing.T) {
 // not-ready (so /readyz stays 503 until the real pool is swapped in).
 func TestNotReady(t *testing.T) {
 	assert.False(t, notReady{}.Ready(context.Background()))
+}
+
+// fakeAudienceRepo is a minimal domain.AudienceRepository for the container's
+// late-binding assertion: CreateAudience echoes the row back so the handler's
+// success path (audienceResult) runs without a real database.
+type fakeAudienceRepo struct{}
+
+func (fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
+	return a, nil
+}
+
+func (fakeAudienceRepo) GetAudience(_ context.Context, _, _, _ string) (*model.CampaignAudience, error) {
+	return &model.CampaignAudience{}, nil
+}
+
+func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.CampaignAudience, error) {
+	return nil, nil
+}
+
+func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
+	return a, nil
 }
