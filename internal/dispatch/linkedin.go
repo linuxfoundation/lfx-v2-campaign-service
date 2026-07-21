@@ -140,7 +140,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("linkedin campaign creation failed before any upstream create: %w", cerr))
 		}
-		return campaignFromLinkedIn(result), fmt.Errorf("linkedin campaign creation UNCONFIRMED: %w", cerr)
+		// A non-nil result means a permanent resource exists (campaign group, and maybe
+		// the campaign). This covers BOTH an ambiguous create AND a definite campaign
+		// failure after a successful group create — either way the claim must be retained.
+		return campaignFromLinkedIn(result), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
 	}
 	return campaignFromLinkedIn(result), nil
 }
