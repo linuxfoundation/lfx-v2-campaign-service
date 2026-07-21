@@ -102,6 +102,23 @@ func TestSearchLists_FollowsOffsetPagination(t *testing.T) {
 	}
 }
 
+func TestSearchLists_MalformedBodyErrors(t *testing.T) {
+	// A 2xx `{}`/`null` (Lists==nil) must be a decode error, not a clean empty success.
+	// A genuinely empty search returns `{"lists":[]}` (non-nil) → 0 results, no error.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if _, err := c.SearchLists(context.Background(), "q"); err == nil {
+		t.Error("a 2xx body with no lists array must error, not return empty success")
+	}
+	cEmpty, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"lists":[],"hasMore":false}`)
+	})
+	if got, err := cEmpty.SearchLists(context.Background(), "q"); err != nil || len(got) != 0 {
+		t.Errorf("a genuinely empty search must return (0, nil), got (%d, %v)", len(got), err)
+	}
+}
+
 func TestSearchLists_RepeatedPageErrors(t *testing.T) {
 	// A server that returns the SAME rows every request (with hasMore=true) must not
 	// loop and hand back duplicates — the walker errors once a page adds no new ids.

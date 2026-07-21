@@ -2,6 +2,15 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot round-21 (PR #35 review, cursor). (1) Switched the field restriction
+from a CRM-style comma-separated `properties` string to REPEATED `includedProperties`
+entries — the marketing-emails LIST endpoint uses that shape, not the CRM `properties`
+convention. (2) The malformed-2xx guard (Results==nil) now fires on ANY page, not just
+page 0: on a later page a missing results array would otherwise silently TRUNCATE the walk
+and return a partial. Applied to SearchEmails + ListEventDefinitions. (3) Added the same
+guard to SearchLists (Lists==nil → error; an empty search returns `{"lists":[]}`, non-nil).
+Tests added for the SearchLists malformed case. (Also merged main to pick up #33.)
+
 **Update** — HubSpot round-20 batch (PR #35 review, copilot + dealako). (1) RESTORED
 `sort=-updatedAt` on SearchEmails — verified against HubSpot's v3 docs that `sort` IS a
 valid GET /marketing/v3/emails param (round 13 wrongly dropped it; another bot flip-flop,

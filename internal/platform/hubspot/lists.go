@@ -118,6 +118,12 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			return nil, fmt.Errorf("hubspot: decode list search: %w", err)
 		}
+		// A malformed 2xx (`{}`/`null` → Lists==nil; a genuinely empty search returns
+		// `{"lists":[]}`, non-nil) would otherwise be returned as a clean empty success
+		// (hasMore defaults false), silently hiding a broken response. Error on it.
+		if resp.Lists == nil {
+			return nil, fmt.Errorf("hubspot: list search returned a 2xx with no lists array (malformed response)")
+		}
 		// Loop-detection is tracked over the RAW server rows, independently of the
 		// contact filter: a page makes progress if it carries ANY list id we hadn't
 		// already seen (whether or not we keep it). Marking `seen` for every raw id —
@@ -289,11 +295,10 @@ func (c *Client) ListEventDefinitions(ctx context.Context) ([]EventDefinition, e
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			return nil, fmt.Errorf("hubspot: decode event definitions: %w", err)
 		}
-		// A malformed 2xx body such as `{}` or `null` decodes with Results==nil (an
-		// empty portal returns `{"results":[]}`, which is non-nil). On the first page
-		// with nil Results and no paging, treat it as a decode error rather than
-		// returning a clean empty success that silently hides a broken response.
-		if page == 0 && resp.Results == nil && (resp.Paging == nil || resp.Paging.Next == nil) {
+		// A malformed 2xx body (`{}`/`null` → Results==nil; an empty portal returns
+		// `{"results":[]}`, non-nil) is malformed on ANY page — on a later page it would
+		// otherwise silently truncate the walk. Error regardless of page.
+		if resp.Results == nil {
 			return nil, fmt.Errorf("hubspot: event definitions returned a 2xx with no results array (malformed response)")
 		}
 		for i := range resp.Results {

@@ -120,8 +120,10 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		q.Set("sort", "-updatedAt")
 		// Restrict the returned fields: the list endpoint returns FULL email content by
 		// default, so at limit=100 rich templates can blow past the client's response
-		// cap. We only need id/name/subject/updatedAt for search + ordering.
-		q.Set("properties", "name,subject,updatedAt")
+		// cap. The marketing-emails list endpoint uses REPEATED `includedProperties`
+		// entries (not a CRM-style comma-separated `properties` string). We only need
+		// name/subject/updatedAt for search + ordering (id always comes back).
+		q["includedProperties"] = []string{"name", "subject", "updatedAt"}
 		if after != "" {
 			q.Set("after", after)
 		}
@@ -133,12 +135,12 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			return nil, fmt.Errorf("hubspot: decode email search: %w", err)
 		}
-		// A malformed 2xx body such as `{}` or `null` decodes with Results==nil. If it
-		// ALSO carries no paging cursor, we can't tell "genuinely empty" from "malformed
-		// response" — but returning it as a successful empty result would silently hide
-		// a broken response. On the FIRST page with nil Results and no paging, treat it
-		// as a decode error rather than a clean empty success.
-		if page == 0 && resp.Results == nil && (resp.Paging == nil || resp.Paging.Next == nil) {
+		// A malformed 2xx body such as `{}` or `null` decodes with Results==nil (a
+		// genuinely empty portal returns `{"results":[]}`, which is non-nil). A missing
+		// results array is malformed on ANY page — on a LATER page it would otherwise
+		// silently end the walk and return a TRUNCATED result. Treat nil Results as a
+		// decode error regardless of page.
+		if resp.Results == nil {
 			return nil, fmt.Errorf("hubspot: email search returned a 2xx with no results array (malformed response)")
 		}
 		for _, e := range resp.Results {

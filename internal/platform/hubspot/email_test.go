@@ -119,10 +119,11 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	// Order is guaranteed CLIENT-SIDE regardless of server order. The request sends
 	// `sort=-updatedAt` (a valid hint) and `properties` to restrict the returned fields
 	// so full email content doesn't blow the response cap at limit=100.
-	var gotSort, gotProps string
+	var gotSort string
+	var gotProps []string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotSort = r.URL.Query().Get("sort")
-		gotProps = r.URL.Query().Get("properties")
+		gotProps = r.URL.Query()["includedProperties"]
 		// Intentionally returned oldest-first to prove the client re-orders.
 		_, _ = io.WriteString(w, `{"results":[`+
 			`{"id":"1","name":"Old","subject":"x","updatedAt":"2024-01-01T00:00:00Z"},`+
@@ -137,8 +138,8 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	if gotSort != "-updatedAt" {
 		t.Errorf("SearchEmails should send sort=-updatedAt, got %q", gotSort)
 	}
-	if gotProps == "" || !strings.Contains(gotProps, "updatedAt") {
-		t.Errorf("SearchEmails should restrict properties, got %q", gotProps)
+	if len(gotProps) == 0 {
+		t.Errorf("SearchEmails should restrict fields via includedProperties, got none")
 	}
 	if len(got) != 3 || got[0].ID != "2" || got[1].ID != "3" || got[2].ID != "1" {
 		t.Errorf("results must be most-recently-updated first (2,3,1), got %v", []string{got[0].ID, got[1].ID, got[2].ID})
