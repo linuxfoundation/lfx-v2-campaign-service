@@ -6,8 +6,12 @@
 // this service's project-nested paths with a single RE2 regex, while the Heimdall
 // RuleSet authorizes the SAME path set as an enumerated list of Traefik path
 // patterns. If the two drift — a path the route forwards but the RuleSet does not
-// authorize — that path reaches the service WITHOUT the campaign_manager FGA check
-// (an unruled, unauthenticated bypass). Nothing but this test couples the two
+// authorize — Heimdall is default-deny (a request matching no rule is REJECTED, per
+// specs/002-deployment-config/research.md), so that path becomes UNREACHABLE through
+// the gateway rather than an unauthenticated bypass: the campaign_manager FGA check
+// never gets the chance to run because Heimdall rejects the request first. (The
+// inverse drift — a path the RuleSet authorizes but the route does not forward — is
+// dead config.) Nothing but this test couples the two
 // hand-maintained matchers, so it renders both with `helm template` and checks them
 // two ways: (1) a curated accepted/rejected table both matchers must agree on, and
 // (2) a WITNESS derivation that couples the assertions to the matchers' own content —
