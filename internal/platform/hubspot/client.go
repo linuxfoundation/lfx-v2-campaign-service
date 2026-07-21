@@ -228,7 +228,12 @@ func IsUnconfirmed(err error) bool {
 		return ae.Ambiguous
 	}
 	var te *transportError
-	return errors.As(err, &te)
+	if errors.As(err, &te) {
+		// Only a MUTATING transport failure is ambiguous; an idempotent read/search
+		// that failed in transit landed no mutation, so it's safely retryable.
+		return te.Mutating
+	}
+	return false
 }
 
 // unconfirmedError marks a POST-2xx ambiguous outcome: the request returned a 2xx,
@@ -278,6 +283,11 @@ type transportError struct {
 	Method string
 	Path   string
 	Err    error
+	// Mutating is true when the failed request was NON-idempotent (a create/clone/
+	// patch). Only then is the outcome UNCONFIRMED — for an idempotent read/search
+	// no mutation could have landed, so a transport failure there is safely
+	// retryable, not ambiguous. See IsUnconfirmed.
+	Mutating bool
 }
 
 func (e *transportError) Error() string {
@@ -285,6 +295,23 @@ func (e *transportError) Error() string {
 }
 
 func (e *transportError) Unwrap() error { return e.Err }
+
+// preSendError is a DEFINITE pre-send failure (DNS/dial before the request left) —
+// the request never reached HubSpot, so no mutation happened (NOT ambiguous, unlike
+// transportError). Error() is URL-free (via safeCause) so a request URL never leaks;
+// Unwrap() retains the cause so errors.Is/As still work on the dial error. Mirrors
+// the twitter client's preSendError.
+type preSendError struct {
+	Method string
+	Path   string
+	Err    error
+}
+
+func (e *preSendError) Error() string {
+	return fmt.Sprintf("hubspot %s %s: %s", e.Method, e.Path, safeCause(e.Err))
+}
+
+func (e *preSendError) Unwrap() error { return e.Err }
 
 // safeCause renders a URL-free description of a round-trip error. A *url.Error's
 // %v embeds the request URL, so peel every *url.Error layer down to the underlying
@@ -377,11 +404,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if isPreSendDialError(err) {
-				// Definitely not sent — a clean pre-send failure (plain error, not
-				// ambiguous). Rendered URL-free via safeCause.
-				return nil, fmt.Errorf("hubspot %s %s: %s", method, path, safeCause(err))
+				// Definitely not sent — a clean pre-send failure (NOT ambiguous).
+				// Typed so the dial cause survives errors.Is/As; URL-free via safeCause.
+				return nil, &preSendError{Method: method, Path: path, Err: err}
 			}
-			return nil, &transportError{Method: method, Path: path, Err: err}
+			return nil, &transportError{Method: method, Path: path, Err: err, Mutating: !idempotent}
 		}
 
 		// 429: retry only an idempotent call; a mutating 429 may have committed.
@@ -419,12 +446,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		raw, rErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 		_ = resp.Body.Close()
 		if rErr != nil {
-			// A 2xx whose body could not be fully read is AMBIGUOUS (the mutation may
-			// have been applied server-side even though we couldn't read the reply).
-			return nil, &transportError{Method: method, Path: path, Err: rErr}
+			// A 2xx whose body could not be fully read is AMBIGUOUS for a mutation (the
+			// change may have been applied server-side even though we couldn't read the
+			// reply); for an idempotent read it's just a failed read, safely retryable.
+			return nil, &transportError{Method: method, Path: path, Err: rErr, Mutating: !idempotent}
 		}
 		if int64(len(raw)) > maxResponseBody {
-			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response body exceeds %d bytes", maxResponseBody)}
+			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response body exceeds %d bytes", maxResponseBody), Mutating: !idempotent}
 		}
 		return raw, nil
 	}

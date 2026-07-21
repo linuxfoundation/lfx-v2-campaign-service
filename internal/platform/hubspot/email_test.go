@@ -46,6 +46,29 @@ func TestSearchEmails_FiltersAndBuildsAppURL(t *testing.T) {
 	}
 }
 
+func TestSearchEmails_MatchesFieldsIndependently(t *testing.T) {
+	// A query must match within name OR subject, not across their concatenation:
+	// name "Sale" + subject "Invite" must NOT match "e i" (which spans the boundary).
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"Sale","subject":"Invite"}]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "e i")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a boundary-spanning query must not match, got %+v", got)
+	}
+	// A query fully inside the subject still matches.
+	got, err = c.SearchEmails(context.Background(), "invit")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("a query within subject must match, got %+v", got)
+	}
+}
+
 func TestClone_Post2xxUnconfirmedIsRecognizedByHelper(t *testing.T) {
 	// A mutating 2xx with no id / undecodable body is labeled UNCONFIRMED in the text
 	// AND must make IsUnconfirmed(err) true, so a caller using the helper alone won't

@@ -88,15 +88,12 @@ CloneEmail, PatchEmailSettings, SetSendList. `lists.go`: SearchLists, GetList
 (includeFilters=true → filterBranch + processingType), CreateList (DYNAMIC,
 objectTypeId 0-1, opaque filterBranch), UpdateListFilters (PUT …/update-list-filters),
 ListEventDefinitions. Creates/clones are non-idempotent; a 2xx-with-no-id is
-UNCONFIRMED (a resource may exist → verify, don't blind-retry). LOAD-BEARING GOTCHA
-captured in SetSendList: an ILS list (any CRM-v3 processingType) MUST go in
-`contactIlsLists`, a legacy list in `contactLists`, and the two namespaces must NOT
-both appear in one PATCH — an ILS id in contactLists (or the opposite namespace
-present) makes HubSpot silently reject the whole `to` object → no recipients. Sends a
-complete `to` (contactIds cleared) with only the send-list's namespace + same-
-namespace suppressions (HubSpot mirrors the exclude). filterBranch shape invariants
-stay with the audience-builder (LFXV2-2774), not this client. 30 table-driven httptest
-cases; full gate green.
+UNCONFIRMED (a resource may exist → verify, don't blind-retry). SetSendList sets
+recipients via `contactIlsLists` (ILS list ids) ONLY — HubSpot removed the legacy
+`contactLists` recipient field after 2024-10-31 (see the 2026-07-21 ILS-only update),
+so the client never emits it. Sends a complete `to` (contactIds cleared) with the ILS
+send list + its suppressions. filterBranch shape invariants stay with the
+audience-builder (LFXV2-2774), not this client. Full gate green.
 
 **Update** — Extended the Meta ad-set ambiguity to the 2xx-no-id case (LFXV2-2641,
 PR #30 review by Copilot). The ad-set create's error path already routed through

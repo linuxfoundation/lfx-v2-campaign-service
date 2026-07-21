@@ -75,7 +75,12 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 			return nil, fmt.Errorf("hubspot: decode email search: %w", err)
 		}
 		for _, e := range resp.Results {
-			if needle == "" || strings.Contains(strings.ToLower(e.Name+" "+e.Subject), needle) {
+			// Match the query in name OR subject INDEPENDENTLY. Concatenating them and
+			// searching the joined string would also match a query that spans the field
+			// boundary (name "Sale", subject "Invite", query "e i") — a false positive.
+			if needle == "" ||
+				strings.Contains(strings.ToLower(e.Name), needle) ||
+				strings.Contains(strings.ToLower(e.Subject), needle) {
 				e.AppURL = c.emailEditURL(e.ID)
 				out = append(out, e)
 			}

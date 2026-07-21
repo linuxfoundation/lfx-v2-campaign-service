@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -229,6 +230,39 @@ func TestDoRequest_Mutating5xxIsUnconfirmed(t *testing.T) {
 	_, err = c4.doRequest(context.Background(), http.MethodPost, "/marketing/v3/emails/clone", map[string]string{"x": "y"}, false)
 	if IsUnconfirmed(err) {
 		t.Errorf("a definite 4xx must NOT be UNCONFIRMED (it cleanly did nothing): %v", err)
+	}
+}
+
+func TestIsUnconfirmed_TransportErrorOnlyWhenMutating(t *testing.T) {
+	// A transport failure on a MUTATING request is UNCONFIRMED (may have landed); on
+	// an idempotent read it landed no mutation, so it's safely retryable — not.
+	mut := &transportError{Method: http.MethodPost, Path: "/x", Err: io.ErrUnexpectedEOF, Mutating: true}
+	if !IsUnconfirmed(mut) {
+		t.Error("a mutating transportError must be UNCONFIRMED")
+	}
+	read := &transportError{Method: http.MethodGet, Path: "/x", Err: io.ErrUnexpectedEOF, Mutating: false}
+	if IsUnconfirmed(read) {
+		t.Error("an idempotent-read transportError must NOT be UNCONFIRMED (safely retryable)")
+	}
+}
+
+func TestPreSendError_UnwrapsAndHidesURL(t *testing.T) {
+	// The pre-send error must preserve the cause for errors.Is/As AND never leak the
+	// request URL.
+	secretURL := "https://api.hubapi.com/x?hapikey=SECRET"
+	pe := &preSendError{
+		Method: http.MethodPost, Path: "/x",
+		Err: &url.Error{Op: "Post", URL: secretURL, Err: &net.DNSError{Err: "no such host"}},
+	}
+	if IsUnconfirmed(pe) {
+		t.Error("a pre-send error is a DEFINITE failure — not UNCONFIRMED")
+	}
+	var dnsErr *net.DNSError
+	if !errors.As(pe, &dnsErr) {
+		t.Error("pre-send error must Unwrap to the underlying dial cause for errors.As")
+	}
+	if strings.Contains(pe.Error(), "SECRET") || strings.Contains(pe.Error(), "hapikey") {
+		t.Errorf("pre-send error leaked the request URL: %q", pe.Error())
 	}
 }
 
