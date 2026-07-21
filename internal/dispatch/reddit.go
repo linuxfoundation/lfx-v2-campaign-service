@@ -124,7 +124,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 
 	client := reddit.NewClient(
 		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
-		reddit.AccountConfig{AccountID: res.accountID, Label: res.providerConfig["label"]},
+		reddit.AccountConfig{AccountID: res.accountID, Label: res.label},
 		d.opts...,
 	)
 

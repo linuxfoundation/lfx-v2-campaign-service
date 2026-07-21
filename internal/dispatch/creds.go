@@ -45,6 +45,7 @@ func newCredsSource(repo connReader, enc domain.Encryptor) *credsSource {
 type resolved struct {
 	plaintext      []byte
 	accountID      string
+	label          string // the connection's friendly name (Connection.Label column)
 	providerConfig map[string]string
 	status         model.ConnectionStatus
 }
@@ -74,6 +75,7 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	return &resolved{
 		plaintext:      plaintext,
 		accountID:      conn.AccountID,
+		label:          conn.Label, // the friendly name lives on the shared column, not ProviderConfig
 		providerConfig: conn.ProviderConfig,
 		status:         conn.Status,
 	}, nil
