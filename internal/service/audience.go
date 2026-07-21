@@ -1,0 +1,229 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package service
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"strings"
+	"sync"
+
+	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+
+	"goa.design/goa/v3/security"
+)
+
+// AudienceService implements the generated audiences service interface, delegating to
+// the audience repository. Built audiences are the "B2" resource: a pointer +
+// provenance to a platform-side audience (a HubSpot master list), never its contents.
+type AudienceService struct {
+	mu   sync.RWMutex
+	repo domain.AudienceRepository
+}
+
+var (
+	_ audiences.Service = (*AudienceService)(nil)
+	_ audiences.Auther  = (*AudienceService)(nil)
+)
+
+// NewAudienceService constructs an AudienceService. A nil repo mounts the routes in
+// the typed-503 (unavailable) mode, matching the brief/connection services.
+func NewAudienceService(repo domain.AudienceRepository) *AudienceService {
+	return &AudienceService{repo: repo}
+}
+
+// SetBackend late-binds the repo after a cold-start DB retry (guarded by the RWMutex;
+// handlers snapshot via ready() so a mid-request swap can't race). Mirrors the brief
+// service's late-binding.
+func (s *AudienceService) SetBackend(repo domain.AudienceRepository) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.repo = repo
+}
+
+// ready returns the repo or a typed 503 when the database is not wired yet.
+func (s *AudienceService) ready() (domain.AudienceRepository, error) {
+	s.mu.RLock()
+	repo := s.repo
+	s.mu.RUnlock()
+	if repo == nil {
+		return nil, &audiences.ConnServiceUnavailableError{Code: "503", Message: "audience storage is unavailable"}
+	}
+	return repo, nil
+}
+
+// JWTAuth records the authenticated actor (validated by Heimdall at the gateway) into
+// the context for attribution, mirroring the brief service.
+func (s *AudienceService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
+	if token == "" {
+		return ctx, &audiences.BadRequestError{Code: "400", Message: "missing bearer token"}
+	}
+	if a := actorFromToken(token); a != nil {
+		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	}
+	return ctx, nil
+}
+
+// ─── Handlers ───
+
+func (s *AudienceService) CreateAudience(ctx context.Context, p *audiences.CreateAudiencePayload) (*audiences.Audience, error) {
+	repo, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	a := audienceFromInput(p.ProjectID, p.BriefID, "", p.Audience)
+	a.CreatedBy = marshalAny(actorFromCtx(ctx))
+	created, cerr := repo.CreateAudience(ctx, a)
+	if cerr != nil {
+		return nil, mapAudienceErr(cerr)
+	}
+	return audienceResult(created), nil
+}
+
+func (s *AudienceService) GetAudience(ctx context.Context, p *audiences.GetAudiencePayload) (*audiences.Audience, error) {
+	repo, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	a, gerr := repo.GetAudience(ctx, p.ProjectID, p.BriefID, p.AudienceID)
+	if gerr != nil {
+		return nil, mapAudienceErr(gerr)
+	}
+	return audienceResult(a), nil
+}
+
+func (s *AudienceService) ListAudiences(ctx context.Context, p *audiences.ListAudiencesPayload) (*audiences.ListAudiencesResult, error) {
+	repo, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	list, lerr := repo.ListAudiences(ctx, p.ProjectID, p.BriefID)
+	if lerr != nil {
+		return nil, mapAudienceErr(lerr)
+	}
+	out := make([]*audiences.Audience, 0, len(list))
+	for _, a := range list {
+		out = append(out, audienceResult(a))
+	}
+	return &audiences.ListAudiencesResult{Audiences: out}, nil
+}
+
+func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.UpdateAudiencePayload) (*audiences.Audience, error) {
+	repo, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	version, verr := parseAudienceIfMatch(p.IfMatch)
+	if verr != nil {
+		return nil, verr
+	}
+	a := audienceFromInput(p.ProjectID, p.BriefID, p.AudienceID, p.Audience)
+	updated, uerr := repo.UpdateAudience(ctx, a, version)
+	if uerr != nil {
+		return nil, mapAudienceErr(uerr)
+	}
+	return audienceResult(updated), nil
+}
+
+// ─── Mapping helpers ───
+
+// audienceFromInput builds the domain model from a create/update payload. StatusOrDefault
+// on the model handles an omitted status (defaults to "building").
+func audienceFromInput(projectID, briefID, id string, in *audiences.AudienceInput) *model.CampaignAudience {
+	a := &model.CampaignAudience{
+		ID:                   id,
+		ProjectID:            projectID,
+		BriefID:              briefID,
+		Platform:             model.Provider(in.Platform),
+		PlatformMasterListID: strVal(in.PlatformMasterListID),
+		SuppressionListIDs:   marshalStrings(in.SuppressionListIds),
+		InclusionSummary:     strVal(in.InclusionSummary),
+	}
+	if in.Status != nil {
+		a.Status = model.AudienceStatus(*in.Status)
+	}
+	a.Status = a.StatusOrDefault()
+	return a
+}
+
+// audienceResult maps the domain model to the API response view (ETag mirrors version).
+func audienceResult(a *model.CampaignAudience) *audiences.Audience {
+	etag := strconv.FormatInt(a.Version, 10)
+	res := &audiences.Audience{
+		ID:                 a.ID,
+		ProjectID:          a.ProjectID,
+		BriefID:            a.BriefID,
+		Platform:           string(a.Platform),
+		SuppressionListIds: unmarshalStrings(a.SuppressionListIDs),
+		Status:             string(a.Status),
+		Version:            a.Version,
+		Etag:               &etag,
+	}
+	if a.PlatformMasterListID != "" {
+		res.PlatformMasterListID = &a.PlatformMasterListID
+	}
+	if a.InclusionSummary != "" {
+		res.InclusionSummary = &a.InclusionSummary
+	}
+	return res
+}
+
+// parseAudienceIfMatch parses the If-Match header into a version. Reuses the same
+// strong-validator rules as the brief service (RFC 7232): rejects a weak tag and an
+// unbalanced quote, accepts a bare version or a strong quoted entity-tag.
+func parseAudienceIfMatch(ifMatch *string) (int64, error) {
+	if ifMatch == nil || *ifMatch == "" {
+		return 0, &audiences.PreconditionRequiredError{Code: "428", Message: "an If-Match header is required"}
+	}
+	raw := strings.TrimSpace(*ifMatch)
+	if strings.HasPrefix(raw, "W/") || strings.HasPrefix(raw, "w/") {
+		return 0, &audiences.BadRequestError{Code: "400", Message: "If-Match must be a strong validator; weak tags (W/\"…\") are not accepted"}
+	}
+	hasOpen := strings.HasPrefix(raw, `"`)
+	hasClose := strings.HasSuffix(raw, `"`)
+	switch {
+	case hasOpen && hasClose && len(raw) >= 2:
+		raw = raw[1 : len(raw)-1]
+	case hasOpen || hasClose:
+		return 0, &audiences.BadRequestError{Code: "400", Message: "If-Match has an unbalanced quote"}
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, &audiences.BadRequestError{Code: "400", Message: "If-Match must be an integer version"}
+	}
+	return v, nil
+}
+
+// mapAudienceErr maps domain errors to the generated audiences API error types,
+// preserving already-typed audiences errors.
+func mapAudienceErr(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, domain.ErrNotFound):
+		return &audiences.NotFoundError{Code: "404", Message: "the audience was not found"}
+	case errors.Is(err, domain.ErrConflict):
+		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
+	case errors.Is(err, domain.ErrPreconditionFailed):
+		return &audiences.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
+	}
+	var (
+		unavail   *audiences.ConnServiceUnavailableError
+		badReq    *audiences.BadRequestError
+		notFound  *audiences.NotFoundError
+		conflict  *audiences.ConflictError
+		preFailed *audiences.PreconditionFailedError
+		preReq    *audiences.PreconditionRequiredError
+	)
+	switch {
+	case errors.As(err, &unavail), errors.As(err, &badReq), errors.As(err, &notFound),
+		errors.As(err, &conflict), errors.As(err, &preFailed), errors.As(err, &preReq):
+		return err
+	default:
+		return &audiences.InternalServerError{Code: "500", Message: "an internal server error occurred"}
+	}
+}

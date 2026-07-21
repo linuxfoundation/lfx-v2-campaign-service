@@ -1,5 +1,22 @@
 # Log
 
+## 2026-07-21
+
+**Creation** — Added the campaign_audiences Goa API (LFXV2-2782, epic LFXV2-2770) on
+top of the existing DB layer (migration 000005 + model.CampaignAudience +
+AudienceRepository + repo). `design/audience.go` defines the audiences service
+(create/get/list/update) nested under a brief
+(`/projects/{project_id}/briefs/{brief_id}/audiences[/{audience_id}]`), reusing the
+shared design helpers (bearerToken/projectIDAttr/briefIDAttr/ifMatchAttr, JWTAuth,
+the standard error set). Regenerated gen/ via goa. `internal/service/audience.go`
+implements the handlers: maps payloads ↔ model, optimistic-concurrency update gated on
+If-Match (same strong-validator parsing as briefs), ETag = version, typed error
+mapping, and RWMutex `SetBackend` late-binding + typed-503 mode mirroring the brief
+service. Wired into the container (no-db / 503-boot / live / cold-start-retry paths)
+and mounted in the server (`buildMux` + a route-mount test asserting
+`GET …/audiences` resolves non-404 + a nil-endpoints fail-loud case). Service-layer
+tests cover create/defaults/If-Match(428/412/success)/404/late-binding. Full gate green.
+
 ## 2026-07-20
 
 **Update** — Fixed "briefs stay broken after a cold-start DB retry" (PR #28 review,

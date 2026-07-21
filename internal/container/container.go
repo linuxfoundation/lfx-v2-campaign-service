@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
@@ -46,6 +47,12 @@ type backendSetter interface {
 // signature) so the retry path can wire both.
 type briefBackendSetter interface {
 	SetBackend(domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *service.Orchestrator)
+}
+
+// audienceBackendSetter late-binds the audience repo after a cold-start retry.
+// *AudienceService implements it.
+type audienceBackendSetter interface {
+	SetBackend(domain.AudienceRepository)
 }
 
 // notReady is a ReadinessChecker that always reports not-ready. It is wired as
@@ -110,6 +117,7 @@ type Container struct {
 	Service     svc.Service
 	Connections connsvc.Service
 	Briefs      briefsvc.Service
+	Audiences   audiencesvc.Service
 
 	// mu guards pool, which the background DB-init goroutine sets once the pool
 	// opens and Close reads on shutdown.
@@ -161,6 +169,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
 		c.Connections = service.NewConnectionService(nil, nil)
 		c.Briefs = service.NewBriefService(nil, nil, nil, nil)
+		c.Audiences = service.NewAudienceService(nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
 	}
@@ -212,14 +221,16 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	campaign := service.NewCampaignService(notReady{})
 	connections := service.NewConnectionService(nil, enc)
 	briefs := service.NewBriefService(nil, nil, nil, nil)
+	auds := service.NewAudienceService(nil)
 	c.Service = campaign
 	c.Connections = connections
 	c.Briefs = briefs
+	c.Audiences = auds
 
 	initCtx, cancel := context.WithCancel(context.Background())
 	c.cancelInit = cancel
 	c.initDone = make(chan struct{})
-	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections, briefs)
+	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections, briefs, auds)
 
 	return c, nil
 }
@@ -250,6 +261,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	c.Audiences = service.NewAudienceService(postgres.NewAudienceRepo(pool))
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
 	// dispatch goroutine lived only in that process, so fail them forward now
@@ -278,7 +290,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 // readiness — and runs the same stuck-job recovery + periodic sweeper the fast path
 // does, so /readyz flips to healthy AND the connection + brief/job routes go live
 // without a pod restart.
-func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter, bb briefBackendSetter) {
+func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter, bb briefBackendSetter, ab audienceBackendSetter) {
 	defer close(c.initDone)
 
 	for attempt := 1; ; attempt++ {
@@ -303,6 +315,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// that read.
 			c.orch = orch
 			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
+			ab.SetBackend(postgres.NewAudienceRepo(pool))
 			// Derive from ctx (the init context Close cancels), NOT context.Background():
 			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
 			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the
