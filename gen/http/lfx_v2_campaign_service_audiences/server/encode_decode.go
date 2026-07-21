@@ -663,3 +663,22 @@ func marshalLfxv2campaignserviceaudiencesAudienceToAudienceResponseBody(v *lfxv2
 
 	return res
 }
+
+// unmarshalAudienceUpdateInputRequestBodyToLfxv2campaignserviceaudiencesAudienceUpdateInput
+// builds a value of type *lfxv2campaignserviceaudiences.AudienceUpdateInput
+// from a value of type *AudienceUpdateInputRequestBody.
+func unmarshalAudienceUpdateInputRequestBodyToLfxv2campaignserviceaudiencesAudienceUpdateInput(v *AudienceUpdateInputRequestBody) *lfxv2campaignserviceaudiences.AudienceUpdateInput {
+	res := &lfxv2campaignserviceaudiences.AudienceUpdateInput{
+		PlatformMasterListID: v.PlatformMasterListID,
+		InclusionSummary:     v.InclusionSummary,
+		Status:               v.Status,
+	}
+	if v.SuppressionListIds != nil {
+		res.SuppressionListIds = make([]string, len(v.SuppressionListIds))
+		for i, val := range v.SuppressionListIds {
+			res.SuppressionListIds[i] = val
+		}
+	}
+
+	return res
+}

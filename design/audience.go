@@ -34,6 +34,23 @@ var AudienceInput = Type("audience-input", func() {
 	Required("platform")
 })
 
+// AudienceUpdateInput is the PATCH payload. Unlike AudienceInput it has NO required
+// fields: PATCH is a partial update where every field is optional (a nil field is left
+// unchanged, an explicit empty list clears — see applyAudiencePatch). platform is
+// deliberately absent: it is immutable, so the update handler never reads it; reusing
+// AudienceInput here (where platform is Required) would force callers to resend the
+// immutable platform on a status-only or suppression-only patch, breaking the
+// "only supplied fields change" contract. It Reference()s AudienceInput so the shared
+// mutable attributes inherit their type/validation/description from one source.
+var AudienceUpdateInput = Type("audience-update-input", func() {
+	Reference(AudienceInput)
+	Attribute("platform_master_list_id")
+	Attribute("suppression_list_ids")
+	Attribute("inclusion_summary")
+	Attribute("status")
+	// No Required(): every field is optional for a partial update.
+})
+
 // Audience is the audience response view. It Reference()s AudienceInput so the
 // shared attributes inherit their type/validation/description from one source of
 // truth (a later change to the platform Enum or a validation rule flows here), then
@@ -134,7 +151,9 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			briefIDAttr()
 			audienceIDAttr()
 			ifMatchAttr()
-			Attribute("audience", AudienceInput)
+			// AudienceUpdateInput (not AudienceInput): a PATCH must not require the
+			// immutable platform field, so a status-only/suppression-only patch works.
+			Attribute("audience", AudienceUpdateInput)
 			Required("project_id", "brief_id", "audience_id", "audience")
 		})
 		Result(Audience)

@@ -23,7 +23,7 @@ type CreateAudienceRequestBody struct {
 // "lfx-v2-campaign-service-audiences" service "update-audience" endpoint HTTP
 // request body.
 type UpdateAudienceRequestBody struct {
-	Audience *AudienceInputRequestBody `form:"audience" json:"audience" xml:"audience"`
+	Audience *AudienceUpdateInputRequestBody `form:"audience" json:"audience" xml:"audience"`
 }
 
 // CreateAudienceResponseBody is the type of the
@@ -368,6 +368,20 @@ type AudienceResponseBody struct {
 	Etag *string `form:"etag,omitempty" json:"etag,omitempty" xml:"etag,omitempty"`
 }
 
+// AudienceUpdateInputRequestBody is used to define fields on request body
+// types.
+type AudienceUpdateInputRequestBody struct {
+	// Pointer to the built master list in the platform (empty until built)
+	PlatformMasterListID *string `form:"platform_master_list_id,omitempty" json:"platform_master_list_id,omitempty" xml:"platform_master_list_id,omitempty"`
+	// Platform suppression list ids applied to the master
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// Human-readable provenance: how the audience was built (past events, geo,
+	// topic)
+	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
+	// Build lifecycle status
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+}
+
 // NewCreateAudienceRequestBody builds the HTTP request body from the payload
 // of the "create-audience" endpoint of the "lfx-v2-campaign-service-audiences"
 // service.
@@ -385,7 +399,7 @@ func NewCreateAudienceRequestBody(p *lfxv2campaignserviceaudiences.CreateAudienc
 func NewUpdateAudienceRequestBody(p *lfxv2campaignserviceaudiences.UpdateAudiencePayload) *UpdateAudienceRequestBody {
 	body := &UpdateAudienceRequestBody{}
 	if p.Audience != nil {
-		body.Audience = marshalLfxv2campaignserviceaudiencesAudienceInputToAudienceInputRequestBody(p.Audience)
+		body.Audience = marshalLfxv2campaignserviceaudiencesAudienceUpdateInputToAudienceUpdateInputRequestBody(p.Audience)
 	}
 	return body
 }
@@ -1151,6 +1165,17 @@ func ValidateAudienceResponseBody(body *AudienceResponseBody) (err error) {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platform", *body.Platform, []any{"hubspot"}))
 		}
 	}
+	if body.Status != nil {
+		if !(*body.Status == "building" || *body.Status == "built" || *body.Status == "failed") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"building", "built", "failed"}))
+		}
+	}
+	return
+}
+
+// ValidateAudienceUpdateInputRequestBody runs the validations defined on
+// audience-update-inputRequestBody
+func ValidateAudienceUpdateInputRequestBody(body *AudienceUpdateInputRequestBody) (err error) {
 	if body.Status != nil {
 		if !(*body.Status == "building" || *body.Status == "built" || *body.Status == "failed") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"building", "built", "failed"}))

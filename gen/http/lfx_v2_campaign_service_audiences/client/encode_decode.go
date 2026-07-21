@@ -810,3 +810,41 @@ func unmarshalAudienceResponseBodyToLfxv2campaignserviceaudiencesAudience(v *Aud
 
 	return res
 }
+
+// marshalLfxv2campaignserviceaudiencesAudienceUpdateInputToAudienceUpdateInputRequestBody
+// builds a value of type *AudienceUpdateInputRequestBody from a value of type
+// *lfxv2campaignserviceaudiences.AudienceUpdateInput.
+func marshalLfxv2campaignserviceaudiencesAudienceUpdateInputToAudienceUpdateInputRequestBody(v *lfxv2campaignserviceaudiences.AudienceUpdateInput) *AudienceUpdateInputRequestBody {
+	res := &AudienceUpdateInputRequestBody{
+		PlatformMasterListID: v.PlatformMasterListID,
+		InclusionSummary:     v.InclusionSummary,
+		Status:               v.Status,
+	}
+	if v.SuppressionListIds != nil {
+		res.SuppressionListIds = make([]string, len(v.SuppressionListIds))
+		for i, val := range v.SuppressionListIds {
+			res.SuppressionListIds[i] = val
+		}
+	}
+
+	return res
+}
+
+// marshalAudienceUpdateInputRequestBodyToLfxv2campaignserviceaudiencesAudienceUpdateInput
+// builds a value of type *lfxv2campaignserviceaudiences.AudienceUpdateInput
+// from a value of type *AudienceUpdateInputRequestBody.
+func marshalAudienceUpdateInputRequestBodyToLfxv2campaignserviceaudiencesAudienceUpdateInput(v *AudienceUpdateInputRequestBody) *lfxv2campaignserviceaudiences.AudienceUpdateInput {
+	res := &lfxv2campaignserviceaudiences.AudienceUpdateInput{
+		PlatformMasterListID: v.PlatformMasterListID,
+		InclusionSummary:     v.InclusionSummary,
+		Status:               v.Status,
+	}
+	if v.SuppressionListIds != nil {
+		res.SuppressionListIds = make([]string, len(v.SuppressionListIds))
+		for i, val := range v.SuppressionListIds {
+			res.SuppressionListIds[i] = val
+		}
+	}
+
+	return res
+}

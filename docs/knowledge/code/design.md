@@ -19,7 +19,10 @@ LFXV2-2773) models built campaign audiences nested under a brief
 (`.../briefs/{briefId}/audiences`): create, get, list, and update-as-PATCH (a
 load-then-merge where a nil field is unchanged and an explicit empty list clears),
 with optimistic concurrency via ETag/If-Match (`428` when missing, `412` on
-mismatch). Every method is gated on `campaign_manager` at the gateway via
+mismatch). PATCH takes a dedicated `AudienceUpdateInput` (all fields optional, no
+immutable `platform`) rather than the create-time `AudienceInput` (where `platform`
+is required) — so a status-only or suppression-only patch is valid without resending
+the immutable platform. Every method is gated on `campaign_manager` at the gateway via
 `JWTAuth`, which can reject any request with a `BadRequest` (400) — so every brief
 and audience method declares `BadRequest` regardless of whether it accepts a body.
 The binding `platforms` selection is constrained to the known provider enum.

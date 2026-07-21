@@ -122,7 +122,7 @@ func TestAudienceService_Update_RequiresAndChecksIfMatch(t *testing.T) {
 	// Missing If-Match → 428.
 	_, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
 		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID,
-		Audience: &audiences.AudienceInput{Platform: "hubspot", Status: strptr("built")},
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built")},
 	})
 	var preReq *audiences.PreconditionRequiredError
 	if !errors.As(err, &preReq) {
@@ -132,7 +132,7 @@ func TestAudienceService_Update_RequiresAndChecksIfMatch(t *testing.T) {
 	// Wrong version → 412.
 	_, err = s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
 		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("99"),
-		Audience: &audiences.AudienceInput{Platform: "hubspot", Status: strptr("built")},
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built")},
 	})
 	var preFail *audiences.PreconditionFailedError
 	if !errors.As(err, &preFail) {
@@ -142,7 +142,7 @@ func TestAudienceService_Update_RequiresAndChecksIfMatch(t *testing.T) {
 	// Correct version → success, version bumps.
 	updated, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
 		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("1"),
-		Audience: &audiences.AudienceInput{Platform: "hubspot", Status: strptr("built"), PlatformMasterListID: strptr("12345")},
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built"), PlatformMasterListID: strptr("12345")},
 	})
 	if err != nil {
 		t.Fatalf("UpdateAudience: %v", err)
@@ -194,7 +194,7 @@ func TestAudienceService_Update_MergesOmittedFields(t *testing.T) {
 	// Update ONLY the status.
 	updated, err := s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
 		ProjectID: "cncf", BriefID: "b1", AudienceID: created.ID, IfMatch: strptr("1"),
-		Audience: &audiences.AudienceInput{Platform: "hubspot", Status: strptr("built")},
+		Audience: &audiences.AudienceUpdateInput{Status: strptr("built")},
 	})
 	if err != nil {
 		t.Fatalf("UpdateAudience: %v", err)

@@ -89,6 +89,18 @@ type AudienceInput struct {
 	Status *string
 }
 
+type AudienceUpdateInput struct {
+	// Pointer to the built master list in the platform (empty until built)
+	PlatformMasterListID *string
+	// Platform suppression list ids applied to the master
+	SuppressionListIds []string
+	// Human-readable provenance: how the audience was built (past events, geo,
+	// topic)
+	InclusionSummary *string
+	// Build lifecycle status
+	Status *string
+}
+
 // CreateAudiencePayload is the payload type of the
 // lfx-v2-campaign-service-audiences service create-audience method.
 type CreateAudiencePayload struct {
@@ -144,7 +156,7 @@ type UpdateAudiencePayload struct {
 	AudienceID string
 	// If-Match header carrying the current ETag/version
 	IfMatch  *string
-	Audience *AudienceInput
+	Audience *AudienceUpdateInput
 }
 
 type BadRequestError struct {

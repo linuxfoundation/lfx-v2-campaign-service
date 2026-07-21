@@ -145,7 +145,7 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 // but an EXPLICIT empty array (`[]`) is a non-nil empty slice that DOES apply and
 // clears the suppressions — an intentional "remove all" rather than a no-op. platform
 // is immutable and ignored on update.
-func applyAudiencePatch(cur *model.CampaignAudience, in *audiences.AudienceInput) {
+func applyAudiencePatch(cur *model.CampaignAudience, in *audiences.AudienceUpdateInput) {
 	if in == nil {
 		return
 	}

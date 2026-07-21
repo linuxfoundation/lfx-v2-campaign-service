@@ -2,6 +2,14 @@
 
 ## 2026-07-21
 
+**Update** — PR #40 follow-up review: fixed the campaign_audiences PATCH contract. The
+update method reused `AudienceInput`, where `platform` is Required — so the generated
+update validator rejected a status-only/suppression-only patch unless the caller also
+resent the immutable `platform`, defeating the "only supplied fields change" contract.
+Added a dedicated `AudienceUpdateInput` (all mutable fields optional, no `platform`),
+pointed `update-audience` at it, regenerated `gen/`, retyped `applyAudiencePatch`, and
+updated the service tests to send platform-free patches. design.md notes the split.
+
 **Update** — PR #40 review: extended the container startup tests to cover the new
 audiences service (typed-503 in both no-DB and cold-start-503 modes + successful
 `SetBackend` late-binding), and updated the architecture index for accuracy —
