@@ -254,6 +254,7 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor) ma
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:   dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds: dispatch.NewLinkedInDispatcher(repo, enc),
+		model.ProviderMetaAds:     dispatch.NewMetaDispatcher(repo, enc),
 	}
 }
 
