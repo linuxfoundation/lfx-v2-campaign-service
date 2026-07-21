@@ -43,9 +43,10 @@ type List struct {
 	ListID         string `json:"listId"`
 	Name           string `json:"name"`
 	ProcessingType string `json:"processingType"`
-	// ObjectTypeID is the list's member object type ("0-1" = contacts). It is a
-	// RESPONSE property on each search hit (the v3 ListSearchRequest body has no
-	// objectTypeId field), so SearchLists filters on it client-side.
+	// ObjectTypeID is the list's member object type ("0-1" = contacts). SearchLists
+	// constrains to contacts via the objectTypeId REQUEST field (a valid
+	// ListSearchRequest field); this response value is used only as a defensive
+	// re-check on each hit.
 	ObjectTypeID string `json:"objectTypeId"`
 	// Size is the normalized membership count (see resolveSize). Not decoded directly.
 	Size int `json:"-"`

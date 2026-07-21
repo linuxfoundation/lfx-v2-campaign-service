@@ -2,6 +2,14 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot cursor decode preserves `+` (PR #35 review round 12, cursor/copilot).
+The round-10 `decodeCursor` used `url.QueryUnescape`, which converts a literal `+` to a
+space — but base64 paging cursors legitimately contain `+`, so a token like `A+B/C=`
+would be sent as `A B/C=` and break pagination. Switched to `url.PathUnescape`, which
+decodes `%XX` while preserving `+`. Added `TestSearchEmails_PreservesPlusInCursor`. Also
+fixed a stale `List.ObjectTypeID` field comment that still carried the (wrong) round-6
+"objectTypeId is response-only" claim.
+
 **Update** — HubSpot constructor input normalization (PR #35 review round 11, copilot).
 `NewClient` now trims the injected `PrivateAppToken` and `PortalID` (mirrors meta/twitter):
 a whitespace-only token is treated as missing (rather than sent as `Bearer   `), and a

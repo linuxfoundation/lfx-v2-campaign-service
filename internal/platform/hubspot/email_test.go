@@ -135,6 +135,27 @@ func TestSearchEmails_DecodesEncodedCursor(t *testing.T) {
 	}
 }
 
+func TestSearchEmails_PreservesPlusInCursor(t *testing.T) {
+	// Base64 cursors legitimately contain literal '+'. PathUnescape must preserve it
+	// (QueryUnescape would corrupt "A+B/C=" into "A B/C="), so page-2 sends the token
+	// unchanged.
+	var afters []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		afters = append(afters, r.URL.Query().Get("after"))
+		if r.URL.Query().Get("after") == "" {
+			_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"A","subject":"x"}],"paging":{"next":{"after":"A+B/C="}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"B","subject":"y"}]}`)
+	})
+	if _, err := c.SearchEmails(context.Background(), ""); err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(afters) != 2 || afters[1] != "A+B/C=" {
+		t.Errorf("page-2 after must preserve the literal '+', got %q", afters[len(afters)-1])
+	}
+}
+
 func TestSearchEmails_StuckCursorErrors(t *testing.T) {
 	// A server that echoes the same `after` token must not loop forever duplicating
 	// the page — the walker errors on a non-advancing cursor.

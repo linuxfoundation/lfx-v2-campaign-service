@@ -50,11 +50,13 @@ type paging struct {
 // decodeCursor normalizes a HubSpot paging cursor to its RAW form before it is put
 // back into a query string. HubSpot returns `paging.next.after` already percent-encoded
 // (e.g. `MjA%3D`); handing that straight to url.Values.Encode would re-encode the `%`
-// as `%25`, corrupting the next-page request. QueryUnescape decodes it once; a token
-// that is NOT encoded is returned unchanged (and an unescape error falls back to the
-// original, so a malformed token can't drop the whole walk).
+// as `%25`, corrupting the next-page request. PathUnescape (NOT QueryUnescape) decodes
+// `%XX` while PRESERVING a literal `+` — cursors are opaque base64 and legitimately
+// contain `+`, which QueryUnescape would wrongly turn into a space. A token that is NOT
+// encoded is returned unchanged, and a decode error falls back to the original so a
+// malformed token can't drop the whole walk.
 func decodeCursor(after string) string {
-	if dec, err := url.QueryUnescape(after); err == nil {
+	if dec, err := url.PathUnescape(after); err == nil {
 		return dec
 	}
 	return after
