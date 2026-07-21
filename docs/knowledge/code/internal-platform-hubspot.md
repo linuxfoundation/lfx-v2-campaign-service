@@ -19,8 +19,9 @@ drives HubSpot's email surface: marketing-email search/get/clone and draft-updat
 contact-list search/get/create/filter-update (no delete), and event-definition
 lookups. Credentials and account
 configuration are injected via `NewClient`; the package never reads environment
-variables or touches the database. In production the bearer token comes from a
-decrypted stored `hubspot_connections` connection (`private_app_token`).
+variables or touches the database. In production the bearer token is a field inside the
+connection's ENCRYPTED credentials blob (there is no `private_app_token` column on
+`hubspot_connections`); the connection layer decrypts it and injects it here.
 
 ## Auth (simplest of all the clients)
 

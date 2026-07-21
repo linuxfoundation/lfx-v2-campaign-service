@@ -116,14 +116,13 @@ func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 }
 
 func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
-	// The `sort` query param isn't a documented field on GET /marketing/v3/emails, so
-	// order is guaranteed CLIENT-SIDE: results come back most-recently-updated first
-	// regardless of server order, and no `sort` param is sent.
-	var sentSort bool
+	// Order is guaranteed CLIENT-SIDE regardless of server order. The request sends
+	// `sort=-updatedAt` (a valid hint) and `properties` to restrict the returned fields
+	// so full email content doesn't blow the response cap at limit=100.
+	var gotSort, gotProps string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := r.URL.Query()["sort"]; ok {
-			sentSort = true
-		}
+		gotSort = r.URL.Query().Get("sort")
+		gotProps = r.URL.Query().Get("properties")
 		// Intentionally returned oldest-first to prove the client re-orders.
 		_, _ = io.WriteString(w, `{"results":[`+
 			`{"id":"1","name":"Old","subject":"x","updatedAt":"2024-01-01T00:00:00Z"},`+
@@ -135,11 +134,45 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchEmails: %v", err)
 	}
-	if sentSort {
-		t.Error("SearchEmails must NOT send an unsupported `sort` query param")
+	if gotSort != "-updatedAt" {
+		t.Errorf("SearchEmails should send sort=-updatedAt, got %q", gotSort)
+	}
+	if gotProps == "" || !strings.Contains(gotProps, "updatedAt") {
+		t.Errorf("SearchEmails should restrict properties, got %q", gotProps)
 	}
 	if len(got) != 3 || got[0].ID != "2" || got[1].ID != "3" || got[2].ID != "1" {
 		t.Errorf("results must be most-recently-updated first (2,3,1), got %v", []string{got[0].ID, got[1].ID, got[2].ID})
+	}
+}
+
+func TestSearchEmails_MalformedBodyErrors(t *testing.T) {
+	// A 2xx `{}`/`null` (Results==nil, no paging) must be a decode error, not a clean
+	// empty success that hides a broken response. (An empty portal returns
+	// `{"results":[]}`, which is non-nil and returns 0 results without error.)
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if _, err := c.SearchEmails(context.Background(), ""); err == nil {
+		t.Error("a 2xx body with no results array must error, not return empty success")
+	}
+	cEmpty, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	if got, err := cEmpty.SearchEmails(context.Background(), ""); err != nil || len(got) != 0 {
+		t.Errorf("a genuinely empty portal must return (0, nil), got (%d, %v)", len(got), err)
+	}
+}
+
+func TestSortEmailsByUpdatedDesc_IDTiebreak(t *testing.T) {
+	// Equal (or missing) timestamps fall back to a deterministic id ordering.
+	emails := []Email{
+		{ID: "a", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "b", UpdatedAt: "2026-01-01T00:00:00Z"},
+	}
+	sortEmailsByUpdatedDesc(emails)
+	if emails[0].ID != "c" || emails[1].ID != "b" || emails[2].ID != "a" {
+		t.Errorf("equal timestamps must tiebreak by id desc (c,b,a), got %s,%s,%s", emails[0].ID, emails[1].ID, emails[2].ID)
 	}
 }
 

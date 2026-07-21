@@ -2,6 +2,21 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot round-20 batch (PR #35 review, copilot + dealako). (1) RESTORED
+`sort=-updatedAt` on SearchEmails — verified against HubSpot's v3 docs that `sort` IS a
+valid GET /marketing/v3/emails param (round 13 wrongly dropped it; another bot flip-flop,
+like objectTypeId). Client-side parsed-instant sort stays as the guarantee. (2) Added a
+`properties=name,subject,updatedAt` param — the list endpoint returns FULL email content
+by default, so at limit=100 rich templates could blow the response cap. (3) SearchEmails
+and ListEventDefinitions now ERROR on a malformed 2xx (`{}`/`null` → Results==nil, no
+paging) instead of returning a clean empty success that hides a broken response (an empty
+portal returns `{"results":[]}`, non-nil, still returns 0). (4) Removed the dead
+`cloneEmailRequest.Language` field (never populated; omitting language IS the
+preserve-source-locale behavior). (5) Doc fixes: `private_app_token` is NOT a
+`hubspot_connections` column (the token lives inside the encrypted creds blob) — corrected
+client.go + internal-platform-hubspot.md; fixed a stale `/crm/v3/lists/` createListRequest
+comment. (6) Tests: sort/properties assertions, malformed-body, and the id-tiebreak.
+
 **Update** — HubSpot error-path query-strip + comment/test cleanup (PR #35 review round 18,
 copilot). (1) `doRequest` now strips the query string from `path` before it reaches any
 error (the full path is already in `u` for the URL) — a paginated request carries
@@ -33,11 +48,11 @@ internal-platform-hubspot.md now shows the canonical no-trailing-slash `/crm/v3/
 (matching the round-13 code fix).
 
 **Update** — HubSpot endpoint-contract fixes (PR #35 review round 13, copilot).
-(1) `SearchEmails` dropped the `sort=-updatedAt` query param — it's not a documented
-field on `GET /marketing/v3/emails` (it belongs to the revisions endpoint) so HubSpot
-may ignore/reject it. Order is now guaranteed CLIENT-SIDE: added `Email.UpdatedAt` and
-`sortEmailsByUpdatedDesc` (RFC3339 lexicographic, id tiebreak) applied to the aggregated
-matches. Added `TestSearchEmails_SortsMostRecentlyUpdatedFirst`. (2) `CreateList` now
+(1) `SearchEmails` — [CORRECTED in round 20: `sort` IS a valid GET /marketing/v3/emails
+param per HubSpot's docs; this round wrongly dropped it. Round 20 restored `sort=-updatedAt`
+as a server hint.] The most-recently-updated-first order is guaranteed CLIENT-SIDE
+regardless via `Email.UpdatedAt` + `sortEmailsByUpdatedDesc` (parsed-instant compare, id
+tiebreak) applied to the aggregated matches. (2) `CreateList` now
 POSTs to the canonical `/crm/v3/lists` (no trailing slash) — HubSpot canonicalizes a
 trailing slash via redirect and this client refuses redirects, so `/crm/v3/lists/` could
 have produced a failed/ambiguous create. Updated the test path assertion.

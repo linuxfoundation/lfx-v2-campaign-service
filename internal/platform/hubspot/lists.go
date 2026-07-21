@@ -187,7 +187,7 @@ func (c *Client) GetList(ctx context.Context, listID string) (*List, error) {
 	return c.decodeListEnvelope(raw, "get")
 }
 
-// createListRequest is the POST /crm/v3/lists/ body for a DYNAMIC contact list.
+// createListRequest is the POST /crm/v3/lists body for a DYNAMIC contact list.
 type createListRequest struct {
 	Name           string          `json:"name"`
 	ObjectTypeID   string          `json:"objectTypeId"`
@@ -288,6 +288,13 @@ func (c *Client) ListEventDefinitions(ctx context.Context) ([]EventDefinition, e
 		}
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			return nil, fmt.Errorf("hubspot: decode event definitions: %w", err)
+		}
+		// A malformed 2xx body such as `{}` or `null` decodes with Results==nil (an
+		// empty portal returns `{"results":[]}`, which is non-nil). On the first page
+		// with nil Results and no paging, treat it as a decode error rather than
+		// returning a clean empty success that silently hides a broken response.
+		if page == 0 && resp.Results == nil && (resp.Paging == nil || resp.Paging.Next == nil) {
+			return nil, fmt.Errorf("hubspot: event definitions returned a 2xx with no results array (malformed response)")
 		}
 		for i := range resp.Results {
 			resp.Results[i].Label = resp.Results[i].Labels.Singular

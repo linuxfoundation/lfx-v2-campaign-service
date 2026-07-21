@@ -112,10 +112,16 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 	for page := 0; page < maxListPages; page++ {
 		q := url.Values{}
 		q.Set("limit", "100")
-		// NOTE: no `sort` param — it is not a documented field on GET
-		// /marketing/v3/emails (it belongs to the revisions endpoint), so HubSpot may
-		// ignore/reject it. The most-recently-updated-first order is guaranteed by
-		// sorting the aggregated matches client-side (below) instead.
+		// `sort` IS a valid GET /marketing/v3/emails param (verified against HubSpot's
+		// v3 docs) — request most-recently-updated first as a server hint. We STILL
+		// re-sort client-side (sortEmailsByUpdatedDesc, below) as the guarantee, because
+		// the aggregated multi-page result must be ordered as a whole and mixed
+		// offsets/fractional seconds need a parsed comparison.
+		q.Set("sort", "-updatedAt")
+		// Restrict the returned fields: the list endpoint returns FULL email content by
+		// default, so at limit=100 rich templates can blow past the client's response
+		// cap. We only need id/name/subject/updatedAt for search + ordering.
+		q.Set("properties", "name,subject,updatedAt")
 		if after != "" {
 			q.Set("after", after)
 		}
@@ -126,6 +132,14 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		var resp emailListResponse
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			return nil, fmt.Errorf("hubspot: decode email search: %w", err)
+		}
+		// A malformed 2xx body such as `{}` or `null` decodes with Results==nil. If it
+		// ALSO carries no paging cursor, we can't tell "genuinely empty" from "malformed
+		// response" — but returning it as a successful empty result would silently hide
+		// a broken response. On the FIRST page with nil Results and no paging, treat it
+		// as a decode error rather than a clean empty success.
+		if page == 0 && resp.Results == nil && (resp.Paging == nil || resp.Paging.Next == nil) {
+			return nil, fmt.Errorf("hubspot: email search returned a 2xx with no results array (malformed response)")
 		}
 		for _, e := range resp.Results {
 			// Match the query in name OR subject INDEPENDENTLY. Concatenating them and
@@ -178,11 +192,14 @@ func (c *Client) GetEmail(ctx context.Context, id string) (*Email, error) {
 	return &e, nil
 }
 
-// cloneEmailRequest is the POST /marketing/v3/emails/clone body.
+// cloneEmailRequest is the POST /marketing/v3/emails/clone body. NOTE: no `language`
+// field — omitting it makes HubSpot preserve the SOURCE draft's locale, which is the
+// faithful-clone behavior this method promises. (A field defaulting to "en" would
+// silently re-language a non-English source; a never-populated `language,omitempty`
+// field would just be dead code, so it's left off entirely.)
 type cloneEmailRequest struct {
 	ID        string `json:"id"`
 	CloneName string `json:"cloneName"`
-	Language  string `json:"language,omitempty"`
 }
 
 // CloneEmail clones sourceID into a new draft named cloneName and returns it.
@@ -198,10 +215,8 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 	}
 	// sourceID/cloneName are trimmed above — a whitespace-padded id posted raw could
 	// be rejected by HubSpot (a silent staging failure), and a padded name would
-	// produce a misnamed draft (CreateList normalizes names the same way). Language is
-	// deliberately omitted (omitempty) so HubSpot preserves the SOURCE draft's locale —
-	// this method promises a faithful clone and takes no locale parameter, so forcing
-	// "en" would silently re-language a non-English source.
+	// produce a misnamed draft (CreateList normalizes names the same way). No language
+	// is sent (see cloneEmailRequest) so HubSpot preserves the source draft's locale.
 	body := cloneEmailRequest{ID: sourceID, CloneName: cloneName}
 	raw, err := c.doRequest(ctx, http.MethodPost, emailsPath+"/clone", body, false)
 	if err != nil {

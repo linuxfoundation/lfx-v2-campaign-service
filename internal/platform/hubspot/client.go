@@ -7,8 +7,9 @@
 // contact-list search/get/create/filter-update (no delete), and event-definition
 // lookups. Credentials and account
 // configuration are injected via NewClient; the package never reads environment
-// variables or touches the database. In production the bearer token comes from a
-// decrypted stored connection (`hubspot_connections.private_app_token`).
+// variables or touches the database. In production the bearer token is a field inside
+// the connection's ENCRYPTED credentials blob (there is no `private_app_token` column
+// on `hubspot_connections`); the connection layer decrypts it and injects it here.
 //
 // Unlike the ad-platform clients (OAuth2 refresh flow for Google Ads, OAuth1 for
 // X), HubSpot authenticates with a STATIC private-app bearer token — there is no
