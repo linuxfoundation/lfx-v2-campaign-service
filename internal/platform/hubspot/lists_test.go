@@ -170,6 +170,22 @@ func TestCreateList_SendsDynamicContactBodyAndFilterBranch(t *testing.T) {
 	}
 }
 
+func TestCreateList_TrimsName(t *testing.T) {
+	// A padded name must be trimmed before it is posted — leading/trailing spaces
+	// would otherwise become part of the HubSpot list name.
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"list":{"listId":"77","name":"New"}}`)
+	})
+	if _, err := c.CreateList(context.Background(), "  New  ", json.RawMessage(`{"filterBranchType":"OR"}`)); err != nil {
+		t.Fatalf("CreateList: %v", err)
+	}
+	if body["name"] != "New" {
+		t.Errorf("create body name must be trimmed, got %v", body["name"])
+	}
+}
+
 func TestCreateList_2xxNoListIDIsUnconfirmed(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"list":{"name":"no id"}}`)

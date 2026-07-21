@@ -88,6 +88,12 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
 			return out, nil
 		}
+		// A non-advancing cursor (HubSpot or a proxy echoing the same `after`) would
+		// otherwise re-fetch the same page every iteration, duplicating results until
+		// the page cap. Refuse to loop on it.
+		if resp.Paging.Next.After == after {
+			return nil, fmt.Errorf("hubspot: SearchEmails cursor did not advance (repeated after token)")
+		}
 		after = resp.Paging.Next.After
 	}
 	return nil, fmt.Errorf("hubspot: SearchEmails exceeded %d pages; refusing to page unbounded", maxListPages)

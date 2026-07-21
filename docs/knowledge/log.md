@@ -2,6 +2,13 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot paginator hardening (PR #35 review round 3, cursor).
+`SearchEmails` and `ListEventDefinitions` now error on a non-advancing cursor (a
+repeated `paging.next.after` token) instead of re-fetching the same page until the cap
+and duplicating results — matching the offset guard `SearchLists` already had.
+`CreateList` trims its name before posting (padding no longer becomes part of the list
+name).
+
 **Update** — HubSpot client hardening (PR #35 review round 2, copilot/cursor).
 (1) All id entry points trim-and-reassign before use (`GetEmail`,
 `PatchEmailSettings`, `SetSendList`, `CloneEmail`, `GetList`, `UpdateListFilters`) —

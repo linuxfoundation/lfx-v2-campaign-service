@@ -114,6 +114,22 @@ func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 	}
 }
 
+func TestSearchEmails_StuckCursorErrors(t *testing.T) {
+	// A server that echoes the same `after` token must not loop forever duplicating
+	// the page — the walker errors on a non-advancing cursor.
+	var calls int
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"A","subject":"x"}],"paging":{"next":{"after":"SAME"}}}`)
+	})
+	if _, err := c.SearchEmails(context.Background(), ""); err == nil {
+		t.Fatal("a non-advancing cursor must error, not loop to the page cap")
+	}
+	if calls > 3 {
+		t.Errorf("expected the stuck-cursor guard to stop after 2 calls, got %d", calls)
+	}
+}
+
 func TestGetEmail_2xxNoIDIsPlainErrorNotUnconfirmed(t *testing.T) {
 	// GetEmail is an idempotent GET, so a malformed 2xx is a plain error, NOT
 	// UNCONFIRMED (a read can't leave a mutation in doubt) — so it's safely retryable.

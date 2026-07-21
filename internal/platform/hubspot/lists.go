@@ -163,7 +163,7 @@ type createListRequest struct {
 // 2xx-with-no-id is surfaced as UNCONFIRMED rather than blind-retried (which would
 // create a duplicate list).
 func (c *Client) CreateList(ctx context.Context, name string, filterBranch json.RawMessage) (*List, error) {
-	if strings.TrimSpace(name) == "" {
+	if name = strings.TrimSpace(name); name == "" {
 		return nil, fmt.Errorf("hubspot: CreateList requires a non-empty name")
 	}
 	if len(filterBranch) == 0 {
@@ -255,6 +255,11 @@ func (c *Client) ListEventDefinitions(ctx context.Context) ([]EventDefinition, e
 		out = append(out, resp.Results...)
 		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
 			return out, nil
+		}
+		// A non-advancing cursor would re-fetch the same page forever, duplicating
+		// results until the page cap — refuse to loop on it.
+		if resp.Paging.Next.After == after {
+			return nil, fmt.Errorf("hubspot: ListEventDefinitions cursor did not advance (repeated after token)")
 		}
 		after = resp.Paging.Next.After
 	}
