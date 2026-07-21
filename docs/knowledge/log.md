@@ -2,6 +2,11 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot constructor input normalization (PR #35 review round 11, copilot).
+`NewClient` now trims the injected `PrivateAppToken` and `PortalID` (mirrors meta/twitter):
+a whitespace-only token is treated as missing (rather than sent as `Bearer   `), and a
+padded portal id can't build invalid app URLs. Added `TestNewClient_NormalizesTokenAndPortalID`.
+
 **Update** — HubSpot cursor decode + dedup clarity (PR #35 review round 10, copilot/cursor).
 (1) HubSpot returns `paging.next.after` already percent-encoded (e.g. `MjA%3D`); feeding
 it straight back through `url.Values.Encode` double-encoded the `%` (→ `MjA%253D`),

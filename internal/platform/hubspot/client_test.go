@@ -70,6 +70,33 @@ func TestDoRequest_MissingTokenFailsPreSend(t *testing.T) {
 	}
 }
 
+func TestNewClient_NormalizesTokenAndPortalID(t *testing.T) {
+	// A whitespace-only token must be treated as missing (not sent as "Bearer   "),
+	// and a padded portal id must be trimmed before it builds app URLs.
+	cWs := NewClient(Credentials{PrivateAppToken: "   "}, testAccount(), WithBaseURL("http://127.0.0.1:1"))
+	_, err := cWs.doRequest(context.Background(), http.MethodGet, "/x", nil, true)
+	if err == nil || !strings.Contains(err.Error(), "missing private-app token") {
+		t.Errorf("a whitespace-only token must be treated as missing, got: %v", err)
+	}
+
+	var gotAuth string
+	_, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, `{}`)
+	})
+	c2 := NewClient(Credentials{PrivateAppToken: "  pat-x  "}, AccountConfig{PortalID: "  8112310  "},
+		WithBaseURL(srv.URL), withRetryBaseDelay(0))
+	if _, err := c2.doRequest(context.Background(), http.MethodGet, "/x", nil, true); err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	if gotAuth != "Bearer pat-x" {
+		t.Errorf("token must be trimmed in the Authorization header, got %q", gotAuth)
+	}
+	if c2.account.PortalID != "8112310" {
+		t.Errorf("portal id must be trimmed, got %q", c2.account.PortalID)
+	}
+}
+
 func TestDoRequest_JSONBodySetsContentType(t *testing.T) {
 	var gotCT, gotBody string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

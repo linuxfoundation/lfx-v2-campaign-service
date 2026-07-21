@@ -167,6 +167,11 @@ func withClock(now func() time.Time) Option {
 // caller's reusable exported fields (Transport, Jar, Timeout) plus noFollow, so the
 // caller's own client is never mutated. Mirrors the meta/googleads clients.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
+	// Normalize injected inputs (mirrors the meta/twitter clients): a whitespace-only
+	// token would otherwise slip past the missing-token check and yield a "Bearer   "
+	// header, and a padded portal id would build invalid app URLs.
+	creds.PrivateAppToken = strings.TrimSpace(creds.PrivateAppToken)
+	account.PortalID = strings.TrimSpace(account.PortalID)
 	c := &Client{
 		creds:          creds,
 		account:        account,
