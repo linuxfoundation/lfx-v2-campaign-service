@@ -209,16 +209,23 @@ func (c *Client) SetSendList(ctx context.Context, id, sendListID string, suppres
 	if isILS {
 		to["contactIlsLists"] = map[string]any{"include": []string{sendListID}, "exclude": suppress}
 	} else {
-		// Legacy lists are numeric. REJECT a non-numeric id up front — if Atoi
-		// silently dropped it, the PATCH would send an empty include, and HubSpot
-		// would clear the existing recipients and return success, leaving the email
-		// with NO recipients (the same silent-empty failure the ILS-namespace
-		// routing guards against). strconv.Atoi doesn't trim, so trim first.
+		// Legacy lists are numeric on BOTH sides. REJECT a non-numeric send-list id
+		// up front — if it were silently dropped the PATCH would send an empty
+		// include, and HubSpot would clear the existing recipients and return success,
+		// leaving the email with NO recipients (the same silent-empty failure the
+		// ILS-namespace routing guards against). strconv.Atoi doesn't trim, so trim
+		// first.
 		n, err := strconv.Atoi(strings.TrimSpace(sendListID))
 		if err != nil {
 			return nil, fmt.Errorf("hubspot: SetSendList legacy send-list id %q is not numeric (a non-numeric id would clear all recipients)", sendListID)
 		}
-		to["contactLists"] = map[string]any{"include": []any{n}, "exclude": suppress}
+		// The legacy namespace also expects NUMERIC exclude ids — sending strings can
+		// be ignored or fail the whole `to` object like a misrouted ILS id.
+		excl, err := numericIDs(suppress)
+		if err != nil {
+			return nil, fmt.Errorf("hubspot: SetSendList legacy suppression list: %w", err)
+		}
+		to["contactLists"] = map[string]any{"include": []any{n}, "exclude": excl}
 	}
 	e, err := c.patchEmail(ctx, id, map[string]any{"to": to})
 	if err != nil {
@@ -235,13 +242,31 @@ func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]a
 	}
 	var e Email
 	if err := json.Unmarshal(raw, &e); err != nil {
-		return nil, fmt.Errorf("hubspot: decode patched email: %w", err)
+		// A PATCH is mutating: an undecodable 2xx body means HubSpot may already have
+		// applied the change, so surface it as UNCONFIRMED (like CloneEmail) rather
+		// than a plain decode error, so callers verify instead of blind-retrying.
+		return nil, fmt.Errorf("hubspot: patch email %s UNCONFIRMED (2xx with an undecodable body — the update may have applied; verify before retrying): %w", id, err)
 	}
 	if e.ID == "" {
 		e.ID = id // some PATCH responses omit the id; keep the caller's
 	}
 	e.AppURL = c.emailEditURL(e.ID)
 	return &e, nil
+}
+
+// numericIDs converts each id to a JSON number, rejecting any non-numeric value.
+// Used for the legacy contact-list namespace, which expects numeric ids on both the
+// include and exclude sides (string ids can be ignored or fail the whole `to`).
+func numericIDs(ids []string) ([]any, error) {
+	out := make([]any, 0, len(ids))
+	for _, s := range ids {
+		n, err := strconv.Atoi(strings.TrimSpace(s))
+		if err != nil {
+			return nil, fmt.Errorf("id %q is not numeric", s)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // emailEditURL builds a human-facing edit link. Empty when the portal id is unset.

@@ -221,6 +221,31 @@ func TestSetSendList_LegacyRoutesToContactListsNumeric(t *testing.T) {
 	}
 }
 
+func TestSetSendList_LegacyExcludeIsNumeric(t *testing.T) {
+	// The legacy namespace expects NUMERIC ids on the exclude side too — a string
+	// exclude can be ignored or fail the whole `to` object.
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c.SetSendList(context.Background(), "999", "12345", []string{"6789", " 100 "}, false); err != nil {
+		t.Fatalf("SetSendList: %v", err)
+	}
+	cl := body["to"].(map[string]any)["contactLists"].(map[string]any)
+	excl, _ := cl["exclude"].([]any)
+	if len(excl) != 2 || excl[0].(float64) != 6789 || excl[1].(float64) != 100 {
+		t.Errorf("legacy exclude = %v, want numeric [6789 100]", excl)
+	}
+	// A non-numeric suppression id must be rejected before the PATCH.
+	c2, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no PATCH expected when a legacy suppression id is non-numeric")
+	})
+	if _, err := c2.SetSendList(context.Background(), "999", "12345", []string{"nope"}, false); err == nil {
+		t.Error("a non-numeric legacy suppression id must be rejected")
+	}
+}
+
 func TestSetSendList_RejectsEmptyIDs(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("no request expected on invalid input")
