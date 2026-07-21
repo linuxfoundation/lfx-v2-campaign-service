@@ -89,7 +89,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	account := meta.AccountConfig{
 		AccountID:      accountID,
 		PageID:         pageID,
-		Label:          res.providerConfig["label"],
+		Label:          res.label,
 		CurrencyOffset: cfg.CurrencyOffset,
 	}
 	in := meta.CampaignInput{
