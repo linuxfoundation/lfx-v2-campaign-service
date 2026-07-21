@@ -192,7 +192,11 @@ func (c *Client) Close() error {
 	if c.db != nil {
 		err := c.db.Close()
 		c.db = nil
-		return err
+		if err != nil {
+			// Wrap with context (like the query/DSN errors) while preserving %w so a
+			// shutdown failure stays diagnosable via errors.Is/errors.As.
+			return fmt.Errorf("snowflake: close pool: %w", err)
+		}
 	}
 	return nil
 }
