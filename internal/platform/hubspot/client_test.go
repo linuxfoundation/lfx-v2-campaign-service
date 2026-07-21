@@ -212,6 +212,26 @@ func TestDoRequest_429OverCapRetryAfterAborts(t *testing.T) {
 	}
 }
 
+func TestDoRequest_Mutating5xxIsUnconfirmed(t *testing.T) {
+	// A mutating 5xx may have committed server-side → the apiError must be Ambiguous
+	// and IsUnconfirmed(err) must be true, so callers verify instead of assuming a
+	// clean failure. A definite 4xx must be the opposite.
+	c5, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	})
+	_, err := c5.doRequest(context.Background(), http.MethodPost, "/marketing/v3/emails/clone", map[string]string{"x": "y"}, false)
+	if !IsUnconfirmed(err) {
+		t.Errorf("a mutating 5xx must be UNCONFIRMED, got %T: %v", err, err)
+	}
+	c4, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	_, err = c4.doRequest(context.Background(), http.MethodPost, "/marketing/v3/emails/clone", map[string]string{"x": "y"}, false)
+	if IsUnconfirmed(err) {
+		t.Errorf("a definite 4xx must NOT be UNCONFIRMED (it cleanly did nothing): %v", err)
+	}
+}
+
 func TestParseRetryAfter_SecondsAndHTTPDate(t *testing.T) {
 	// Fixed "now" so an HTTP-date delay is deterministic.
 	now := time.Date(2026, 10, 21, 7, 0, 0, 0, time.UTC)

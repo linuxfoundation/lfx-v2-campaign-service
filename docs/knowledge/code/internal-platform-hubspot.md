@@ -61,25 +61,30 @@ googleads/reddit/meta/twitter clients:
 `CloneEmail` (`POST /marketing/v3/emails/clone`), `PatchEmailSettings`
 (subject + the v3 `from` object's `fromName`/`replyTo`; preview/preheader text is
 NOT a first-class v3 field, so it is deliberately not offered — see LFXV2-2775), and
-`SetSendList`. Creates/clones/PATCHes pass
+`SetSendList`. Both `PatchEmailSettings` and `SetSendList` PATCH the DRAFT route
+(`/marketing/v3/emails/{id}/draft`) — the base `/{id}` route mutates the LIVE email,
+so draft edits must go through `/draft`. Creates/clones/PATCHes pass
 `idempotent=false` (no idempotency key → a retried 429 could double-create); a 2xx
-with no id on a clone/get is surfaced as UNCONFIRMED so the caller verifies rather
-than assuming success.
+with no id (or an undecodable 2xx) on a clone/patch is surfaced as UNCONFIRMED, and a
+mutating 429/3xx/5xx apiError is flagged `Ambiguous` (see `IsUnconfirmed`), so the
+caller verifies rather than blind-retrying.
 
-**`SetSendList` routing gotcha (load-bearing):** a HubSpot email's recipient list
-goes in `contactIlsLists` when it is an ILS list (any CRM-v3 processingType) and
-`contactLists` when legacy — and the two namespaces must NOT both appear in one
-PATCH. Putting an ILS list id in `contactLists` (or including the opposite namespace)
-makes HubSpot silently reject the ENTIRE `to` object, leaving the email with no
-recipients. The client sends a COMPLETE `to` (clearing `contactIds` so no
-clone-source contacts leak) with only the send-list's namespace populated, and only
-same-namespace suppressions (HubSpot mirrors the exclude to the other namespace).
-The ILS-vs-legacy decision is the caller's (from `GetList().ProcessingType`).
+**`SetSendList` recipients (ILS-only):** a HubSpot email's recipient list goes in
+`contactIlsLists` (ILS list ids). HubSpot's ILS migration removed functional support
+for the legacy `contactLists` recipient field after 2024-10-31 (it's silently
+non-functional now), so this client NEVER emits `contactLists` — callers resolve an
+ILS list id from the Lists v3 API. The client sends a COMPLETE `to` (clearing
+`contactIds` so no clone-source contacts leak) with `contactIlsLists.include` = the
+send list + `.exclude` = suppressions.
 
 ## CRM contact-list + event-definition operations (LFXV2-2780)
 
-`lists.go`: `SearchLists`, `GetList` (with `includeFilters=true` so the filterBranch
-+ processingType come back — the latter drives the send-list routing above),
+`lists.go`: `SearchLists` (`POST /crm/v3/lists/search` — constrained to contact lists
+via `objectTypeId: "0-1"`, follows `offset`/`hasMore` pagination; membership size
+comes back as `hs_list_size`, a STRING under `additionalProperties`, requested
+explicitly — there is no top-level `size` field; `includeFilters` is NOT a valid
+search-body field and is not sent), `GetList` (with `includeFilters=true` so the
+filterBranch + processingType come back),
 `CreateList` (`POST /crm/v3/lists/` — DYNAMIC, contact objectTypeId `0-1`),
 `UpdateListFilters` (`PUT …/update-list-filters`), and `ListEventDefinitions` (resolve
 `fullyQualifiedName` for BEHAVIORAL_EVENT filters). `filterBranch` is passed through

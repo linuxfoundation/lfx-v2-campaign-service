@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -33,12 +34,32 @@ const (
 type List struct {
 	ListID         string `json:"listId"`
 	Name           string `json:"name"`
-	Size           int    `json:"size"`
 	ProcessingType string `json:"processingType"`
-	// FilterBranch is only populated by GetList(includeFilters=true).
+	// Size is the list membership count. HubSpot does NOT return a top-level `size`
+	// on a list object; it returns `hs_list_size` as a STRING under
+	// `additionalProperties`, and only when requested. setSizeFrom parses it.
+	Size int `json:"-"`
+	// AdditionalProperties captures the requested extra props (e.g. hs_list_size),
+	// which HubSpot returns as string values.
+	AdditionalProperties map[string]string `json:"additionalProperties,omitempty"`
+	// FilterBranch is only populated by GetList (includeFilters=true).
 	FilterBranch json.RawMessage `json:"filterBranch,omitempty"`
 	// AppURL is a human-facing link (built client-side, never from the API).
 	AppURL string `json:"-"`
+}
+
+// hsListSizeProp is the additionalProperties key HubSpot uses for a list's
+// membership size (a decimal string).
+const hsListSizeProp = "hs_list_size"
+
+// setSizeFromProps parses hs_list_size (a string under additionalProperties) into
+// Size. A missing/blank/unparseable value leaves Size at 0.
+func (l *List) setSizeFromProps() {
+	if s, ok := l.AdditionalProperties[hsListSizeProp]; ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+			l.Size = n
+		}
+	}
 }
 
 // SearchLists returns ALL contact lists whose name matches query. Read-only. The
@@ -50,7 +71,17 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 	out := make([]List, 0)
 	offset := 0
 	for page := 0; page < maxListPages; page++ {
-		body := map[string]any{"query": query, "count": pageSize, "offset": offset, "includeFilters": false}
+		body := map[string]any{
+			"query":  query,
+			"count":  pageSize,
+			"offset": offset,
+			// Constrain to CONTACT lists (objectTypeId 0-1) so company/deal/custom
+			// lists aren't returned. `includeFilters` is NOT a search-body field
+			// (it's on the GET single-list route) — omitted. Request hs_list_size so
+			// the membership count comes back.
+			"objectTypeId":         contactObjectTID,
+			"additionalProperties": []string{hsListSizeProp},
+		}
 		raw, err := c.doRequest(ctx, http.MethodPost, listSearchPath, body, true)
 		if err != nil {
 			return nil, err
@@ -64,6 +95,7 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			return nil, fmt.Errorf("hubspot: decode list search: %w", err)
 		}
 		for i := range resp.Lists {
+			resp.Lists[i].setSizeFromProps()
 			resp.Lists[i].AppURL = c.listURL(resp.Lists[i].ListID)
 			out = append(out, resp.Lists[i])
 		}

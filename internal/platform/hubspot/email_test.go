@@ -46,6 +46,31 @@ func TestSearchEmails_FiltersAndBuildsAppURL(t *testing.T) {
 	}
 }
 
+func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
+	// Page 1 returns paging.next.after; page 2 omits it. The walker must forward the
+	// cursor, aggregate both pages, and terminate — a match on page 2 must not be lost.
+	var afters []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		after := r.URL.Query().Get("after")
+		afters = append(afters, after)
+		if after == "" {
+			_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"KubeCon A","subject":"x"}],"paging":{"next":{"after":"CURSOR2"}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"KubeCon B","subject":"y"}]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "kubecon")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != "1" || got[1].ID != "2" {
+		t.Fatalf("both pages must aggregate, got %+v", got)
+	}
+	if len(afters) != 2 || afters[0] != "" || afters[1] != "CURSOR2" {
+		t.Errorf("cursor not forwarded across pages: %v", afters)
+	}
+}
+
 func TestGetEmail_2xxNoIDIsUnconfirmed(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"name":"no id here"}`)
@@ -164,24 +189,30 @@ func TestPatchEmailSettings_EmptyIsRejected(t *testing.T) {
 	}
 }
 
-// The load-bearing routing gotcha: an ILS list MUST go in contactIlsLists (never
-// contactLists), and the opposite namespace must NOT appear in the same PATCH.
-func TestSetSendList_ILSRoutesToIlsListsOnly(t *testing.T) {
+// Recipients are set ONLY via contactIlsLists (legacy contactLists was removed by
+// HubSpot's ILS migration after 2024-10-31), and the PATCH targets the /draft route.
+func TestSetSendList_ILSOnlyOnDraftRoute(t *testing.T) {
 	var body map[string]any
+	var gotPath string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
 		body = decodeBody(t, r)
 		_, _ = io.WriteString(w, `{"id":"999"}`)
 	})
-	_, err := c.SetSendList(context.Background(), "999", "26991", []string{"111", " 222 ", ""}, true)
+	_, err := c.SetSendList(context.Background(), "999", "26991", []string{"111", " 222 ", ""})
 	if err != nil {
 		t.Fatalf("SetSendList: %v", err)
+	}
+	if gotPath != "/marketing/v3/emails/999/draft" {
+		t.Errorf("SetSendList must PATCH the draft route, got %q", gotPath)
 	}
 	to, _ := body["to"].(map[string]any)
 	if to == nil {
 		t.Fatalf("no `to` in body: %v", body)
 	}
+	// The removed legacy field must never be emitted.
 	if _, hasLegacy := to["contactLists"]; hasLegacy {
-		t.Error("ILS send list must NOT put contactLists in the same PATCH (HubSpot rejects the whole `to`)")
+		t.Error("SetSendList must NOT emit the removed legacy contactLists field")
 	}
 	ils, _ := to["contactIlsLists"].(map[string]any)
 	if ils == nil {
@@ -201,61 +232,15 @@ func TestSetSendList_ILSRoutesToIlsListsOnly(t *testing.T) {
 	}
 }
 
-func TestSetSendList_LegacyRoutesToContactListsNumeric(t *testing.T) {
+func TestSetSendList_TrimsILSSendListID(t *testing.T) {
+	// A whitespace-padded ILS send-list id must be trimmed — a padded id sent raw
+	// could be rejected by HubSpot, leaving the email with no recipients.
 	var body map[string]any
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		body = decodeBody(t, r)
 		_, _ = io.WriteString(w, `{"id":"999"}`)
 	})
-	if _, err := c.SetSendList(context.Background(), "999", "12345", nil, false); err != nil {
-		t.Fatalf("SetSendList: %v", err)
-	}
-	to, _ := body["to"].(map[string]any)
-	if _, hasILS := to["contactIlsLists"]; hasILS {
-		t.Error("legacy send list must NOT put contactIlsLists in the same PATCH")
-	}
-	cl, _ := to["contactLists"].(map[string]any)
-	inc, _ := cl["include"].([]any)
-	if len(inc) != 1 || inc[0].(float64) != 12345 {
-		t.Errorf("legacy include = %v, want numeric [12345]", inc)
-	}
-}
-
-func TestSetSendList_LegacyExcludeIsNumeric(t *testing.T) {
-	// The legacy namespace expects NUMERIC ids on the exclude side too — a string
-	// exclude can be ignored or fail the whole `to` object.
-	var body map[string]any
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		body = decodeBody(t, r)
-		_, _ = io.WriteString(w, `{"id":"999"}`)
-	})
-	if _, err := c.SetSendList(context.Background(), "999", "12345", []string{"6789", " 100 "}, false); err != nil {
-		t.Fatalf("SetSendList: %v", err)
-	}
-	cl := body["to"].(map[string]any)["contactLists"].(map[string]any)
-	excl, _ := cl["exclude"].([]any)
-	if len(excl) != 2 || excl[0].(float64) != 6789 || excl[1].(float64) != 100 {
-		t.Errorf("legacy exclude = %v, want numeric [6789 100]", excl)
-	}
-	// A non-numeric suppression id must be rejected before the PATCH.
-	c2, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("no PATCH expected when a legacy suppression id is non-numeric")
-	})
-	if _, err := c2.SetSendList(context.Background(), "999", "12345", []string{"nope"}, false); err == nil {
-		t.Error("a non-numeric legacy suppression id must be rejected")
-	}
-}
-
-func TestSetSendList_ILSTrimsSendListID(t *testing.T) {
-	// A whitespace-padded ILS send-list id must be trimmed before it goes into
-	// contactIlsLists — a padded id would be sent raw and HubSpot could reject it,
-	// leaving the email with no recipients.
-	var body map[string]any
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		body = decodeBody(t, r)
-		_, _ = io.WriteString(w, `{"id":"999"}`)
-	})
-	if _, err := c.SetSendList(context.Background(), "999", "  ils-123  ", nil, true); err != nil {
+	if _, err := c.SetSendList(context.Background(), "999", "  ils-123  ", nil); err != nil {
 		t.Fatalf("SetSendList: %v", err)
 	}
 	ils := body["to"].(map[string]any)["contactIlsLists"].(map[string]any)
@@ -269,34 +254,10 @@ func TestSetSendList_RejectsEmptyIDs(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("no request expected on invalid input")
 	})
-	if _, err := c.SetSendList(context.Background(), "", "1", nil, true); err == nil {
+	if _, err := c.SetSendList(context.Background(), "", "1", nil); err == nil {
 		t.Error("empty email id should be rejected")
 	}
-	if _, err := c.SetSendList(context.Background(), "1", "", nil, true); err == nil {
-		t.Error("empty send-list id should be rejected")
-	}
-}
-
-func TestSetSendList_RejectsNonNumericLegacyID(t *testing.T) {
-	// A non-numeric legacy (non-ILS) send-list id must be rejected BEFORE the PATCH:
-	// silently dropping it would send an empty include and HubSpot would clear all
-	// recipients while returning success (a silent no-recipient send).
-	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("no PATCH expected when the legacy send-list id is non-numeric")
-	})
-	if _, err := c.SetSendList(context.Background(), "999", "not-a-number", nil, false); err == nil {
-		t.Error("a non-numeric legacy send-list id must be rejected, not turned into an empty-recipient PATCH")
-	}
-	// A whitespace-padded numeric id must be accepted (Atoi doesn't trim; we do).
-	var patched bool
-	c2, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		patched = true
-		_, _ = io.WriteString(w, `{"id":"999"}`)
-	})
-	if _, err := c2.SetSendList(context.Background(), "999", " 12345 ", nil, false); err != nil {
-		t.Errorf("a padded numeric legacy id should be accepted: %v", err)
-	}
-	if !patched {
-		t.Error("expected a PATCH for a valid padded numeric id")
+	if _, err := c.SetSendList(context.Background(), "1", "  ", nil); err == nil {
+		t.Error("empty/whitespace ILS send-list id should be rejected")
 	}
 }

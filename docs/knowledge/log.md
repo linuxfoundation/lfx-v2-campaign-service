@@ -1,5 +1,24 @@
 # Log
 
+## 2026-07-21
+
+**Update** — HubSpot client v3-contract fixes (PR #35 review, copilot; verified
+against HubSpot's OpenAPI specs). (1) `PatchEmailSettings`/`SetSendList` now PATCH the
+DRAFT route `/marketing/v3/emails/{id}/draft` — the base `/{id}` route mutates the
+LIVE email, so draft edits were hitting the wrong endpoint. (2) `SetSendList` is now
+ILS-ONLY: HubSpot's ILS migration removed functional support for the legacy
+`contactLists` recipient field after 2024-10-31, so the client never emits it (dropped
+the `isILS` param + the legacy numeric-id handling; callers resolve an ILS list id from
+the Lists API). (3) `SearchLists` now sends `objectTypeId: "0-1"` to constrain to
+contact lists, drops the invalid `includeFilters` search-body field, and reads
+membership size from `hs_list_size` (a STRING under `additionalProperties`, requested
+explicitly) — there is no top-level `size`, so `List.Size` was always 0. (4) A mutating
+429/3xx/5xx `apiError` is now flagged `Ambiguous`; new `IsUnconfirmed(err)` lets callers
+distinguish a may-have-committed outcome from a definite 4xx. (5) 429/error response
+bodies are drained (bounded) before close so the keep-alive connection is reused on
+retry. (6) Added multi-page pagination tests (cursor + offset forwarding, aggregation,
+termination) for all three list-walkers.
+
 ## 2026-07-20
 
 **Update** — Idempotency-lookup errors no longer silently fall through to dispatch

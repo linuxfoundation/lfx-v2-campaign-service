@@ -203,6 +203,35 @@ type apiError struct {
 	Path       string
 	// Body is a bounded snapshot retained for classification only; never rendered.
 	Body string
+	// Ambiguous is true when this error came from a MUTATING request whose status
+	// (429 / 3xx / 5xx) means the server MAY have applied the change. Callers of a
+	// non-idempotent op must treat an ambiguous apiError as UNCONFIRMED (verify,
+	// don't blind-retry) — distinct from a definite 4xx, which cleanly did nothing.
+	Ambiguous bool
+}
+
+// IsUnconfirmed reports whether err represents an AMBIGUOUS outcome on a mutating
+// request — the server may or may not have applied the change. This is true for an
+// ambiguous apiError (a mutating 429/3xx/5xx) and for any transportError (the reply
+// was never read, so the mutation may have landed). A definite 4xx (a non-ambiguous
+// apiError) returns false: it cleanly did nothing. External callers use this to
+// decide "verify before retrying" vs "safe to retry / definitely failed".
+func IsUnconfirmed(err error) bool {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.Ambiguous
+	}
+	var te *transportError
+	return errors.As(err, &te)
+}
+
+// isAmbiguousMutatingStatus reports whether a status code on a MUTATING request
+// leaves the outcome ambiguous: 429 (may have committed before the limit), any 3xx
+// (a redirect on a mutate is not a clean no-op here), and 5xx (server may have
+// applied it before failing). A definite 4xx (except 429) means the request was
+// rejected and nothing changed.
+func isAmbiguousMutatingStatus(code int) bool {
+	return code == http.StatusTooManyRequests || (code >= 300 && code < 400) || code >= 500
 }
 
 func (e *apiError) Error() string {
@@ -330,11 +359,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		if resp.StatusCode == http.StatusTooManyRequests {
 			if !idempotent || attempt >= retryMax {
 				snap := c.readErrorSnapshot(resp)
-				_ = resp.Body.Close()
-				return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: snap}
+				drainAndClose(resp)
+				return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: snap, Ambiguous: !idempotent}
 			}
 			wait := c.retryAfter(resp, attempt)
-			_ = resp.Body.Close()
+			// Drain the (idempotent) 429 body before closing so the transport can
+			// reuse this connection for the retry instead of paying for a fresh
+			// TCP/TLS handshake while already rate-limited.
+			drainAndClose(resp)
 			if wait > maxRetryWait {
 				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 			}
@@ -348,8 +380,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			snap := c.readErrorSnapshot(resp)
-			_ = resp.Body.Close()
-			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: snap}
+			drainAndClose(resp)
+			return nil, &apiError{
+				StatusCode: resp.StatusCode, Method: method, Path: path, Body: snap,
+				Ambiguous: !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
+			}
 		}
 
 		raw, rErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
@@ -367,6 +402,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 
 	// Unreachable: the loop returns on the last attempt.
 	return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
+}
+
+// drainAndClose reads and discards a bounded remainder of the response body before
+// closing, so Go's transport can reuse the keep-alive connection instead of paying
+// for a fresh TCP/TLS handshake on the next request (an unread body forces the
+// connection closed). Bounded so a huge body can't stall shutdown.
+func drainAndClose(resp *http.Response) {
+	const maxDrain = 4 << 10
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrain))
+	_ = resp.Body.Close()
 }
 
 // readErrorSnapshot reads a bounded prefix of a non-2xx body for internal

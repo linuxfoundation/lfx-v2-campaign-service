@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 )
 
@@ -189,59 +188,38 @@ func (c *Client) PatchEmailSettings(ctx context.Context, id string, s EmailSetti
 	return c.patchEmail(ctx, id, payload)
 }
 
-// SetSendList sets the recipient (and suppression) lists on a draft. sendListID
-// is the built master audience; suppressionListIDs are excluded. isILS selects the
-// namespace: an ILS list (any CRM-v3 processingType) MUST go in contactIlsLists — a
-// CRM-v3 (ILS) list id placed in contactLists makes HubSpot silently reject the
-// whole `to` object, leaving the email with no recipients. Only same-namespace
-// suppressions are sent; HubSpot mirrors the exclude to the other namespace itself.
-// A COMPLETE `to` object is sent (contactIds cleared) so no stale clone-source
-// recipients remain. MUTATING.
-func (c *Client) SetSendList(ctx context.Context, id, sendListID string, suppressionListIDs []string, isILS bool) (*Email, error) {
-	sendListID = strings.TrimSpace(sendListID)
-	if strings.TrimSpace(id) == "" || sendListID == "" {
-		return nil, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and send-list id")
+// SetSendList sets the recipient (ILS) send list and suppression lists on a draft.
+// ilsListID is the built master audience (an ILS list id); suppressionListIDs are
+// excluded.
+//
+// Recipients are set ONLY via contactIlsLists. HubSpot's ILS migration removed
+// functional support for the legacy `contactLists` recipient field after
+// 2024-10-31 (it's silently non-functional now), so this client never emits it —
+// callers resolve an ILS list id from the Lists v3 API. A COMPLETE `to` object is
+// sent (contactIds cleared) so no stale clone-source recipients remain. MUTATING.
+func (c *Client) SetSendList(ctx context.Context, id, ilsListID string, suppressionListIDs []string) (*Email, error) {
+	ilsListID = strings.TrimSpace(ilsListID)
+	if strings.TrimSpace(id) == "" || ilsListID == "" {
+		return nil, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and ILS send-list id")
 	}
 	to := map[string]any{
 		// Clear individual contacts the clone source may have carried over.
 		"contactIds": map[string]any{"include": []string{}, "exclude": []string{}},
+		// ilsListID is trimmed above — a whitespace-padded id sent raw could be
+		// rejected by HubSpot, leaving the email with no recipients.
+		"contactIlsLists": map[string]any{"include": []string{ilsListID}, "exclude": cleanIDs(suppressionListIDs)},
 	}
-	suppress := cleanIDs(suppressionListIDs)
-	if isILS {
-		// sendListID is trimmed above — a whitespace-padded ILS id would otherwise be
-		// sent raw and HubSpot could reject it, leaving the email with no recipients.
-		to["contactIlsLists"] = map[string]any{"include": []string{sendListID}, "exclude": suppress}
-	} else {
-		// Legacy lists are numeric on BOTH sides. REJECT a non-numeric send-list id
-		// up front — if it were silently dropped the PATCH would send an empty
-		// include, and HubSpot would clear the existing recipients and return success,
-		// leaving the email with NO recipients (the same silent-empty failure the
-		// ILS-namespace routing guards against). strconv.Atoi doesn't trim, so trim
-		// first.
-		n, err := strconv.Atoi(sendListID) // already trimmed above
-		if err != nil {
-			return nil, fmt.Errorf("hubspot: SetSendList legacy send-list id %q is not numeric (a non-numeric id would clear all recipients)", sendListID)
-		}
-		// The legacy namespace also expects NUMERIC exclude ids — sending strings can
-		// be ignored or fail the whole `to` object like a misrouted ILS id.
-		excl, err := numericIDs(suppress)
-		if err != nil {
-			return nil, fmt.Errorf("hubspot: SetSendList legacy suppression list: %w", err)
-		}
-		to["contactLists"] = map[string]any{"include": []any{n}, "exclude": excl}
-	}
-	e, err := c.patchEmail(ctx, id, map[string]any{"to": to})
-	if err != nil {
-		return nil, err
-	}
-	return e, nil
+	return c.patchEmail(ctx, id, map[string]any{"to": to})
 }
 
-// patchEmail PATCHes /marketing/v3/emails/{id} and decodes the returned email.
+// patchEmail PATCHes the email's DRAFT (/marketing/v3/emails/{id}/draft) and decodes
+// the returned email. The /draft sub-route stages subject/from/send-list changes on
+// the unpublished draft buffer; the base /{id} route mutates the LIVE email instead,
+// so draft edits must go through /draft (verified against HubSpot's v3 spec).
 func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]any) (*Email, error) {
-	raw, err := c.doRequest(ctx, http.MethodPatch, emailsPath+"/"+url.PathEscape(id), payload, false)
+	raw, err := c.doRequest(ctx, http.MethodPatch, emailsPath+"/"+url.PathEscape(id)+"/draft", payload, false)
 	if err != nil {
-		return nil, fmt.Errorf("hubspot: patch email %s: %w", id, err)
+		return nil, fmt.Errorf("hubspot: patch email %s draft: %w", id, err)
 	}
 	var e Email
 	if err := json.Unmarshal(raw, &e); err != nil {
@@ -255,21 +233,6 @@ func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]a
 	}
 	e.AppURL = c.emailEditURL(e.ID)
 	return &e, nil
-}
-
-// numericIDs converts each id to a JSON number, rejecting any non-numeric value.
-// Used for the legacy contact-list namespace, which expects numeric ids on both the
-// include and exclude sides (string ids can be ignored or fail the whole `to`).
-func numericIDs(ids []string) ([]any, error) {
-	out := make([]any, 0, len(ids))
-	for _, s := range ids {
-		n, err := strconv.Atoi(strings.TrimSpace(s))
-		if err != nil {
-			return nil, fmt.Errorf("id %q is not numeric", s)
-		}
-		out = append(out, n)
-	}
-	return out, nil
 }
 
 // emailEditURL builds a human-facing edit link. Empty when the portal id is unset.

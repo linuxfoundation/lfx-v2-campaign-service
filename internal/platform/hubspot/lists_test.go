@@ -13,11 +13,14 @@ import (
 )
 
 func TestSearchLists_ReturnsAndBuildsURL(t *testing.T) {
+	var body map[string]any
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/crm/v3/lists/search" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = io.WriteString(w, `{"lists":[{"listId":"26991","name":"CNCF Master","size":1200}]}`)
+		body = decodeBody(t, r)
+		// Size comes back as hs_list_size (a STRING) under additionalProperties.
+		_, _ = io.WriteString(w, `{"lists":[{"listId":"26991","name":"CNCF Master","additionalProperties":{"hs_list_size":"1200"}}]}`)
 	})
 	got, err := c.SearchLists(context.Background(), "CNCF")
 	if err != nil {
@@ -26,8 +29,48 @@ func TestSearchLists_ReturnsAndBuildsURL(t *testing.T) {
 	if len(got) != 1 || got[0].ListID != "26991" {
 		t.Fatalf("got %+v", got)
 	}
+	if got[0].Size != 1200 {
+		t.Errorf("Size must be parsed from hs_list_size string, got %d", got[0].Size)
+	}
 	if !strings.Contains(got[0].AppURL, "/lists/26991") {
 		t.Errorf("AppURL = %q", got[0].AppURL)
+	}
+	// The search body must constrain to contact lists (0-1), request hs_list_size,
+	// and NOT send includeFilters (not a valid search-body field).
+	if body["objectTypeId"] != "0-1" {
+		t.Errorf("search must set objectTypeId 0-1, got %v", body["objectTypeId"])
+	}
+	if _, bad := body["includeFilters"]; bad {
+		t.Error("search must NOT send includeFilters (invalid on the search route)")
+	}
+	ap, _ := body["additionalProperties"].([]any)
+	if len(ap) != 1 || ap[0] != "hs_list_size" {
+		t.Errorf("search must request hs_list_size, got %v", body["additionalProperties"])
+	}
+}
+
+func TestSearchLists_FollowsOffsetPagination(t *testing.T) {
+	// Page 1 returns hasMore + an advanced offset; page 2 returns hasMore=false.
+	var offsets []int
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		off := int(body["offset"].(float64))
+		offsets = append(offsets, off)
+		if off == 0 {
+			_, _ = io.WriteString(w, `{"lists":[{"listId":"1","name":"A"}],"hasMore":true,"offset":100}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"lists":[{"listId":"2","name":"B"}],"hasMore":false,"offset":100}`)
+	})
+	got, err := c.SearchLists(context.Background(), "q")
+	if err != nil {
+		t.Fatalf("SearchLists: %v", err)
+	}
+	if len(got) != 2 || got[0].ListID != "1" || got[1].ListID != "2" {
+		t.Fatalf("both pages must aggregate, got %+v", got)
+	}
+	if len(offsets) != 2 || offsets[0] != 0 || offsets[1] != 100 {
+		t.Errorf("offset not forwarded across pages: %v", offsets)
 	}
 }
 
@@ -168,5 +211,30 @@ func TestListEventDefinitions_ReturnsFQNs(t *testing.T) {
 	}
 	if len(defs) != 1 || defs[0].FullyQualifiedName != "pe8112310_event_registration" {
 		t.Errorf("defs = %+v", defs)
+	}
+}
+
+func TestListEventDefinitions_FollowsCursorPagination(t *testing.T) {
+	// Page 1 returns paging.next.after; page 2 omits it. A portal with >1 page of
+	// definitions must not silently lose the later ones.
+	var afters []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		after := r.URL.Query().Get("after")
+		afters = append(afters, after)
+		if after == "" {
+			_, _ = io.WriteString(w, `{"results":[{"fullyQualifiedName":"pe_a","name":"a"}],"paging":{"next":{"after":"C2"}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"fullyQualifiedName":"pe_b","name":"b"}]}`)
+	})
+	defs, err := c.ListEventDefinitions(context.Background())
+	if err != nil {
+		t.Fatalf("ListEventDefinitions: %v", err)
+	}
+	if len(defs) != 2 || defs[0].FullyQualifiedName != "pe_a" || defs[1].FullyQualifiedName != "pe_b" {
+		t.Fatalf("both pages must aggregate, got %+v", defs)
+	}
+	if len(afters) != 2 || afters[0] != "" || afters[1] != "C2" {
+		t.Errorf("cursor not forwarded: %v", afters)
 	}
 }
