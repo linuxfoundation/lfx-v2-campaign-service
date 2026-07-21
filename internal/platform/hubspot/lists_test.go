@@ -186,7 +186,7 @@ func TestGetList_TopLevelShapeAlsoDecodes(t *testing.T) {
 func TestCreateList_SendsDynamicContactBodyAndFilterBranch(t *testing.T) {
 	var body map[string]any
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/crm/v3/lists/" {
+		if r.Method != http.MethodPost || r.URL.Path != "/crm/v3/lists" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		body = decodeBody(t, r)

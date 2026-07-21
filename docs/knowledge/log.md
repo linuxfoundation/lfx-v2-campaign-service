@@ -2,6 +2,16 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot endpoint-contract fixes (PR #35 review round 13, copilot).
+(1) `SearchEmails` dropped the `sort=-updatedAt` query param — it's not a documented
+field on `GET /marketing/v3/emails` (it belongs to the revisions endpoint) so HubSpot
+may ignore/reject it. Order is now guaranteed CLIENT-SIDE: added `Email.UpdatedAt` and
+`sortEmailsByUpdatedDesc` (RFC3339 lexicographic, id tiebreak) applied to the aggregated
+matches. Added `TestSearchEmails_SortsMostRecentlyUpdatedFirst`. (2) `CreateList` now
+POSTs to the canonical `/crm/v3/lists` (no trailing slash) — HubSpot canonicalizes a
+trailing slash via redirect and this client refuses redirects, so `/crm/v3/lists/` could
+have produced a failed/ambiguous create. Updated the test path assertion.
+
 **Update** — HubSpot cursor decode preserves `+` (PR #35 review round 12, cursor/copilot).
 The round-10 `decodeCursor` used `url.QueryUnescape`, which converts a literal `+` to a
 space — but base64 paging cursors legitimately contain `+`, so a token like `A+B/C=`

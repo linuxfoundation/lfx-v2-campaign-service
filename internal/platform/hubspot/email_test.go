@@ -97,20 +97,49 @@ func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 		after := r.URL.Query().Get("after")
 		afters = append(afters, after)
 		if after == "" {
-			_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"KubeCon A","subject":"x"}],"paging":{"next":{"after":"CURSOR2"}}}`)
+			// "A" is the more recently updated, so it must sort first after aggregation.
+			_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"KubeCon A","subject":"x","updatedAt":"2026-01-02T00:00:00Z"}],"paging":{"next":{"after":"CURSOR2"}}}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"KubeCon B","subject":"y"}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"KubeCon B","subject":"y","updatedAt":"2026-01-01T00:00:00Z"}]}`)
 	})
 	got, err := c.SearchEmails(context.Background(), "kubecon")
 	if err != nil {
 		t.Fatalf("SearchEmails: %v", err)
 	}
 	if len(got) != 2 || got[0].ID != "1" || got[1].ID != "2" {
-		t.Fatalf("both pages must aggregate, got %+v", got)
+		t.Fatalf("both pages must aggregate (most-recent A first), got %+v", got)
 	}
 	if len(afters) != 2 || afters[0] != "" || afters[1] != "CURSOR2" {
 		t.Errorf("cursor not forwarded across pages: %v", afters)
+	}
+}
+
+func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
+	// The `sort` query param isn't a documented field on GET /marketing/v3/emails, so
+	// order is guaranteed CLIENT-SIDE: results come back most-recently-updated first
+	// regardless of server order, and no `sort` param is sent.
+	var sentSort bool
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.URL.Query()["sort"]; ok {
+			sentSort = true
+		}
+		// Intentionally returned oldest-first to prove the client re-orders.
+		_, _ = io.WriteString(w, `{"results":[`+
+			`{"id":"1","name":"Old","subject":"x","updatedAt":"2024-01-01T00:00:00Z"},`+
+			`{"id":"2","name":"New","subject":"x","updatedAt":"2026-06-01T00:00:00Z"},`+
+			`{"id":"3","name":"Mid","subject":"x","updatedAt":"2025-03-01T00:00:00Z"}`+
+			`]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if sentSort {
+		t.Error("SearchEmails must NOT send an unsupported `sort` query param")
+	}
+	if len(got) != 3 || got[0].ID != "2" || got[1].ID != "3" || got[2].ID != "1" {
+		t.Errorf("results must be most-recently-updated first (2,3,1), got %v", []string{got[0].ID, got[1].ID, got[2].ID})
 	}
 }
 

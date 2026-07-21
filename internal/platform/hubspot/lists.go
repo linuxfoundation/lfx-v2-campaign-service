@@ -212,7 +212,10 @@ func (c *Client) CreateList(ctx context.Context, name string, filterBranch json.
 		ProcessingType: "DYNAMIC",
 		FilterBranch:   filterBranch,
 	}
-	raw, err := c.doRequest(ctx, http.MethodPost, listsPath+"/", body, false)
+	// POST to the canonical /crm/v3/lists (no trailing slash). HubSpot canonicalizes a
+	// trailing slash with a redirect, and this client refuses to follow redirects, so a
+	// POST to /crm/v3/lists/ could turn into a failed/ambiguous create.
+	raw, err := c.doRequest(ctx, http.MethodPost, listsPath, body, false)
 	if err != nil {
 		return nil, fmt.Errorf("hubspot: create list %q: %w", name, err)
 	}

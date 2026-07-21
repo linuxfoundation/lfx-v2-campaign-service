@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -29,8 +30,24 @@ type Email struct {
 	Name    string `json:"name"`
 	Subject string `json:"subject"`
 	State   string `json:"state"`
+	// UpdatedAt is the last-modified timestamp (RFC3339). Used only to order
+	// SearchEmails results most-recently-updated first; the string sorts
+	// lexicographically in timestamp order.
+	UpdatedAt string `json:"updatedAt"`
 	// AppURL is a human-facing edit link (built client-side, never from the API).
 	AppURL string `json:"-"`
+}
+
+// sortEmailsByUpdatedDesc orders emails most-recently-updated first, in place. The
+// updatedAt strings are RFC3339, which sort lexicographically in chronological order;
+// ties (or missing timestamps) fall back to the id for a deterministic order.
+func sortEmailsByUpdatedDesc(emails []Email) {
+	sort.SliceStable(emails, func(i, j int) bool {
+		if emails[i].UpdatedAt != emails[j].UpdatedAt {
+			return emails[i].UpdatedAt > emails[j].UpdatedAt
+		}
+		return emails[i].ID > emails[j].ID
+	})
 }
 
 // emailListResponse is the shape of GET /marketing/v3/emails. HubSpot cursor-
@@ -79,7 +96,10 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 	for page := 0; page < maxListPages; page++ {
 		q := url.Values{}
 		q.Set("limit", "100")
-		q.Set("sort", "-updatedAt")
+		// NOTE: no `sort` param — it is not a documented field on GET
+		// /marketing/v3/emails (it belongs to the revisions endpoint), so HubSpot may
+		// ignore/reject it. The most-recently-updated-first order is guaranteed by
+		// sorting the aggregated matches client-side (below) instead.
 		if after != "" {
 			q.Set("after", after)
 		}
@@ -103,6 +123,7 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 			}
 		}
 		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
+			sortEmailsByUpdatedDesc(out)
 			return out, nil
 		}
 		// A non-advancing cursor (HubSpot or a proxy echoing the same `after`) would
