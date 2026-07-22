@@ -74,7 +74,28 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		// the handler.
 		MinLength(1)
 	})
-	Attribute("config", Any, "Per-platform campaign configuration")
+	Attribute("config", Any, "Per-platform campaign configuration", func() {
+		// config is an OBJECT ENVELOPE keyed by per-platform config name
+		// (redditConfig / linkedInConfig / metaConfig / twitterConfig — plus the
+		// top-level hsToken sibling), NOT a string. Goa renders an Any without an
+		// example as an empty-string example, which a consumer would copy and then
+		// hit "cannot unmarshal string into map" after the 202. Publish a deterministic
+		// OBJECT example (matching the reddit-ads + meta-ads platforms example above) so
+		// the copyable contract is a valid envelope.
+		Example(map[string]any{
+			"hsToken": "hs-abc123",
+			"redditConfig": map[string]any{
+				"budgetUsd": 50, "startDate": "2099-08-01", "endDate": "2099-08-31",
+				"objective": "traffic", "subreddits": []string{"kubernetes"},
+				"postUrl": "t3_abc123", "variants": []map[string]any{{"headline": "Join us"}},
+			},
+			"metaConfig": map[string]any{
+				"budget": 2500, "startDate": "2099-08-01", "endDate": "2099-08-31",
+				"objective": "traffic", "geoTargets": []string{"US"},
+				"variants": []map[string]any{{"primaryText": "Join us at KubeCon", "headline": "KubeCon 2099"}},
+			},
+		})
+	})
 	Required("platforms")
 })
 
