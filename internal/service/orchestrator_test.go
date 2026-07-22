@@ -1101,8 +1101,12 @@ func TestOrchestrator_GroupOrphanPartialIsPersisted(t *testing.T) {
 	if !ok {
 		t.Fatal("pending claim should be retained after a group-orphan dispatch error")
 	}
-	// PlatformCampaignID stays empty (no campaign was created) so the idempotency
-	// fast-path re-attempts rather than false-succeeding.
+	// PlatformCampaignID stays empty (no campaign was created), which keeps the row
+	// OUT of the idempotency fast-path (it keys on a non-empty id) so it can't
+	// false-succeed. NOTE: the row is not automatically re-attempted either — a later
+	// job's ClaimCampaignDispatch conflicts with this retained pending row and skips
+	// dispatch; the row stays blocked pending reconciliation / resume support
+	// (LFXV2-2665). This PR only makes the orphan RECORDED, not auto-resumed.
 	if row.PlatformCampaignID != "" {
 		t.Errorf("retained row PlatformCampaignID = %q, want empty (no campaign created)", row.PlatformCampaignID)
 	}
@@ -1116,6 +1120,44 @@ func TestOrchestrator_GroupOrphanPartialIsPersisted(t *testing.T) {
 	}
 	if row.Status != "pending" {
 		t.Errorf("retained row Status = %q, want pending (recoverable orphan)", row.Status)
+	}
+}
+
+// contentlessPartialDispatcher returns a non-nil campaign with NEITHER an upstream id
+// NOR a Result blob, alongside a retained (non-pre-create) error — the exact case the
+// widened persist guard must REJECT (nothing to record → "outcome unknown", no upsert).
+type contentlessPartialDispatcher struct{}
+
+func (contentlessPartialDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{PlatformCampaignID: "", CampaignName: "n"}, // no id, no Result
+		errors.New("dispatch failed with no recordable upstream detail")
+}
+
+// TestOrchestrator_ContentlessPartialIsNotPersisted pins the FALSE branch of the
+// widened persist guard: a retained partial that carries neither an upstream id nor a
+// Result blob has nothing worth recording, so it must NOT be upserted (it's logged as
+// "outcome unknown" and the claim is retained). Without this, a future refactor that
+// dropped the id/Result check from the guard would still pass every other test while
+// silently writing anonymous, content-free pending rows.
+func TestOrchestrator_ContentlessPartialIsNotPersisted(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: contentlessPartialDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	// The claim is RETAINED (outcome unknown; a blind retry could double-create).
+	if _, ok := camps.existing["b1|"+string(model.ProviderLinkedInAds)]; !ok {
+		t.Fatal("claim should be retained after a contentless partial error")
+	}
+	// But NOTHING is upserted — there is no orphan detail to record.
+	if len(camps.upserted) != 0 {
+		t.Errorf("upserted %d campaigns, want 0 (a content-free partial must not be persisted)", len(camps.upserted))
 	}
 }
 

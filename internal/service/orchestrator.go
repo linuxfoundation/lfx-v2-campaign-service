@@ -591,13 +591,17 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// completed campaign): the dispatch did not succeed, only an upstream
 				// resource was partially created.
 				campaign.Status = "pending"
+				// Log has_result too: in the group-orphan case platform_campaign_id is
+				// empty by design, so has_result flags that the reconcilable detail (the
+				// group id) is in the persisted Result blob — otherwise the log line
+				// alone gives an on-call engineer an empty id and no pointer to the orphan.
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
 					slog.ErrorContext(ctx, "failed to record partial upstream resource on retained pending claim",
-						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", perr)
+						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
 				} else {
 					slog.ErrorContext(ctx, "platform dispatch failed after a partial upstream create; recorded orphan on retained pending claim",
-						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", derr)
+						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 				}
 				cancelPersist()
 			} else {
