@@ -8,6 +8,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	lfxv2campaignserviceconnections "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -2355,9 +2357,10 @@ type GoogleAdsCredentialsRequestBody struct {
 type LinkedinAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// LinkedIn ad account ID
+	// LinkedIn ad account ID (numeric)
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, e.g. 208777 — not the full
+	// urn:li:organization: URN)
 	OrgID string `form:"org_id" json:"org_id" xml:"org_id"`
 }
 
@@ -7718,6 +7721,20 @@ func ValidateSetCredentialHubspotNotFoundResponseBody(body *SetCredentialHubspot
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateLinkedinAdsConnectionConfigRequestBody runs the validations defined
+// on linkedin-ads-connection-configRequestBody
+func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionConfigRequestBody) (err error) {
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[0-9]+$"))
+	if utf8.RuneCountInString(body.AccountID) > 64 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 64, false))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.org_id", body.OrgID, "^[0-9]+$"))
+	if utf8.RuneCountInString(body.OrgID) > 64 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.org_id", body.OrgID, utf8.RuneCountInString(body.OrgID), 64, false))
 	}
 	return
 }

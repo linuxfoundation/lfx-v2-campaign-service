@@ -5299,16 +5299,20 @@ definitions:
         properties:
             account_id:
                 type: string
-                description: LinkedIn ad account ID
+                description: LinkedIn ad account ID (numeric)
                 example: "538170226"
+                pattern: ^[0-9]+$
+                maxLength: 64
             label:
                 type: string
                 description: Optional friendly name
                 example: Consequatur rerum.
             org_id:
                 type: string
-                description: LinkedIn organization URN id
+                description: 'LinkedIn organization ID (the bare NUMERIC id, e.g. 208777 — not the full urn:li:organization: URN)'
                 example: "208777"
+                pattern: ^[0-9]+$
+                maxLength: 64
         example:
             account_id: "538170226"
             label: Velit nulla modi.

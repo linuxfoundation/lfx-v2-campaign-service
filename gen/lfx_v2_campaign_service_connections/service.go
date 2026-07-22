@@ -486,9 +486,10 @@ type LinkedinAdsConnection struct {
 type LinkedinAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
-	// LinkedIn ad account ID
+	// LinkedIn ad account ID (numeric)
 	AccountID string
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, e.g. 208777 — not the full
+	// urn:li:organization: URN)
 	OrgID string
 }
 

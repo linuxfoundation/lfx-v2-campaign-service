@@ -347,8 +347,22 @@ var LinkedInAdsCredentials = Type("linkedin-ads-credentials", func() {
 
 var LinkedInAdsConnectionConfig = Type("linkedin-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
-	Attribute("account_id", String, "LinkedIn ad account ID", func() { Example("538170226") })
-	Attribute("org_id", String, "LinkedIn organization URN id", func() { Example("208777") })
+	// Both ids are interpolated into LinkedIn request paths / URNs
+	// (adAccounts/<account_id>/..., urn:li:organization:<org_id>), and the client treats
+	// them as the bare NUMERIC id — a non-numeric value stored on an active connection
+	// would fail every dispatch asynchronously. Validate the numeric shape here so an
+	// unusable id is a 4xx at connection creation instead. MaxLength bounds the stored
+	// size (real LinkedIn ids are short).
+	Attribute("account_id", String, "LinkedIn ad account ID (numeric)", func() {
+		Example("538170226")
+		Pattern(`^[0-9]+$`)
+		MaxLength(64)
+	})
+	Attribute("org_id", String, "LinkedIn organization ID (the bare NUMERIC id, e.g. 208777 — not the full urn:li:organization: URN)", func() {
+		Example("208777")
+		Pattern(`^[0-9]+$`)
+		MaxLength(64)
+	})
 	Required("account_id", "org_id")
 })
 
