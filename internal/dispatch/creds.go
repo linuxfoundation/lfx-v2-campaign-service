@@ -26,6 +26,14 @@ import (
 // (YYYY-MM-DD), documented in docs/api-catalog.md for every platform config.
 const campaignDateLayout = "2006-01-02"
 
+// maxPersistedBudget is the largest value the campaigns.budget_amount column can hold
+// (NUMERIC(14,2) → 12 integer digits, i.e. < 10^12). Some platform clients (Meta,
+// Twitter) accept a larger budget than this — for those the campaign can be created
+// upstream and only THEN would the row write fail with a numeric overflow. To avoid
+// losing the record of a created campaign, applyCampaignConfig leaves budget_amount
+// NULL (and logs) rather than persisting an over-range value.
+const maxPersistedBudget = 1e12 - 0.01
+
 // applyCampaignConfig populates the persistence-contract columns on c that only the
 // per-platform config knows: budget_amount, budget_type, start_date, end_date, and
 // config_snapshot (docs/architecture.md — the campaigns row stores these). Without it
@@ -41,13 +49,22 @@ const campaignDateLayout = "2006-01-02"
 //     ConfigSnapshot. A marshal failure is logged (not fatal) and leaves it NULL.
 func applyCampaignConfig(ctx context.Context, c *model.Campaign, budget float64, lifetime bool, startDate, endDate string, snapshot any) {
 	if budget > 0 {
-		b := budget
-		c.BudgetAmount = &b
-		bt := model.BudgetDaily
-		if lifetime {
-			bt = model.BudgetLifetime
+		if budget > maxPersistedBudget {
+			// The campaign exists upstream (some clients accept a larger budget than the
+			// budget_amount column holds); persisting the over-range value would fail the
+			// whole row write with a numeric overflow and lose the record. Leave it NULL
+			// and log so the row still persists (id/status/config) for reconciliation.
+			slog.WarnContext(ctx, "campaign budget exceeds the persistable range; budget_amount left empty",
+				"platform", string(c.Platform), "budget", budget, "max", maxPersistedBudget)
+		} else {
+			b := budget
+			c.BudgetAmount = &b
+			bt := model.BudgetDaily
+			if lifetime {
+				bt = model.BudgetLifetime
+			}
+			c.BudgetType = &bt
 		}
-		c.BudgetType = &bt
 	}
 	c.StartDate = parseCampaignDate(startDate)
 	c.EndDate = parseCampaignDate(endDate)
