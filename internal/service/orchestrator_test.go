@@ -344,6 +344,37 @@ func TestOrchestrator_SkipsAlreadyDispatchedPlatform(t *testing.T) {
 	}
 }
 
+// TestOrchestrator_PendingOrphanWithIDIsNotAFastPathSuccess verifies the fast path
+// does NOT report a retained partial orphan as a completed success. A mid-flow failure
+// persists a row with a `pending` status AND a non-empty upstream id (recorded for
+// reconciliation). A later CreateCampaigns must NOT short-circuit to success on that id
+// alone — it must fall through to the claim/reconcile path (here the dispatcher runs and
+// the job succeeds), rather than falsely reporting the still-pending orphan as done.
+func TestOrchestrator_PendingOrphanWithIDIsNotAFastPathSuccess(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
+		// pending status WITH an upstream id — a retained orphan, not a completed campaign.
+		"b1|" + string(model.ProviderGoogleAds): {ID: "c1", Status: "pending", PlatformCampaignID: "pc-orphan"},
+	}}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	// The retained orphan must NOT be reported as a completed success on its id alone.
+	// Pre-fix the fast path returned OK with pc-orphan; now it falls through (here the
+	// pending row means the claim is held by another worker, so this job is SKIPPED, not
+	// falsely succeeded). Either way, this job must not report pc-orphan as a success.
+	if j.Status == model.JobSucceeded && strings.Contains(string(j.Result), "pc-orphan") {
+		t.Errorf("a pending orphan must not be reported as a completed success on its id; job=%s result=%s", j.Status, j.Result)
+	}
+}
+
 // TestOrchestrator_ClaimErrorIsFailure verifies that a failure to claim the
 // dispatch slot is recorded as a platform failure and the dispatcher is never
 // called (so no create can duplicate).

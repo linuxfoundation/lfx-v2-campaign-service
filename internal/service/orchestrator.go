@@ -37,6 +37,14 @@ const CancelGracePeriod = jobFinalizeTimeout + persistResultTimeout + time.Secon
 // a context detached from the (possibly-cancelled) dispatch context.
 const claimReleaseTimeout = 5 * time.Second
 
+// campaignStatusPending is the status of a claim/orphan row that is NOT a completed
+// campaign: either a bare single-flight claim, or a retained partial where the upstream
+// campaign exists but a later step failed (the id is recorded for reconciliation). The
+// idempotency fast path must NOT treat such a row as a completed success just because
+// it carries an upstream id — otherwise a retry after a partial failure reports success
+// while the campaign is still incomplete/orphaned.
+const campaignStatusPending = "pending"
+
 // dispatchQueueTimeout bounds how long a platform waits for a semaphore slot
 // before it's recorded as failed. Without it, a large backlog could keep a job
 // queued longer than staleJobCutoff, so the recovery sweep would wrongly fail a
@@ -470,13 +478,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Only ErrNotFound is a clean "nothing yet, proceed".
 	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p)
 	switch {
-	case lerr == nil && existing.PlatformCampaignID != "":
+	case lerr == nil && existing.PlatformCampaignID != "" && existing.Status != campaignStatusPending:
+		// A COMPLETED campaign (created / created_degraded — both terminal, since a
+		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently.
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
 		return res
 	case lerr == nil:
-		// A row exists but has no upstream id yet (a prior pending/failed attempt) —
-		// fall through to the claim path, which reconciles it.
+		// A row exists but is not a completed campaign — either it has no upstream id
+		// yet (a prior pending/failed attempt) OR it is a retained partial orphan
+		// (pending status WITH an upstream id, recorded for reconciliation after a
+		// mid-flow failure). In both cases fall through to the claim path, which
+		// reconciles it rather than falsely reporting the pending orphan as a success.
 	case errors.Is(lerr, domain.ErrNotFound):
 		// No campaign for this pair yet — fall through to claim/dispatch.
 	default:
@@ -507,8 +520,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	}
 	if !claimed {
 		// Another worker owns (or already completed) this pair.
-		if existing != nil && existing.PlatformCampaignID != "" {
-			// Already created upstream — reuse it (idempotent).
+		if existing != nil && existing.PlatformCampaignID != "" && existing.Status != campaignStatusPending {
+			// Already created upstream AND completed (created / created_degraded) —
+			// reuse it (idempotent). A pending row WITH an id is a retained partial
+			// orphan, not a success, so it falls through to the skip path below rather
+			// than being reported as a completed campaign.
 			res.OK = true
 			res.CampaignID = existing.PlatformCampaignID
 			return res
@@ -579,7 +595,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// Keep the row 'pending' so it stays a recoverable orphan (not a
 				// completed campaign): the dispatch did not succeed, only the upstream
 				// create partially happened.
-				campaign.Status = "pending"
+				campaign.Status = campaignStatusPending
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign id on retained pending claim",
