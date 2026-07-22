@@ -108,7 +108,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// request-supplied hsToken takes precedence; the brief's EventDetails/Copy token is
 	// only a fallback. Without this a valid hsToken is silently ignored and the client
 	// falls back to the event slug for utm_campaign, losing the HubSpot attribution.
-	hsToken := envelopeHSToken(config)
+	hsToken, err := envelopeHSToken(config)
+	if err != nil {
+		return nil, notCreated(err) // a wrong-typed hsToken is a caller error (pre-create)
+	}
 	if hsToken == "" {
 		hsToken = bf.HSToken
 	}

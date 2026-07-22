@@ -10,6 +10,43 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
+// TestEnvelopeHSToken covers the shared top-level hsToken extraction: a valid string
+// is returned trimmed, absence yields "", and a wrong-typed value is an error (not a
+// silent fallback).
+func TestEnvelopeHSToken(t *testing.T) {
+	cases := []struct {
+		name     string
+		envelope string
+		want     string
+		wantErr  bool
+	}{
+		{"empty envelope", ``, "", false},
+		{"absent field", `{"redditConfig":{"budgetUsd":1}}`, "", false},
+		{"valid string", `{"hsToken":"  HS-123  ","redditConfig":{}}`, "HS-123", false},
+		{"empty string", `{"hsToken":""}`, "", false},
+		{"wrong type number", `{"hsToken":123,"redditConfig":{}}`, "", true},
+		{"wrong type object", `{"hsToken":{"x":1}}`, "", true},
+		{"malformed envelope", `{bad`, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := envelopeHSToken([]byte(tc.envelope))
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("want error, got nil (result %q)", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestApplyCampaignConfig covers the shared budget/schedule/config mapping used by
 // every adapter: budget + daily/lifetime type, parsed dates, config snapshot, and the
 // over-range budget guard.

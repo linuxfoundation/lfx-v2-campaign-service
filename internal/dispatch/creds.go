@@ -218,15 +218,26 @@ func unmarshalPlatformConfig(envelope []byte, key string, dst any) error {
 // so it is read from the envelope here, shared by every dispatcher. Returns "" when
 // absent or when the envelope is empty/unparseable (a malformed envelope surfaces via
 // unmarshalPlatformConfig's own error on the same input).
-func envelopeHSToken(envelope []byte) string {
+func envelopeHSToken(envelope []byte) (string, error) {
 	if len(envelope) == 0 {
-		return ""
+		return "", nil
 	}
 	var m struct {
-		HSToken string `json:"hsToken"`
+		HSToken *json.RawMessage `json:"hsToken"`
 	}
 	if err := json.Unmarshal(envelope, &m); err != nil {
-		return ""
+		// The envelope as a whole is malformed. The caller already validated it via
+		// unmarshalPlatformConfig, so this is defensive; surface it rather than swallow.
+		return "", fmt.Errorf("decode campaign config envelope: %w", err)
 	}
-	return strings.TrimSpace(m.HSToken)
+	if m.HSToken == nil {
+		return "", nil // field absent — fine, caller falls back to the brief token
+	}
+	var s string
+	if err := json.Unmarshal(*m.HSToken, &s); err != nil {
+		// hsToken is PRESENT but not a string (e.g. a number/object). Do NOT silently
+		// swallow it and fall back — a wrong-typed documented field is a caller error.
+		return "", fmt.Errorf("config hsToken must be a string: %w", err)
+	}
+	return strings.TrimSpace(s), nil
 }
