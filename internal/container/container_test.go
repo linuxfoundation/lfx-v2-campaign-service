@@ -4,9 +4,11 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -163,20 +165,27 @@ func TestRegisterDispatchers_RegistersReddit(t *testing.T) {
 
 // TestLogMissingDispatchers_SurfacesGaps verifies logMissingDispatchers actually
 // flags a known ad provider that has no adapter, so the startup gap stays visible. It
-// asserts the detection over adPlatformProviders rather than the log sink: a map that
-// registers only reddit must leave every other adPlatformProvider "missing".
+// asserts on the EMITTED LOG OUTPUT (captured via a buffer-backed default handler), not
+// a recomputed copy of the function's loop — so it fails if logMissingDispatchers were
+// gutted to a no-op (per @dealako's review).
 func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
-	m := registerDispatchers(nil, nil) // reddit only
-	var missing []model.Provider
-	for _, p := range adPlatformProviders {
-		if _, ok := m[p]; !ok {
-			missing = append(missing, p)
-		}
-	}
-	assert.NotEmpty(t, missing, "known providers without an adapter must be detected as missing")
-	assert.NotContains(t, missing, model.ProviderRedditAds, "reddit is registered, so it must not be reported missing")
-	// logMissingDispatchers must run over that map without panicking (it only warns).
+	// Capture the ACTUAL slog output (not a recomputed copy of the loop) so the test
+	// verifies logMissingDispatchers's behavior — it would fail if the function were
+	// gutted to a no-op. Swap the default logger to a buffer-backed handler for the call.
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	m := registerDispatchers(nil, nil) // registers reddit (+ linkedin/meta/twitter as they land)
 	logMissingDispatchers(m)
+
+	out := buf.String()
+	assert.Contains(t, out, "no dispatcher registered", "the warning message must be emitted when providers are missing")
+	// The registered provider (reddit) must NOT be logged as missing...
+	assert.NotContains(t, out, string(model.ProviderRedditAds), "reddit is registered, so it must not be logged as missing")
+	// ...and at least one genuinely-unregistered known provider MUST be named.
+	assert.Contains(t, out, string(model.ProviderMicrosoftAds), "an unregistered known provider (microsoft-ads) must be surfaced in the log")
 }
 
 func TestNewContainer_NoDatabase(t *testing.T) {
