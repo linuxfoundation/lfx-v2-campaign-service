@@ -179,15 +179,19 @@ func (c *Client) GetEmail(ctx context.Context, id string) (*Email, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Value decode (not the *Email-pointer pattern patchEmail uses to detect a null
+	// body): here the `e.ID == ""` check below already covers a JSON `null` body — it
+	// unmarshals to a zero-valued Email whose ID is "" — so a separate nil check would
+	// be redundant.
 	var e Email
 	if err := json.Unmarshal(raw, &e); err != nil {
 		return nil, fmt.Errorf("hubspot: decode email: %w", err)
 	}
 	if e.ID == "" {
-		// GetEmail is an idempotent GET, so a malformed 2xx cannot leave any mutation
-		// in an unconfirmed state — this is a plain malformed-response error (NOT an
-		// unconfirmedError), so IsUnconfirmed stays false and the read is safely
-		// retryable. (IsUnconfirmed is a mutating-outcome signal; a read can't commit.)
+		// GetEmail is an idempotent GET, so a malformed 2xx (incl. a `null` body) cannot
+		// leave any mutation in an unconfirmed state — this is a plain malformed-response
+		// error (NOT an unconfirmedError), so IsUnconfirmed stays false and the read is
+		// safely retryable. (IsUnconfirmed is a mutating-outcome signal; a read can't commit.)
 		return nil, fmt.Errorf("hubspot: GetEmail(%s) returned a 2xx with no id (malformed response)", id)
 	}
 	e.AppURL = c.emailEditURL(e.ID)
@@ -224,6 +228,10 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 	if err != nil {
 		return nil, fmt.Errorf("hubspot: clone email from %s: %w", sourceID, err)
 	}
+	// Value decode (not the *Email-pointer pattern patchEmail uses): the `e.ID == ""`
+	// check below already covers a JSON `null` body (it unmarshals to a zero-valued
+	// Email), and a null body is treated as UNCONFIRMED there — same as a no-id body —
+	// so a separate nil check would be redundant.
 	var e Email
 	if err := json.Unmarshal(raw, &e); err != nil {
 		// A malformed/truncated 2xx body reaches here AFTER HubSpot may have already
@@ -232,7 +240,7 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 		return nil, unconfirmed("hubspot: clone email UNCONFIRMED (2xx with an undecodable body — a draft may have been created; verify before retrying)", err)
 	}
 	if e.ID == "" {
-		return nil, unconfirmed("hubspot: clone email UNCONFIRMED (2xx with no id — a draft may have been created; verify before retrying)", nil)
+		return nil, unconfirmed("hubspot: clone email UNCONFIRMED (2xx with no id or a null body — a draft may have been created; verify before retrying)", nil)
 	}
 	e.AppURL = c.emailEditURL(e.ID)
 	return &e, nil

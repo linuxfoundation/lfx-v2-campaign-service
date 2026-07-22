@@ -40,7 +40,8 @@ import (
 
 const (
 	// DefaultBaseURL is the HubSpot API origin. All v3/v4 REST endpoints hang off
-	// this host (e.g. /marketing/v3/emails, /crm/v3/lists/).
+	// this host (e.g. /marketing/v3/emails, /crm/v3/lists — no trailing slash, which
+	// would redirect and this client refuses redirects).
 	DefaultBaseURL = "https://api.hubapi.com"
 
 	// AppBaseURL is the HubSpot app origin used to build human-facing links to

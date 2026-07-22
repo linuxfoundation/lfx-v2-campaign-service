@@ -247,7 +247,14 @@ func TestDoRequest_Mutating429IsNotRetried(t *testing.T) {
 	_, err := c.doRequest(context.Background(), http.MethodPost, "/crm/v3/lists/", map[string]string{"x": "y"}, false)
 	var ae *apiError
 	if !errors.As(err, &ae) || ae.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("mutating 429 must be a definite apiError (no retry), got %T: %v", err, err)
+		t.Fatalf("mutating 429 must be an apiError (no retry), got %T: %v", err, err)
+	}
+	// A mutating 429 is AMBIGUOUS — the throttled request may already have committed —
+	// so it must be UNCONFIRMED, not a clean definite failure. This is the load-bearing
+	// contract (client.go sets Ambiguous: !idempotent); assert it so a regression to
+	// Ambiguous=false is caught, not just the type/status.
+	if !IsUnconfirmed(err) {
+		t.Error("a mutating 429 must be UNCONFIRMED because it may have committed")
 	}
 	if calls != 1 {
 		t.Errorf("mutating 429 must NOT be retried, got %d calls", calls)

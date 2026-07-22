@@ -2,6 +2,17 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot FINAL review pass (PR #35). Ran an exhaustive self-review of the
+whole hubspot diff (correctness, test-strength, doc-drift, API-contract, security) and
+closed the last three things an automated reviewer could flag — the code was already
+functionally correct: (1) `TestDoRequest_Mutating429IsNotRetried` now asserts
+`IsUnconfirmed(err)` (a mutating 429 is ambiguous/may-have-committed), closing the pending
+Copilot suggestion and catching an `Ambiguous`-flag regression. (2) Fixed the
+`DefaultBaseURL` const comment that still showed `/crm/v3/lists/` with a trailing slash.
+(3) Added clarifying comments on GetEmail/CloneEmail explaining the value-decode already
+covers a null body via the `e.ID == ""` check (patchEmail uses the *Email-pointer pattern;
+these don't need to). Branch frozen at this head for merge.
+
 **Update** — HubSpot round-22 (PR #35 review, copilot). (1) `patchEmail`: a 2xx JSON
 `null` (or empty) body decodes into the Email struct WITHOUT error (zero-valued), so the
 id-fallback would report a PHANTOM success for a malformed response. A PATCH is mutating,
