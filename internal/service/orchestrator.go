@@ -48,12 +48,28 @@ const campaignStatusPending = "pending"
 // like the campaign group exists, or the create is ambiguous). The orchestrator
 // PRESERVES these on the persisted row (rather than flattening every partial to
 // "pending") so the row surfaces WHAT went wrong, and treats them as NON-reusable so a
-// retry re-attempts the incomplete create. The values mirror the dispatch package's
-// campaignStatusGroupCreated/Unconfirmed; they are duplicated here (not imported) to
-// keep the service layer free of a dispatch dependency.
+// retry re-attempts the incomplete create.
 var partialOrphanStatuses = map[string]bool{
 	"group_created": true,
 	"unconfirmed":   true,
+}
+
+// preservableErrorStatuses are the dispatcher-set statuses that are PRESERVED on the
+// retained-error path rather than flattened to "pending". Two categories:
+//   - the partial-orphan statuses above (non-reusable; a retry reconciles), and
+//   - created_degraded: the campaign WAS created (a re-dispatch can't repair a degraded
+//     sub-step like a short creative count), so it is preserved AND reusable.
+//
+// This is a CLOSED allowlist, not "any non-empty status": an arbitrary success-looking
+// status (e.g. a plain "active" returned when a later step like ad-group creation
+// failed) is NOT preserved — that campaign is incomplete and must stay a 'pending'
+// reconcilable orphan, not be reused as complete. created_degraded mirrors the dispatch
+// package's campaignStatusCreatedDegraded; the group_created/unconfirmed literals are
+// drift-guarded by TestPartialOrphanStatusValues in the dispatch package.
+var preservableErrorStatuses = map[string]bool{
+	"group_created":    true,
+	"unconfirmed":      true,
+	"created_degraded": true,
 }
 
 // isReusableCampaign reports whether an existing campaign row is a completed upstream
@@ -662,16 +678,22 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
-				// PRESERVE a recognized partial-orphan status (group_created / unconfirmed)
-				// so the retained row surfaces WHAT went wrong, instead of flattening every
-				// partial to a generic 'pending'. Any OTHER status on this error path —
-				// empty, a stale/success-looking 'created'/'active', anything unrecognized —
-				// is forced to 'pending': the dispatch did NOT succeed, so the row must not
-				// carry a status that could be read as complete. This is safe against the
-				// idempotency fast path because isReusableCampaign excludes pending AND the
-				// partial-orphan statuses, so neither the flattened nor the preserved row is
-				// ever mistaken for a completed campaign on retry.
-				if !partialOrphanStatuses[campaign.Status] {
+				// Decide the persisted status. Preserve a dispatcher-set status that
+				// carries real meaning; otherwise flatten to 'pending' so the row can't read
+				// as complete. Two kinds of status are preserved:
+				//   - a partial-orphan status (group_created / unconfirmed): the row surfaces
+				//     WHAT went wrong and stays NON-reusable (isReusableCampaign excludes it),
+				//     so a retry reconciles rather than false-succeeding.
+				//   - a terminal status WITH a real upstream id (e.g. created_degraded, which
+				//     LinkedIn returns alongside an error when the campaign WAS created but
+				//     fewer creatives than requested landed): the campaign genuinely exists
+				//     and a re-dispatch can't repair the degraded sub-step, so it is preserved
+				//     AND remains reusable (isReusableCampaign accepts it) — flattening it to
+				//     'pending' would hide a real paid campaign and force a needless retry.
+				// Anything outside the closed preservableErrorStatuses allowlist — empty, or a
+				// plain success-looking status like "active" returned when a later step
+				// failed — is flattened, so an incomplete campaign can't read as complete.
+				if !preservableErrorStatuses[campaign.Status] {
 					campaign.Status = campaignStatusPending
 				}
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)

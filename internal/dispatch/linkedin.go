@@ -18,8 +18,10 @@ import (
 // campaignStatusGroupCreated marks a LinkedIn dispatch where the campaign GROUP was
 // created but the CAMPAIGN was not — a recoverable orphan whose group id lives in
 // Result. Distinct from campaignStatusCreated so the degraded state is visible, and
-// PlatformCampaignID is left empty so a retry re-attempts the campaign (see
-// campaignFromLinkedIn).
+// PlatformCampaignID is left empty so the orchestrator's idempotency fast path does NOT
+// treat it as a completed campaign (it keys reuse on a real id + terminal status). The
+// retained claim then blocks a blind re-dispatch; actual recovery awaits the planned
+// reconciliation/single-flight support (LFXV2-2665). See campaignFromLinkedIn.
 const campaignStatusGroupCreated = "group_created"
 
 // campaignStatusUnconfirmed marks a LinkedIn dispatch where NEITHER the campaign nor
@@ -223,9 +225,10 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 		// orchestrator's idempotency treats ANY non-empty PlatformCampaignID as "campaign
 		// finished upstream" and short-circuits a later dispatch to success — so a
 		// group-only orphan would look permanently succeeded and the campaign would never
-		// be created on retry. PlatformCampaignID stays EMPTY (no campaign exists) so a
-		// retry re-attempts; the group orphan is preserved in Result (CampaignGroupID) +
-		// the group_created status for reconciliation.
+		// be created on retry. PlatformCampaignID stays EMPTY (no campaign exists) so the
+		// idempotency fast path does NOT treat it as complete; the retained claim then
+		// blocks a blind re-dispatch (recovery awaits LFXV2-2665). The group orphan is
+		// preserved in Result (CampaignGroupID) + the group_created status for reconciliation.
 		c.Status = campaignStatusGroupCreated
 	default:
 		// Neither id present — a group-ambiguous partial where even the group create is

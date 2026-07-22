@@ -400,3 +400,20 @@ func TestLinkedIn_GroupCreatedButCampaignFails_RecordsGroupOrphan(t *testing.T) 
 		t.Errorf("the group id must be preserved in Result for reconciliation, got %s", camp.Result)
 	}
 }
+
+// TestPartialOrphanStatusValues locks the STRING VALUES of the partial-orphan
+// statuses. The orchestrator's service-layer partialOrphanStatuses map
+// (internal/service/orchestrator.go) hardcodes these same literals to decide which
+// degraded statuses to PRESERVE on a retained orphan row (rather than flatten to
+// "pending") and to exclude from completed-campaign reuse. The service test package
+// deliberately does not import dispatch (to avoid coupling), so nothing there fails if
+// these constants are renamed — this test in the OWNING package is the drift guard: if
+// a value changes, update the service map in lockstep. (Addresses dealako's PR #37 nit.)
+func TestPartialOrphanStatusValues(t *testing.T) {
+	if campaignStatusGroupCreated != "group_created" {
+		t.Errorf("campaignStatusGroupCreated = %q; the service partialOrphanStatuses map expects %q — update both in lockstep", campaignStatusGroupCreated, "group_created")
+	}
+	if campaignStatusUnconfirmed != "unconfirmed" {
+		t.Errorf("campaignStatusUnconfirmed = %q; the service partialOrphanStatuses map expects %q — update both in lockstep", campaignStatusUnconfirmed, "unconfirmed")
+	}
+}

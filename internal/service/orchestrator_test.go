@@ -210,6 +210,20 @@ func (d partialOrphanDispatcher) Dispatch(_ context.Context, _ *model.CampaignBr
 		errors.New("campaign create ambiguous after group created")
 }
 
+// degradedCreatedDispatcher returns a campaign that WAS created (has an id) with a
+// terminal created_degraded status ALONGSIDE an error — the LinkedIn shape when the
+// campaign lands but fewer creatives than requested succeed.
+type degradedCreatedDispatcher struct{}
+
+func (degradedCreatedDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{
+			PlatformCampaignID: "pc-" + string(p),
+			Status:             "created_degraded",
+			CampaignName:       "n",
+		},
+		errors.New("only 2 of 3 creatives created")
+}
+
 func waitForTerminal(t *testing.T, jobs *fakeJobRepo, id string) *model.CampaignJob {
 	t.Helper()
 	for i := 0; i < 100; i++ {
@@ -279,8 +293,11 @@ func TestOrchestrator_PartialFailure(t *testing.T) {
 
 // TestOrchestrator_PreservesDegradedStatusOnRetainedOrphan verifies the fix for the
 // PR #37 review finding: a dispatcher-set degraded status (group_created / unconfirmed)
-// on a retained-partial orphan must be PERSISTED on the campaign row — not flattened to
-// "pending" — AND must not be treated as a completed campaign on a later dispatch.
+// on a retained-partial orphan is PERSISTED on the campaign row (not flattened to
+// "pending"). This runs the persist/preserve half end to end (Start -> retain ->
+// UpsertCampaign). The "not reusable on a later dispatch" half is asserted directly via
+// isReusableCampaign(row) below (the reuse gate itself is table-locked in
+// TestIsReusableCampaign) rather than by driving a second Start.
 func TestOrchestrator_PreservesDegradedStatusOnRetainedOrphan(t *testing.T) {
 	for _, status := range []string{"group_created", "unconfirmed"} {
 		t.Run(status, func(t *testing.T) {
@@ -329,6 +346,38 @@ func TestOrchestrator_PreservesDegradedStatusOnRetainedOrphan(t *testing.T) {
 				t.Errorf("a %q orphan must NOT be reusable as a completed campaign", status)
 			}
 		})
+	}
+}
+
+// TestOrchestrator_PreservesCreatedDegradedWithID verifies that a terminal
+// created_degraded status returned ALONGSIDE an error but WITH a real upstream id (the
+// campaign was created, only a sub-step degraded) is preserved on the persisted row —
+// not flattened to "pending" — and remains reusable (a re-dispatch can't repair the
+// degraded sub-step, so it must not needlessly re-create). Addresses PR #37 copilot.
+func TestOrchestrator_PreservesCreatedDegradedWithID(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: degradedCreatedDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	row := camps.existing["b1|"+string(model.ProviderLinkedInAds)]
+	if row == nil {
+		t.Fatal("expected a persisted row for the created-degraded campaign")
+	}
+	if row.Status != "created_degraded" {
+		t.Errorf("status = %q, want the preserved created_degraded (not flattened to pending)", row.Status)
+	}
+	if row.PlatformCampaignID == "" {
+		t.Error("the created campaign id must be persisted")
+	}
+	// created_degraded WITH an id IS reusable — the campaign exists and can't be repaired
+	// by a re-dispatch.
+	if !isReusableCampaign(row) {
+		t.Error("created_degraded with an id must be reusable (the campaign exists)")
 	}
 }
 
