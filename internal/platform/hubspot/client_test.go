@@ -240,6 +240,64 @@ func TestDoRequest_ConnectionRefusedIsPreSendNotUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestDoRequest_PerAttemptTimeoutEnforcedWithZeroTimeoutClient(t *testing.T) {
+	// A caller may inject an *http.Client whose Timeout is 0 (WithHTTPClient) AND pass
+	// context.Background() (no deadline). Without a per-attempt context deadline, a
+	// stalled HubSpot connection would hang indefinitely. This test proves the
+	// per-attempt WithTimeout enforces the bound INDEPENDENTLY of the injected client:
+	// the handler blocks until the test ends, the injected client has Timeout:0, the
+	// caller ctx has no deadline, yet doRequest returns quickly.
+	block := make(chan struct{})
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		<-block // never respond within the per-attempt window
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	// Cleanup runs LIFO: unblock the stuck handler FIRST, THEN Close — otherwise
+	// srv.Close() would block forever waiting on the handler still parked on <-block.
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(block) })
+
+	c := NewClient(testCreds(), testAccount(),
+		WithBaseURL(srv.URL),
+		WithHTTPClient(&http.Client{}), // Timeout: 0 — must NOT be the thing that saves us
+		withRequestTimeout(60*time.Millisecond),
+		withRetryBaseDelay(0),
+	)
+
+	done := make(chan error, 1)
+	go func() {
+		// Idempotent GET so a mid-flight timeout is a retryable transportError, not a
+		// mutating-ambiguous one; the point here is the bound, not the classification.
+		_, err := c.doRequest(context.Background(), http.MethodGet, "/crm/v3/lists/1", nil, true)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a per-attempt timeout error, got nil")
+		}
+		// The per-attempt deadline fires mid-flight → *url.Error wrapping
+		// context.DeadlineExceeded, surfaced as a transportError (NOT a preSendError:
+		// the request WAS sent). errors.Is reaches the deadline cause via Unwrap.
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("expected the wrapped cause to be context.DeadlineExceeded, got: %v", err)
+		}
+		var te *transportError
+		if !errors.As(err, &te) {
+			t.Errorf("a mid-flight per-attempt timeout should be a transportError, got %T: %v", err, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("doRequest did not return within 5s — the per-attempt timeout is NOT enforced " +
+			"(a zero-Timeout injected client + background ctx hung indefinitely)")
+	}
+	if got := atomic.LoadInt32(&hits); got == 0 {
+		t.Error("the server was never reached — the request failed pre-send, not mid-flight")
+	}
+}
+
 // A caller-supplied *http.Client that WOULD follow redirects must be force-overridden
 // to no-follow WITHOUT mutating the caller's client.
 func TestClient_OverridesInjectedCheckRedirectWithoutMutatingCaller(t *testing.T) {

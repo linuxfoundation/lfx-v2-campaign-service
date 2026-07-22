@@ -48,7 +48,9 @@ const (
 	// created lists/emails (returned to callers for reference, never sent to the API).
 	AppBaseURL = "https://app.hubspot.com"
 
-	// requestTimeout bounds a single HTTP round-trip.
+	// requestTimeout bounds a single HTTP round-trip. It is enforced per-attempt via
+	// a context.WithTimeout in doRequest (NOT only via http.Client.Timeout), so an
+	// injected zero-Timeout client or a deadline-free caller ctx still cannot hang.
 	requestTimeout = 30 * time.Second
 
 	// retryMax is the number of times a rate-limited (429) IDEMPOTENT request is
@@ -111,6 +113,11 @@ type Client struct {
 	// retryBaseDelay is injectable so tests avoid real per-retry sleeps.
 	retryBaseDelay time.Duration
 
+	// requestTimeout bounds EACH HTTP attempt via a per-attempt context deadline
+	// (see doRequest). It defaults to the package requestTimeout const and is
+	// injectable so tests can drive the per-attempt timeout on a fast clock.
+	requestTimeout time.Duration
+
 	// now is injectable so tests can compute an HTTP-date Retry-After delay
 	// deterministically. Defaults to time.Now.
 	now func() time.Time
@@ -159,6 +166,12 @@ func withRetryBaseDelay(d time.Duration) Option {
 	return func(c *Client) { c.retryBaseDelay = d }
 }
 
+// withRequestTimeout overrides the per-attempt context deadline (tests set it
+// short to exercise the timeout without a real 30s wait).
+func withRequestTimeout(d time.Duration) Option {
+	return func(c *Client) { c.requestTimeout = d }
+}
+
 // withClock overrides the clock so tests can compute an HTTP-date Retry-After delay
 // deterministically.
 func withClock(now func() time.Time) Option {
@@ -183,10 +196,16 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		appBaseURL:     AppBaseURL,
 		httpClient:     &http.Client{Timeout: requestTimeout, CheckRedirect: noFollow},
 		retryBaseDelay: retryBaseDelay,
+		requestTimeout: requestTimeout,
 		now:            time.Now,
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	// A non-positive per-attempt timeout (unset, or a bad injection) would make
+	// context.WithTimeout cancel immediately; fall back to the documented default.
+	if c.requestTimeout <= 0 {
+		c.requestTimeout = requestTimeout
 	}
 	// Enforce no-follow on whatever client is now in use without mutating a
 	// caller-supplied client: rebuild it from its exported reusable fields.
@@ -412,21 +431,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 	}
 
 	for attempt := 0; attempt <= retryMax; attempt++ {
-		var reqBody io.Reader
-		if encoded != nil {
-			reqBody = bytes.NewReader(encoded)
-		}
-		req, err := http.NewRequestWithContext(ctx, method, u, reqBody)
-		if err != nil {
-			// Request build failure is definitively pre-send (nothing was sent).
-			return nil, fmt.Errorf("hubspot build request %s %s: %w", method, path, err)
-		}
-		req.Header.Set("Authorization", "Bearer "+c.creds.PrivateAppToken)
-		req.Header.Set("Accept", "application/json")
-		if encoded != nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
-
 		// If the caller's context is ALREADY done before we send, nothing was sent —
 		// return a clean PRE-SEND error (definitely-not-sent), NOT the ambiguous
 		// transportError below. Otherwise httpClient.Do would fail with the ctx error
@@ -439,60 +443,101 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			return nil, &preSendError{Method: method, Path: path, err: ctxErr}
 		}
 
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			if isPreSendDialError(err) {
-				// Definitely not sent — a clean pre-send failure (NOT ambiguous).
-				// Typed so the dial cause survives errors.Is/As; URL-free via safeCause.
-				return nil, &preSendError{Method: method, Path: path, err: err}
-			}
-			return nil, &transportError{Method: method, Path: path, err: err, Mutating: !idempotent}
-		}
+		// Bound EACH attempt with a per-attempt context deadline, NOT just the
+		// http.Client.Timeout: WithHTTPClient can inject an *http.Client whose Timeout is
+		// 0 (or larger than requestTimeout), and doRequest takes the caller ctx directly
+		// (which may be context.Background()), so without this a stalled HubSpot
+		// connection could hang indefinitely even though requestTimeout is documented as
+		// the round-trip bound. The caller ctx is the parent, so a real caller
+		// cancel/deadline still propagates. Mirrors the linkedin/reddit clients'
+		// per-attempt context.WithTimeout. cancel() runs on EVERY exit path (each return
+		// and the 429 continue) to avoid leaking the timer.
+		raw, retryWait, done, aerr := func() (rawBody []byte, retryWait time.Duration, done bool, err error) {
+			attemptCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
+			defer cancel()
 
-		// 429: retry only an idempotent call; a mutating 429 may have committed.
-		if resp.StatusCode == http.StatusTooManyRequests {
-			if !idempotent || attempt >= retryMax {
+			var reqBody io.Reader
+			if encoded != nil {
+				reqBody = bytes.NewReader(encoded)
+			}
+			req, rerr := http.NewRequestWithContext(attemptCtx, method, u, reqBody)
+			if rerr != nil {
+				// Request build failure is definitively pre-send (nothing was sent).
+				return nil, 0, true, fmt.Errorf("hubspot build request %s %s: %w", method, path, rerr)
+			}
+			req.Header.Set("Authorization", "Bearer "+c.creds.PrivateAppToken)
+			req.Header.Set("Accept", "application/json")
+			if encoded != nil {
+				req.Header.Set("Content-Type", "application/json")
+			}
+
+			resp, derr := c.httpClient.Do(req)
+			if derr != nil {
+				if isPreSendDialError(derr) {
+					// Definitely not sent — a clean pre-send failure (NOT ambiguous).
+					// Typed so the dial cause survives errors.Is/As; URL-free via safeCause.
+					return nil, 0, true, &preSendError{Method: method, Path: path, err: derr}
+				}
+				return nil, 0, true, &transportError{Method: method, Path: path, err: derr, Mutating: !idempotent}
+			}
+
+			// 429: retry only an idempotent call; a mutating 429 may have committed.
+			if resp.StatusCode == http.StatusTooManyRequests {
+				if !idempotent || attempt >= retryMax {
+					drainAndClose(resp)
+					return nil, 0, true, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Ambiguous: !idempotent}
+				}
+				wait := c.retryAfter(resp, attempt)
+				// Drain the (idempotent) 429 body before closing so the transport can
+				// reuse this connection for the retry instead of paying for a fresh
+				// TCP/TLS handshake while already rate-limited.
 				drainAndClose(resp)
-				return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Ambiguous: !idempotent}
+				if wait > maxRetryWait {
+					return nil, 0, true, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
+				}
+				// Signal a retry-after wait to the caller loop (done=false).
+				return nil, wait, false, nil
 			}
-			wait := c.retryAfter(resp, attempt)
-			// Drain the (idempotent) 429 body before closing so the transport can
-			// reuse this connection for the retry instead of paying for a fresh
-			// TCP/TLS handshake while already rate-limited.
-			drainAndClose(resp)
-			if wait > maxRetryWait {
-				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(wait):
-			}
-			continue
-		}
 
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			drainAndClose(resp)
-			return nil, &apiError{
-				StatusCode: resp.StatusCode, Method: method, Path: path,
-				Ambiguous: !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				drainAndClose(resp)
+				return nil, 0, true, &apiError{
+					StatusCode: resp.StatusCode, Method: method, Path: path,
+					Ambiguous: !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
+				}
 			}
-		}
 
-		raw, rErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
-		_ = resp.Body.Close()
-		if rErr != nil {
-			// A 2xx whose body could not be fully read is AMBIGUOUS for a mutation (the
-			// change may have been applied server-side even though we couldn't read the
-			// reply); for an idempotent read it's just a failed read, safely retryable.
-			return nil, &transportError{Method: method, Path: path, err: rErr, Mutating: !idempotent}
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+			_ = resp.Body.Close()
+			if readErr != nil {
+				// A 2xx whose body could not be fully read is AMBIGUOUS for a mutation (the
+				// change may have been applied server-side even though we couldn't read the
+				// reply); for an idempotent read it's just a failed read, safely retryable.
+				return nil, 0, true, &transportError{Method: method, Path: path, err: readErr, Mutating: !idempotent}
+			}
+			return body, 0, true, nil
+		}()
+
+		// A terminal attempt (done): return its result/error. Otherwise it was an
+		// idempotent 429 — wait out the backoff (honoring the caller ctx) and retry.
+		if done {
+			if aerr != nil {
+				return nil, aerr
+			}
+			if int64(len(raw)) > maxResponseBody {
+				// Over-cap on a mutation is AMBIGUOUS (the change may have committed even
+				// though the oversized reply is unusable); on a read it's a clean failure.
+				return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("response body exceeds %d bytes", maxResponseBody), Mutating: !idempotent}
+			}
+			return raw, nil
 		}
-		if int64(len(raw)) > maxResponseBody {
-			return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("response body exceeds %d bytes", maxResponseBody), Mutating: !idempotent}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryWait):
 		}
-		return raw, nil
+		continue
 	}
-
 	// Unreachable: the loop returns on the last attempt.
 	return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 }
