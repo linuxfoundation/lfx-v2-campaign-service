@@ -280,10 +280,15 @@ twitterConfig?: object          — X/Twitter-specific params
 Meta (Facebook/Instagram) per-platform config. **Budget is in the ad ACCOUNT's currency**, not USD — the service does no FX conversion.
 
 ```
-budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…)
+budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…).
+                                  Must be POSITIVE and round to at least one minor unit; a budget
+                                  that fails this is rejected by the client during dispatch (a
+                                  pre-create job failure, since CreateCampaigns is async).
 lifetimeBudget?: boolean        — true → lifetime budget over the flight; false/absent → daily budget
-startDate: string               — YYYY-MM-DD
-endDate: string                 — YYYY-MM-DD
+startDate: string               — YYYY-MM-DD. Must NOT be before today (UTC).
+endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate. (Both date rules are
+                                  enforced by the client during dispatch — a violation fails the
+                                  platform job pre-create, not a synchronous 4xx.)
 objective?: string              — awareness | traffic | engagement | leads | conversions.
                                   NOTE: `leads` is INTERIM — it runs a website-traffic campaign
                                   (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration
@@ -310,6 +315,9 @@ placements?: object             — Which feeds to run on; ALL keys optional boo
                                   Go field NAMES (no lowercase json aliases): FacebookFeed,
                                   InstagramFeed, Stories, Reels, AudienceNetwork, MessengerInbox.
                                   Omitted → the client's default (both feeds enabled).
+                                  At least ONE supported placement must remain enabled after your
+                                  overrides — e.g. `{FacebookFeed:false, InstagramFeed:false}` with
+                                  nothing else enabled is REJECTED (the dispatch job fails pre-create).
                                   NOTE: `MessengerInbox: true` is REJECTED — Meta removed the
                                   Messenger Inbox placement (Nov 2025), so the client fails the
                                   dispatch job pre-create if it is enabled. Leave it false/omitted.
@@ -319,10 +327,13 @@ variants: AdVariant[]           — One ad per variant; at least one is required
 `AdVariant` (an entry in `variants`):
 
 ```
-primaryText: string             — Required; non-empty
-headline: string                — Required; non-empty
-description?: string
+primaryText: string             — Required; non-empty; at most 125 runes
+headline: string                — Required; non-empty; at most 40 runes
+description?: string             — At most 30 runes
 ```
+
+Copy limits are enforced by the client before any upstream call, so a variant that
+exceeds them fails the platform job pre-create (async — not a synchronous 4xx).
 
 Connection prerequisites (from the Meta connection, not this config): a valid `account_id`
 (`act_<digits>`) and a numeric `page_id` — both REQUIRED, format-validated, and length-bounded
