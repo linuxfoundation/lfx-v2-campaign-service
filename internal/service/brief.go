@@ -106,8 +106,10 @@ var projectSlugRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // projectUUIDRe matches a canonical UUID (the shape the project path also accepts on
 // read routes). A UUID in a campaign-naming path breaks the slug-based attribution
-// join, so it is rejected explicitly (Goa does not enforce Pattern/MaxLength on PATH
-// parameters, so this app-level guard is the actual enforcement).
+// join, so it is rejected explicitly. The generated HTTP decoder also validates the
+// slug Pattern/MaxLength for the create routes; this app-level guard duplicates that
+// for direct/non-HTTP callers (e.g. service tests) — belt-and-suspenders, not the sole
+// enforcement.
 var projectUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // projectSlugProblem returns a human-readable reason if projectID is NOT a canonical
@@ -115,8 +117,9 @@ var projectUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-
 // campaign-create): those store project_id as the campaign-name attribution key AND
 // the exact-match key for the connection lookup at dispatch, so a brief-slug and a
 // connection-UUID would never join. Read/update/delete stay UUID-or-slug (migration
-// 000003 preserved historical UUID rows). Goa does not enforce Pattern/MaxLength on
-// PATH parameters, so this is the actual enforcement.
+// 000003 preserved historical UUID rows). The generated HTTP decoder validates the
+// same Pattern/MaxLength on the create routes; this guard duplicates it for
+// direct/non-HTTP callers.
 func projectSlugProblem(projectID string) string {
 	if projectUUIDRe.MatchString(projectID) {
 		return "project_id must be the canonical project slug, not a UUID"

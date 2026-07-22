@@ -24,8 +24,9 @@ import (
 // brief/campaign create already require a slug — so a UUID-keyed connection could never
 // be joined to a dispatched campaign. Reuses the shared projectSlugProblem logic and
 // wraps it as a connections BadRequestError. Get/update/delete/set-credential/test stay
-// permissive (historical UUID rows). Goa does not enforce Pattern/MaxLength on PATH
-// params, so this app-level guard is the actual enforcement.
+// permissive (historical UUID rows). The generated HTTP decoder validates the same
+// Pattern/MaxLength on the create routes; this guard duplicates it for direct/non-HTTP
+// callers (belt-and-suspenders), and is where the connections-flavored 400 is produced.
 func validateConnectionProjectSlug(projectID string) error {
 	if msg := projectSlugProblem(projectID); msg != "" {
 		return &conn.BadRequestError{Code: "400", Message: msg}

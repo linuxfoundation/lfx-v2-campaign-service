@@ -55,9 +55,10 @@ func projectIDAttr() {
 // connection lookup at dispatch, so a UUID there breaks the slug-based join. The Pattern
 // requires single internal hyphens (no `foo--bar`) and MaxLength(35) rejects a canonical
 // 36-char UUID (RE2 has no negative lookahead, so the length bound is the reliable UUID
-// discriminator). Goa does NOT enforce Pattern/MaxLength on PATH parameters, so the
-// handlers additionally guard with validateProjectSlug / projectSlugProblem — this
-// attribute exists so the PUBLISHED Goa/OpenAPI contract matches that runtime rejection.
+// discriminator). Declaring the Pattern/MaxLength here makes Goa BOTH publish the
+// constraint in the OpenAPI contract AND generate the request-decoder validation for
+// the create routes; the handlers additionally guard with validateProjectSlug /
+// projectSlugProblem so direct/non-HTTP callers get the same rejection.
 func projectSlugAttr() {
 	Attribute("project_id", String, "Canonical LFX project slug (NOT a UUID) that scopes the resource", func() {
 		Example("cncf")
@@ -162,8 +163,8 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			// already require a canonical slug, so a UUID-keyed connection could never be
 			// joined to a dispatched campaign — constrain create to a slug too. get/update/
 			// delete/set-credential/test stay permissive (projectIDAttr) for historical
-			// UUID-keyed rows (migration 000003). Goa does not enforce Pattern/MaxLength on
-			// PATH params, so the service additionally guards via validateConnectionProjectSlug.
+			// UUID-keyed rows (migration 000003). The generated decoder validates the
+			// pattern; the service additionally guards via validateConnectionProjectSlug.
 			projectSlugAttr()
 			Attribute("config", config)
 			Attribute("credentials", creds)
