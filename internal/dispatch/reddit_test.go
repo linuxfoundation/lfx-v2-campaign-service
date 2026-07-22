@@ -217,8 +217,8 @@ func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
 	if camp.BudgetAmount == nil || *camp.BudgetAmount != 50 {
 		t.Errorf("BudgetAmount = %v, want 50", camp.BudgetAmount)
 	}
-	if camp.BudgetType == nil || *camp.BudgetType != model.BudgetDaily {
-		t.Errorf("BudgetType = %v, want daily (reddit has no lifetime flag)", camp.BudgetType)
+	if camp.BudgetType == nil || *camp.BudgetType != model.BudgetLifetime {
+		t.Errorf("BudgetType = %v, want lifetime (reddit client uses goal_type LIFETIME_SPEND)", camp.BudgetType)
 	}
 	if camp.StartDate == nil || camp.StartDate.Format("2006-01-02") != "2099-08-01" {
 		t.Errorf("StartDate = %v, want 2099-08-01", camp.StartDate)

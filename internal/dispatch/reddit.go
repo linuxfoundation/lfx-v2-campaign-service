@@ -195,10 +195,11 @@ func campaignFromReddit(ctx context.Context, r *reddit.CampaignResult, cfg reddi
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
-	// Persist the budget/schedule/config the caller supplied (Reddit has no lifetime
-	// budget flag — its budget is a daily cap). ConfigSnapshot captures the validated
-	// redditConfig for reconciliation.
-	applyCampaignConfig(ctx, c, cfg.BudgetUSD, false, cfg.StartDate, cfg.EndDate, cfg)
+	// Persist the budget/schedule/config the caller supplied. The Reddit client always
+	// creates campaigns with goal_type LIFETIME_SPEND (client.go) — budgetUsd is a
+	// LIFETIME spend cap, not a daily one — so the persisted budget_type is lifetime.
+	// ConfigSnapshot captures the validated redditConfig for reconciliation.
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, true, cfg.StartDate, cfg.EndDate, cfg)
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
 	}
