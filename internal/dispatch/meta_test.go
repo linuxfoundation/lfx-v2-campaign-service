@@ -307,7 +307,7 @@ func TestMeta_ConfigHSTokenTakesPrecedence(t *testing.T) {
 		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
 		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	cfg := json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"],"currencyOffset":100,"hsToken":"HS-FROM-CONFIG","variants":[{"headline":"A","primaryText":"first","description":"d1"}]}}`)
+	cfg := json.RawMessage(`{"hsToken":"HS-FROM-CONFIG","metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"],"currencyOffset":100,"variants":[{"headline":"A","primaryText":"first","description":"d1"}]}}`)
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}

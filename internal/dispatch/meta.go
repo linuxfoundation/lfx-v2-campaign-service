@@ -42,9 +42,6 @@ type metaConfig struct {
 	// CurrencyOffset optionally overrides the account minor-unit offset (1 for
 	// zero-decimal currencies like JPY, 100 for most). Left 0 → derived by the client.
 	CurrencyOffset int64 `json:"currencyOffset"`
-	// HSToken is the documented TOP-LEVEL config field for HubSpot attribution
-	// (docs/api-catalog.md); it takes precedence over a token embedded in the brief.
-	HSToken string `json:"hsToken"`
 }
 
 // MetaDispatcher creates Meta (Facebook/Instagram) campaigns for the orchestrator.
@@ -97,10 +94,12 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		Label:          res.label,
 		CurrencyOffset: cfg.CurrencyOffset,
 	}
-	// A request-supplied config.hsToken takes precedence over a token in the brief
-	// blobs; without this a documented config.hsToken is silently ignored and the client
-	// falls back to the event slug for utm_campaign, losing the HubSpot attribution.
-	hsToken := strings.TrimSpace(cfg.HSToken)
+	// hsToken is a documented TOP-LEVEL config envelope field (docs/api-catalog.md —
+	// sibling to metaConfig, NOT nested in it), read via the shared envelope helper. A
+	// request-supplied token takes precedence over the brief blobs; without this a
+	// documented config.hsToken is silently ignored and the client falls back to the
+	// event slug for utm_campaign, losing the HubSpot attribution.
+	hsToken := envelopeHSToken(config)
 	if hsToken == "" {
 		hsToken = bf.HSToken
 	}
