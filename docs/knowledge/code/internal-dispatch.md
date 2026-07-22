@@ -34,10 +34,16 @@ imports) and outside each `platform/*` package (avoiding an import cycle).
    segment is stamped from the authenticated `brief.ProjectID`, NOT from caller JSON
    (it's the data pipeline's attribution join key — see docs/api-catalog.md).
 3. **Call the client** and map the result → `model.Campaign` (upstream id, name, the
-   provider result blob in `Result`, and — on SUCCESS — a `created` status, since the
-   orchestrator does not set a status on success and `UpsertCampaign` writes it
-   verbatim). The orchestrator fills project/brief/job/platform (and, for a retained
-   ambiguous orphan, a `pending` status).
+   provider result blob in `Result`, and a status, since the orchestrator does not set
+   a status on success and `UpsertCampaign` writes it verbatim). The success status is
+   `created` normally, or **`created_degraded`** when the campaign was created upstream
+   but a non-fatal sub-step is incomplete — a promoted-post/ad that failed or is
+   unconfirmed, or fewer ads created than requested. The adapter returns a NIL error in
+   the degraded case (the paid campaign exists, so failing the job would mislead and be
+   unrecoverable by retry — idempotency short-circuits a re-dispatch), and instead makes
+   the shortfall VISIBLE via the distinct status (details are in `Result`/Steps) for a
+   human or monitor to reconcile. The orchestrator fills project/brief/job/platform
+   (and, for a retained ambiguous orphan, a `pending` status).
 
 ## The claim contract (release vs retain)
 

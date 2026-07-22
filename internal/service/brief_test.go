@@ -193,6 +193,40 @@ func TestBriefService_CreateCampaigns_RejectsUnapprovedBrief(t *testing.T) {
 
 // CreateCampaigns must reject an empty platform set (400) rather than creating a
 // no-op job that instantly aggregates to succeeded.
+// CreateBrief and CreateCampaigns must reject a project_id that is a UUID (or any
+// non-slug value): it is stamped into the campaign-name Project segment, and a UUID
+// there breaks the data-pipeline's slug-based attribution join. Goa does not enforce
+// path-param patterns, so this is guarded app-side.
+func TestBriefService_CreateBriefAndCampaigns_RejectNonSlugProjectID(t *testing.T) {
+	uuid := "a09410d0-0ec0-11ea-8e8f-416e2d8da950"
+	for _, bad := range []string{uuid, "CNCF", "cncf_x", "-cncf", "with space"} {
+		s := newTestBriefService(newFakeBriefRepo())
+		if _, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
+			ProjectID: bad, Brief: &briefs.BriefInput{ProgramType: "events", EventSlug: "kubecon"},
+		}); err == nil {
+			t.Errorf("CreateBrief must reject non-slug project_id %q", bad)
+		} else if _, ok := err.(*briefs.BadRequestError); !ok {
+			t.Errorf("CreateBrief(%q) error = %T, want *BadRequestError", bad, err)
+		}
+		if _, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+			ProjectID: bad, BriefID: "b1", Input: &briefs.CampaignCreateInput{Platforms: []string{"google-ads"}},
+		}); err == nil {
+			t.Errorf("CreateCampaigns must reject non-slug project_id %q", bad)
+		} else if _, ok := err.(*briefs.BadRequestError); !ok {
+			t.Errorf("CreateCampaigns(%q) error = %T, want *BadRequestError", bad, err)
+		}
+	}
+	// A valid slug must PASS the slug guard (it fails later for a different reason —
+	// unknown brief — proving the guard itself didn't reject it).
+	s := newTestBriefService(newFakeBriefRepo())
+	_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "nope", Input: &briefs.CampaignCreateInput{Platforms: []string{"google-ads"}},
+	})
+	if err != nil && strings.Contains(err.Error(), "canonical") {
+		t.Errorf("a valid slug must pass the slug guard, got %v", err)
+	}
+}
+
 func TestBriefService_CreateCampaigns_RejectsEmptyPlatforms(t *testing.T) {
 	repo := newFakeBriefRepo()
 	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{

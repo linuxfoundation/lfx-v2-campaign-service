@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -212,6 +213,47 @@ func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
 	// "cncf"), stamped by the adapter — not free text from the brief JSON.
 	if !strings.Contains(camp.CampaignName, "cncf") {
 		t.Errorf("campaign name must include the authenticated project slug, got %q", camp.CampaignName)
+	}
+}
+
+func TestReddit_ConfigHSTokenTakesPrecedence(t *testing.T) {
+	// hsToken is a documented top-level config field. A request supplying config.hsToken
+	// must be honored (it drives utm_campaign for HubSpot attribution) and take
+	// precedence over any token in the brief blobs — not be silently ignored.
+	var gotClickURL string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			body, _ := io.ReadAll(r.Body)
+			gotClickURL = string(body) // the ad body carries the utm click_url
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ad_1"}})
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "cmp_123"}})
+		case strings.Contains(r.URL.Path, "ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+		}
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	// config carries hsToken (+ a postUrl/variant so the ad step runs and emits the
+	// utm click_url). registrationUrl gives the utm a base to decorate.
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"],"postUrl":"t3_abc123","hsToken":"HS-FROM-CONFIG","variants":[{"headline":"Join us"}]}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !strings.Contains(gotClickURL, "HS-FROM-CONFIG") {
+		t.Errorf("config.hsToken must drive utm_campaign; ad click_url did not carry it: %q", gotClickURL)
 	}
 }
 
