@@ -190,6 +190,23 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	if camp.Status != campaignStatusCreated {
 		t.Errorf("success status = %q, want %q", camp.Status, campaignStatusCreated)
 	}
+	// Persistence-contract columns populated from the config (config uses a LIFETIME
+	// budget of 2500, so BudgetType must be lifetime — not left NULL or daily).
+	if camp.BudgetAmount == nil || *camp.BudgetAmount != 2500 {
+		t.Errorf("BudgetAmount = %v, want 2500", camp.BudgetAmount)
+	}
+	if camp.BudgetType == nil || *camp.BudgetType != model.BudgetLifetime {
+		t.Errorf("BudgetType = %v, want lifetime (lifetimeBudget:true)", camp.BudgetType)
+	}
+	if camp.StartDate == nil || camp.StartDate.Format("2006-01-02") != "2099-01-01" {
+		t.Errorf("StartDate = %v, want 2099-01-01", camp.StartDate)
+	}
+	if camp.EndDate == nil || camp.EndDate.Format("2006-01-02") != "2099-02-01" {
+		t.Errorf("EndDate = %v, want 2099-02-01", camp.EndDate)
+	}
+	if len(camp.ConfigSnapshot) == 0 {
+		t.Error("ConfigSnapshot should capture the validated meta config")
+	}
 
 	// Per-variant fan-out: two variants → two creatives + two ads.
 	if got := atomic.LoadInt32(&creativeCount); got != 2 {

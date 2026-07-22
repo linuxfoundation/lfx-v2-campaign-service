@@ -136,7 +136,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("meta campaign creation failed before any upstream create: %w", cerr))
 		}
-		return campaignFromMeta(ctx, result), fmt.Errorf("meta campaign creation UNCONFIRMED: %w", cerr)
+		return campaignFromMeta(ctx, result, cfg), fmt.Errorf("meta campaign creation UNCONFIRMED: %w", cerr)
 	}
 	// Meta creates one ad per requested variant but treats per-variant ad failures as
 	// NON-fatal (the client records them in Steps and continues), so a nil error can
@@ -148,7 +148,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// for a human/monitor to reconcile. Mirrors the reddit/twitter partial-ad handling.
 	// All requested variants are valid here (the client fails fast on a malformed
 	// variant), so len(cfg.Variants) is the requested count.
-	camp := campaignFromMeta(ctx, result)
+	camp := campaignFromMeta(ctx, result, cfg)
 	if result.AdCount < len(cfg.Variants) {
 		camp.Status = campaignStatusCreatedDegraded
 	}
@@ -156,12 +156,15 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 }
 
 // campaignFromMeta maps the client result to the persistence model.
-func campaignFromMeta(ctx context.Context, r *meta.CampaignResult) *model.Campaign {
+func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
+	// Persist the budget/schedule/config the caller supplied (Meta honors a
+	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config.
+	applyCampaignConfig(ctx, c, cfg.Budget, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, cfg)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: on the degraded/ambiguous-orphan paths Result is the sole carrier
