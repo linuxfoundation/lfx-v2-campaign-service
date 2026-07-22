@@ -14,11 +14,66 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
+
+// campaignDateLayout is the wire format for the per-platform config start/end dates
+// (YYYY-MM-DD), documented in docs/api-catalog.md for every platform config.
+const campaignDateLayout = "2006-01-02"
+
+// applyCampaignConfig populates the persistence-contract columns on c that only the
+// per-platform config knows: budget_amount, budget_type, start_date, end_date, and
+// config_snapshot (docs/architecture.md — the campaigns row stores these). Without it
+// every dispatched row would have NULL budget/schedule/config despite those values
+// being used upstream. Shared by all adapters so the persisted contract is identical
+// across platforms.
+//
+//   - budget: whole units in the platform's budget currency (0 → left NULL / unset).
+//   - lifetime: true → BudgetLifetime, false → BudgetDaily (only set when budget > 0).
+//   - start/end: YYYY-MM-DD strings; a blank or unparseable value is left NULL (the
+//     client already validated dates on the create path, so this is defensive).
+//   - snapshot: the validated per-platform config struct; marshaled into
+//     ConfigSnapshot. A marshal failure is logged (not fatal) and leaves it NULL.
+func applyCampaignConfig(ctx context.Context, c *model.Campaign, budget float64, lifetime bool, startDate, endDate string, snapshot any) {
+	if budget > 0 {
+		b := budget
+		c.BudgetAmount = &b
+		bt := model.BudgetDaily
+		if lifetime {
+			bt = model.BudgetLifetime
+		}
+		c.BudgetType = &bt
+	}
+	c.StartDate = parseCampaignDate(startDate)
+	c.EndDate = parseCampaignDate(endDate)
+	if snapshot != nil {
+		if raw, err := json.Marshal(snapshot); err != nil {
+			slog.WarnContext(ctx, "failed to marshal campaign config snapshot (ConfigSnapshot left empty)",
+				"platform", string(c.Platform), "error", err)
+		} else {
+			c.ConfigSnapshot = raw
+		}
+	}
+}
+
+// parseCampaignDate parses a YYYY-MM-DD config date to a *time.Time (UTC), returning
+// nil for a blank or unparseable value (the column is nullable).
+func parseCampaignDate(s string) *time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	t, err := time.Parse(campaignDateLayout, s)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
 
 // connReader is the read side of the connection repository the adapters need. Kept
 // to the single method they use so a test can supply a tiny fake.

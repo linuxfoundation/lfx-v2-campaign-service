@@ -165,7 +165,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("reddit campaign creation failed before any upstream create: %w", cerr))
 		}
-		return campaignFromReddit(result), fmt.Errorf("reddit campaign creation UNCONFIRMED: %w", cerr)
+		return campaignFromReddit(ctx, result, cfg), fmt.Errorf("reddit campaign creation UNCONFIRMED: %w", cerr)
 	}
 	// A nil error with a non-empty AdWarning is a DEGRADED success: the campaign + ad
 	// group were created, but the promoted-post ad failed or is unconfirmed
@@ -177,7 +177,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// `created_degraded` status (the warning text is already carried in Result). A
 	// human/monitor reconciles the ad; the campaign is not silently "succeeded".
 	// Mirrors the twitter adapter's PromotedTweetWarning handling.
-	camp := campaignFromReddit(result)
+	camp := campaignFromReddit(ctx, result, cfg)
 	if strings.TrimSpace(result.AdWarning) != "" {
 		camp.Status = campaignStatusCreatedDegraded
 	}
@@ -189,12 +189,16 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 // orphan, status); this sets what only the dispatcher knows — upstream id, name, the
 // provider result blob, and a "created" status on the success path (the orchestrator
 // does not set one on success, and UpsertCampaign writes Status verbatim).
-func campaignFromReddit(r *reddit.CampaignResult) *model.Campaign {
+func campaignFromReddit(ctx context.Context, r *reddit.CampaignResult, cfg redditConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
+	// Persist the budget/schedule/config the caller supplied (Reddit has no lifetime
+	// budget flag — its budget is a daily cap). ConfigSnapshot captures the validated
+	// redditConfig for reconciliation.
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, false, cfg.StartDate, cfg.EndDate, cfg)
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
 	}

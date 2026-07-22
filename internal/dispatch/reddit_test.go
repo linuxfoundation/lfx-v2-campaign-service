@@ -212,6 +212,23 @@ func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
 	if camp.Status != campaignStatusCreated {
 		t.Errorf("status = %q, want %q", camp.Status, campaignStatusCreated)
 	}
+	// The persistence-contract columns (budget/schedule/config) must be populated from
+	// the config, not left NULL (UpsertCampaign writes them verbatim).
+	if camp.BudgetAmount == nil || *camp.BudgetAmount != 50 {
+		t.Errorf("BudgetAmount = %v, want 50", camp.BudgetAmount)
+	}
+	if camp.BudgetType == nil || *camp.BudgetType != model.BudgetDaily {
+		t.Errorf("BudgetType = %v, want daily (reddit has no lifetime flag)", camp.BudgetType)
+	}
+	if camp.StartDate == nil || camp.StartDate.Format("2006-01-02") != "2099-08-01" {
+		t.Errorf("StartDate = %v, want 2099-08-01", camp.StartDate)
+	}
+	if camp.EndDate == nil || camp.EndDate.Format("2006-01-02") != "2099-08-31" {
+		t.Errorf("EndDate = %v, want 2099-08-31", camp.EndDate)
+	}
+	if len(camp.ConfigSnapshot) == 0 {
+		t.Error("ConfigSnapshot should capture the validated reddit config")
+	}
 	// The campaign name must carry the AUTHENTICATED project slug (brief.ProjectID
 	// "cncf"), stamped by the adapter — not free text from the brief JSON.
 	if !strings.Contains(camp.CampaignName, "cncf") {
