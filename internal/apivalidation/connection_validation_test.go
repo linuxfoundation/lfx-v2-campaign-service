@@ -38,6 +38,10 @@ func TestValidateMetaAdsConnectionConfig_PatternsAndRequired(t *testing.T) {
 		{name: "account_id without act_ prefix", body: &connsrv.MetaAdsConnectionConfigRequestBody{AccountID: strp("193556282970417"), PageID: strp("123")}, wantErr: true, errSubstr: "account_id"},
 		{name: "account_id non-numeric", body: &connsrv.MetaAdsConnectionConfigRequestBody{AccountID: strp("act_foo"), PageID: strp("123")}, wantErr: true, errSubstr: "account_id"},
 		{name: "empty account_id", body: &connsrv.MetaAdsConnectionConfigRequestBody{AccountID: strp(""), PageID: strp("123")}, wantErr: true, errSubstr: "account_id"},
+		// MaxLength(64) boundary: a pattern-valid but over-long id must still 4xx, so the
+		// length bound can't silently disappear on regeneration (65 = one over the cap).
+		{name: "overlong account_id", body: &connsrv.MetaAdsConnectionConfigRequestBody{AccountID: strp("act_" + strings.Repeat("9", 65)), PageID: strp("123")}, wantErr: true, errSubstr: "account_id"},
+		{name: "overlong page_id", body: &connsrv.MetaAdsConnectionConfigRequestBody{AccountID: strp("act_1"), PageID: strp(strings.Repeat("9", 65))}, wantErr: true, errSubstr: "page_id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
