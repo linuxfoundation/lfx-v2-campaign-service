@@ -103,6 +103,16 @@ func notCreated(err error) error { return &preCreateError{err: err} }
 // persists with an empty one.
 const campaignStatusCreated = "created"
 
+// campaignStatusCreatedDegraded marks a campaign that WAS created upstream but whose
+// outcome is incomplete — a per-platform partial (e.g. a promoted-post/ad step that
+// failed or is unconfirmed, or fewer ads created than requested). It is a distinct,
+// VISIBLE status (vs the clean campaignStatusCreated) so a degraded outcome is not
+// silently "succeeded": the campaign exists (returning an error would mislead and be
+// unrecoverable by retry, since idempotency short-circuits a re-dispatch), so instead
+// the degraded state is persisted for a human/monitor to reconcile. Shared by every
+// dispatch adapter (reddit/meta/twitter) whose client can return a partial success.
+const campaignStatusCreatedDegraded = "created_degraded"
+
 // unmarshalPlatformConfig extracts ONE platform's nested config object from the
 // per-request config envelope and unmarshals it into dst. The CreateCampaigns
 // request carries a single `config` blob for all selected platforms, with each

@@ -151,7 +151,21 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		}
 		return campaignFromReddit(result), fmt.Errorf("reddit campaign creation UNCONFIRMED: %w", cerr)
 	}
-	return campaignFromReddit(result), nil
+	// A nil error with a non-empty AdWarning is a DEGRADED success: the campaign + ad
+	// group were created, but the promoted-post ad failed or is unconfirmed
+	// (client.go sets AdWarning on that path). We do NOT return an error — the campaign
+	// IS created, so failing the job would mislead (the paid campaign exists) and be
+	// unrecoverable by retry anyway (the orchestrator persists PlatformCampaignID and a
+	// re-dispatch short-circuits on idempotency, never re-running the ad step). Instead
+	// the degraded state is made VISIBLE in the persisted row: a distinct
+	// `created_degraded` status (the warning text is already carried in Result). A
+	// human/monitor reconciles the ad; the campaign is not silently "succeeded".
+	// Mirrors the twitter adapter's PromotedTweetWarning handling.
+	camp := campaignFromReddit(result)
+	if strings.TrimSpace(result.AdWarning) != "" {
+		camp.Status = campaignStatusCreatedDegraded
+	}
+	return camp, nil
 }
 
 // campaignFromReddit maps the client result to the persistence model. The

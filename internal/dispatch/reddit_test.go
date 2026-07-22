@@ -214,3 +214,50 @@ func TestReddit_DispatchSuccessMapsResult(t *testing.T) {
 		t.Errorf("campaign name must include the authenticated project slug, got %q", camp.CampaignName)
 	}
 }
+
+func TestReddit_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
+	// The campaign + ad group are created, but the promoted-post ad step fails (Reddit
+	// rejects the /ads POST with a 4xx). The reddit client returns (result, nil) with a
+	// non-empty AdWarning — a DEGRADED success. The adapter must NOT persist a clean
+	// "created" status (which would let idempotency block re-dispatch while the missing
+	// ad is visible only inside the result blob); it must persist "created_degraded".
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			// Definite rejection of the promoted-post ad -> AdWarning, but the campaign
+			// (already created) still returns (result, nil).
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "rejected"})
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "cmp_123"}})
+		case strings.Contains(r.URL.Path, "ad_groups"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "ag_1"}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+		}
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	// postUrl (a t3_-prefixed raw id is accepted) + a variant drive the ad step so the
+	// /ads failure produces an AdWarning.
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"],"postUrl":"t3_abc123","variants":[{"headline":"Join us"}]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg)
+	if err != nil {
+		t.Fatalf("a degraded success (campaign created, ad failed) must NOT return an error: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "cmp_123" {
+		t.Fatalf("the created campaign must still be mapped, got %+v", camp)
+	}
+	if camp.Status != campaignStatusCreatedDegraded {
+		t.Errorf("status = %q, want %q (the failed ad must surface as a degraded, not clean, success)", camp.Status, campaignStatusCreatedDegraded)
+	}
+}
