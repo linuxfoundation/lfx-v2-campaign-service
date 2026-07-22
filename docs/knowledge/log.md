@@ -2,6 +2,8 @@
 
 ## 2026-07-21
 
+**Update** — Fixed the group-orphan persistence gap (orchestrator `dispatchPlatform`): a retained partial with an EMPTY `PlatformCampaignID` but a non-empty `Result` (LinkedIn's group-created-but-campaign-failed case) was DROPPED — persist only fired for a non-empty upstream id — leaving the orphaned group id + status unrecorded while the pending claim blocked the pair with no trace. Now persists whenever `campaign != nil && (PlatformCampaignID != "" || len(Result) > 0)`, keeping the row `pending` with the empty id (so the idempotency fast-path still re-attempts rather than false-succeeding) and the `Result` blob (so the orphan is reconcilable). Added `TestOrchestrator_GroupOrphanPartialIsPersisted`. The broader no-resume issue (a pending empty-id claim is skipped, never re-dispatched) stays tracked under LFXV2-2665.
+
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review
 (context/concurrency, error-classification, test-completeness, API-contract/docs, security)
 with adversarial verification of each finding. One REAL bug + polish:

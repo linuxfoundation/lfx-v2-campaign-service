@@ -1063,6 +1063,62 @@ func TestOrchestrator_PartialDispatchErrorPersistsUpstreamID(t *testing.T) {
 	}
 }
 
+// groupOrphanDispatcher models LinkedIn's group-created-but-campaign-failed case:
+// it returns a non-nil campaign with an EMPTY PlatformCampaignID (deliberately, so
+// the idempotency fast-path doesn't false-succeed) but a NON-EMPTY Result carrying
+// the orphaned group id, alongside a retained (non-pre-create) error.
+type groupOrphanDispatcher struct{}
+
+func (groupOrphanDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{
+			PlatformCampaignID: "", // no campaign was created — only the group
+			CampaignName:       "Events | KubeCon | cncf",
+			Status:             "group_created",
+			Result:             json.RawMessage(`{"campaignGroupId":"urn:li:sponsoredCampaignGroup:500"}`),
+		},
+		errors.New("linkedin campaign creation incomplete (a campaign group may exist)")
+}
+
+// TestOrchestrator_GroupOrphanPartialIsPersisted verifies the fix for the HIGH
+// group-orphan finding: a retained partial with an EMPTY PlatformCampaignID but a
+// non-empty Result (the orphaned group id) must still be PERSISTED — previously it
+// was dropped (persist only fired for a non-empty PlatformCampaignID), leaving the
+// group orphan unrecorded and the pending claim blocking the pair with no trace.
+func TestOrchestrator_GroupOrphanPartialIsPersisted(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: groupOrphanDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	// The claim must be RETAINED (the group exists — a blind retry could duplicate it).
+	row, ok := camps.existing["b1|"+string(model.ProviderLinkedInAds)]
+	if !ok {
+		t.Fatal("pending claim should be retained after a group-orphan dispatch error")
+	}
+	// PlatformCampaignID stays empty (no campaign was created) so the idempotency
+	// fast-path re-attempts rather than false-succeeding.
+	if row.PlatformCampaignID != "" {
+		t.Errorf("retained row PlatformCampaignID = %q, want empty (no campaign created)", row.PlatformCampaignID)
+	}
+	// The group orphan MUST be recorded: the Result blob carrying the group id must
+	// have been persisted (this is the fix — previously dropped).
+	if len(camps.upserted) != 1 {
+		t.Fatalf("upserted %d campaigns, want 1 (the group orphan must be persisted, not dropped)", len(camps.upserted))
+	}
+	if !strings.Contains(string(row.Result), "sponsoredCampaignGroup:500") {
+		t.Errorf("retained row Result must carry the orphaned group id for reconciliation, got %q", row.Result)
+	}
+	if row.Status != "pending" {
+		t.Errorf("retained row Status = %q, want pending (recoverable orphan)", row.Status)
+	}
+}
+
 // blockingSweepJobRepo blocks inside FailStuckJobs until its context is
 // cancelled, letting a test prove that cancelling the sweeper's context
 // interrupts an in-flight sweep promptly (rather than the sweep running to its

@@ -45,7 +45,12 @@ DO NOTHING of a `pending` campaign row, so exactly one worker across replicas
 wins the claim (the unique index arbitrates) with no held connection or blocking
 lock. A worker that loses the claim reuses the existing row instead of dispatching
 again; the pending row also survives an upstream-create-then-crash, making the
-orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
+orphaned upstream campaign recoverable. A retained partial is persisted when it
+carries EITHER a non-empty `PlatformCampaignID` OR a non-empty `Result` blob —
+the latter covers LinkedIn's group-created-but-campaign-failed case, where the
+adapter deliberately keeps `PlatformCampaignID` empty (so the idempotency
+fast-path doesn't false-succeed) and records the orphaned group id in `Result`;
+persisting it keeps that orphan discoverable for reconciliation. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).

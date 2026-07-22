@@ -564,28 +564,39 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		} else {
 			// The claim is RETAINED (outcome unknown, blind retry could double-create).
 			// The platform clients' partial-result contract lets Dispatch return a
-			// non-nil campaign carrying the created upstream id ALONGSIDE the error
-			// (the campaign POST succeeded but a later step failed). If it did, stamp
-			// that upstream id onto the retained pending row so the orphaned upstream
-			// campaign is RECONCILABLE later instead of leaving an anonymous claim.
-			// Persist on a context DETACHED from the dispatch ctx (mirroring the
-			// success path) so a shutdown-cancelled dispatch ctx can't drop the record
-			// of a paid campaign that actually exists.
-			if campaign != nil && campaign.PlatformCampaignID != "" {
+			// non-nil campaign carrying created-upstream detail ALONGSIDE the error. That
+			// detail comes in two shapes, BOTH of which we must persist onto the retained
+			// pending row so the orphaned upstream resource is RECONCILABLE later instead
+			// of leaving an anonymous claim:
+			//   1. a non-empty PlatformCampaignID (the campaign POST succeeded, a later
+			//      step failed), and/or
+			//   2. an empty PlatformCampaignID WITH a non-empty Result blob — e.g.
+			//      LinkedIn created the campaign GROUP but not the campaign, so it
+			//      deliberately keeps PlatformCampaignID empty (to avoid the idempotency
+			//      fast-path false-succeeding) and records the group id / partial
+			//      resources in Result. Persisting only case 1 dropped case 2 entirely:
+			//      the group id + status never reached the DB, leaving the orphan
+			//      undiscoverable and the pending claim blocking the pair with no record.
+			// An empty-id row stays OUT of the idempotency fast-path (it requires a
+			// non-empty PlatformCampaignID), so it correctly reads as "reconcile me", not
+			// "already succeeded". Persist on a context DETACHED from the dispatch ctx
+			// (mirroring the success path) so a shutdown-cancelled dispatch ctx can't drop
+			// the record of a paid resource that actually exists.
+			if campaign != nil && (campaign.PlatformCampaignID != "" || len(campaign.Result) > 0) {
 				campaign.JobID = &jobID
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
 				// Keep the row 'pending' so it stays a recoverable orphan (not a
-				// completed campaign): the dispatch did not succeed, only the upstream
-				// create partially happened.
+				// completed campaign): the dispatch did not succeed, only an upstream
+				// resource was partially created.
 				campaign.Status = "pending"
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
-					slog.ErrorContext(ctx, "failed to record partial upstream campaign id on retained pending claim",
+					slog.ErrorContext(ctx, "failed to record partial upstream resource on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", perr)
 				} else {
-					slog.ErrorContext(ctx, "platform dispatch failed after upstream create; recorded orphaned upstream id on retained pending claim",
+					slog.ErrorContext(ctx, "platform dispatch failed after a partial upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", derr)
 				}
 				cancelPersist()
