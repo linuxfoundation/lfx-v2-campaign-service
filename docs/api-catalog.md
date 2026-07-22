@@ -344,7 +344,9 @@ description?: string             — At most 30 runes
 ```
 
 Copy limits are enforced by the client before any upstream call, so a variant that
-exceeds them fails the platform job pre-create (async — not a synchronous 4xx).
+exceeds them fails the platform job pre-create (async — not a synchronous 4xx). The
+composed ad-creative NAME (`<eventName> - Variant N`) is also capped at 255 runes and
+rejected pre-create, so keep `eventName` well short of that so the suffix fits.
 
 Connection prerequisites (from the Meta connection, not this config): a valid `account_id`
 (`act_<digits>`) and a numeric `page_id` — both REQUIRED, format-validated, and length-bounded
