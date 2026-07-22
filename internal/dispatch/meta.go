@@ -44,7 +44,10 @@ type metaConfig struct {
 	// JPY, 100 for most), NOT an unconditional override: the client's preflight derives
 	// the offset from the account's currency and that is authoritative — a supplied value
 	// is used only when the currency can't be resolved, and a value conflicting with a
-	// recognized account currency is REJECTED (4xx). Left 0 → derived by the client.
+	// recognized account currency is REJECTED by the client during dispatch. Because
+	// CreateCampaigns is asynchronous (a 202 is returned before dispatch runs), that
+	// rejection fails the platform job BEFORE any mutating Meta call — it is a pre-create
+	// dispatch failure, not a synchronous 4xx on the campaign request. Left 0 → derived.
 	CurrencyOffset int64 `json:"currencyOffset"`
 }
 

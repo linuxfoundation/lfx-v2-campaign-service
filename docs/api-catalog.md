@@ -300,9 +300,12 @@ currencyOffset?: number         — Account minor-unit scale (1 for zero-decimal
                                   the client's preflight derives the offset from the account's ISO
                                   currency and that is AUTHORITATIVE — a supplied value is used only
                                   when the currency can't be determined, and a supplied value that
-                                  CONFLICTS with a recognized account currency is REJECTED (a 4xx)
-                                  rather than trusted. Omit it unless the account currency is
-                                  unrecognized.
+                                  CONFLICTS with a recognized account currency is REJECTED by the
+                                  client during dispatch rather than trusted. Since CreateCampaigns
+                                  is async (a 202 is returned first), that rejection fails the
+                                  platform job BEFORE any mutating Meta call — a pre-create dispatch
+                                  failure, not a synchronous 4xx on the campaign request. Omit it
+                                  unless the account currency is unrecognized.
 placements?: object             — Which feeds to run on; ALL keys optional booleans. Keys are the
                                   Go field NAMES (no lowercase json aliases): FacebookFeed,
                                   InstagramFeed, Stories, Reels, AudienceNetwork, MessengerInbox.
