@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,6 +68,40 @@ func TestDoRequest_MissingTokenFailsPreSend(t *testing.T) {
 	_, err := c.doRequest(context.Background(), http.MethodGet, "/x", nil, true)
 	if err == nil || !strings.Contains(err.Error(), "missing private-app token") {
 		t.Errorf("expected a missing-token error, got: %v", err)
+	}
+}
+
+func TestDoRequest_AlreadyCancelledCtxIsPreSendNotUnconfirmed(t *testing.T) {
+	// If the caller's context is already done BEFORE we send, nothing was sent. For a
+	// MUTATING call this must be a clean PRE-SEND error (definitely-not-committed), NOT
+	// an ambiguous transportError → UNCONFIRMED (which would wrongly tell the caller the
+	// mutation MIGHT have landed and to verify-before-retry). Also: the server must
+	// never be hit.
+	var hits int32
+	c, srv := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = io.WriteString(w, `{}`)
+	})
+	_ = srv
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already done before the call
+
+	_, err := c.doRequest(ctx, http.MethodPost, "/crm/v3/lists", map[string]string{"x": "y"}, false)
+	if err == nil {
+		t.Fatal("a cancelled ctx must produce an error")
+	}
+	var pe *preSendError
+	if !errors.As(err, &pe) {
+		t.Fatalf("an already-cancelled ctx must be a preSendError (definitely not sent), got %T: %v", err, err)
+	}
+	if IsUnconfirmed(err) {
+		t.Error("a pre-send (never-sent) mutating request must NOT be UNCONFIRMED")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("the pre-send error must wrap the ctx cause for errors.Is, got %v", err)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Errorf("the server must never be hit when ctx is already done, got %d hits", n)
 	}
 }
 

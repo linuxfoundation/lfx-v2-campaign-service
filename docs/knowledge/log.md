@@ -2,6 +2,18 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot ctx-cancel pre-send guard (PR #35 review, copilot — a REAL
+correctness bug, not a nit). `doRequest` fired `httpClient.Do(req)` even when the caller's
+context was ALREADY done before send. A ctx cancellation isn't an `isPreSendDialError`, so
+the resulting `Do` error fell through to `transportError{Mutating: !idempotent}` →
+`IsUnconfirmed == true` — wrongly telling a caller of a MUTATING request that the mutation
+MIGHT have committed (verify-before-retry) when nothing was ever sent. Added a `ctx.Err()`
+guard right before `Do` (inside the retry loop, so it also covers a ctx that expires during
+a 429 backoff), returning a clean `preSendError` (definitely-not-sent → `IsUnconfirmed ==
+false`). Mirrors the established ctx.Err() pre-send guard in the googleads/reddit/meta
+clients. Added `TestDoRequest_AlreadyCancelledCtxIsPreSendNotUnconfirmed` (asserts
+preSendError, NOT unconfirmed, wraps context.Canceled, and the server is never hit).
+
 **Update** — HubSpot FINAL review pass (PR #35). Ran an exhaustive self-review of the
 whole hubspot diff (correctness, test-strength, doc-drift, API-contract, security) and
 closed the last three things an automated reviewer could flag — the code was already

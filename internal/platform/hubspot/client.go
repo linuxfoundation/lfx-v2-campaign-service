@@ -418,6 +418,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
+		// If the caller's context is ALREADY done before we send, nothing was sent —
+		// return a clean PRE-SEND error (definitely-not-sent), NOT the ambiguous
+		// transportError below. Otherwise httpClient.Do would fail with the ctx error
+		// and, since a context cancellation is not an isPreSendDialError, it would be
+		// mis-classified as an ambiguous transportError → UNCONFIRMED, wrongly implying a
+		// mutating request MIGHT have committed when none was ever sent. This also covers
+		// a ctx that expires during a 429 retry backoff. Mirrors the ctx.Err() pre-send
+		// guard in the googleads/reddit/meta clients.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, &preSendError{Method: method, Path: path, Err: ctxErr}
+		}
+
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if isPreSendDialError(err) {
