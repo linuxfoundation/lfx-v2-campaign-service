@@ -223,6 +223,102 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	}
 }
 
+func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
+	// Two variants requested, but the SECOND ad POST fails (Meta rejects it). Meta
+	// treats per-variant ad failures as non-fatal, so CreateCampaign returns
+	// (result, nil) with AdCount=1 < 2 — a DEGRADED success. The adapter must persist
+	// created_degraded, not a clean created (which would let idempotency block a
+	// re-dispatch while the missing ad is only visible inside the result blob).
+	var adCnt int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			// First ad succeeds; the second is rejected → AdCount ends at 1 of 2.
+			if atomic.AddInt32(&adCnt, 1) == 1 {
+				_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+			} else {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":{"message":"rejected"}}`)
+			}
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	cfg := json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"],"currencyOffset":100,"variants":[
+		{"headline":"A","primaryText":"first","description":"d1"},
+		{"headline":"B","primaryText":"second","description":"d2"}
+	]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if err != nil {
+		t.Fatalf("a degraded success (campaign created, one ad failed) must NOT error: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "camp_123" {
+		t.Fatalf("the created campaign must still be mapped, got %+v", camp)
+	}
+	if camp.Status != campaignStatusCreatedDegraded {
+		t.Errorf("status = %q, want %q (fewer ads created than requested is a degraded success)", camp.Status, campaignStatusCreatedDegraded)
+	}
+}
+
+func TestMeta_ConfigHSTokenTakesPrecedence(t *testing.T) {
+	// config.hsToken is a documented top-level field and must drive utm_campaign,
+	// taking precedence over any brief token — not be silently ignored.
+	var creativeBody string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			creativeBody = string(b) // the creative carries the utm link
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	cfg := json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"],"currencyOffset":100,"hsToken":"HS-FROM-CONFIG","variants":[{"headline":"A","primaryText":"first","description":"d1"}]}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	mu.Lock()
+	got := creativeBody
+	mu.Unlock()
+	if !strings.Contains(got, "HS-FROM-CONFIG") {
+		t.Errorf("config.hsToken must drive utm_campaign; creative link did not carry it: %q", got)
+	}
+}
+
 func TestMeta_AmbiguousCreateRetainsClaim(t *testing.T) {
 	// A 5xx on the campaign POST is ambiguous → the meta client returns a non-nil
 	// name-only partial (empty CampaignID). The adapter must retain the claim.

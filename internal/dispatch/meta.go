@@ -42,6 +42,9 @@ type metaConfig struct {
 	// CurrencyOffset optionally overrides the account minor-unit offset (1 for
 	// zero-decimal currencies like JPY, 100 for most). Left 0 → derived by the client.
 	CurrencyOffset int64 `json:"currencyOffset"`
+	// HSToken is the documented TOP-LEVEL config field for HubSpot attribution
+	// (docs/api-catalog.md); it takes precedence over a token embedded in the brief.
+	HSToken string `json:"hsToken"`
 }
 
 // MetaDispatcher creates Meta (Facebook/Instagram) campaigns for the orchestrator.
@@ -94,13 +97,21 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		Label:          res.label,
 		CurrencyOffset: cfg.CurrencyOffset,
 	}
+	// A request-supplied config.hsToken takes precedence over a token in the brief
+	// blobs; without this a documented config.hsToken is silently ignored and the client
+	// falls back to the event slug for utm_campaign, losing the HubSpot attribution.
+	hsToken := strings.TrimSpace(cfg.HSToken)
+	if hsToken == "" {
+		hsToken = bf.HSToken
+	}
+
 	in := meta.CampaignInput{
 		EventName: bf.EventName,
 		EventSlug: brief.EventSlug,
 		// Project stamped from the authenticated scope, not caller JSON (api-catalog).
 		Project:         brief.ProjectID,
 		RegistrationURL: bf.RegistrationURL,
-		HSToken:         bf.HSToken,
+		HSToken:         hsToken,
 		Objective:       cfg.Objective,
 		GeoTargets:      cfg.GeoTargets,
 		Budget:          cfg.Budget,
@@ -124,7 +135,21 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		}
 		return campaignFromMeta(result), fmt.Errorf("meta campaign creation UNCONFIRMED: %w", cerr)
 	}
-	return campaignFromMeta(result), nil
+	// Meta creates one ad per requested variant but treats per-variant ad failures as
+	// NON-fatal (the client records them in Steps and continues), so a nil error can
+	// still come back with AdCount < the number of variants requested — a DEGRADED
+	// success. We do NOT return an error: the campaign IS created, so failing the job
+	// would mislead and be unrecoverable by retry (idempotency short-circuits a
+	// re-dispatch, never re-running the ad steps). Instead the shortfall is made VISIBLE
+	// as a distinct created_degraded status (per-variant failures are in Result.Steps)
+	// for a human/monitor to reconcile. Mirrors the reddit/twitter partial-ad handling.
+	// All requested variants are valid here (the client fails fast on a malformed
+	// variant), so len(cfg.Variants) is the requested count.
+	camp := campaignFromMeta(result)
+	if result.AdCount < len(cfg.Variants) {
+		camp.Status = campaignStatusCreatedDegraded
+	}
+	return camp, nil
 }
 
 // campaignFromMeta maps the client result to the persistence model.
