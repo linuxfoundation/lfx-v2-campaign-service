@@ -138,7 +138,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags           = flag.NewFlagSet("create-google-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsCreateGoogleAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceConnectionsCreateGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateGoogleAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceConnectionsCreateGoogleAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateGoogleAdsFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceConnectionsGetGoogleAdsFlags           = flag.NewFlagSet("get-google-ads", flag.ExitOnError)
@@ -166,7 +166,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags           = flag.NewFlagSet("create-linkedin-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsCreateLinkedinAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceConnectionsCreateLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateLinkedinAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceConnectionsCreateLinkedinAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateLinkedinAdsFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceConnectionsGetLinkedinAdsFlags           = flag.NewFlagSet("get-linkedin-ads", flag.ExitOnError)
@@ -194,7 +194,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceConnectionsCreateMetaAdsFlags           = flag.NewFlagSet("create-meta-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsCreateMetaAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateMetaAdsFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceConnectionsCreateMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateMetaAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateMetaAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateMetaAdsFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceConnectionsCreateMetaAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateMetaAdsFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceConnectionsGetMetaAdsFlags           = flag.NewFlagSet("get-meta-ads", flag.ExitOnError)
@@ -222,7 +222,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceConnectionsCreateRedditAdsFlags           = flag.NewFlagSet("create-reddit-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsCreateRedditAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateRedditAdsFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceConnectionsCreateRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateRedditAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateRedditAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateRedditAdsFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceConnectionsCreateRedditAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateRedditAdsFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceConnectionsGetRedditAdsFlags           = flag.NewFlagSet("get-reddit-ads", flag.ExitOnError)
@@ -250,7 +250,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags           = flag.NewFlagSet("create-twitter-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsCreateTwitterAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceConnectionsCreateTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateTwitterAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceConnectionsCreateTwitterAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateTwitterAdsFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceConnectionsGetTwitterAdsFlags           = flag.NewFlagSet("get-twitter-ads", flag.ExitOnError)
@@ -278,7 +278,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags           = flag.NewFlagSet("create-microsoft-ads", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsBodyFlag        = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceConnectionsCreateMicrosoftAdsBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceConnectionsGetMicrosoftAdsFlags           = flag.NewFlagSet("get-microsoft-ads", flag.ExitOnError)
@@ -306,7 +306,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceConnectionsCreateHubspotFlags           = flag.NewFlagSet("create-hubspot", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsCreateHubspotBodyFlag        = lfxV2CampaignServiceConnectionsCreateHubspotFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceConnectionsCreateHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateHubspotFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsCreateHubspotProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateHubspotFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceConnectionsCreateHubspotBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateHubspotFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceConnectionsGetHubspotFlags           = flag.NewFlagSet("get-hubspot", flag.ExitOnError)
@@ -1253,7 +1253,7 @@ func lfxV2CampaignServiceConnectionsCreateGoogleAdsUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
@@ -1381,7 +1381,7 @@ func lfxV2CampaignServiceConnectionsCreateLinkedinAdsUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
@@ -1509,7 +1509,7 @@ func lfxV2CampaignServiceConnectionsCreateMetaAdsUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
@@ -1637,7 +1637,7 @@ func lfxV2CampaignServiceConnectionsCreateRedditAdsUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
@@ -1765,7 +1765,7 @@ func lfxV2CampaignServiceConnectionsCreateTwitterAdsUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
@@ -1893,7 +1893,7 @@ func lfxV2CampaignServiceConnectionsCreateMicrosoftAdsUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
@@ -2021,7 +2021,7 @@ func lfxV2CampaignServiceConnectionsCreateHubspotUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)

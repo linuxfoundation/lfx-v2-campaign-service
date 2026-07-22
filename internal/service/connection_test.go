@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -120,6 +121,39 @@ func TestCreateGoogleAds_HappyPath(t *testing.T) {
 	}
 	if res.Etag != "1" {
 		t.Errorf("etag = %q, want 1", res.Etag)
+	}
+}
+
+// Connection CREATE must reject a UUID project_id (only a canonical slug is
+// dispatchable — brief/campaign create require a slug and dispatch does an exact-match
+// lookup). Get/update/delete/set/test stay permissive for historical UUID rows.
+func TestCreateConnection_RejectsUUIDProjectID(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	_, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
+		ProjectID: "a09410d0-0ec0-11ea-8e8f-416e2d8da950", // a UUID, not a slug
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: "8666746580"},
+		Credentials: &conn.GoogleAdsCredentials{
+			RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
+		},
+	})
+	var bad *conn.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("a UUID project_id must be a BadRequestError, got %T (%v)", err, err)
+	}
+}
+
+// A different provider's create path shares the same guard — spot-check reddit so the
+// guard isn't accidentally applied to only one provider.
+func TestCreateRedditAds_RejectsUUIDProjectID(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	_, err := s.CreateRedditAds(context.Background(), &conn.CreateRedditAdsPayload{
+		ProjectID:   "a09410d0-0ec0-11ea-8e8f-416e2d8da950",
+		Config:      &conn.RedditAdsConnectionConfig{AccountID: "t2_gv9wtbfa"},
+		Credentials: &conn.RedditAdsCredentials{ClientID: "c", ClientSecret: "s", RefreshToken: "r"},
+	})
+	var bad *conn.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("a UUID project_id must be a BadRequestError, got %T (%v)", err, err)
 	}
 }
 

@@ -10,6 +10,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	lfxv2campaignserviceconnections "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	goa "goa.design/goa/v3/pkg"
@@ -39,6 +40,13 @@ func BuildCreateGoogleAdsPayload(lfxV2CampaignServiceConnectionsCreateGoogleAdsB
 	var projectID string
 	{
 		projectID = lfxV2CampaignServiceConnectionsCreateGoogleAdsProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var bearerToken *string
 	{
@@ -227,6 +235,13 @@ func BuildCreateLinkedinAdsPayload(lfxV2CampaignServiceConnectionsCreateLinkedin
 	var projectID string
 	{
 		projectID = lfxV2CampaignServiceConnectionsCreateLinkedinAdsProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var bearerToken *string
 	{
@@ -415,6 +430,13 @@ func BuildCreateMetaAdsPayload(lfxV2CampaignServiceConnectionsCreateMetaAdsBody 
 	var projectID string
 	{
 		projectID = lfxV2CampaignServiceConnectionsCreateMetaAdsProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var bearerToken *string
 	{
@@ -601,6 +623,13 @@ func BuildCreateRedditAdsPayload(lfxV2CampaignServiceConnectionsCreateRedditAdsB
 	var projectID string
 	{
 		projectID = lfxV2CampaignServiceConnectionsCreateRedditAdsProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var bearerToken *string
 	{
@@ -789,6 +818,13 @@ func BuildCreateTwitterAdsPayload(lfxV2CampaignServiceConnectionsCreateTwitterAd
 	var projectID string
 	{
 		projectID = lfxV2CampaignServiceConnectionsCreateTwitterAdsProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var bearerToken *string
 	{
@@ -977,6 +1013,13 @@ func BuildCreateMicrosoftAdsPayload(lfxV2CampaignServiceConnectionsCreateMicroso
 	var projectID string
 	{
 		projectID = lfxV2CampaignServiceConnectionsCreateMicrosoftAdsProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var bearerToken *string
 	{
@@ -1166,6 +1209,13 @@ func BuildCreateHubspotPayload(lfxV2CampaignServiceConnectionsCreateHubspotBody 
 	var projectID string
 	{
 		projectID = lfxV2CampaignServiceConnectionsCreateHubspotProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	var bearerToken *string
 	{

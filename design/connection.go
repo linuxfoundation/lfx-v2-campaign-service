@@ -157,7 +157,14 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 		Description("Create the project's " + title + " connection (singleton; 409 if one already exists).")
 		Payload(func() {
 			bearerToken()
-			projectIDAttr()
+			// A connection is created keyed by project_id, which is later the EXACT-MATCH
+			// key for the dispatch lookup (ConnectionRepo.Get). brief/campaign create
+			// already require a canonical slug, so a UUID-keyed connection could never be
+			// joined to a dispatched campaign — constrain create to a slug too. get/update/
+			// delete/set-credential/test stay permissive (projectIDAttr) for historical
+			// UUID-keyed rows (migration 000003). Goa does not enforce Pattern/MaxLength on
+			// PATH params, so the service additionally guards via validateConnectionProjectSlug.
+			projectSlugAttr()
 			Attribute("config", config)
 			Attribute("credentials", creds)
 			Required("project_id", "config", "credentials")

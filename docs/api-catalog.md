@@ -107,13 +107,15 @@ Because the connection is a singleton, there is **no service-generated `{id}` in
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| POST | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Create the project's Google Ads connection (`409 Conflict` if one already exists). |
+| POST | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Create the project's Google Ads connection (`409 Conflict` if one already exists). `projectId` MUST be a canonical slug, not a UUID (see the slug note below). |
 | GET | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Get the connection (credentials redacted); returns ETag. |
 | PUT | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
 | DELETE | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Remove the connection (soft delete). |
 | POST | `/projects/{projectId}/connection-google-ads/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
 | POST | `/projects/{projectId}/connection-google-ads/set-credential` | `campaign_manager` | JSON | Replace the stored (encrypted) credential. Split out from `PUT` so credential replacement is independently permissioned/audited. Not "rotate" — the service does not generate/swap secrets upstream. |
 
+> **Create requires a canonical slug `projectId`.** The connection is stored keyed by `project_id`, which is the EXACT-MATCH key for the dispatch lookup, and brief/campaign create already require a canonical slug — so a UUID-keyed connection could never be joined to a dispatched campaign. `POST` (create) therefore rejects a UUID `projectId` with `400` (Pattern `^[a-z0-9]+(-[a-z0-9]+)*$`, MaxLength 35, enforced by the service since Goa does not validate path params). `GET`/`PUT`/`DELETE`/`test`/`set-credential` stay permissive (UUID-or-slug) to keep historical UUID-keyed rows reachable.
+>
 > Because the connection is a singleton, `GET /projects/{projectId}/connection-google-ads` *is* the read — there is no collection listing and no Query Service index for connections. There is no present use case for a cross-project inventory of connections (the UI reads a project's connection directly), so the connection tables are intentionally not indexed; if such an inventory is ever needed, indexing can be added then.
 
 ---

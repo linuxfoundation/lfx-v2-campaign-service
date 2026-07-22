@@ -1228,9 +1228,11 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   type: string
+                  maxLength: 35
+                  pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -1606,9 +1608,11 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   type: string
+                  maxLength: 35
+                  pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -1984,9 +1988,11 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   type: string
+                  maxLength: 35
+                  pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -2362,9 +2368,11 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   type: string
+                  maxLength: 35
+                  pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -2740,9 +2748,11 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   type: string
+                  maxLength: 35
+                  pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -3118,9 +3128,11 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   type: string
+                  maxLength: 35
+                  pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
@@ -3496,9 +3508,11 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   type: string
+                  maxLength: 35
+                  pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
                 - name: Authorization
                   in: header
                   description: JWT token issued by Heimdall
