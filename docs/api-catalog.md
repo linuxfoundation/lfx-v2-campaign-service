@@ -271,9 +271,43 @@ driveFolderUrl?: string
 platforms?: CampaignPlatform[]
 linkedInConfig?: object         — LinkedIn-specific params
 redditConfig?: object           — Reddit-specific params
-metaConfig?: object             — Meta-specific params
+metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params
 ```
+
+#### MetaConfig (the `metaConfig` object)
+
+Meta (Facebook/Instagram) per-platform config. **Budget is in the ad ACCOUNT's currency**, not USD — the service does no FX conversion.
+
+```
+budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…)
+lifetimeBudget?: boolean        — true → lifetime budget over the flight; false/absent → daily budget
+startDate: string               — YYYY-MM-DD
+endDate: string                 — YYYY-MM-DD
+objective?: string              — awareness | traffic | engagement | leads | conversions
+geoTargets: string[]            — ISO country codes, e.g. ['US', 'JP']
+pixelId?: string                — Meta pixel id (required to attach a conversion promoted object)
+currencyOffset?: number         — Account minor-unit scale override (1 for zero-decimal currencies
+                                  like JPY, 100 for most). Left 0/absent → derived from the account's
+                                  ISO currency during the client's preflight.
+placements?: object             — Which feeds to run on; ALL keys optional booleans. Keys are the
+                                  Go field NAMES (no lowercase json aliases): FacebookFeed,
+                                  InstagramFeed, Stories, Reels, AudienceNetwork, MessengerInbox.
+                                  Omitted → the client's default (both feeds enabled).
+variants: AdVariant[]           — One ad per variant; at least one is required.
+```
+
+`AdVariant` (an entry in `variants`):
+
+```
+primaryText: string             — Required; non-empty
+headline: string                — Required; non-empty
+description?: string
+```
+
+Connection prerequisites (from the Meta connection, not this config): a valid `account_id`
+(`act_<digits>`) and a numeric `page_id` — both REQUIRED and format-validated at connection
+creation (a missing/malformed value is a 4xx there, not a runtime dispatch failure).
 
 ### JobCreateResponse (returned immediately from `POST .../campaigns`)
 
