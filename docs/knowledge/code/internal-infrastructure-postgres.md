@@ -63,5 +63,12 @@ applied file.
   expose it under the wrong tenant. The API create path already guards this (`INSERT …
   WHERE EXISTS` an active brief scoped by project+brief); the FK makes the datastore the
   source of truth for all writers.
+- `000008` — `campaigns.claimed_at TIMESTAMPTZ` (nullable, no backfill): a dispatch
+  claim-lease timestamp (LFXV2-2665). `ClaimCampaignDispatch` can now RE-CLAIM a stale
+  pending orphan (empty `platform_campaign_id`, `claimed_at` older than the lease window
+  or NULL) via `ON CONFLICT DO UPDATE ... WHERE`, letting a later job resume a partial
+  create — gated per-platform by the dispatcher's `Resumable()` (only name-idempotent
+  clients). A NULL `claimed_at` on a pre-existing pending row reads as re-claimable (the
+  known-stuck rows this unblocks); a completed campaign (non-empty id) is never stolen.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).

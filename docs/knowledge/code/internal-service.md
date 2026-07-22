@@ -45,7 +45,18 @@ DO NOTHING of a `pending` campaign row, so exactly one worker across replicas
 wins the claim (the unique index arbitrates) with no held connection or blocking
 lock. A worker that loses the claim reuses the existing row instead of dispatching
 again; the pending row also survives an upstream-create-then-crash, making the
-orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
+orphaned upstream campaign recoverable. A STALE pending orphan (empty
+`platform_campaign_id`, lease `claimed_at` older than `claimReclaimAfter`, which
+exceeds `providerCallTimeout` so an in-flight dispatch is never stolen) can be
+RE-CLAIMED by a later job and re-dispatched — but ONLY for a dispatcher that
+reports `Resumable()==true` (its platform client find-or-creates by name so a
+resume reuses the partial instead of duplicating it — LinkedIn, Twitter). A
+non-resumable platform (reddit/meta, whose clients would double-create) passes
+`reclaimAfter==0`, so its stale claims are never stolen and await manual
+reconciliation. `ClaimCampaignDispatch` does this as one atomic
+`INSERT ... ON CONFLICT DO UPDATE ... WHERE <stale-orphan>` (the empty-id guard
+means a completed campaign is never stolen), using `RETURNING (xmax = 0)` to
+distinguish a fresh insert from a steal. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).

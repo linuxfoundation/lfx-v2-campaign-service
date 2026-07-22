@@ -72,6 +72,14 @@ const jobFinalizeTimeout = 10 * time.Second
 // init()).
 const persistResultTimeout = 5 * time.Second
 
+// claimReclaimAfter is how long a pending dispatch claim's lease (claimed_at) must be
+// idle before a NEW job may steal it and re-dispatch (resume) the orphaned partial
+// (LFXV2-2665). It MUST exceed providerCallTimeout so an in-flight dispatch — whose
+// claimed_at is recent because it just acquired the claim — is never stolen mid-create.
+// 3× gives comfortable margin against replica clock skew and internal provider retries.
+// Only applied for dispatchers that report Resumable()==true.
+const claimReclaimAfter = 3 * providerCallTimeout
+
 // PlatformDispatcher creates a campaign on one ad platform. Implementations are
 // the per-provider adapters (added as those integrations land); the
 // orchestrator is agnostic to them.
@@ -79,6 +87,23 @@ type PlatformDispatcher interface {
 	// Dispatch creates a campaign on the platform and returns the resulting
 	// campaign row (platform_campaign_id, status, result populated).
 	Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error)
+}
+
+// resumableDispatcher lets a dispatcher opt into stale-claim RESUME: re-dispatching a
+// pending (brief, platform) orphan whose lease expired. It is safe ONLY when the
+// platform client find-or-creates by name, so a resume reuses the partial instead of
+// creating a duplicate (LinkedIn, Twitter). A dispatcher that does not implement this
+// (or returns false) is treated as non-resumable — its stale claims are never stolen,
+// so a re-dispatch can't double-create; they await manual/other reconciliation.
+type resumableDispatcher interface{ Resumable() bool }
+
+// dispatcherReclaimAfter returns the lease-steal window to use for d: claimReclaimAfter
+// when d opts into resume, else 0 (stealing disabled — today's behavior).
+func dispatcherReclaimAfter(d PlatformDispatcher) time.Duration {
+	if rd, ok := d.(resumableDispatcher); ok && rd.Resumable() {
+		return claimReclaimAfter
+	}
+	return 0
 }
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
@@ -498,8 +523,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 
 	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
 	// platform). Exactly one worker across all replicas wins (the unique index
-	// arbitrates) — no held connection, no blocking lock.
-	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, jobID)
+	// arbitrates) — no held connection, no blocking lock. For a resumable dispatcher
+	// (name-idempotent client) a STALE pending orphan is also re-claimed so this job
+	// can resume the partial (LFXV2-2665); a non-resumable one keeps the strict
+	// insert-or-skip behavior (reclaimAfter == 0) so a re-dispatch can't double-create.
+	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, jobID, dispatcherReclaimAfter(d))
 	if err != nil {
 		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)
 		res.Error = "could not claim campaign dispatch"

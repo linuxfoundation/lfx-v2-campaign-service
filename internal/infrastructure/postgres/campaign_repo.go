@@ -38,24 +38,69 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // row (claimed) or does nothing (already claimed/completed). No RETURNING is used
 // because ON CONFLICT DO NOTHING returns no row on conflict, so we detect the
 // winner via RowsAffected and then read the current row to return it.
-func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
-	q := `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
-		VALUES ($1, $2, $3, $4, '', 'pending')
-		ON CONFLICT (brief_id, platform) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, projectID, briefID, jobID, string(platform))
-	if err != nil {
-		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
+func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string, reclaimAfter time.Duration) (bool, *model.Campaign, error) {
+	// The claim is one atomic INSERT ... ON CONFLICT. Two conflict actions:
+	//   - reclaimAfter <= 0: DO NOTHING — a conflicting row is never touched (today's
+	//     behavior; used for platforms whose client can't resume without duplicating).
+	//   - reclaimAfter  > 0: DO UPDATE ... WHERE <stale-orphan> — a conflicting row that
+	//     is still an ORPHAN (status 'pending', EMPTY platform_campaign_id) whose lease
+	//     (claimed_at) is stale (NULL or older than reclaimAfter) is STOLEN by this
+	//     caller so a later job can resume the partial create. The empty-id guard means
+	//     a COMPLETED campaign is never stolen; the lease guard means an actively-owned
+	//     claim (recent claimed_at) is never stolen mid-flight.
+	// Either way, RETURNING yields exactly one row when THIS caller won (a fresh insert
+	// or a steal) and zero rows when it did not (no conflict-free insert AND the update
+	// WHERE didn't match) — so `claimed` is "a row came back", and `xmax = 0` distinguishes
+	// a fresh insert (xmax 0) from a steal (xmax set), purely for logging.
+	var conflict string
+	args := []any{projectID, briefID, jobID, string(platform)}
+	if reclaimAfter > 0 {
+		// $5 is the lease window in SECONDS (a float): make_interval(secs => $5) builds
+		// the interval server-side. Passing a Go time.Duration (int64 nanoseconds)
+		// directly to `$5::interval` would fail — a bigint has no cast to interval.
+		conflict = `ON CONFLICT (brief_id, platform) DO UPDATE
+			SET job_id = EXCLUDED.job_id, claimed_at = now(), version = campaigns.version + 1
+			WHERE campaigns.platform_campaign_id = ''
+			  AND campaigns.status = 'pending'
+			  AND (campaigns.claimed_at IS NULL
+			       OR campaigns.claimed_at < now() - make_interval(secs => $5))`
+		args = append(args, reclaimAfter.Seconds())
+	} else {
+		conflict = `ON CONFLICT (brief_id, platform) DO NOTHING`
 	}
-	claimed := tag.RowsAffected() == 1
+	q := `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status, claimed_at)
+		VALUES ($1, $2, $3, $4, '', 'pending', now())
+		` + conflict + `
+		RETURNING (xmax = 0) AS inserted`
+
+	var inserted bool
+	claimed := true
+	if err := r.db.QueryRow(ctx, q, args...).Scan(&inserted); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No row returned: we neither inserted (conflict) nor stole (the DO UPDATE
+			// WHERE didn't match, or DO NOTHING). Not this caller's claim.
+			claimed = false
+		} else {
+			return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
+		}
+	}
+	if claimed && !inserted {
+		// A steal of a stale orphan (vs a fresh insert). Surface it so a resumed
+		// dispatch is traceable in logs.
+		slog.InfoContext(ctx, "resumed a stale pending dispatch claim (orphan re-claimed for redispatch)",
+			"project_id", projectID, "brief_id", briefID, "platform", string(platform), "job_id", jobID)
+	}
 
 	row, gerr := r.GetCampaignByPlatform(ctx, projectID, briefID, platform)
 	if gerr != nil {
 		// The row must exist now (we or someone else just wrote it); a read failure
-		// here is a genuine error. If WE just inserted the pending row, roll it back
-		// (best effort) so a failed claim doesn't leave a pending row that blocks the
-		// pair forever; report claimed=false so the caller treats it as a clean
-		// failure with nothing to release.
-		if claimed {
+		// here is a genuine error. If WE just INSERTED the pending row (a fresh claim,
+		// not a steal), roll it back (best effort) so a failed claim doesn't leave a
+		// pending row that blocks the pair forever; report claimed=false so the caller
+		// treats it as a clean failure with nothing to release. A STOLEN row is NOT
+		// rolled back — it is a pre-existing orphan we only re-leased, and deleting it
+		// would destroy the recorded partial we meant to resume.
+		if claimed && inserted {
 			// Roll back on a context detached from ctx: the read likely failed
 			// BECAUSE ctx was cancelled, and reusing it for the DELETE would fail
 			// too, leaking the just-committed placeholder.

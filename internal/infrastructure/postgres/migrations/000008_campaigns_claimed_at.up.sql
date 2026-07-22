@@ -1,0 +1,23 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Add a claim-lease timestamp to campaigns (LFXV2-2665, dispatch claim resume).
+--
+-- A dispatch single-flight claim is a `pending` campaigns row (see
+-- ClaimCampaignDispatch). Until now a `pending` claim was TERMINAL: once a dispatch
+-- failed after a partial upstream create, the row stayed `pending` forever and a later
+-- job's `INSERT ... ON CONFLICT DO NOTHING` was skipped, never re-dispatching — so the
+-- clients' name-based find-or-create resume never ran.
+--
+-- claimed_at records WHEN the lease was (re)acquired. A pending claim whose lease is
+-- stale (older than claimReclaimAfter, which exceeds providerCallTimeout so an in-flight
+-- dispatch is never stolen) is treated as an ORPHAN and may be re-claimed by a new job.
+-- An actively-owned claim has a recent claimed_at and is left alone.
+--
+-- Nullable with NO default and NO backfill: an existing pending row predates this
+-- feature and has claimed_at IS NULL, which the re-claim WHERE treats as "lease unknown /
+-- older than any window" → re-claimable. That is the safe reading (those rows are the
+-- known-stuck ones this feature exists to unblock). A completed campaign (non-empty
+-- platform_campaign_id) is never re-claimed regardless of claimed_at — the id is the
+-- hard invariant guarding that, not the lease.
+ALTER TABLE campaigns ADD COLUMN claimed_at TIMESTAMPTZ;

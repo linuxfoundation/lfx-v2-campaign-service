@@ -2,6 +2,8 @@
 
 ## 2026-07-21
 
+**Update** — Dispatch claim RESUME (LFXV2-2665, migration 000008). A `pending` dispatch claim was terminal — after a partial upstream create the row blocked the `(brief, platform)` pair forever (a later job's `ON CONFLICT DO NOTHING` was skipped, so the clients' name-based find-or-create resume never ran). Added `campaigns.claimed_at` (lease timestamp) and rewrote `ClaimCampaignDispatch` to a single atomic `INSERT ... ON CONFLICT DO UPDATE ... WHERE platform_campaign_id='' AND status='pending' AND (claimed_at IS NULL OR claimed_at < now() - make_interval(secs => $5))`, using `RETURNING (xmax = 0)` to tell a fresh insert from a steal. A STALE orphan is re-claimed and re-dispatched; an actively-owned claim (recent lease) or a completed campaign (non-empty id) is never stolen. Gated PER-PLATFORM by a new `Resumable()` dispatcher capability + `dispatcherReclaimAfter` (lease window = `3*providerCallTimeout`, else 0): steal is enabled ONLY for name-idempotent clients (LinkedIn, Twitter); reddit/meta stay `reclaimAfter==0` so a re-dispatch can't double-create. Design in `specs/004-dispatch-claim-resume/plan.md`. Tests: resumable steals+redispatches a stale orphan; non-resumable does NOT. Depends on #42 (orphan recorded) + the dispatcher stack (client resume paths).
+
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review
 (context/concurrency, error-classification, test-completeness, API-contract/docs, security)
 with adversarial verification of each finding. One REAL bug + polish:

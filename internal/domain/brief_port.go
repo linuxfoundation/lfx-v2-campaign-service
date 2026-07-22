@@ -5,6 +5,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
@@ -46,16 +47,27 @@ type CampaignReader interface {
 	// by projectID for tenant isolation, matching GetCampaign/ClaimCampaignDispatch.
 	GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider) (*model.Campaign, error)
 	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
-	// platform) by inserting a placeholder campaign row (status 'pending') via
-	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker
-	// wins across all replicas — the (brief_id, platform) unique index arbitrates,
-	// with no held connection and no blocking lock. It returns:
-	//   - claimed=true, row=the pending row  → this worker owns the dispatch;
-	//   - claimed=false, row=the existing row → another worker already claimed or
-	//     completed it; the caller reuses that row instead of dispatching again.
+	// platform) by inserting a placeholder campaign row (status 'pending'). Exactly
+	// one worker wins across all replicas — the (brief_id, platform) unique index
+	// arbitrates, with no held connection and no blocking lock. It returns:
+	//   - claimed=true, row=the (re)claimed pending row → this worker owns the dispatch;
+	//   - claimed=false, row=the existing row → another worker actively owns the claim,
+	//     or the pair already completed; the caller reuses that row (if completed) or
+	//     skips (if actively owned) instead of dispatching again.
 	// The placeholder row also survives an upstream-create-then-crash, making the
 	// orphan recoverable (its status stays 'pending').
-	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (claimed bool, row *model.Campaign, err error)
+	//
+	// reclaimAfter enables STEALING a stale/orphaned pending claim (LFXV2-2665): if
+	// >0, a conflicting row that is still 'pending' with an EMPTY platform_campaign_id
+	// AND whose claim lease (claimed_at) is older than reclaimAfter (or NULL) is
+	// re-claimed by this caller — letting a later job resume a partial create via the
+	// client's name-based find-or-create. reclaimAfter MUST exceed the provider call
+	// timeout so an in-flight dispatch is never stolen. reclaimAfter==0 disables
+	// stealing entirely (a stale claim is left as-is) — used for platforms whose
+	// client is NOT idempotent-by-name, where a re-dispatch would double-create.
+	// A COMPLETED campaign (non-empty platform_campaign_id) is never stolen regardless
+	// of reclaimAfter.
+	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string, reclaimAfter time.Duration) (claimed bool, row *model.Campaign, err error)
 	// DeleteDispatchClaim removes a still-'pending' claim row for (brief, platform)
 	// so the pair can be retried after a dispatch fails before the upstream
 	// campaign is created. It only deletes rows still in 'pending' status, so it

@@ -105,6 +105,9 @@ type fakeCampaignRepo struct {
 	byPlatformErr error
 	// claimErr, when set, is returned by ClaimCampaignDispatch.
 	claimErr error
+	// staleClaims marks briefID+"|"+platform keys whose pending claim lease is
+	// considered stale, so a reclaimAfter>0 claim steals it (models the DB lease check).
+	staleClaims map[string]bool
 }
 
 func (r *fakeCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -126,7 +129,7 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 // ClaimCampaignDispatch simulates INSERT ... ON CONFLICT DO NOTHING: if an entry
 // for (brief, platform) already exists it's a conflict (not claimed) returning
 // the existing row; otherwise it inserts a pending placeholder and claims.
-func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
+func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, jobID string, reclaimAfter time.Duration) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.claimErr != nil {
@@ -134,6 +137,14 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	}
 	key := briefID + "|" + string(platform)
 	if c, ok := r.existing[key]; ok {
+		// Model the steal path (LFXV2-2665): with reclaimAfter>0, a STALE pending orphan
+		// (empty PlatformCampaignID, and marked stale via r.staleClaims) is re-claimed by
+		// this caller. A fresh/actively-owned claim, a completed campaign, or a
+		// non-resumable caller (reclaimAfter==0) is NOT stolen.
+		if reclaimAfter > 0 && c.Status == "pending" && c.PlatformCampaignID == "" && r.staleClaims[key] {
+			c.JobID = &jobID
+			return true, c, nil // claimed=true (stolen)
+		}
 		return false, c, nil
 	}
 	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, JobID: &jobID, Status: "pending"}
@@ -184,6 +195,91 @@ type failDispatcher struct{}
 
 func (failDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("boom")
+}
+
+// resumableOKDispatcher succeeds AND opts into stale-claim resume (Resumable()==true),
+// like the LinkedIn/Twitter adapters whose clients find-or-create by name.
+type resumableOKDispatcher struct{}
+
+func (resumableOKDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{PlatformCampaignID: "pc-resumed-" + string(p), Status: "active", CampaignName: "n"}, nil
+}
+func (resumableOKDispatcher) Resumable() bool { return true }
+
+// nonResumableOKDispatcher succeeds but does NOT opt into resume (default), like the
+// reddit/meta adapters whose clients are not name-idempotent.
+type nonResumableOKDispatcher struct{}
+
+func (nonResumableOKDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{PlatformCampaignID: "pc-" + string(p), Status: "active", CampaignName: "n"}, nil
+}
+
+// TestOrchestrator_ResumableStealsStaleOrphanAndRedispatches verifies the resume path
+// (LFXV2-2665): a resumable dispatcher whose (brief, platform) has a STALE pending orphan
+// (empty PlatformCampaignID) re-claims it (reclaimAfter>0 → steal) and re-dispatches,
+// completing the campaign — rather than being skipped.
+func TestOrchestrator_ResumableStealsStaleOrphanAndRedispatches(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{
+		existing: map[string]*model.Campaign{
+			// A pre-existing STALE group-orphan claim for the pair.
+			"b1|" + string(model.ProviderLinkedInAds): {
+				BriefID: "b1", ProjectID: "cncf", Platform: model.ProviderLinkedInAds,
+				Status: "pending", PlatformCampaignID: "",
+				Result: json.RawMessage(`{"campaignGroupId":"urn:li:sponsoredCampaignGroup:9"}`),
+			},
+		},
+		staleClaims: map[string]bool{"b1|" + string(model.ProviderLinkedInAds): true},
+	}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: resumableOKDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Errorf("job status = %s, want succeeded (the stale orphan should resume to a completed campaign)", j.Status)
+	}
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	// The stale orphan must have been re-dispatched and completed (real upstream id now).
+	row := camps.existing["b1|"+string(model.ProviderLinkedInAds)]
+	if row == nil || row.PlatformCampaignID != "pc-resumed-"+string(model.ProviderLinkedInAds) {
+		t.Fatalf("resumable dispatcher must re-dispatch the stale orphan to completion, got %+v", row)
+	}
+}
+
+// TestOrchestrator_NonResumableDoesNotStealStaleOrphan verifies the safety gate: a
+// NON-resumable dispatcher (reclaimAfter==0) must NOT steal a stale pending orphan — a
+// re-dispatch could double-create. The pair is skipped, the orphan left intact.
+func TestOrchestrator_NonResumableDoesNotStealStaleOrphan(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{
+		existing: map[string]*model.Campaign{
+			"b1|" + string(model.ProviderRedditAds): {
+				BriefID: "b1", ProjectID: "cncf", Platform: model.ProviderRedditAds,
+				Status: "pending", PlatformCampaignID: "",
+			},
+		},
+		staleClaims: map[string]bool{"b1|" + string(model.ProviderRedditAds): true},
+	}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderRedditAds: nonResumableOKDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderRedditAds}, nil)
+	waitForTerminal(t, jobs, id)
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	// The orphan must be untouched (still empty id) — no re-dispatch happened, and
+	// nothing was upserted by this run.
+	row := camps.existing["b1|"+string(model.ProviderRedditAds)]
+	if row == nil || row.PlatformCampaignID != "" {
+		t.Errorf("a non-resumable stale orphan must NOT be re-dispatched/stolen, got %+v", row)
+	}
+	if len(camps.upserted) != 0 {
+		t.Errorf("non-resumable path must not upsert; got %d upserts", len(camps.upserted))
+	}
 }
 
 // nilDispatcher returns (nil, nil) — a misbehaving dispatcher that must be
@@ -465,7 +561,7 @@ func TestClaimCampaignDispatch_ConcurrentSingleWinner(t *testing.T) {
 			defer wg.Done()
 			<-start // release all goroutines at once to maximize contention
 			claimed, row, err := repo.ClaimCampaignDispatch(
-				context.Background(), "cncf", "b1", model.ProviderGoogleAds, "job1")
+				context.Background(), "cncf", "b1", model.ProviderGoogleAds, "job1", 0)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -661,11 +757,11 @@ type claimCountingCampaignRepo struct {
 	claims int
 }
 
-func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, jobID string) (bool, *model.Campaign, error) {
+func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, jobID string, reclaimAfter time.Duration) (bool, *model.Campaign, error) {
 	r.cmu.Lock()
 	r.claims++
 	r.cmu.Unlock()
-	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, jobID)
+	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, jobID, reclaimAfter)
 }
 
 // TestOrchestrator_DispatchGoesThroughClaim verifies each per-platform dispatch
