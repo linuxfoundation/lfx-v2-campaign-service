@@ -153,10 +153,10 @@ func TestReddit_AmbiguousCreateRetainsClaim(t *testing.T) {
 	}
 	// The adapter builds the reconcile signal on the returned campaign — the
 	// deterministic name (so it can be looked up) and the provider result blob — even
-	// though the upstream id is empty on an ambiguous create. NOTE: this asserts the
-	// ADAPTER's output in isolation. Whether the orchestrator PERSISTS this name/blob
-	// for the id-less case is a separate concern (today it retains the claim but writes
-	// the name/blob only when an upstream id is present — orchestrator.go, out of scope).
+	// though the upstream id is empty on an ambiguous create. This asserts the ADAPTER's
+	// output in isolation; the orchestrator PERSISTS this id-less partial because Result
+	// is non-empty (and classifies it on retry) — see
+	// TestOrchestrator_IDlessOrphanWithResultIsNotASkipSuccess.
 	if camp.CampaignName == "" {
 		t.Error("the retained campaign must carry the deterministic name for reconciliation")
 	}

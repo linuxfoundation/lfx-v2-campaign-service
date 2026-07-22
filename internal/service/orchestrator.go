@@ -548,17 +548,23 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			res.Error = "a prior dispatch left an incomplete campaign upstream; reconciliation required"
 			return res
 		}
-		// A genuine concurrent claim held by another running worker (no upstream id yet):
-		// don't dispatch again (the point of the claim). This job did not create the
-		// campaign — its outcome belongs to the owning dispatch — so record it as
-		// SKIPPED, not failed. Recording a skip as a failure would falsely drive THIS
-		// job to terminal failed/partial even when the owner succeeds (GetJob only
-		// decodes the stored result and never re-checks the campaign row, so the false
-		// failure would be permanent). aggregateStatus excludes skipped platforms from
-		// the failure tally and returns succeeded for a wholly-skipped job (leaving it
-		// running would strand it until the staleness sweeper failed it, since nothing
-		// revisits a running job). Fully adopting the owner's async result into this job
-		// is tracked under LFXV2-2665.
+		// A BARE pending claim (no upstream id AND no Result blob): typically a claim
+		// held by another still-running worker, so we treat it as SKIPPED rather than
+		// re-dispatching (the point of the claim). Recording a skip as a failure would
+		// falsely drive THIS job to terminal failed/partial even when the owner succeeds
+		// (GetJob only decodes the stored result and never re-checks the campaign row, so
+		// the false failure would be permanent). aggregateStatus excludes skipped
+		// platforms from the failure tally and returns succeeded for a wholly-skipped job.
+		//
+		// KNOWN RESIDUAL GAP: a bare pending claim can ALSO be a terminally-stranded row
+		// — e.g. a dispatcher that returned (nil, err) after possibly creating a campaign
+		// but with no reconcile detail, a failed partial persist, or a panic after the
+		// claim. Those are indistinguishable HERE from a live owner without a claim
+		// lease/timestamp, so such a stranded claim can still let an all-skipped retry
+		// report succeeded. Disambiguating an active owner from a terminal/unknown claim
+		// requires the claim-lease (claimed_at) reconciliation work tracked in LFXV2-2665;
+		// this PR closes the id-carrying and Result-carrying cases, which are the ones
+		// that persist a reconcilable signal.
 		res.Skipped = true
 		res.Error = "skipped: another concurrent dispatch owns this platform"
 		return res

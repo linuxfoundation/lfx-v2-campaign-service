@@ -73,6 +73,11 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		// Goa/OpenAPI can't express uniqueItems, so duplicate rejection stays in
 		// the handler.
 		MinLength(1)
+		// Pin a deterministic example that MATCHES the config envelope example below
+		// (redditConfig + metaConfig). Without it Goa auto-picks an enum value (e.g.
+		// linkedin-ads), producing a published example whose platforms don't match the
+		// supplied config — a copyable request that fails asynchronously.
+		Example([]string{"reddit-ads", "meta-ads"})
 	})
 	Attribute("config", Any, "Per-platform campaign configuration", func() {
 		// config is an OBJECT ENVELOPE keyed by per-platform config name

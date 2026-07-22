@@ -4134,43 +4134,43 @@ definitions:
             brief_id:
                 type: string
                 description: Parent brief
-                example: Delectus harum voluptates sit est corporis.
+                example: Aspernatur nihil et incidunt dolorem dolor sed.
             campaign_name:
                 type: string
                 description: Campaign name
-                example: Autem maxime hic.
+                example: Necessitatibus ut necessitatibus in.
             id:
                 type: string
                 description: Campaign UUID
-                example: Provident sed quo aperiam.
+                example: Atque eius sequi culpa.
             platform:
                 type: string
                 description: Channel
-                example: Voluptatem repellat expedita inventore.
+                example: Delectus harum voluptates sit est corporis.
             platform_campaign_id:
                 type: string
                 description: ID returned by the ad platform
-                example: Necessitatibus ut necessitatibus in.
+                example: Voluptatem repellat expedita inventore.
             project_id:
                 type: string
                 description: Owning project
-                example: Aspernatur nihil et incidunt dolorem dolor sed.
+                example: Odit provident sed quo aperiam.
             status:
                 type: string
                 description: Campaign status
-                example: Ratione ipsum.
+                example: Autem maxime hic.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 5222261282955006154
+                example: 5495768961310923213
                 format: int64
         example:
-            brief_id: Esse mollitia et dolorum accusantium aspernatur quos.
+            brief_id: Quae esse mollitia et dolorum.
             campaign_name: Dolores dolore id dolore sed.
-            id: Hic est odio.
-            platform: Magnam voluptates molestiae libero autem quod.
-            platform_campaign_id: Ullam ipsum.
-            project_id: Occaecati rerum reiciendis.
+            id: Ipsum reprehenderit amet hic est.
+            platform: Aspernatur quos est magnam voluptates.
+            platform_campaign_id: Libero autem quod saepe ullam ipsum.
+            project_id: Quaerat occaecati rerum.
             status: Sunt accusantium totam quia.
             version: 2163540746102408081
         required:
@@ -4224,9 +4224,8 @@ definitions:
                         - hubspot
                 description: Platforms to create campaigns on (binding selection)
                 example:
-                    - meta-ads
-                    - linkedin-ads
                     - reddit-ads
+                    - meta-ads
                 minItems: 1
         example:
             config:
@@ -4252,7 +4251,8 @@ definitions:
                     variants:
                         - headline: Join us
             platforms:
-                - linkedin-ads
+                - reddit-ads
+                - meta-ads
         required:
             - platforms
     CampaignUpdateInput:
@@ -4696,13 +4696,14 @@ definitions:
                 $ref: '#/definitions/AudienceInput'
         example:
             audience:
-                inclusion_summary: Fugiat adipisci eos rerum.
+                inclusion_summary: Doloremque et qui perferendis.
                 platform: hubspot
-                platform_master_list_id: Est recusandae aspernatur eum fugit voluptas molestias.
+                platform_master_list_id: Hic rem dolores eligendi ea vel consequatur.
                 status: built
                 suppression_list_ids:
-                    - Quidem illo numquam doloremque et.
-                    - Perferendis ut quia aut.
+                    - Vero commodi est qui asperiores velit enim.
+                    - Expedita ut minus ut est recusandae aspernatur.
+                    - Fugit voluptas molestias architecto dicta quidem illo.
         required:
             - audience
     LfxV2CampaignServiceAudiencesListAudiencesResponseBody:
@@ -4714,99 +4715,92 @@ definitions:
                 items:
                     $ref: '#/definitions/Audience'
                 example:
-                    - brief_id: Ex id ut aut.
-                      etag: Vero labore laudantium maiores.
-                      id: Eum et qui aut consequatur ut.
-                      inclusion_summary: Et officia sequi et quam.
+                    - brief_id: Ut quia harum.
+                      etag: Illo et eligendi aperiam non ut voluptas.
+                      id: Accusantium sequi modi corrupti esse mollitia.
+                      inclusion_summary: Voluptatum officia quod error amet quia inventore.
                       platform: hubspot
-                      platform_master_list_id: Similique ut minima.
-                      project_id: Harum maxime voluptas expedita.
-                      status: failed
+                      platform_master_list_id: Expedita omnis.
+                      project_id: Saepe rerum sunt eum et qui aut.
+                      status: building
                       suppression_list_ids:
-                        - Voluptatum officia quod error amet quia inventore.
-                        - Quia enim illo et eligendi.
-                        - Non ut voluptas et accusamus natus id.
-                      version: 6003632806016131164
-                    - brief_id: Ex id ut aut.
-                      etag: Vero labore laudantium maiores.
-                      id: Eum et qui aut consequatur ut.
-                      inclusion_summary: Et officia sequi et quam.
+                        - Ut aut.
+                        - Sit similique ut minima ut.
+                      version: 6744905420071986958
+                    - brief_id: Ut quia harum.
+                      etag: Illo et eligendi aperiam non ut voluptas.
+                      id: Accusantium sequi modi corrupti esse mollitia.
+                      inclusion_summary: Voluptatum officia quod error amet quia inventore.
                       platform: hubspot
-                      platform_master_list_id: Similique ut minima.
-                      project_id: Harum maxime voluptas expedita.
-                      status: failed
+                      platform_master_list_id: Expedita omnis.
+                      project_id: Saepe rerum sunt eum et qui aut.
+                      status: building
                       suppression_list_ids:
-                        - Voluptatum officia quod error amet quia inventore.
-                        - Quia enim illo et eligendi.
-                        - Non ut voluptas et accusamus natus id.
-                      version: 6003632806016131164
-                    - brief_id: Ex id ut aut.
-                      etag: Vero labore laudantium maiores.
-                      id: Eum et qui aut consequatur ut.
-                      inclusion_summary: Et officia sequi et quam.
+                        - Ut aut.
+                        - Sit similique ut minima ut.
+                      version: 6744905420071986958
+                    - brief_id: Ut quia harum.
+                      etag: Illo et eligendi aperiam non ut voluptas.
+                      id: Accusantium sequi modi corrupti esse mollitia.
+                      inclusion_summary: Voluptatum officia quod error amet quia inventore.
                       platform: hubspot
-                      platform_master_list_id: Similique ut minima.
-                      project_id: Harum maxime voluptas expedita.
-                      status: failed
+                      platform_master_list_id: Expedita omnis.
+                      project_id: Saepe rerum sunt eum et qui aut.
+                      status: building
                       suppression_list_ids:
-                        - Voluptatum officia quod error amet quia inventore.
-                        - Quia enim illo et eligendi.
-                        - Non ut voluptas et accusamus natus id.
-                      version: 6003632806016131164
-                    - brief_id: Ex id ut aut.
-                      etag: Vero labore laudantium maiores.
-                      id: Eum et qui aut consequatur ut.
-                      inclusion_summary: Et officia sequi et quam.
+                        - Ut aut.
+                        - Sit similique ut minima ut.
+                      version: 6744905420071986958
+                    - brief_id: Ut quia harum.
+                      etag: Illo et eligendi aperiam non ut voluptas.
+                      id: Accusantium sequi modi corrupti esse mollitia.
+                      inclusion_summary: Voluptatum officia quod error amet quia inventore.
                       platform: hubspot
-                      platform_master_list_id: Similique ut minima.
-                      project_id: Harum maxime voluptas expedita.
-                      status: failed
+                      platform_master_list_id: Expedita omnis.
+                      project_id: Saepe rerum sunt eum et qui aut.
+                      status: building
                       suppression_list_ids:
-                        - Voluptatum officia quod error amet quia inventore.
-                        - Quia enim illo et eligendi.
-                        - Non ut voluptas et accusamus natus id.
-                      version: 6003632806016131164
+                        - Ut aut.
+                        - Sit similique ut minima ut.
+                      version: 6744905420071986958
         example:
             audiences:
-                - brief_id: Ex id ut aut.
-                  etag: Vero labore laudantium maiores.
-                  id: Eum et qui aut consequatur ut.
-                  inclusion_summary: Et officia sequi et quam.
+                - brief_id: Ut quia harum.
+                  etag: Illo et eligendi aperiam non ut voluptas.
+                  id: Accusantium sequi modi corrupti esse mollitia.
+                  inclusion_summary: Voluptatum officia quod error amet quia inventore.
                   platform: hubspot
-                  platform_master_list_id: Similique ut minima.
-                  project_id: Harum maxime voluptas expedita.
-                  status: failed
+                  platform_master_list_id: Expedita omnis.
+                  project_id: Saepe rerum sunt eum et qui aut.
+                  status: building
                   suppression_list_ids:
-                    - Voluptatum officia quod error amet quia inventore.
-                    - Quia enim illo et eligendi.
-                    - Non ut voluptas et accusamus natus id.
-                  version: 6003632806016131164
-                - brief_id: Ex id ut aut.
-                  etag: Vero labore laudantium maiores.
-                  id: Eum et qui aut consequatur ut.
-                  inclusion_summary: Et officia sequi et quam.
+                    - Ut aut.
+                    - Sit similique ut minima ut.
+                  version: 6744905420071986958
+                - brief_id: Ut quia harum.
+                  etag: Illo et eligendi aperiam non ut voluptas.
+                  id: Accusantium sequi modi corrupti esse mollitia.
+                  inclusion_summary: Voluptatum officia quod error amet quia inventore.
                   platform: hubspot
-                  platform_master_list_id: Similique ut minima.
-                  project_id: Harum maxime voluptas expedita.
-                  status: failed
+                  platform_master_list_id: Expedita omnis.
+                  project_id: Saepe rerum sunt eum et qui aut.
+                  status: building
                   suppression_list_ids:
-                    - Voluptatum officia quod error amet quia inventore.
-                    - Quia enim illo et eligendi.
-                    - Non ut voluptas et accusamus natus id.
-                  version: 6003632806016131164
-                - brief_id: Ex id ut aut.
-                  etag: Vero labore laudantium maiores.
-                  id: Eum et qui aut consequatur ut.
-                  inclusion_summary: Et officia sequi et quam.
+                    - Ut aut.
+                    - Sit similique ut minima ut.
+                  version: 6744905420071986958
+                - brief_id: Ut quia harum.
+                  etag: Illo et eligendi aperiam non ut voluptas.
+                  id: Accusantium sequi modi corrupti esse mollitia.
+                  inclusion_summary: Voluptatum officia quod error amet quia inventore.
                   platform: hubspot
-                  platform_master_list_id: Similique ut minima.
-                  project_id: Harum maxime voluptas expedita.
-                  status: failed
+                  platform_master_list_id: Expedita omnis.
+                  project_id: Saepe rerum sunt eum et qui aut.
+                  status: building
                   suppression_list_ids:
-                    - Voluptatum officia quod error amet quia inventore.
-                    - Quia enim illo et eligendi.
-                    - Non ut voluptas et accusamus natus id.
-                  version: 6003632806016131164
+                    - Ut aut.
+                    - Sit similique ut minima ut.
+                  version: 6744905420071986958
         required:
             - audiences
     LfxV2CampaignServiceAudiencesUpdateAudienceRequestBody:
@@ -4817,14 +4811,14 @@ definitions:
                 $ref: '#/definitions/AudienceUpdateInput'
         example:
             audience:
-                clear_suppression_lists: false
-                inclusion_summary: Qui praesentium ipsam officiis cum ipsum recusandae.
-                platform_master_list_id: Nesciunt ipsum et.
-                status: built
+                clear_suppression_lists: true
+                inclusion_summary: Ipsum et delectus dolorum eveniet.
+                platform_master_list_id: Molestiae eos.
+                status: building
                 suppression_list_ids:
-                    - Eveniet qui alias ea quibusdam tempore.
-                    - Maxime porro enim dolorum nobis itaque est.
-                    - Magnam pariatur explicabo est.
+                    - Iusto quos.
+                    - Eos non adipisci rerum.
+                    - Placeat ea odio ea eos.
         required:
             - audience
     LfxV2CampaignServiceBriefsCreateBriefRequestBody:
@@ -4835,18 +4829,17 @@ definitions:
                 $ref: '#/definitions/BriefInput'
         example:
             brief:
-                copy: Beatae placeat cumque iure veritatis cumque.
-                event_details: Cum porro architecto doloremque aperiam doloribus aut.
-                event_slug: Molestiae minus dolor accusantium.
-                keywords: Ex distinctio ipsum ab assumenda natus.
+                copy: Aut rerum ut blanditiis dolor.
+                event_details: Cum molestias fuga voluptatibus quis.
+                event_slug: Accusantium tempore impedit est et expedita.
+                keywords: Nobis aliquid rerum consequatur officiis velit.
                 platforms:
-                    - Rerum ut blanditiis dolor modi nobis aliquid.
-                    - Consequatur officiis velit quasi dolores assumenda.
-                    - Mollitia fugiat dolore similique et.
-                    - Voluptates quaerat molestiae.
-                program_type: education
-                targeting: Esse est.
-                url: Cum molestias fuga voluptatibus quis.
+                    - Excepturi saepe sit vel perspiciatis neque.
+                    - Qui molestias.
+                    - Molestiae minus dolor accusantium.
+                program_type: membership
+                targeting: Dolores assumenda accusantium mollitia fugiat dolore similique.
+                url: Quos voluptatibus quos accusantium.
         required:
             - brief
     LfxV2CampaignServiceBriefsCreateCampaignsRequestBody:
@@ -4880,9 +4873,8 @@ definitions:
                         variants:
                             - headline: Join us
                 platforms:
-                    - google-ads
-                    - linkedin-ads
-                    - microsoft-ads
+                    - reddit-ads
+                    - meta-ads
         required:
             - input
     LfxV2CampaignServiceBriefsUpdateBriefRequestBody:
@@ -4893,18 +4885,17 @@ definitions:
                 $ref: '#/definitions/BriefInput'
         example:
             brief:
-                copy: Beatae placeat cumque iure veritatis cumque.
-                event_details: Cum porro architecto doloremque aperiam doloribus aut.
-                event_slug: Molestiae minus dolor accusantium.
-                keywords: Ex distinctio ipsum ab assumenda natus.
+                copy: Aut rerum ut blanditiis dolor.
+                event_details: Cum molestias fuga voluptatibus quis.
+                event_slug: Accusantium tempore impedit est et expedita.
+                keywords: Nobis aliquid rerum consequatur officiis velit.
                 platforms:
-                    - Rerum ut blanditiis dolor modi nobis aliquid.
-                    - Consequatur officiis velit quasi dolores assumenda.
-                    - Mollitia fugiat dolore similique et.
-                    - Voluptates quaerat molestiae.
-                program_type: education
-                targeting: Esse est.
-                url: Cum molestias fuga voluptatibus quis.
+                    - Excepturi saepe sit vel perspiciatis neque.
+                    - Qui molestias.
+                    - Molestiae minus dolor accusantium.
+                program_type: membership
+                targeting: Dolores assumenda accusantium mollitia fugiat dolore similique.
+                url: Quos voluptatibus quos accusantium.
         required:
             - brief
     LfxV2CampaignServiceBriefsUpdateCampaignRequestBody:
