@@ -39,8 +39,11 @@ type metaConfig struct {
 	Placements     meta.Placement   `json:"placements"`
 	PixelID        string           `json:"pixelId"`
 	Variants       []meta.AdVariant `json:"variants"`
-	// CurrencyOffset optionally overrides the account minor-unit offset (1 for
-	// zero-decimal currencies like JPY, 100 for most). Left 0 → derived by the client.
+	// CurrencyOffset is a FALLBACK minor-unit scale (1 for zero-decimal currencies like
+	// JPY, 100 for most), NOT an unconditional override: the client's preflight derives
+	// the offset from the account's currency and that is authoritative — a supplied value
+	// is used only when the currency can't be resolved, and a value conflicting with a
+	// recognized account currency is REJECTED (4xx). Left 0 → derived by the client.
 	CurrencyOffset int64 `json:"currencyOffset"`
 }
 

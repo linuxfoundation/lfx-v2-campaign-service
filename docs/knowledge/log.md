@@ -391,9 +391,10 @@ a vacuous placement assertion in the meta dispatch happy-path test: it used lowe
 silently ignored and the client applied its both-feeds default — switched to the correct
 `FacebookFeed`/`InstagramFeed` keys and now assert instagram is ABSENT from targeting
 (proving the `InstagramFeed:false` override is honored). Gave `CampaignCreateInput.
-platforms` a deterministic UNIQUE `Example` ([google-ads, meta-ads]) — Goa's auto-example
-otherwise repeated the first enum value (duplicate `reddit-ads`), which the handler
-rejects. Regenerated the Goa API, dropped the now-non-pointer `cfg.PageID` deref in the
+platforms` a deterministic UNIQUE `Example` ([reddit-ads, meta-ads] — two providers with
+a registered dispatcher on this branch, so a consumer copying it doesn't hit "no
+dispatcher registered") — Goa's auto-example otherwise repeated the first enum value
+(duplicate `reddit-ads`), which the handler rejects. Regenerated the Goa API, dropped the now-non-pointer `cfg.PageID` deref in the
 connection service, updated internal-dispatch.md, and strengthened the meta happy-path
 dispatch test to assert the full mapping contract (objective→OUTCOME_SALES, lifetime
 budget in minor units, geo countries, pixel + page promoted objects, per-variant
