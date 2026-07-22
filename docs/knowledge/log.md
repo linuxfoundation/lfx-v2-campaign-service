@@ -2,6 +2,220 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review
+(context/concurrency, error-classification, test-completeness, API-contract/docs, security)
+with adversarial verification of each finding. One REAL bug + polish:
+(1) SECURITY: `transportError` and `preSendError` had EXPORTED `Err error` fields holding a
+`*url.Error` whose exported `.URL` carries the full request URL incl. `?after=<cursor>`.
+`Error()` strips it via safeCause, but JSON/reflection serialization of the error (a
+structured logger, error middleware) walks the exported field and leaks the cursor — the
+exact vector the package already eliminated for `apiError` (no Body field). Unexported both
+to `err` (like `unconfirmedError`); `Unwrap()`/`errors.Is/As` and the URL-free `Error()`
+are unaffected. Added json.Marshal leak-regression assertions to both leak tests.
+(2) Test coverage: mutating-3xx-is-UNCONFIRMED, connection-refused-is-preSend-NOT-unconfirmed
+(dial+ECONNREFUSED → definite pre-send), ListEventDefinitions malformed-body + stuck-cursor
+guards. (3) Fixed two stale test comments (`properties`→`includedProperties`,
+`nextPageToken`→paging `after` cursor).
+
+**Update** — HubSpot ctx-cancel pre-send guard (PR #35 review, copilot — a REAL
+correctness bug, not a nit). `doRequest` fired `httpClient.Do(req)` even when the caller's
+context was ALREADY done before send. A ctx cancellation isn't an `isPreSendDialError`, so
+the resulting `Do` error fell through to `transportError{Mutating: !idempotent}` →
+`IsUnconfirmed == true` — wrongly telling a caller of a MUTATING request that the mutation
+MIGHT have committed (verify-before-retry) when nothing was ever sent. Added a `ctx.Err()`
+guard right before `Do` (inside the retry loop, so it also covers a ctx that expires during
+a 429 backoff), returning a clean `preSendError` (definitely-not-sent → `IsUnconfirmed ==
+false`). Mirrors the established ctx.Err() pre-send guard in the googleads/reddit/meta
+clients. Added `TestDoRequest_AlreadyCancelledCtxIsPreSendNotUnconfirmed` (asserts
+preSendError, NOT unconfirmed, wraps context.Canceled, and the server is never hit).
+
+**Update** — HubSpot FINAL review pass (PR #35). Ran an exhaustive self-review of the
+whole hubspot diff (correctness, test-strength, doc-drift, API-contract, security) and
+closed the last three things an automated reviewer could flag — the code was already
+functionally correct: (1) `TestDoRequest_Mutating429IsNotRetried` now asserts
+`IsUnconfirmed(err)` (a mutating 429 is ambiguous/may-have-committed), closing the pending
+Copilot suggestion and catching an `Ambiguous`-flag regression. (2) Fixed the
+`DefaultBaseURL` const comment that still showed `/crm/v3/lists/` with a trailing slash.
+(3) Added clarifying comments on GetEmail/CloneEmail explaining the value-decode already
+covers a null body via the `e.ID == ""` check (patchEmail uses the *Email-pointer pattern;
+these don't need to). Branch frozen at this head for merge.
+
+**Update** — HubSpot round-22 (PR #35 review, copilot). (1) `patchEmail`: a 2xx JSON
+`null` (or empty) body decodes into the Email struct WITHOUT error (zero-valued), so the
+id-fallback would report a PHANTOM success for a malformed response. A PATCH is mutating,
+so a null/empty body is now UNCONFIRMED (the update may have applied). Added
+`TestPatchEmail_NullBodyIsUnconfirmed`. (2) Doc: corrected the round-20 log entry that
+still said `properties=…` (the code uses repeated `includedProperties`), and added a
+missing blank line before a `**Creation**` heading that was folding two log entries.
+
+**Update** — HubSpot round-21 (PR #35 review, cursor). (1) Switched the field restriction
+from a CRM-style comma-separated `properties` string to REPEATED `includedProperties`
+entries — the marketing-emails LIST endpoint uses that shape, not the CRM `properties`
+convention. (2) The malformed-2xx guard (Results==nil) now fires on ANY page, not just
+page 0: on a later page a missing results array would otherwise silently TRUNCATE the walk
+and return a partial. Applied to SearchEmails + ListEventDefinitions. (3) Added the same
+guard to SearchLists (Lists==nil → error; an empty search returns `{"lists":[]}`, non-nil).
+Tests added for the SearchLists malformed case. (Also merged main to pick up #33.)
+
+**Update** — HubSpot round-20 batch (PR #35 review, copilot + dealako). (1) RESTORED
+`sort=-updatedAt` on SearchEmails — verified against HubSpot's v3 docs that `sort` IS a
+valid GET /marketing/v3/emails param (round 13 wrongly dropped it; another bot flip-flop,
+like objectTypeId). Client-side parsed-instant sort stays as the guarantee. (2) Added a
+repeated `includedProperties` values for name, subject, and updatedAt — the list
+endpoint returns FULL email content by default, so at limit=100 rich templates could blow
+the response cap. (3) SearchEmails
+and ListEventDefinitions now ERROR on a malformed 2xx (`{}`/`null` → Results==nil, no
+paging) instead of returning a clean empty success that hides a broken response (an empty
+portal returns `{"results":[]}`, non-nil, still returns 0). (4) Removed the dead
+`cloneEmailRequest.Language` field (never populated; omitting language IS the
+preserve-source-locale behavior). (5) Doc fixes: `private_app_token` is NOT a
+`hubspot_connections` column (the token lives inside the encrypted creds blob) — corrected
+client.go + internal-platform-hubspot.md; fixed a stale `/crm/v3/lists/` createListRequest
+comment. (6) Tests: sort/properties assertions, malformed-body, and the id-tiebreak.
+
+**Update** — HubSpot error-path query-strip + comment/test cleanup (PR #35 review round 18,
+copilot). (1) `doRequest` now strips the query string from `path` before it reaches any
+error (the full path is already in `u` for the URL) — a paginated request carries
+`?after=<cursor>`, and the cursor (or any future query secret) must not leak through the
+URL-free error contract. Added `TestDoRequest_ErrorPathStripsQueryString`. (2) Corrected
+the stale `Email.UpdatedAt` field comment (it still claimed lexical sorting; the code
+parses). (3) `TestSearchEmails_SortsByParsedInstantNotLexical` checks `len(got)` before
+indexing so a pagination/filter regression reports the failure instead of panicking.
+
+**Update** — HubSpot sort-by-instant + drop error-body snapshot (PR #35 review round 15,
+copilot). (1) `sortEmailsByUpdatedDesc` now PARSES `updatedAt` as an RFC3339 instant
+before comparing — a raw lexical compare mis-orders equivalent instants with different
+offsets/fractional seconds (`2026-01-01T00:30:00+01:00` is OLDER than
+`2026-01-01T00:00:00Z` but sorts lexically after). Missing/malformed → zero time (sorts
+last); id tiebreak. Added `TestSearchEmails_SortsByParsedInstantNotLexical`. (2) Removed
+`apiError.Body` + `readErrorSnapshot` entirely: nothing in this package classifies on the
+body, and an EXPORTED Body field could leak upstream request material via reflection/JSON
+serialization of the error even though `Error()` omits it. Non-2xx responses are now just
+drained for connection reuse (googleads keeps a snapshot only because it parses error
+codes from it).
+
+**Update** — HubSpot remove dead Label field + doc fix (PR #35 review round 14, copilot).
+(1) Removed the unused `AccountConfig.Label` — it was documented as "surfaced on results"
+but this client's operations return raw Email/List objects with no result envelope to
+carry it, and nothing read `c.account.Label` (the meta/reddit clients DO surface it on
+their campaign-result types; hubspot has none yet). A no-op config field misleads callers,
+so it's gone until there's a result type that reads it. (2) Doc: `CreateList` endpoint in
+internal-platform-hubspot.md now shows the canonical no-trailing-slash `/crm/v3/lists`
+(matching the round-13 code fix).
+
+**Update** — HubSpot endpoint-contract fixes (PR #35 review round 13, copilot).
+(1) `SearchEmails` — [CORRECTED in round 20: `sort` IS a valid GET /marketing/v3/emails
+param per HubSpot's docs; this round wrongly dropped it. Round 20 restored `sort=-updatedAt`
+as a server hint.] The most-recently-updated-first order is guaranteed CLIENT-SIDE
+regardless via `Email.UpdatedAt` + `sortEmailsByUpdatedDesc` (parsed-instant compare, id
+tiebreak) applied to the aggregated matches. (2) `CreateList` now
+POSTs to the canonical `/crm/v3/lists` (no trailing slash) — HubSpot canonicalizes a
+trailing slash via redirect and this client refuses redirects, so `/crm/v3/lists/` could
+have produced a failed/ambiguous create. Updated the test path assertion.
+
+**Update** — HubSpot cursor decode preserves `+` (PR #35 review round 12, cursor/copilot).
+The round-10 `decodeCursor` used `url.QueryUnescape`, which converts a literal `+` to a
+space — but base64 paging cursors legitimately contain `+`, so a token like `A+B/C=`
+would be sent as `A B/C=` and break pagination. Switched to `url.PathUnescape`, which
+decodes `%XX` while preserving `+`. Added `TestSearchEmails_PreservesPlusInCursor`. Also
+fixed a stale `List.ObjectTypeID` field comment that still carried the (wrong) round-6
+"objectTypeId is response-only" claim.
+
+**Update** — HubSpot constructor input normalization (PR #35 review round 11, copilot).
+`NewClient` now trims the injected `PrivateAppToken` and `PortalID` (mirrors meta/twitter):
+a whitespace-only token is treated as missing (rather than sent as `Bearer   `), and a
+padded portal id can't build invalid app URLs. Added `TestNewClient_NormalizesTokenAndPortalID`.
+
+**Update** — HubSpot cursor decode + dedup clarity (PR #35 review round 10, copilot/cursor).
+(1) HubSpot returns `paging.next.after` already percent-encoded (e.g. `MjA%3D`); feeding
+it straight back through `url.Values.Encode` double-encoded the `%` (→ `MjA%253D`),
+corrupting page-2 of `SearchEmails`/`ListEventDefinitions`. Added `decodeCursor`
+(QueryUnescape-once, unchanged on non-encoded tokens, falls back to the raw token on
+error) and use it in both cursor paginators. Added `TestSearchEmails_DecodesEncodedCursor`.
+(2) Clarified `SearchLists` loop-detection: `seen`/`newThisPage` intentionally track the
+RAW server rows independently of the contact filter (progress ≠ what we keep). (3) Fixed a
+dangling doc-comment in `client_test.go`.
+
+**Update** — HubSpot defensive filter tolerates omitted objectTypeId (PR #35 review
+round 9, cursor). The round-8 client-side check dropped any hit whose `ObjectTypeID` !=
+"0-1" — but a HubSpot response can OMIT `objectTypeId`, leaving it empty, which would
+drop valid contact lists (the server-side filter already guaranteed they're contacts).
+Now the defensive check drops a hit only if its type is EXPLICITLY non-contact (`ot != ""
+&& ot != "0-1"`); an empty/omitted type is trusted. Test updated with an omitted-type
+fixture row that must be kept.
+
+**Update** — HubSpot contact-list filter RESTORED server-side (PR #35 review round 8,
+copilot — REVERSES round 6). VERIFIED against HubSpot's official v3 docs:
+`objectTypeId` IS a valid `ListSearchRequest` body field — the docs give the exact
+example `{"query":"HubSpot","processingTypes":["MANUAL"],"objectTypeId":"0-1"}`. Round 6
+had claimed the opposite (that it's a response-only property) and the server-side filter
+was dropped in favor of client-side only; that was based on a wrong API claim from a
+self-contradicting bot review. `SearchLists` now sends `objectTypeId: "0-1"` in the
+request again (server-side filter), KEEPING the per-hit `ObjectTypeID` check as
+defense-in-depth, and restored the body assertion (`objectTypeId == "0-1"`). The
+`TestSearchLists_FiltersToContactListsClientSide` defensive test stays. NOTE for future
+reviewers: this is settled against the HubSpot docs — do not remove the server-side
+`objectTypeId` again.
+
+**Update** — HubSpot dedup + cap coverage (PR #35 review round 7, cursor/copilot).
+`SearchLists` (offset paginator) now tracks seen list ids and errors when a non-empty
+page adds no NEW ids (server repeating a page), matching the cursor paginators'
+stuck-cursor guard — previously it could return duplicate rows. Added a boundary test
+for the 10 MiB response cap: a body AT the limit succeeds, limit+1 is a `transportError`,
+and an over-cap MUTATING call stays `IsUnconfirmed`.
+
+**Update** — HubSpot contact-list filtering (PR #35 review round 6, copilot). [SUPERSEDED
+by round 8 — see the top entry.] This round removed the server-side `objectTypeId` filter
+on a bot claim that it wasn't a valid `ListSearchRequest` field. That claim was WRONG
+(HubSpot's docs document the field), so round 8 restored the server-side filter. What
+survives from this round: `ObjectTypeID` was added to the `List` struct and a per-hit
+client-side check + `TestSearchLists_FiltersToContactListsClientSide` were added — both
+KEPT as defense-in-depth alongside the server-side filter.
+
+**Update** — HubSpot input-normalization (PR #35 review round 4, cursor).
+`SearchEmails`/`SearchLists` trim the query before matching/forwarding (a padded term
+no longer silently returns no results), and `CloneEmail` trims `cloneName` and rejects
+an empty-after-trim name (consistent with `CreateList`), so a padded name can't produce
+a misnamed draft.
+
+**Update** — HubSpot paginator hardening (PR #35 review round 3, cursor).
+`SearchEmails` and `ListEventDefinitions` now error on a non-advancing cursor (a
+repeated `paging.next.after` token) instead of re-fetching the same page until the cap
+and duplicating results — matching the offset guard `SearchLists` already had.
+`CreateList` trims its name before posting (padding no longer becomes part of the list
+name).
+
+**Update** — HubSpot client hardening (PR #35 review round 2, copilot/cursor).
+(1) All id entry points trim-and-reassign before use (`GetEmail`,
+`PatchEmailSettings`, `SetSendList`, `CloneEmail`, `GetList`, `UpdateListFilters`) —
+a whitespace-padded id sent raw yields a 404/rejection that silently fails staging.
+(2) `SearchLists` now errors on an empty page while `hasMore=true` instead of
+returning a silent partial (a truncated audience list under-targets); the cap-exceeded
+paths deliberately keep returning an error (all-or-error contract, never a silent
+partial). (3) Corrected the `transportError` doc: it is ambiguous ONLY for a MUTATING
+call (`IsUnconfirmed` returns `transportError.Mutating`); an idempotent read/search
+that failed in transit is safely retryable.
+
+**Update** — HubSpot client v3-contract fixes (PR #35 review, copilot; verified
+against HubSpot's OpenAPI specs). (1) `PatchEmailSettings`/`SetSendList` now PATCH the
+DRAFT route `/marketing/v3/emails/{id}/draft` — the base `/{id}` route mutates the
+LIVE email, so draft edits were hitting the wrong endpoint. (2) `SetSendList` is now
+ILS-ONLY: HubSpot's ILS migration removed functional support for the legacy
+`contactLists` recipient field after 2024-10-31, so the client never emits it (dropped
+the `isILS` param + the legacy numeric-id handling; callers resolve an ILS list id from
+the Lists API). (3) `SearchLists` constrains results to
+contact lists via the `objectTypeId "0-1"` request field (a valid `ListSearchRequest`
+field — see the round-8 entry; a round-6 detour briefly moved this client-side before it
+was restored server-side). It also drops the invalid
+`includeFilters` search-body field, and reads
+membership size from `hs_list_size` (a STRING under `additionalProperties`, requested
+explicitly) — there is no top-level `size`, so `List.Size` was always 0. (4) A mutating
+429/3xx/5xx `apiError` is now flagged `Ambiguous`; new `IsUnconfirmed(err)` lets callers
+distinguish a may-have-committed outcome from a definite 4xx. (5) 429/error response
+bodies are drained (bounded) before close so the keep-alive connection is reused on
+retry. (6) Added multi-page pagination tests (cursor + offset forwarding, aggregation,
+termination) for all three list-walkers.
+
 **Update** — GA budget-name reconcile guidance qualified (PR #33 review, copilot). The
 `campaignNamePartial` comment + `internal-platform-googleads.md` claimed the budget and
 campaign names always DIFFER, so `CampaignBudgetName` is the budget reconcile key. That's
@@ -359,6 +573,31 @@ follow-up to apply the same URL-suppression there. (2) Corrected the stale
 method" after the 3xx gate was re-added. (3) Documented CreateCampaign's
 non-standard `(non-nil result, non-nil error)` contract so callers inspect the
 result on error (for reconcile) instead of discarding it.
+
+**Creation** — Added the `internal/platform/hubspot` Go package (email-channel
+scaffold, LFXV2-2778 under epic LFXV2-2770). HubSpot's auth is the simplest of any
+client — a STATIC private-app bearer token (no OAuth token-exchange flow), attached
+directly by `doRequest`. The request layer mirrors the googleads/reddit/meta/twitter
+discipline: no-follow redirects (fresh-client rebuild so a `WithHTTPClient` caller
+isn't mutated), bounded 10 MiB reads, typed `apiError` (method/path/status only,
+body never surfaced) + `transportError` (URL-free via `safeCause`, cause retained
+via Unwrap), `isPreSendDialError` pre-send classification, and 429 retry gated on an
+explicit `idempotent` flag (a non-idempotent create is never retried — no idempotency
+key → double-create risk). Concept doc + code index added.
+
+**Creation** — Added the HubSpot marketing-email ops (LFXV2-2779) + CRM-list/event-def
+ops (LFXV2-2780) on the client. `email.go`: SearchEmails/GetEmail (idempotent),
+CloneEmail, PatchEmailSettings, SetSendList. `lists.go`: SearchLists, GetList
+(includeFilters=true → filterBranch + processingType), CreateList (DYNAMIC,
+objectTypeId 0-1, opaque filterBranch), UpdateListFilters (PUT …/update-list-filters),
+ListEventDefinitions. Creates/clones are non-idempotent; a 2xx-with-no-id is
+UNCONFIRMED (a resource may exist → verify, don't blind-retry). SetSendList sets
+recipients via `contactIlsLists` (ILS list ids) ONLY — HubSpot removed the legacy
+`contactLists` recipient field after 2024-10-31 (see the 2026-07-21 ILS-only update),
+so the client never emits it. Sends a complete `to` (contactIds cleared) with the ILS
+send list + its suppressions. filterBranch shape invariants stay with the
+audience-builder (LFXV2-2774), not this client. Full gate green.
+
 **Creation** — Added the `internal/platform/snowflake` Go package (email channel,
 LFXV2-2772 under epic LFXV2-2770): a READ-ONLY Snowflake client that resolves
 past-edition EVENT_NAME/EVENT_ID from `ANALYTICS.PLATINUM_LFX_ONE.event_registrations`

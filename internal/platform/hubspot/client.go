@@ -1,0 +1,653 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+// Package hubspot is a Go client for the HubSpot API. It drives the email
+// channel's HubSpot surface: marketing-email search/get/clone and draft-update
+// (subject + sender; email content-setting is deferred to LFXV2-2775), CRM
+// contact-list search/get/create/filter-update (no delete), and event-definition
+// lookups. Credentials and account
+// configuration are injected via NewClient; the package never reads environment
+// variables or touches the database. In production the bearer token is a field inside
+// the connection's ENCRYPTED credentials blob (there is no `private_app_token` column
+// on `hubspot_connections`); the connection layer decrypts it and injects it here.
+//
+// Unlike the ad-platform clients (OAuth2 refresh flow for Google Ads, OAuth1 for
+// X), HubSpot authenticates with a STATIC private-app bearer token — there is no
+// token-exchange endpoint, so the request layer just attaches the injected token.
+// Everything else (no-follow redirects, bounded reads, typed body-free errors,
+// pre-send/ambiguous/definite classification, 429 retry gated on an explicit
+// idempotent flag) mirrors the googleads/reddit/meta/twitter clients.
+package hubspot
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const (
+	// DefaultBaseURL is the HubSpot API origin. All v3/v4 REST endpoints hang off
+	// this host (e.g. /marketing/v3/emails, /crm/v3/lists — no trailing slash, which
+	// would redirect and this client refuses redirects).
+	DefaultBaseURL = "https://api.hubapi.com"
+
+	// AppBaseURL is the HubSpot app origin used to build human-facing links to
+	// created lists/emails (returned to callers for reference, never sent to the API).
+	AppBaseURL = "https://app.hubspot.com"
+
+	// requestTimeout bounds a single HTTP round-trip. It is enforced per-attempt via
+	// a context.WithTimeout in doRequest (NOT only via http.Client.Timeout), so an
+	// injected zero-Timeout client or a deadline-free caller ctx still cannot hang.
+	requestTimeout = 30 * time.Second
+
+	// retryMax is the number of times a rate-limited (429) IDEMPOTENT request is
+	// retried with bounded backoff. A non-idempotent (mutating) request is never
+	// retried — HubSpot list/email creates have no idempotency key, so a 429 whose
+	// first attempt may already have committed would double-create on retry.
+	retryMax = 3
+
+	// retryBaseDelay is the base backoff for a 429 retry; the effective wait honors
+	// Retry-After when the server sends it, clamped to maxRetryWait.
+	retryBaseDelay = 1 * time.Second
+
+	// maxRetryWait caps how long one 429 backoff will sleep. If a server-declared
+	// Retry-After exceeds this, the call aborts with the 429 error rather than
+	// sleeping pointlessly (and a hostile huge value can't wedge the client).
+	maxRetryWait = 60 * time.Second
+
+	// maxResponseBody bounds how much of any response body is read into memory,
+	// guarding against a hostile/oversized reply while comfortably exceeding any
+	// normal HubSpot response or error envelope.
+	maxResponseBody = 10 << 20 // 10 MiB
+)
+
+// ---------------------------------------------------------------------------
+// Injected configuration
+// ---------------------------------------------------------------------------
+
+// Credentials holds the HubSpot private-app bearer token used for all API calls.
+// It is injected (from a decrypted stored connection), never read from the
+// environment.
+type Credentials struct {
+	// PrivateAppToken is the HubSpot private-app access token sent as the bearer
+	// credential on every request.
+	PrivateAppToken string
+}
+
+// AccountConfig identifies the HubSpot portal the client operates against. It is
+// used to build human-facing app links (never sent to the API) and, later, to
+// scope brand-kit-driven content.
+type AccountConfig struct {
+	// PortalID is the HubSpot portal (hub) id. Optional; only used to build app
+	// links for created assets.
+	PortalID string
+	// NOTE: no Label field. The sibling ad clients (meta/reddit) surface an account
+	// label on their campaign-result types, but this client's operations return raw
+	// Email/List objects with no result envelope to carry it — a Label config here
+	// would be silently ignored. Add it back alongside a result type that reads it.
+}
+
+// Client is a HubSpot API client. It is safe for concurrent use (it holds no
+// per-request mutable state; the bearer token is static).
+type Client struct {
+	creds   Credentials
+	account AccountConfig
+
+	baseURL    string
+	appBaseURL string
+	httpClient *http.Client
+
+	// retryBaseDelay is injectable so tests avoid real per-retry sleeps.
+	retryBaseDelay time.Duration
+
+	// requestTimeout bounds EACH HTTP attempt via a per-attempt context deadline
+	// (see doRequest). It defaults to the package requestTimeout const and is
+	// injectable so tests can drive the per-attempt timeout on a fast clock.
+	requestTimeout time.Duration
+
+	// now is injectable so tests can compute an HTTP-date Retry-After delay
+	// deterministically. Defaults to time.Now.
+	now func() time.Time
+}
+
+// Option customizes a Client at construction time.
+type Option func(*Client)
+
+// noFollow is the CheckRedirect policy for every client this package uses: it
+// returns http.ErrUseLastResponse so the client does NOT follow redirects and
+// hands the 3xx response back to the request layer, where a non-2xx status is
+// surfaced as an error. HubSpot returns JSON directly and never legitimately
+// 3xx-redirects these calls; not following keeps outcome classification sound — a
+// redirect can't carry an already-sent mutating POST to a different target.
+// Mirrors the reddit/googleads clients.
+func noFollow(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// WithBaseURL overrides the API base URL (default DefaultBaseURL). Trailing
+// slashes are trimmed so path building never produces a double slash. Primarily
+// for tests (httptest.Server).
+func WithBaseURL(u string) Option {
+	return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") }
+}
+
+// WithAppBaseURL overrides the app base URL used for human-facing links.
+func WithAppBaseURL(u string) Option {
+	return func(c *Client) { c.appBaseURL = strings.TrimRight(u, "/") }
+}
+
+// WithHTTPClient overrides the underlying *http.Client (default has a 30s
+// timeout). A nil client is ignored so the option can't produce an unusable
+// Client whose httpClient.Do would panic. Redirect following is force-disabled on
+// whatever client ends up in use (see NewClient).
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *Client) {
+		if h != nil {
+			c.httpClient = h
+		}
+	}
+}
+
+// withRetryBaseDelay overrides the 429 backoff base (tests set it to ~0).
+func withRetryBaseDelay(d time.Duration) Option {
+	return func(c *Client) { c.retryBaseDelay = d }
+}
+
+// withRequestTimeout overrides the per-attempt context deadline (tests set it
+// short to exercise the timeout without a real 30s wait).
+func withRequestTimeout(d time.Duration) Option {
+	return func(c *Client) { c.requestTimeout = d }
+}
+
+// withClock overrides the clock so tests can compute an HTTP-date Retry-After delay
+// deterministically.
+func withClock(now func() time.Time) Option {
+	return func(c *Client) { c.now = now }
+}
+
+// NewClient constructs a Client from injected credentials and account config.
+// Redirect following is force-disabled on the client actually used — including one
+// supplied via WithHTTPClient — by building a FRESH *http.Client carrying only the
+// caller's reusable exported fields (Transport, Jar, Timeout) plus noFollow, so the
+// caller's own client is never mutated. Mirrors the meta/googleads clients.
+func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
+	// Normalize injected inputs (mirrors the meta/twitter clients): a whitespace-only
+	// token would otherwise slip past the missing-token check and yield a "Bearer   "
+	// header, and a padded portal id would build invalid app URLs.
+	creds.PrivateAppToken = strings.TrimSpace(creds.PrivateAppToken)
+	account.PortalID = strings.TrimSpace(account.PortalID)
+	c := &Client{
+		creds:          creds,
+		account:        account,
+		baseURL:        DefaultBaseURL,
+		appBaseURL:     AppBaseURL,
+		httpClient:     &http.Client{Timeout: requestTimeout, CheckRedirect: noFollow},
+		retryBaseDelay: retryBaseDelay,
+		requestTimeout: requestTimeout,
+		now:            time.Now,
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	// A non-positive per-attempt timeout (unset, or a bad injection) would make
+	// context.WithTimeout cancel immediately; fall back to the documented default.
+	if c.requestTimeout <= 0 {
+		c.requestTimeout = requestTimeout
+	}
+	// Enforce no-follow on whatever client is now in use without mutating a
+	// caller-supplied client: rebuild it from its exported reusable fields.
+	c.httpClient = &http.Client{
+		Transport:     c.httpClient.Transport,
+		Jar:           c.httpClient.Jar,
+		Timeout:       c.httpClient.Timeout,
+		CheckRedirect: noFollow,
+	}
+	return c
+}
+
+// ---------------------------------------------------------------------------
+// Typed errors (mirror the sibling clients: bodies/secrets never surfaced)
+// ---------------------------------------------------------------------------
+
+// apiError is a non-2xx HubSpot response. Error() renders only method/path/status
+// — the response body is NOT echoed (a HubSpot error envelope can quote request
+// material), matching the reddit/googleads discipline. No response-body snapshot is
+// retained at all: nothing in this package classifies on the body, and an exported Body
+// field could leak upstream material through reflection/JSON serialization of the error
+// even though Error() omits it. (Google Ads keeps a bounded snapshot because it parses
+// error CODES from it; this client does not.)
+type apiError struct {
+	StatusCode int
+	Method     string
+	Path       string
+	// Ambiguous is true when this error came from a MUTATING request whose status
+	// (429 / 3xx / 5xx) means the server MAY have applied the change. Callers of a
+	// non-idempotent op must treat an ambiguous apiError as UNCONFIRMED (verify,
+	// don't blind-retry) — distinct from a definite 4xx, which cleanly did nothing.
+	Ambiguous bool
+}
+
+// IsUnconfirmed reports whether err represents an AMBIGUOUS outcome on a mutating
+// request — the server may or may not have applied the change. This is true for an
+// ambiguous apiError (a mutating 429/3xx/5xx) and for any transportError (the reply
+// was never read, so the mutation may have landed). A definite 4xx (a non-ambiguous
+// apiError) returns false: it cleanly did nothing. External callers use this to
+// decide "verify before retrying" vs "safe to retry / definitely failed".
+func IsUnconfirmed(err error) bool {
+	var ue *unconfirmedError
+	if errors.As(err, &ue) {
+		return true
+	}
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.Ambiguous
+	}
+	var te *transportError
+	if errors.As(err, &te) {
+		// Only a MUTATING transport failure is ambiguous; an idempotent read/search
+		// that failed in transit landed no mutation, so it's safely retryable.
+		return te.Mutating
+	}
+	return false
+}
+
+// unconfirmedError marks a POST-2xx ambiguous outcome: the request returned a 2xx,
+// but the reply had no id or an undecodable body, so the mutation MAY have been
+// applied. Callers of a create/clone/patch must treat it like an ambiguous apiError
+// (verify, don't blind-retry) — IsUnconfirmed recognizes it. A nil cause is allowed
+// (the 2xx-no-id case has no underlying error).
+type unconfirmedError struct {
+	msg string
+	err error
+}
+
+func (e *unconfirmedError) Error() string {
+	if e.err != nil {
+		return e.msg + ": " + e.err.Error()
+	}
+	return e.msg
+}
+func (e *unconfirmedError) Unwrap() error { return e.err }
+
+// unconfirmed builds an *unconfirmedError (cause may be nil).
+func unconfirmed(msg string, cause error) error {
+	return &unconfirmedError{msg: msg, err: cause}
+}
+
+// isAmbiguousMutatingStatus reports whether a status code on a MUTATING request
+// leaves the outcome ambiguous: 429 (may have committed before the limit), any 3xx
+// (a redirect on a mutate is not a clean no-op here), and 5xx (server may have
+// applied it before failing). A definite 4xx (except 429) means the request was
+// rejected and nothing changed.
+func isAmbiguousMutatingStatus(code int) bool {
+	return code == http.StatusTooManyRequests || (code >= 300 && code < 400) || code >= 500
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("hubspot %s %s -> %d", e.Method, e.Path, e.StatusCode)
+}
+
+// transportError wraps a round-trip failure that happened AFTER the request was
+// plausibly sent (mid-flight timeout, EOF, reset), OR a failure to read a 2xx
+// response: the server may or may not have processed the request, so the outcome
+// is AMBIGUOUS. A pre-send failure (request build, pre-connect dial — see
+// isPreSendDialError) is NOT wrapped as transportError. Error() renders a URL-free
+// cause so a request URL (which can carry query material) never leaks; Unwrap()
+// retains the cause for errors.Is/As. Mirrors the twitter client's safeTransportCause.
+//
+// The wrapped cause is UNEXPORTED (`err`): the cause is typically a `*url.Error` whose
+// EXPORTED `URL` field carries the full request URL incl. the `?after=<cursor>` query.
+// Error() strips it via safeCause, but an EXPORTED field would let reflection/JSON
+// serialization of the error (a structured logger, error middleware) walk into that URL
+// and leak the cursor — the exact vector the package eliminated for apiError (no Body
+// field). Keeping it unexported (like unconfirmedError) closes that walk while Unwrap()
+// still exposes the cause for errors.Is/As.
+type transportError struct {
+	Method string
+	Path   string
+	err    error
+	// Mutating is true when the failed request was NON-idempotent (a create/clone/
+	// patch). Only then is the outcome UNCONFIRMED — for an idempotent read/search
+	// no mutation could have landed, so a transport failure there is safely
+	// retryable, not ambiguous. See IsUnconfirmed.
+	Mutating bool
+}
+
+func (e *transportError) Error() string {
+	return fmt.Sprintf("hubspot %s %s: %s", e.Method, e.Path, safeCause(e.err))
+}
+
+func (e *transportError) Unwrap() error { return e.err }
+
+// preSendError is a DEFINITE pre-send failure (DNS/dial before the request left, or an
+// already-cancelled ctx) — the request never reached HubSpot, so no mutation happened
+// (NOT ambiguous, unlike transportError). Error() is URL-free (via safeCause) so a
+// request URL never leaks; Unwrap() retains the cause so errors.Is/As still work. The
+// cause is UNEXPORTED (`err`) for the same reflection/JSON-leak reason as transportError
+// above — the dial `*url.Error` carries the full URL/query in its exported URL field.
+type preSendError struct {
+	Method string
+	Path   string
+	err    error
+}
+
+func (e *preSendError) Error() string {
+	return fmt.Sprintf("hubspot %s %s: %s", e.Method, e.Path, safeCause(e.err))
+}
+
+func (e *preSendError) Unwrap() error { return e.err }
+
+// safeCause renders a URL-free description of a round-trip error. Peeling a
+// *url.Error (whose %v embeds the request URL) is NOT sufficient on its own: because
+// WithHTTPClient accepts a custom http.RoundTripper, the INNER error text is
+// attacker/caller-controlled and can itself embed the URL — e.g. a transport that
+// returns fmt.Errorf("request %s failed", req.URL) leaves the `?after=<cursor>` in
+// err.Error() even after the *url.Error wrapper is peeled. So this NEVER echoes an
+// unknown error's text: it maps to a fixed vocabulary of URL-free descriptions and
+// falls back to a generic "transport failure" for anything it doesn't recognize.
+func safeCause(err error) string {
+	if err == nil {
+		return "transport failure"
+	}
+	// Context outcomes are safe, well-known, and URL-free — surface them precisely so
+	// a cancel/deadline stays diagnosable.
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "context deadline exceeded"
+	}
+	// A timeout (i/o timeout, TLS handshake timeout, per-attempt deadline) is common
+	// and worth naming — but emit our OWN fixed string, never the error's text, since a
+	// custom transport's timeout error could embed the URL. errors.As reaches a
+	// net.Error even through a *url.Error wrapper.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+	// A bare io.EOF/ErrUnexpectedEOF (connection closed mid-response) is URL-free and
+	// worth distinguishing from a generic failure.
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "connection closed"
+	}
+	// Anything else — including any custom-transport error whose text we cannot vouch
+	// for — collapses to a generic, URL-free description. This is the allow-list's
+	// default-deny: unknown error text is NEVER rendered.
+	return "transport failure"
+}
+
+// isPreSendDialError reports whether a httpClient.Do error clearly happened BEFORE
+// the request could be sent — a DNS resolution failure or a connect-time dial
+// failure (connection refused / no route / network unreachable). Only these prove
+// the request never reached HubSpot, so a mutation definitely did not happen. Every
+// other Do error (mid-flight timeout, EOF, reset) is ambiguous. Mirrors the
+// reddit/meta/googleads clients.
+func isPreSendDialError(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		if errors.Is(err, syscall.ECONNREFUSED) ||
+			errors.Is(err, syscall.EHOSTUNREACH) ||
+			errors.Is(err, syscall.ENETUNREACH) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// Request layer
+// ---------------------------------------------------------------------------
+
+// doRequest performs one HubSpot REST call against {baseURL}/{path}, attaching the
+// static bearer token. body is JSON-encoded when non-nil. It returns the raw 2xx
+// body bytes; non-2xx and transport failures are classified per the ambiguity
+// contract (apiError / transportError / plain pre-send error).
+//
+// idempotent gates 429 retry behavior: a rate-limited idempotent call (a GET read)
+// is retried up to retryMax times with a bounded backoff honoring Retry-After. A
+// NON-idempotent call (a create/clone) is NOT retried — HubSpot creates have no
+// idempotency key, so a 429 whose first attempt may already have committed would
+// double-create on retry; for those the 429 is returned as an apiError immediately.
+func (c *Client) doRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
+	if c.creds.PrivateAppToken == "" {
+		return nil, fmt.Errorf("hubspot: missing private-app token")
+	}
+
+	var encoded []byte
+	if body != nil {
+		b, mErr := json.Marshal(body)
+		if mErr != nil {
+			return nil, fmt.Errorf("marshal request body: %w", mErr)
+		}
+		encoded = b
+	}
+
+	u := c.baseURL + "/" + strings.TrimPrefix(path, "/")
+
+	// Strip the query string from `path` before it reaches any error below (the full
+	// path is already captured in `u` for the URL). A paginated request carries
+	// `?after=<cursor>`, and a cursor — or any future query secret — must not leak
+	// through the URL-free error contract.
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		// If the caller's context is ALREADY done before we send, nothing was sent —
+		// return a clean PRE-SEND error (definitely-not-sent), NOT the ambiguous
+		// transportError below. Otherwise httpClient.Do would fail with the ctx error
+		// and, since a context cancellation is not an isPreSendDialError, it would be
+		// mis-classified as an ambiguous transportError → UNCONFIRMED, wrongly implying a
+		// mutating request MIGHT have committed when none was ever sent. This also covers
+		// a ctx that expires during a 429 retry backoff. Mirrors the ctx.Err() pre-send
+		// guard in the googleads/reddit/meta clients.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, &preSendError{Method: method, Path: path, err: ctxErr}
+		}
+
+		// Bound EACH attempt with a per-attempt context deadline, NOT just the
+		// http.Client.Timeout: WithHTTPClient can inject an *http.Client whose Timeout is
+		// 0 (or larger than requestTimeout), and doRequest takes the caller ctx directly
+		// (which may be context.Background()), so without this a stalled HubSpot
+		// connection could hang indefinitely even though requestTimeout is documented as
+		// the round-trip bound. The caller ctx is the parent, so a real caller
+		// cancel/deadline still propagates. Mirrors the linkedin/reddit clients'
+		// per-attempt context.WithTimeout. cancel() runs on EVERY exit path (each return
+		// and the 429 continue) to avoid leaking the timer.
+		raw, retryWait, done, aerr := func() (rawBody []byte, retryWait time.Duration, done bool, err error) {
+			attemptCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
+			defer cancel()
+
+			var reqBody io.Reader
+			if encoded != nil {
+				reqBody = bytes.NewReader(encoded)
+			}
+			req, rerr := http.NewRequestWithContext(attemptCtx, method, u, reqBody)
+			if rerr != nil {
+				// Request build failure is definitively pre-send (nothing was sent). Return a
+				// preSendError, NOT a raw fmt.Errorf wrapping rerr: url.Parse fails with a
+				// *url.Error whose text embeds the full URL `u` (incl. ?after=<cursor>), so
+				// wrapping it verbatim would leak the cursor even though `path` was stripped.
+				// preSendError renders the cause through safeCause (URL-free) and keeps it
+				// unexported so JSON/reflection can't walk into the URL either.
+				return nil, 0, true, &preSendError{Method: method, Path: path, err: rerr}
+			}
+			req.Header.Set("Authorization", "Bearer "+c.creds.PrivateAppToken)
+			req.Header.Set("Accept", "application/json")
+			if encoded != nil {
+				req.Header.Set("Content-Type", "application/json")
+			}
+
+			resp, derr := c.httpClient.Do(req)
+			if derr != nil {
+				if isPreSendDialError(derr) {
+					// Definitely not sent — a clean pre-send failure (NOT ambiguous).
+					// Typed so the dial cause survives errors.Is/As; URL-free via safeCause.
+					return nil, 0, true, &preSendError{Method: method, Path: path, err: derr}
+				}
+				return nil, 0, true, &transportError{Method: method, Path: path, err: derr, Mutating: !idempotent}
+			}
+
+			// 429: retry only an idempotent call; a mutating 429 may have committed.
+			if resp.StatusCode == http.StatusTooManyRequests {
+				if !idempotent || attempt >= retryMax {
+					drainAndClose(resp)
+					return nil, 0, true, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Ambiguous: !idempotent}
+				}
+				wait := c.retryAfter(resp, attempt)
+				// Drain the (idempotent) 429 body before closing so the transport can
+				// reuse this connection for the retry instead of paying for a fresh
+				// TCP/TLS handshake while already rate-limited.
+				drainAndClose(resp)
+				if wait > maxRetryWait {
+					return nil, 0, true, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
+				}
+				// Signal a retry-after wait to the caller loop (done=false).
+				return nil, wait, false, nil
+			}
+
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				drainAndClose(resp)
+				return nil, 0, true, &apiError{
+					StatusCode: resp.StatusCode, Method: method, Path: path,
+					Ambiguous: !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
+				}
+			}
+
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+			_ = resp.Body.Close()
+			if readErr != nil {
+				// A 2xx whose body could not be fully read is AMBIGUOUS for a mutation (the
+				// change may have been applied server-side even though we couldn't read the
+				// reply); for an idempotent read it's just a failed read, safely retryable.
+				return nil, 0, true, &transportError{Method: method, Path: path, err: readErr, Mutating: !idempotent}
+			}
+			return body, 0, true, nil
+		}()
+
+		// A terminal attempt (done): return its result/error. Otherwise it was an
+		// idempotent 429 — wait out the backoff (honoring the caller ctx) and retry.
+		if done {
+			if aerr != nil {
+				return nil, aerr
+			}
+			if int64(len(raw)) > maxResponseBody {
+				// Over-cap on a mutation is AMBIGUOUS (the change may have committed even
+				// though the oversized reply is unusable); on a read it's a clean failure.
+				return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("response body exceeds %d bytes", maxResponseBody), Mutating: !idempotent}
+			}
+			return raw, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryWait):
+		}
+		continue
+	}
+	// Unreachable: the loop returns on the last attempt.
+	return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
+}
+
+// drainAndClose reads and discards a bounded remainder of the response body before
+// closing, so Go's transport can reuse the keep-alive connection instead of paying
+// for a fresh TCP/TLS handshake on the next request (an unread body forces the
+// connection closed). Bounded so a huge body can't stall shutdown.
+func drainAndClose(resp *http.Response) {
+	const maxDrain = 4 << 10
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrain))
+	_ = resp.Body.Close()
+}
+
+// retryAfter computes the 429 backoff: honor a server-declared Retry-After when
+// present, else exponential backoff off retryBaseDelay. An over-cap server value is
+// returned as maxRetryWait+1s to signal "over cap" so the caller aborts.
+//
+// Retry-After has TWO valid forms (RFC 7231): a delay in seconds ("120") OR an
+// HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT"). HubSpot can send either; parsing only
+// the seconds form silently dropped an HTTP-date and fell back to exponential
+// backoff, ignoring the server's stated reset time.
+func (c *Client) retryAfter(resp *http.Response, attempt int) time.Duration {
+	if d, ok := c.parseRetryAfter(resp.Header.Get("Retry-After")); ok {
+		if d > maxRetryWait {
+			return maxRetryWait + time.Second // signal "over cap" to the caller
+		}
+		return d
+	}
+	d := c.retryBaseDelay * time.Duration(1<<uint(attempt))
+	if d > maxRetryWait {
+		d = maxRetryWait
+	}
+	return d
+}
+
+// parseRetryAfter parses a Retry-After header value in either RFC 7231 form —
+// delay-seconds or an HTTP-date — into a positive wait. Returns ok=false when the
+// header is absent/blank/unparseable or the resulting delay is not positive (a
+// past/now HTTP-date), so the caller falls back to exponential backoff.
+func (c *Client) parseRetryAfter(ra string) (time.Duration, bool) {
+	ra = strings.TrimSpace(ra)
+	if ra == "" {
+		return 0, false
+	}
+	if secs, err := parsePositiveInt(ra); err == nil && secs > 0 {
+		// Clamp before the *time.Second multiply: a huge value would otherwise
+		// overflow time.Duration and could wrap to a non-positive result, bypassing
+		// the over-cap abort. retryAfter treats anything > maxRetryWait as "over cap",
+		// so any value past the cap collapses to the same abort signal — no overflow.
+		if secs > overCapSeconds {
+			secs = overCapSeconds
+		}
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(ra); err == nil {
+		if d := t.Sub(c.now()); d > 0 {
+			return d, true
+		}
+	}
+	return 0, false
+}
+
+// overCapSeconds is a ceiling for a parsed Retry-After (seconds): safely far above
+// maxRetryWait (60s) yet small enough that overCapSeconds*time.Second stays within
+// int64 (MaxInt64/1e9 ≈ 9.2e9 seconds; 1<<31 ≈ 2.1e9 is well under that). Any value
+// at this ceiling already trips the over-cap abort, so saturating here is lossless
+// for the decision.
+const overCapSeconds = 1 << 31
+
+// parsePositiveInt parses a non-negative integer string (Retry-After seconds). It
+// caps accumulation at overCapSeconds so a very long digit string can't overflow int
+// and wrap negative — the caller treats anything over the cap as "over cap" anyway.
+func parsePositiveInt(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty")
+	}
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, fmt.Errorf("non-numeric Retry-After")
+		}
+		n = n*10 + int(r-'0')
+		if n > overCapSeconds {
+			n = overCapSeconds // saturate; further digits can't reduce it
+		}
+	}
+	return n, nil
+}

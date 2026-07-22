@@ -1,0 +1,566 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package hubspot
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"testing"
+)
+
+// decodeBody reads a request JSON body into a map.
+func decodeBody(t *testing.T, r *http.Request) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	return m
+}
+
+func strptr(s string) *string { return &s }
+
+func TestSearchEmails_FiltersAndBuildsAppURL(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/marketing/v3/emails") {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"results":[
+			{"id":"1","name":"KubeCon Invite","subject":"Join us"},
+			{"id":"2","name":"Newsletter","subject":"Monthly"}
+		]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "kubecon")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Fatalf("filter failed, got %+v", got)
+	}
+	if got[0].AppURL == "" || !strings.Contains(got[0].AppURL, "/edit/1/") {
+		t.Errorf("AppURL not built: %q", got[0].AppURL)
+	}
+}
+
+func TestSearchEmails_MatchesFieldsIndependently(t *testing.T) {
+	// A query must match within name OR subject, not across their concatenation:
+	// name "Sale" + subject "Invite" must NOT match "e i" (which spans the boundary).
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"Sale","subject":"Invite"}]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "e i")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a boundary-spanning query must not match, got %+v", got)
+	}
+	// A query fully inside the subject still matches.
+	got, err = c.SearchEmails(context.Background(), "invit")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("a query within subject must match, got %+v", got)
+	}
+}
+
+func TestClone_Post2xxUnconfirmedIsRecognizedByHelper(t *testing.T) {
+	// A mutating 2xx with no id / undecodable body is labeled UNCONFIRMED in the text
+	// AND must make IsUnconfirmed(err) true, so a caller using the helper alone won't
+	// blind-retry into a duplicate clone.
+	cNoID, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"name":"clone but no id"}`)
+	})
+	_, err := cNoID.CloneEmail(context.Background(), "src", "copy")
+	if !IsUnconfirmed(err) {
+		t.Errorf("a 2xx-no-id clone must be IsUnconfirmed, got %T: %v", err, err)
+	}
+	cBad, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{not json`)
+	})
+	_, err = cBad.CloneEmail(context.Background(), "src", "copy")
+	if !IsUnconfirmed(err) {
+		t.Errorf("an undecodable 2xx clone must be IsUnconfirmed, got %T: %v", err, err)
+	}
+}
+
+func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
+	// Page 1 returns paging.next.after; page 2 omits it. The walker must forward the
+	// cursor, aggregate both pages, and terminate — a match on page 2 must not be lost.
+	var afters []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		after := r.URL.Query().Get("after")
+		afters = append(afters, after)
+		if after == "" {
+			// "A" is the more recently updated, so it must sort first after aggregation.
+			_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"KubeCon A","subject":"x","updatedAt":"2026-01-02T00:00:00Z"}],"paging":{"next":{"after":"CURSOR2"}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"KubeCon B","subject":"y","updatedAt":"2026-01-01T00:00:00Z"}]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "kubecon")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != "1" || got[1].ID != "2" {
+		t.Fatalf("both pages must aggregate (most-recent A first), got %+v", got)
+	}
+	if len(afters) != 2 || afters[0] != "" || afters[1] != "CURSOR2" {
+		t.Errorf("cursor not forwarded across pages: %v", afters)
+	}
+}
+
+func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
+	// Order is guaranteed CLIENT-SIDE regardless of server order. The request sends
+	// `sort=-updatedAt` (a valid hint) and repeated `includedProperties` to restrict the
+	// returned fields so full email content doesn't blow the response cap at limit=100.
+	var gotSort string
+	var gotProps []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotSort = r.URL.Query().Get("sort")
+		gotProps = r.URL.Query()["includedProperties"]
+		// Intentionally returned oldest-first to prove the client re-orders.
+		_, _ = io.WriteString(w, `{"results":[`+
+			`{"id":"1","name":"Old","subject":"x","updatedAt":"2024-01-01T00:00:00Z"},`+
+			`{"id":"2","name":"New","subject":"x","updatedAt":"2026-06-01T00:00:00Z"},`+
+			`{"id":"3","name":"Mid","subject":"x","updatedAt":"2025-03-01T00:00:00Z"}`+
+			`]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if gotSort != "-updatedAt" {
+		t.Errorf("SearchEmails should send sort=-updatedAt, got %q", gotSort)
+	}
+	if len(gotProps) == 0 {
+		t.Errorf("SearchEmails should restrict fields via includedProperties, got none")
+	}
+	if len(got) != 3 || got[0].ID != "2" || got[1].ID != "3" || got[2].ID != "1" {
+		t.Errorf("results must be most-recently-updated first (2,3,1), got %v", []string{got[0].ID, got[1].ID, got[2].ID})
+	}
+}
+
+func TestSearchEmails_MalformedBodyErrors(t *testing.T) {
+	// A 2xx `{}`/`null` (Results==nil, no paging) must be a decode error, not a clean
+	// empty success that hides a broken response. (An empty portal returns
+	// `{"results":[]}`, which is non-nil and returns 0 results without error.)
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if _, err := c.SearchEmails(context.Background(), ""); err == nil {
+		t.Error("a 2xx body with no results array must error, not return empty success")
+	}
+	cEmpty, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	if got, err := cEmpty.SearchEmails(context.Background(), ""); err != nil || len(got) != 0 {
+		t.Errorf("a genuinely empty portal must return (0, nil), got (%d, %v)", len(got), err)
+	}
+}
+
+func TestSortEmailsByUpdatedDesc_IDTiebreak(t *testing.T) {
+	// Equal (or missing) timestamps fall back to a deterministic id ordering.
+	emails := []Email{
+		{ID: "a", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "b", UpdatedAt: "2026-01-01T00:00:00Z"},
+	}
+	sortEmailsByUpdatedDesc(emails)
+	if emails[0].ID != "c" || emails[1].ID != "b" || emails[2].ID != "a" {
+		t.Errorf("equal timestamps must tiebreak by id desc (c,b,a), got %s,%s,%s", emails[0].ID, emails[1].ID, emails[2].ID)
+	}
+}
+
+func TestSearchEmails_SortsByParsedInstantNotLexical(t *testing.T) {
+	// A lexical sort of RFC3339 strings is WRONG: `2026-01-01T00:30:00+01:00`
+	// (= 2025-12-31T23:30:00Z, OLDER) sorts lexically AFTER `2026-01-01T00:00:00Z`.
+	// Parsing to instants puts the truly-newer Z email first.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// "newest" carries SUBSECOND precision (HubSpot's millisecond format) — it must
+		// still parse (RFC3339Nano) and sort first, not fall to the zero-time bucket.
+		_, _ = io.WriteString(w, `{"results":[`+
+			`{"id":"older","name":"A","subject":"x","updatedAt":"2026-01-01T00:30:00+01:00"},`+
+			`{"id":"newest","name":"A","subject":"x","updatedAt":"2026-06-01T12:00:00.123Z"},`+
+			`{"id":"newer","name":"A","subject":"x","updatedAt":"2026-01-01T00:00:00Z"}`+
+			`]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 results, got %d: %+v", len(got), got)
+	}
+	ids := []string{got[0].ID, got[1].ID, got[2].ID}
+	if ids[0] != "newest" || ids[1] != "newer" || ids[2] != "older" {
+		t.Errorf("must sort by parsed instant incl. subsecond (newest,newer,older), got %v", ids)
+	}
+}
+
+func TestSearchEmails_ForwardsCursorVerbatim(t *testing.T) {
+	// `paging.next.after` is an OPAQUE token in the JSON body — NOT percent-encoded.
+	// The client must forward it VERBATIM: url.Values.Encode applies exactly one round
+	// of wire-encoding, and net/http on the receiving side decodes it once, so the
+	// `after` the server observes on page 2 equals the RAW token it sent on page 1 —
+	// for every character class, including those that require encoding on the wire
+	// (`=`, `+`, `/`, and a literal `%`). Pre-decoding would corrupt these.
+	for _, tc := range []struct {
+		name  string
+		token string
+	}{
+		{"plain-base64", "MjA="},
+		{"has-plus-and-slash", "A+B/C="},
+		{"has-literal-percent", "MjA%3D"}, // a raw token that literally contains "%3D"
+		{"has-space-and-amp", "a b&c=d"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var afters []string
+			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				after := r.URL.Query().Get("after") // net/http has already wire-decoded this
+				afters = append(afters, after)
+				if after == "" {
+					// The token is embedded in a JSON string; escape only what JSON needs.
+					jsonTok, _ := json.Marshal(tc.token)
+					_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"A","subject":"x"}],"paging":{"next":{"after":`+string(jsonTok)+`}}}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"B","subject":"y"}]}`)
+			})
+			if _, err := c.SearchEmails(context.Background(), ""); err != nil {
+				t.Fatalf("SearchEmails: %v", err)
+			}
+			if len(afters) != 2 || afters[1] != tc.token {
+				t.Errorf("page-2 after must equal the raw server token %q, got %q (afters=%v)", tc.token, afters[len(afters)-1], afters)
+			}
+		})
+	}
+}
+
+func TestSearchEmails_StuckCursorErrors(t *testing.T) {
+	// A server that echoes the same `after` token must not loop forever duplicating
+	// the page — the walker errors on a non-advancing cursor.
+	var calls int
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"A","subject":"x"}],"paging":{"next":{"after":"SAME"}}}`)
+	})
+	if _, err := c.SearchEmails(context.Background(), ""); err == nil {
+		t.Fatal("a non-advancing cursor must error, not loop to the page cap")
+	}
+	if calls > 3 {
+		t.Errorf("expected the stuck-cursor guard to stop after 2 calls, got %d", calls)
+	}
+}
+
+func TestGetEmail_2xxNoIDIsPlainErrorNotUnconfirmed(t *testing.T) {
+	// GetEmail is an idempotent GET, so a malformed 2xx is a plain error, NOT
+	// UNCONFIRMED (a read can't leave a mutation in doubt) — so it's safely retryable.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"name":"no id here"}`)
+	})
+	_, err := c.GetEmail(context.Background(), "42")
+	if err == nil || !strings.Contains(err.Error(), "malformed response") {
+		t.Errorf("a 2xx with no id must be a malformed-response error, got: %v", err)
+	}
+	if IsUnconfirmed(err) {
+		t.Error("a read (GetEmail) must NOT be UNCONFIRMED — it can't leave a mutation in doubt")
+	}
+}
+
+func TestCloneEmail_SendsIDAndCloneName(t *testing.T) {
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/marketing/v3/emails/clone" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon Invite (clone)","state":"DRAFT"}`)
+	})
+	e, err := c.CloneEmail(context.Background(), "123", "KubeCon Invite")
+	if err != nil {
+		t.Fatalf("CloneEmail: %v", err)
+	}
+	if e.ID != "999" {
+		t.Errorf("clone id = %q, want 999", e.ID)
+	}
+	if body["id"] != "123" || body["cloneName"] != "KubeCon Invite" {
+		t.Errorf("clone body = %v", body)
+	}
+	// language is omitted so HubSpot preserves the source draft's locale.
+	if _, ok := body["language"]; ok {
+		t.Errorf("clone body must omit language (preserve source locale), got %v", body["language"])
+	}
+}
+
+func TestCloneEmail_2xxNoIDIsUnconfirmed(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"name":"draft with no id"}`)
+	})
+	_, err := c.CloneEmail(context.Background(), "123", "X")
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a clone 2xx with no id must be UNCONFIRMED (a draft may exist), got: %v", err)
+	}
+}
+
+func TestCloneEmail_Mutating429IsNotRetried(t *testing.T) {
+	var calls int
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := c.CloneEmail(context.Background(), "123", "X")
+	if err == nil {
+		t.Fatal("expected an error on clone 429")
+	}
+	if calls != 1 {
+		t.Errorf("a mutating clone 429 must NOT be retried, got %d calls", calls)
+	}
+}
+
+func TestPatchEmailSettings_OnlySetsProvidedFields(t *testing.T) {
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("want PATCH, got %s", r.Method)
+		}
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	_, err := c.PatchEmailSettings(context.Background(), "999", EmailSettings{
+		Subject: strptr("New subject"),
+	})
+	if err != nil {
+		t.Fatalf("PatchEmailSettings: %v", err)
+	}
+	if body["subject"] != "New subject" {
+		t.Errorf("patch body = %v", body)
+	}
+	if _, ok := body["from"]; ok {
+		t.Errorf("from must be omitted when no from-name/email set: %v", body)
+	}
+}
+
+func TestPatchEmailSettings_FromUsesV3FieldNames(t *testing.T) {
+	// The v3 `from` object uses fromName + replyTo, NOT name/email (which HubSpot
+	// silently ignores). Verified against HubSpot's PublicEmailFromDetails schema.
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c.PatchEmailSettings(context.Background(), "999", EmailSettings{
+		FromName:  strptr("CNCF Events"),
+		FromEmail: strptr("events@cncf.io"),
+	}); err != nil {
+		t.Fatalf("PatchEmailSettings: %v", err)
+	}
+	from, ok := body["from"].(map[string]any)
+	if !ok {
+		t.Fatalf("from object missing: %v", body)
+	}
+	if from["fromName"] != "CNCF Events" || from["replyTo"] != "events@cncf.io" {
+		t.Errorf("from must use fromName/replyTo, got %v", from)
+	}
+	if _, bad := from["name"]; bad {
+		t.Errorf("from must NOT use the ignored `name` field: %v", from)
+	}
+	if _, bad := from["email"]; bad {
+		t.Errorf("from must NOT use the ignored `email` field: %v", from)
+	}
+}
+
+func TestPatchEmailSettings_EmptyIsRejected(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request expected when nothing to set")
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if _, err := c.PatchEmailSettings(context.Background(), "1", EmailSettings{}); err == nil {
+		t.Error("PatchEmailSettings with nothing to set should error before any request")
+	}
+}
+
+func TestPatchEmail_NullBodyIsUnconfirmed(t *testing.T) {
+	// A 2xx JSON `null` body decodes into the Email struct WITHOUT error (zero-valued),
+	// so the id-fallback would otherwise report a phantom success. A PATCH is mutating,
+	// so a null/empty body must be UNCONFIRMED (the update may have applied).
+	sub := strptr("New subject")
+	for _, body := range []string{`null`, ` null `, ``} {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		})
+		_, err := c.PatchEmailSettings(context.Background(), "999", EmailSettings{Subject: sub})
+		if err == nil || !IsUnconfirmed(err) {
+			t.Errorf("a %q PATCH body must be UNCONFIRMED, got %v", body, err)
+		}
+	}
+}
+
+// Recipients are set ONLY via contactIlsLists (legacy contactLists was removed by
+// HubSpot's ILS migration after 2024-10-31), and the PATCH targets the /draft route.
+func TestSetSendList_ILSOnlyOnDraftRoute(t *testing.T) {
+	var body map[string]any
+	var gotPath string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	_, err := c.SetSendList(context.Background(), "999", "26991", []string{"111", " 222 ", ""})
+	if err != nil {
+		t.Fatalf("SetSendList: %v", err)
+	}
+	if gotPath != "/marketing/v3/emails/999/draft" {
+		t.Errorf("SetSendList must PATCH the draft route, got %q", gotPath)
+	}
+	to, _ := body["to"].(map[string]any)
+	if to == nil {
+		t.Fatalf("no `to` in body: %v", body)
+	}
+	// The removed legacy field must never be emitted.
+	if _, hasLegacy := to["contactLists"]; hasLegacy {
+		t.Error("SetSendList must NOT emit the removed legacy contactLists field")
+	}
+	ils, _ := to["contactIlsLists"].(map[string]any)
+	if ils == nil {
+		t.Fatalf("contactIlsLists missing: %v", to)
+	}
+	inc, _ := ils["include"].([]any)
+	if len(inc) != 1 || inc[0] != "26991" {
+		t.Errorf("ils include = %v, want [26991]", inc)
+	}
+	exc, _ := ils["exclude"].([]any)
+	if len(exc) != 2 { // "111","222" — empty dropped
+		t.Errorf("suppressions = %v, want 2 (empty trimmed)", exc)
+	}
+	// contactIds must be cleared so no stale clone-source recipients remain.
+	if _, ok := to["contactIds"]; !ok {
+		t.Error("contactIds must be cleared in the complete `to` object")
+	}
+}
+
+func TestSetSendList_TrimsILSSendListID(t *testing.T) {
+	// A whitespace-padded ILS send-list id must be trimmed — a padded id sent raw
+	// could be rejected by HubSpot, leaving the email with no recipients.
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c.SetSendList(context.Background(), "999", "  ils-123  ", nil); err != nil {
+		t.Fatalf("SetSendList: %v", err)
+	}
+	ils := body["to"].(map[string]any)["contactIlsLists"].(map[string]any)
+	inc, _ := ils["include"].([]any)
+	if len(inc) != 1 || inc[0] != "ils-123" {
+		t.Errorf("ILS include must be the trimmed id, got %v", inc)
+	}
+}
+
+func TestSetSendList_RejectsEmptyIDs(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request expected on invalid input")
+	})
+	if _, err := c.SetSendList(context.Background(), "", "1", nil); err == nil {
+		t.Error("empty email id should be rejected")
+	}
+	if _, err := c.SetSendList(context.Background(), "1", "  ", nil); err == nil {
+		t.Error("empty/whitespace ILS send-list id should be rejected")
+	}
+}
+
+func TestSetSendList_RejectsSendListInSuppression(t *testing.T) {
+	// HubSpot applies contactIlsLists exclusions AFTER inclusions, so a send-list id
+	// that also appears in the suppression set would fully exclude the audience while
+	// the PATCH still returns 2xx. SetSendList must reject this BEFORE the mutating
+	// request — and the compare runs against the trimmed/cleaned ids, so a
+	// whitespace-padded duplicate is caught too.
+	for _, tc := range []struct {
+		name        string
+		ils         string
+		suppression []string
+	}{
+		{"exact-duplicate", "26991", []string{"111", "26991"}},
+		{"padded-duplicate", "26991", []string{" 26991 "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hit int32
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&hit, 1) // must NOT be reached — this is a pre-send guard
+				_, _ = io.WriteString(w, `{"id":"999"}`)
+			})
+			_, err := c.SetSendList(context.Background(), "999", tc.ils, tc.suppression)
+			if err == nil {
+				t.Fatal("a send-list id present in the suppression set must be rejected")
+			}
+			if !strings.Contains(err.Error(), "suppression") {
+				t.Errorf("error should explain the suppression conflict, got: %v", err)
+			}
+			if atomic.LoadInt32(&hit) != 0 {
+				t.Error("SetSendList must reject before sending the PATCH (no request expected)")
+			}
+		})
+	}
+}
+
+func TestSetSendList_TrimsEmailID(t *testing.T) {
+	// A whitespace-padded email id must be trimmed before it reaches the draft URL —
+	// a padded id sent raw yields "/emails/%20999%20/draft", a 404 that silently
+	// fails the send-list staging.
+	var gotPath string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c.SetSendList(context.Background(), "  999  ", "ils-123", nil); err != nil {
+		t.Fatalf("SetSendList: %v", err)
+	}
+	if gotPath != "/marketing/v3/emails/999/draft" {
+		t.Errorf("padded email id must be trimmed in the draft path, got %q", gotPath)
+	}
+}
+
+func TestSearchEmails_TrimsQuery(t *testing.T) {
+	// A padded query must still match — " kubecon " should find "KubeCon Invite".
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"KubeCon Invite","subject":"x"}]}`)
+	})
+	got, err := c.SearchEmails(context.Background(), "  kubecon  ")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Errorf("padded query must match, got %+v", got)
+	}
+}
+
+func TestCloneEmail_RejectsEmptyName(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request expected on invalid input")
+	})
+	if _, err := c.CloneEmail(context.Background(), "123", "   "); err == nil {
+		t.Error("a whitespace-only clone name must be rejected")
+	}
+}
+
+func TestCloneEmail_TrimsSourceID(t *testing.T) {
+	// A whitespace-padded source id must be trimmed before it is posted in the clone
+	// body — a padded id could be rejected by HubSpot, causing a silent clone failure.
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"id":"clone-1"}`)
+	})
+	if _, err := c.CloneEmail(context.Background(), "  src-42  ", "My Clone"); err != nil {
+		t.Fatalf("CloneEmail: %v", err)
+	}
+	if body["id"] != "src-42" {
+		t.Errorf("clone body id must be the trimmed source id, got %v", body["id"])
+	}
+}
