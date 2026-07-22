@@ -104,8 +104,9 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	}
 	// Reject an empty variant set BEFORE any upstream create. The client also refuses
 	// it (nil, err) after its own validation, but checking up front avoids the wasted
-	// connection resolve / input build and keeps the claim-release semantics obvious
-	// (a pre-create failure releases the claim).
+	// input build + upstream round-trip and keeps the claim-release semantics obvious
+	// (a pre-create failure releases the claim). Credential/connection resolution has
+	// already happened above; this only short-circuits the create itself.
 	if len(cfg.Variants) == 0 {
 		return nil, notCreated(fmt.Errorf("linkedin campaign creation requires at least one creative variant"))
 	}
@@ -142,7 +143,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// hsToken is a documented TOP-LEVEL config envelope field (docs/api-catalog.md);
 	// a request-supplied token takes precedence over the brief blobs, so a config
 	// hsToken drives the dark-post utm_campaign instead of being silently ignored.
-	hsToken := envelopeHSToken(config)
+	hsToken, err := envelopeHSToken(config)
+	if err != nil {
+		return nil, notCreated(err) // a wrong-typed hsToken is a caller error (pre-create)
+	}
 	if hsToken == "" {
 		hsToken = bf.HSToken
 	}
@@ -184,10 +188,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), nil
 }
 
-// campaignFromLinkedIn maps the client result to the persistence model (upstream id,
-// name, result blob, and a "created" status on success — see campaignFromReddit).
-// requestedVariants is how many creatives the caller asked for, used to detect a
-// creative shortfall (degraded).
+// campaignFromLinkedIn maps the client result to the persistence model: upstream id,
+// name, result blob, the budget/schedule/ConfigSnapshot (via applyCampaignConfig), and
+// a status derived from what was confirmed created — one of `created`,
+// `created_degraded` (creative shortfall), `group_created` (group only), or
+// `unconfirmed` (neither id). requestedVariants is how many creatives the caller asked
+// for, used to detect a creative shortfall.
 func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, requestedVariants int, cfg linkedinConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,

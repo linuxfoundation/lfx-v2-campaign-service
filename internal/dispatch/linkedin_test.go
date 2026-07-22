@@ -200,6 +200,54 @@ func TestLinkedIn_ForeignAccountIDRejected(t *testing.T) {
 	}
 }
 
+// A whitespace-PADDED adAccountId that TRIMS to the connection's account must be
+// ACCEPTED (the guard trims once and uses the trimmed value both to compare and to
+// build the client input) — the complement of the reject path, per dealako's #37 note.
+func TestLinkedIn_PaddedMatchingAccountIDAccepted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
+	)
+	// The connection's account is "123456789"; supply it whitespace-padded.
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"adAccountId":"  123456789  ",
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err != nil {
+		t.Fatalf("a padded adAccountId that trims to the connection account must be accepted, got: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "200" {
+		t.Fatalf("adapter must map the upstream campaign id, got %+v", camp)
+	}
+}
+
 func TestLinkedIn_AmbiguousCreateRetainsClaim(t *testing.T) {
 	// A 5xx on the campaign-group create is ambiguous → the linkedin client returns a
 	// non-nil partial (empty CampaignID). The adapter must retain the claim.
