@@ -201,8 +201,13 @@ func campaignFromReddit(ctx context.Context, r *reddit.CampaignResult, cfg reddi
 	// Persist the budget/schedule/config the caller supplied. The Reddit client always
 	// creates campaigns with goal_type LIFETIME_SPEND (client.go) — budgetUsd is a
 	// LIFETIME spend cap, not a daily one — so the persisted budget_type is lifetime.
-	// ConfigSnapshot captures the validated redditConfig for reconciliation.
-	applyCampaignConfig(ctx, c, cfg.BudgetUSD, true, cfg.StartDate, cfg.EndDate, cfg)
+	// ConfigSnapshot captures the validated config for reconciliation, but with PostURL
+	// SANITIZED: a post URL may carry secrets in its query/fragment (the client's step
+	// log redacts them via redactURL for exactly this reason), and config_snapshot is
+	// stored UNENCRYPTED in Postgres — so we strip the query/fragment before snapshotting.
+	snapshot := cfg
+	snapshot.PostURL = sanitizeSnapshotURL(cfg.PostURL)
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, true, cfg.StartDate, cfg.EndDate, snapshot)
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
 	}

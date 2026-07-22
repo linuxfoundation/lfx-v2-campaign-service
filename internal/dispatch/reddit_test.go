@@ -323,3 +323,23 @@ func TestReddit_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 		t.Errorf("status = %q, want %q (the failed ad must surface as a degraded, not clean, success)", camp.Status, campaignStatusCreatedDegraded)
 	}
 }
+
+// The config_snapshot stored for a reddit campaign must NOT contain a PostURL's
+// query/fragment (which can carry secrets) — it is persisted unencrypted. Per the
+// Copilot #36 security finding.
+func TestReddit_ConfigSnapshotRedactsPostURL(t *testing.T) {
+	camp := campaignFromReddit(context.Background(),
+		&reddit.CampaignResult{CampaignID: "cmp_1", CampaignName: "n"},
+		redditConfig{BudgetUSD: 10, PostURL: "https://example.com/reg?token=SECRET#f"},
+	)
+	if camp.ConfigSnapshot == nil {
+		t.Fatal("expected a config snapshot")
+	}
+	s := string(camp.ConfigSnapshot)
+	if strings.Contains(s, "SECRET") {
+		t.Errorf("config snapshot must not carry the PostURL query/fragment secret, got: %s", s)
+	}
+	if !strings.Contains(s, "https://example.com/reg") {
+		t.Errorf("config snapshot should retain the sanitized post URL, got: %s", s)
+	}
+}

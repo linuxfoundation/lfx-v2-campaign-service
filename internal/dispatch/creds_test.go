@@ -10,6 +10,26 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
+// TestSanitizeSnapshotURL: the query/fragment (which may carry secrets) must be
+// stripped before a URL is stored in the unencrypted config_snapshot.
+func TestSanitizeSnapshotURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"  ", ""},
+		{"https://example.com/reg?token=SECRET&x=1", "https://example.com/reg"},
+		{"https://example.com/p#frag-SECRET", "https://example.com/p"},
+		{"https://example.com/path", "https://example.com/path"},
+		{"t3_abc123", "t3_abc123"}, // reddit thing-id, no query — unchanged
+		{"not a url?token=SECRET", "not a url"},
+		{"https://user:pass@example.com/x?token=SECRET", ""}, // userinfo → fail closed
+	}
+	for _, tc := range cases {
+		if got := sanitizeSnapshotURL(tc.in); got != tc.want {
+			t.Errorf("sanitizeSnapshotURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestEnvelopeHSToken covers the shared top-level hsToken extraction: a valid string
 // is returned trimmed, absence yields "", and a wrong-typed value is an error (not a
 // silent fallback).

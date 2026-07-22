@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -76,6 +77,31 @@ func applyCampaignConfig(ctx context.Context, c *model.Campaign, budget float64,
 			c.ConfigSnapshot = raw
 		}
 	}
+}
+
+// sanitizeSnapshotURL strips the query and fragment from a URL before it is stored in
+// config_snapshot (which is persisted UNENCRYPTED). A destination/post URL's query or
+// fragment can carry secrets, so the snapshot keeps only scheme+host+path. An absolute
+// URL is reduced to that; a value that does not parse as an absolute URL (or carries
+// userinfo/credentials) is truncated at the first '?'/'#' and dropped entirely if it
+// still contains a credential delimiter '@', mirroring the reddit client's redactURL
+// fail-closed behavior. An empty input stays empty.
+func sanitizeSnapshotURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if u, err := url.Parse(trimmed); err == nil && u.IsAbs() && u.Host != "" && u.User == nil {
+		redacted := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+		return redacted.String()
+	}
+	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
+		trimmed = trimmed[:i]
+	}
+	if strings.Contains(trimmed, "@") {
+		return "" // fail closed: don't store a value that may embed userinfo credentials
+	}
+	return trimmed
 }
 
 // parseCampaignDate parses a YYYY-MM-DD config date to a *time.Time (UTC), returning
