@@ -89,24 +89,24 @@ func TestLinkedIn_EmptyVariantsIsPreCreate(t *testing.T) {
 func TestLinkedIn_CampaignFromLinkedInStatus(t *testing.T) {
 	ctx := context.Background()
 	// Full success: 3 creatives created for 3 requested → clean created.
-	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 3}, 3); c.Status != campaignStatusCreated {
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 3}, 3, linkedinConfig{}); c.Status != campaignStatusCreated {
 		t.Errorf("3/3 creatives should be %q, got %q", campaignStatusCreated, c.Status)
 	}
 	// Creative shortfall: campaign created but only 2 of 3 creatives → degraded.
-	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 2}, 3); c.Status != campaignStatusCreatedDegraded {
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 2}, 3, linkedinConfig{}); c.Status != campaignStatusCreatedDegraded {
 		t.Errorf("2/3 creatives should be %q, got %q", campaignStatusCreatedDegraded, c.Status)
 	}
 	// Group-only orphan: empty CampaignID + group id → group_created (not degraded).
-	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "", CampaignGroupID: "g1"}, 3); c.Status != campaignStatusGroupCreated {
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "", CampaignGroupID: "g1"}, 3, linkedinConfig{}); c.Status != campaignStatusGroupCreated {
 		t.Errorf("group-only orphan should be %q, got %q", campaignStatusGroupCreated, c.Status)
 	}
 	// Group-AMBIGUOUS partial: BOTH ids empty (the group create itself was
 	// unconfirmed) → unconfirmed, NOT a false "created" (dealako #37).
-	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "", CampaignGroupID: ""}, 3); c.Status != campaignStatusUnconfirmed {
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "", CampaignGroupID: ""}, 3, linkedinConfig{}); c.Status != campaignStatusUnconfirmed {
 		t.Errorf("both-ids-empty ambiguous partial should be %q, got %q", campaignStatusUnconfirmed, c.Status)
 	}
 	// The Result blob must be populated on the happy path.
-	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 3}, 3); len(c.Result) == 0 {
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 3}, 3, linkedinConfig{}); len(c.Result) == 0 {
 		t.Error("Result blob should be marshaled on a normal result")
 	}
 }
@@ -160,6 +160,22 @@ func TestLinkedIn_DispatchSuccessMapsResult(t *testing.T) {
 	}
 	if camp.CampaignName == "" || len(camp.Result) == 0 {
 		t.Error("campaign name + result blob should be populated")
+	}
+	// Persistence-contract columns populated from the config (not left NULL).
+	if camp.BudgetAmount == nil || *camp.BudgetAmount != 100 {
+		t.Errorf("BudgetAmount = %v, want 100", camp.BudgetAmount)
+	}
+	if camp.BudgetType == nil || *camp.BudgetType != model.BudgetDaily {
+		t.Errorf("BudgetType = %v, want daily (no lifetimeBudget in config)", camp.BudgetType)
+	}
+	if camp.StartDate == nil || camp.StartDate.Format("2006-01-02") != "2099-01-01" {
+		t.Errorf("StartDate = %v, want 2099-01-01", camp.StartDate)
+	}
+	if camp.EndDate == nil || camp.EndDate.Format("2006-01-02") != "2099-02-01" {
+		t.Errorf("EndDate = %v, want 2099-02-01", camp.EndDate)
+	}
+	if len(camp.ConfigSnapshot) == 0 {
+		t.Error("ConfigSnapshot should capture the validated linkedin config")
 	}
 }
 

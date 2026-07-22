@@ -179,16 +179,16 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		// A non-nil result means a permanent resource exists (campaign group, and maybe
 		// the campaign). This covers BOTH an ambiguous create AND a definite campaign
 		// failure after a successful group create — either way the claim must be retained.
-		return campaignFromLinkedIn(ctx, result, len(cfg.Variants)), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
+		return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
 	}
-	return campaignFromLinkedIn(ctx, result, len(cfg.Variants)), nil
+	return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), nil
 }
 
 // campaignFromLinkedIn maps the client result to the persistence model (upstream id,
 // name, result blob, and a "created" status on success — see campaignFromReddit).
 // requestedVariants is how many creatives the caller asked for, used to detect a
 // creative shortfall (degraded).
-func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, requestedVariants int) *model.Campaign {
+func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, requestedVariants int, cfg linkedinConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
@@ -227,6 +227,9 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 		// claim is retained by the caller and Result carries the reconcile blob.
 		c.Status = campaignStatusUnconfirmed
 	}
+	// Persist the budget/schedule/config the caller supplied (LinkedIn honors a
+	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config.
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, cfg)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: leaving Result empty would make an orphaned campaign harder to
