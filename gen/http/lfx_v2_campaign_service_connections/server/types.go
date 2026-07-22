@@ -8,6 +8,8 @@
 package server
 
 import (
+	"unicode/utf8"
+
 	lfxv2campaignserviceconnections "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -260,7 +262,8 @@ type CreateLinkedinAdsResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, not the full
+	// urn:li:organization: URN)
 	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
 }
 
@@ -282,7 +285,8 @@ type GetLinkedinAdsResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, not the full
+	// urn:li:organization: URN)
 	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
 }
 
@@ -304,7 +308,8 @@ type UpdateLinkedinAdsResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, not the full
+	// urn:li:organization: URN)
 	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
 }
 
@@ -2355,9 +2360,10 @@ type GoogleAdsCredentialsRequestBody struct {
 type LinkedinAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// LinkedIn ad account ID
+	// LinkedIn ad account ID (numeric)
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, e.g. 208777 — not the full
+	// urn:li:organization: URN)
 	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
 }
 
@@ -5539,6 +5545,22 @@ func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionC
 	}
 	if body.OrgID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("org_id", "body"))
+	}
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[0-9]+$"))
+	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
+		}
+	}
+	if body.OrgID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.org_id", *body.OrgID, "^[0-9]+$"))
+	}
+	if body.OrgID != nil {
+		if utf8.RuneCountInString(*body.OrgID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.org_id", *body.OrgID, utf8.RuneCountInString(*body.OrgID), 64, false))
+		}
 	}
 	return
 }

@@ -194,6 +194,36 @@ func (nilDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model
 	return nil, nil //nolint:nilnil // deliberately exercises the nil-campaign guard
 }
 
+// partialOrphanDispatcher returns a retained-partial campaign carrying a degraded
+// status + a reconcile Result but NO upstream id (a group-orphan / unconfirmed
+// partial), ALONGSIDE an error. It exercises the orchestrator's status-preservation:
+// the row must persist with the degraded status (not be flattened to "pending"), and
+// must NOT be reusable on a retry (its status is non-terminal).
+type partialOrphanDispatcher struct{ status string }
+
+func (d partialOrphanDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{
+			Status:       d.status,
+			Result:       json.RawMessage(`{"campaignGroupId":"g1"}`),
+			CampaignName: "n",
+		}, // no PlatformCampaignID: the campaign was not created, only the group
+		errors.New("campaign create ambiguous after group created")
+}
+
+// degradedCreatedDispatcher returns a campaign that WAS created (has an id) with a
+// terminal created_degraded status ALONGSIDE an error — the LinkedIn shape when the
+// campaign lands but fewer creatives than requested succeed.
+type degradedCreatedDispatcher struct{}
+
+func (degradedCreatedDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{
+			PlatformCampaignID: "pc-" + string(p),
+			Status:             "created_degraded",
+			CampaignName:       "n",
+		},
+		errors.New("only 2 of 3 creatives created")
+}
+
 func waitForTerminal(t *testing.T, jobs *fakeJobRepo, id string) *model.CampaignJob {
 	t.Helper()
 	for i := 0; i < 100; i++ {
@@ -258,6 +288,126 @@ func TestOrchestrator_PartialFailure(t *testing.T) {
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobPartial {
 		t.Errorf("status = %s, want partial", j.Status)
+	}
+}
+
+// TestOrchestrator_PreservesDegradedStatusOnRetainedOrphan verifies the fix for the
+// PR #37 review finding: a dispatcher-set degraded status (group_created / unconfirmed)
+// on a retained-partial orphan is PERSISTED on the campaign row (not flattened to
+// "pending"). This runs the persist/preserve half end to end (Start -> retain ->
+// UpsertCampaign). The "not reusable on a later dispatch" half is asserted directly via
+// isReusableCampaign(row) below (the reuse gate itself is table-locked in
+// TestIsReusableCampaign) rather than by driving a second Start.
+func TestOrchestrator_PreservesDegradedStatusOnRetainedOrphan(t *testing.T) {
+	for _, status := range []string{"group_created", "unconfirmed"} {
+		t.Run(status, func(t *testing.T) {
+			jobs := newFakeJobRepo()
+			camps := &fakeCampaignRepo{}
+			orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+				model.ProviderLinkedInAds: partialOrphanDispatcher{status: status},
+			})
+			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+			id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			waitForTerminal(t, jobs, id)
+
+			camps.mu.Lock()
+			defer camps.mu.Unlock()
+			// The group-orphan MUST be recorded (id-less rows were previously dropped):
+			// exactly one row upserted, carrying the reconcile Result blob with the group
+			// id — otherwise the orphan is undiscoverable and the claim blocks the pair
+			// with no record.
+			if len(camps.upserted) != 1 {
+				t.Fatalf("upserted %d campaigns, want 1 (the id-less orphan must be persisted, not dropped)", len(camps.upserted))
+			}
+			row := camps.existing["b1|"+string(model.ProviderLinkedInAds)]
+			if row == nil {
+				t.Fatal("expected a persisted orphan row")
+			}
+			// The retained orphan row was persisted with the DEGRADED status, not pending.
+			if row.Status != status {
+				t.Errorf("persisted status = %q, want the preserved %q (not flattened to pending)", row.Status, status)
+			}
+			// PlatformCampaignID stays empty (no campaign created), keeping the row out of
+			// the id-keyed idempotency fast-path; the reconcile detail rides in Result.
+			if row.PlatformCampaignID != "" {
+				t.Errorf("orphan must have no upstream campaign id, got %q", row.PlatformCampaignID)
+			}
+			if !strings.Contains(string(row.Result), "campaignGroupId") {
+				t.Errorf("orphan Result must carry the group id for reconciliation, got %q", row.Result)
+			}
+			// And the orphan is NOT reusable: isReusableCampaign must reject a
+			// non-terminal status so the fast path can't report a false success — a later
+			// dispatch then hits the retained claim and returns reconciliation-required
+			// rather than reusing the orphan as a completed campaign.
+			if isReusableCampaign(row) {
+				t.Errorf("a %q orphan must NOT be reusable as a completed campaign", status)
+			}
+		})
+	}
+}
+
+// TestOrchestrator_PreservesCreatedDegradedWithID verifies that a terminal
+// created_degraded status returned ALONGSIDE an error but WITH a real upstream id (the
+// campaign was created, only a sub-step degraded) is preserved on the persisted row —
+// not flattened to "pending" — and remains reusable (a re-dispatch can't repair the
+// degraded sub-step, so it must not needlessly re-create). Addresses PR #37 copilot.
+func TestOrchestrator_PreservesCreatedDegradedWithID(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: degradedCreatedDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	row := camps.existing["b1|"+string(model.ProviderLinkedInAds)]
+	if row == nil {
+		t.Fatal("expected a persisted row for the created-degraded campaign")
+	}
+	if row.Status != "created_degraded" {
+		t.Errorf("status = %q, want the preserved created_degraded (not flattened to pending)", row.Status)
+	}
+	if row.PlatformCampaignID == "" {
+		t.Error("the created campaign id must be persisted")
+	}
+	// created_degraded WITH an id IS reusable — the campaign exists and can't be repaired
+	// by a re-dispatch.
+	if !isReusableCampaign(row) {
+		t.Error("created_degraded with an id must be reusable (the campaign exists)")
+	}
+}
+
+// TestIsReusableCampaign locks the reuse gate: a completed campaign (an id + a status
+// that is neither the bare 'pending' claim nor a partial-orphan status) is reusable;
+// every partial-orphan/claim status, and any id-less row, is not.
+func TestIsReusableCampaign(t *testing.T) {
+	cases := []struct {
+		status string
+		id     string
+		want   bool
+	}{
+		{"created", "pc-1", true},
+		{"created_degraded", "pc-1", true},
+		{"active", "pc-1", true},         // any non-claim, non-orphan status + id is complete
+		{"", "pc-1", true},               // legacy: an id with no explicit status is complete
+		{"pending", "pc-1", false},       // a bare/retained claim with an id
+		{"group_created", "pc-1", false}, // partial-orphan status is never reusable, even with an id
+		{"unconfirmed", "", false},       // ambiguous, no id
+		{"group_created", "", false},     // group-only orphan, no id
+		{"created", "", false},           // terminal status but no id (never created)
+	}
+	for _, tc := range cases {
+		got := isReusableCampaign(&model.Campaign{Status: tc.status, PlatformCampaignID: tc.id})
+		if got != tc.want {
+			t.Errorf("isReusableCampaign(status=%q,id=%q) = %v, want %v", tc.status, tc.id, got, tc.want)
+		}
+	}
+	if isReusableCampaign(nil) {
+		t.Error("nil campaign must not be reusable")
 	}
 }
 

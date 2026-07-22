@@ -6926,7 +6926,7 @@ components:
                     example: Adipisci et laboriosam veritatis saepe numquam rem.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                     example: Iste ullam sunt rem non doloribus omnis.
                 project_id:
                     type: string
@@ -6985,7 +6985,7 @@ components:
                     example: Amet laborum.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                     example: Et rem magnam.
                 project_id:
                     type: string
@@ -7042,7 +7042,7 @@ components:
                     example: Amet voluptatem adipisci.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                     example: Labore quidem explicabo tenetur.
                 project_id:
                     type: string
@@ -7099,7 +7099,7 @@ components:
                     example: Omnis corporis mollitia quia provident nam.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                     example: Illo aut.
                 project_id:
                     type: string
@@ -7140,16 +7140,20 @@ components:
             properties:
                 account_id:
                     type: string
-                    description: LinkedIn ad account ID
+                    description: LinkedIn ad account ID (numeric)
                     example: "538170226"
+                    pattern: ^[0-9]+$
+                    maxLength: 64
                 label:
                     type: string
                     description: Optional friendly name
                     example: Omnis et et molestiae dolorum.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, e.g. 208777 — not the full urn:li:organization: URN)'
                     example: "208777"
+                    pattern: ^[0-9]+$
+                    maxLength: 64
             example:
                 account_id: "538170226"
                 label: Perspiciatis a aut quas delectus a.

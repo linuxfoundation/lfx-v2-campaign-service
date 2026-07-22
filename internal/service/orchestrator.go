@@ -37,13 +37,58 @@ const CancelGracePeriod = jobFinalizeTimeout + persistResultTimeout + time.Secon
 // a context detached from the (possibly-cancelled) dispatch context.
 const claimReleaseTimeout = 5 * time.Second
 
-// campaignStatusPending is the status of a claim/orphan row that is NOT a completed
-// campaign: either a bare single-flight claim, or a retained partial where the upstream
-// campaign exists but a later step failed (the id is recorded for reconciliation). The
-// idempotency fast path must NOT treat such a row as a completed success just because
-// it carries an upstream id — otherwise a retry after a partial failure reports success
-// while the campaign is still incomplete/orphaned.
+// campaignStatusPending is the status of a bare single-flight claim row that has no
+// upstream campaign yet. The idempotency fast path must NOT treat a row as a completed
+// success just because it carries an upstream id — reuse is gated on a TERMINAL status
+// (see isReusableCampaign), not merely on a non-empty id.
 const campaignStatusPending = "pending"
+
+// partialOrphanStatuses are the dispatcher-set statuses that describe a RETAINED
+// PARTIAL orphan — the upstream campaign was NOT fully created (only a sub-resource
+// like the campaign group exists, or the create is ambiguous). The orchestrator
+// PRESERVES these on the persisted row (rather than flattening every partial to
+// "pending") so the row surfaces WHAT went wrong, and treats them as NON-reusable so a
+// retry re-attempts the incomplete create.
+var partialOrphanStatuses = map[string]bool{
+	"group_created": true,
+	"unconfirmed":   true,
+}
+
+// preservableErrorStatuses are the dispatcher-set statuses that are PRESERVED on the
+// retained-error path rather than flattened to "pending". Two categories:
+//   - the partial-orphan statuses above (non-reusable; a retry reconciles), and
+//   - created_degraded: the campaign WAS created (a re-dispatch can't repair a degraded
+//     sub-step like a short creative count), so it is preserved AND reusable.
+//
+// This is a CLOSED allowlist, not "any non-empty status": an arbitrary success-looking
+// status (e.g. a plain "active" returned when a later step like ad-group creation
+// failed) is NOT preserved — that campaign is incomplete and must stay a 'pending'
+// reconcilable orphan, not be reused as complete. created_degraded mirrors the dispatch
+// package's campaignStatusCreatedDegraded; the group_created/unconfirmed literals are
+// drift-guarded by TestPartialOrphanStatusValues in the dispatch package.
+var preservableErrorStatuses = map[string]bool{
+	"group_created":    true,
+	"unconfirmed":      true,
+	"created_degraded": true,
+}
+
+// isReusableCampaign reports whether an existing campaign row is a completed upstream
+// campaign safe to reuse idempotently. It must carry an upstream id AND be in neither
+// the bare-claim status (pending) nor a retained-partial-orphan status
+// (group_created/unconfirmed): a row with an empty id (never created), a pending claim,
+// or a partial orphan is NOT reused. Non-reuse means the fast path does not report a
+// false success — the retained claim then wins the unique-claim conflict on a later
+// dispatch and returns "reconciliation required" rather than blind-re-dispatching (which
+// could double-create); the row is auto-resumed only once resume support lands
+// (LFXV2-2665). Any other non-empty status WITH an id is a completed campaign (created /
+// created_degraded / a future terminal status), preserving the original "has id and
+// isn't a non-terminal claim/orphan" reuse semantics.
+func isReusableCampaign(c *model.Campaign) bool {
+	return c != nil &&
+		c.PlatformCampaignID != "" &&
+		c.Status != campaignStatusPending &&
+		!partialOrphanStatuses[c.Status]
+}
 
 // dispatchQueueTimeout bounds how long a platform waits for a semaphore slot
 // before it's recorded as failed. Without it, a large backlog could keep a job
@@ -489,9 +534,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Only ErrNotFound is a clean "nothing yet, proceed".
 	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p)
 	switch {
-	case lerr == nil && existing.PlatformCampaignID != "" && existing.Status != campaignStatusPending:
+	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
-		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently.
+		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A
+		// retained partial orphan (group_created/unconfirmed, or an id-less row) is NOT
+		// terminal, so it falls through to the claim/reconcile path below.
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
 		return res
@@ -531,10 +578,10 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	}
 	if !claimed {
 		// Another worker owns (or already completed) this pair.
-		if existing != nil && existing.PlatformCampaignID != "" && existing.Status != campaignStatusPending {
+		if isReusableCampaign(existing) {
 			// Already created upstream AND completed (created / created_degraded) —
-			// reuse it (idempotent). A pending row WITH an id is a retained partial
-			// orphan, not a success, so it falls through to the skip path below rather
+			// reuse it (idempotent). A non-terminal row WITH an id (a retained partial
+			// orphan) is not a success, so it falls through to the skip path below rather
 			// than being reported as a completed campaign.
 			res.OK = true
 			res.CampaignID = existing.PlatformCampaignID
@@ -631,10 +678,24 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
-				// Keep the row 'pending' so it stays a recoverable orphan (not a
-				// completed campaign): the dispatch did not succeed, only the upstream
-				// create partially happened.
-				campaign.Status = campaignStatusPending
+				// Decide the persisted status. Preserve a dispatcher-set status that
+				// carries real meaning; otherwise flatten to 'pending' so the row can't read
+				// as complete. Two kinds of status are preserved:
+				//   - a partial-orphan status (group_created / unconfirmed): the row surfaces
+				//     WHAT went wrong and stays NON-reusable (isReusableCampaign excludes it),
+				//     so a retry reconciles rather than false-succeeding.
+				//   - a terminal status WITH a real upstream id (e.g. created_degraded, which
+				//     LinkedIn returns alongside an error when the campaign WAS created but
+				//     fewer creatives than requested landed): the campaign genuinely exists
+				//     and a re-dispatch can't repair the degraded sub-step, so it is preserved
+				//     AND remains reusable (isReusableCampaign accepts it) — flattening it to
+				//     'pending' would hide a real paid campaign and force a needless retry.
+				// Anything outside the closed preservableErrorStatuses allowlist — empty, or a
+				// plain success-looking status like "active" returned when a later step
+				// failed — is flattened, so an incomplete campaign can't read as complete.
+				if !preservableErrorStatuses[campaign.Status] {
+					campaign.Status = campaignStatusPending
+				}
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",

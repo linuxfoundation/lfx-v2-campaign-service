@@ -228,6 +228,11 @@ func BuildCreateLinkedinAdsPayload(lfxV2CampaignServiceConnectionsCreateLinkedin
 		if body.Credentials == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
 		}
+		if body.Config != nil {
+			if err2 := ValidateLinkedinAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -295,6 +300,11 @@ func BuildUpdateLinkedinAdsPayload(lfxV2CampaignServiceConnectionsUpdateLinkedin
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+		}
+		if body.Config != nil {
+			if err2 := ValidateLinkedinAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 		if err != nil {
 			return nil, err
