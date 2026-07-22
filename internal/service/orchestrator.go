@@ -529,17 +529,31 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			res.CampaignID = existing.PlatformCampaignID
 			return res
 		}
-		// Another worker holds the pending claim: don't dispatch again (the point of
-		// the claim). This job did not create the campaign — its outcome belongs to
-		// the owning dispatch — so record it as SKIPPED, not failed. Recording a skip
-		// as a failure would falsely drive THIS job to terminal failed/partial even
-		// when the owner succeeds (GetJob only decodes the stored result and never
-		// re-checks the campaign row, so the false failure would be permanent).
-		// aggregateStatus excludes skipped platforms from the failure tally and
-		// returns succeeded for a wholly-skipped job (leaving it running would strand
-		// it until the staleness sweeper failed it, since nothing revisits a running
-		// job). Fully adopting the owner's async result into this job is tracked under
-		// LFXV2-2665.
+		// A retained partial ORPHAN (a pending row that ALREADY carries an upstream id)
+		// is distinguishable from a claim held by a still-running worker: the upstream
+		// campaign exists but a prior dispatch failed mid-flow, and NOTHING will revisit
+		// it. Classifying it as a concurrent SKIP would let aggregateStatus mark an
+		// all-skipped retry job `succeeded`, hiding the unreconciled orphan forever.
+		// Report it as a FAILURE (reconciliation required) instead so the job does not
+		// look successful. (Automatic name-based reconciliation is tracked in LFXV2-2665.)
+		if existing != nil && existing.PlatformCampaignID != "" {
+			slog.ErrorContext(ctx, "retained partial orphan found on retry; reconciliation required",
+				"platform", p, "job_id", jobID, "platform_campaign_id", existing.PlatformCampaignID)
+			res.CampaignID = existing.PlatformCampaignID
+			res.Error = "a prior dispatch left an incomplete campaign upstream; reconciliation required"
+			return res
+		}
+		// A genuine concurrent claim held by another running worker (no upstream id yet):
+		// don't dispatch again (the point of the claim). This job did not create the
+		// campaign — its outcome belongs to the owning dispatch — so record it as
+		// SKIPPED, not failed. Recording a skip as a failure would falsely drive THIS
+		// job to terminal failed/partial even when the owner succeeds (GetJob only
+		// decodes the stored result and never re-checks the campaign row, so the false
+		// failure would be permanent). aggregateStatus excludes skipped platforms from
+		// the failure tally and returns succeeded for a wholly-skipped job (leaving it
+		// running would strand it until the staleness sweeper failed it, since nothing
+		// revisits a running job). Fully adopting the owner's async result into this job
+		// is tracked under LFXV2-2665.
 		res.Skipped = true
 		res.Error = "skipped: another concurrent dispatch owns this platform"
 		return res

@@ -366,12 +366,17 @@ func TestOrchestrator_PendingOrphanWithIDIsNotAFastPathSuccess(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	j := waitForTerminal(t, jobs, id)
-	// The retained orphan must NOT be reported as a completed success on its id alone.
-	// Pre-fix the fast path returned OK with pc-orphan; now it falls through (here the
-	// pending row means the claim is held by another worker, so this job is SKIPPED, not
-	// falsely succeeded). Either way, this job must not report pc-orphan as a success.
-	if j.Status == model.JobSucceeded && strings.Contains(string(j.Result), "pc-orphan") {
-		t.Errorf("a pending orphan must not be reported as a completed success on its id; job=%s result=%s", j.Status, j.Result)
+	// A retained partial orphan (pending row WITH an upstream id) is distinguishable
+	// from a concurrent claim, and NOTHING will revisit it — so the retry must NOT be
+	// reported as successful. It is classified as a reconciliation-required FAILURE,
+	// not a skip (a skip would let aggregateStatus mark an all-skipped job succeeded and
+	// hide the orphan). Assert the job is not succeeded and the failure names the orphan
+	// for reconciliation.
+	if j.Status == model.JobSucceeded {
+		t.Errorf("a retained orphan must not make the retry succeed; job=%s result=%s", j.Status, j.Result)
+	}
+	if !strings.Contains(string(j.Result), "reconciliation required") {
+		t.Errorf("the result should flag the orphan for reconciliation, got: %s", j.Result)
 	}
 }
 
