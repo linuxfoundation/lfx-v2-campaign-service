@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -471,6 +472,40 @@ func TestSetSendList_RejectsEmptyIDs(t *testing.T) {
 	}
 	if _, err := c.SetSendList(context.Background(), "1", "  ", nil); err == nil {
 		t.Error("empty/whitespace ILS send-list id should be rejected")
+	}
+}
+
+func TestSetSendList_RejectsSendListInSuppression(t *testing.T) {
+	// HubSpot applies contactIlsLists exclusions AFTER inclusions, so a send-list id
+	// that also appears in the suppression set would fully exclude the audience while
+	// the PATCH still returns 2xx. SetSendList must reject this BEFORE the mutating
+	// request — and the compare runs against the trimmed/cleaned ids, so a
+	// whitespace-padded duplicate is caught too.
+	for _, tc := range []struct {
+		name        string
+		ils         string
+		suppression []string
+	}{
+		{"exact-duplicate", "26991", []string{"111", "26991"}},
+		{"padded-duplicate", "26991", []string{" 26991 "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hit int32
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&hit, 1) // must NOT be reached — this is a pre-send guard
+				_, _ = io.WriteString(w, `{"id":"999"}`)
+			})
+			_, err := c.SetSendList(context.Background(), "999", tc.ils, tc.suppression)
+			if err == nil {
+				t.Fatal("a send-list id present in the suppression set must be rejected")
+			}
+			if !strings.Contains(err.Error(), "suppression") {
+				t.Errorf("error should explain the suppression conflict, got: %v", err)
+			}
+			if atomic.LoadInt32(&hit) != 0 {
+				t.Error("SetSendList must reject before sending the PATCH (no request expected)")
+			}
+		})
 	}
 }
 

@@ -296,12 +296,23 @@ func (c *Client) SetSendList(ctx context.Context, id, ilsListID string, suppress
 	if id == "" || ilsListID == "" {
 		return nil, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and ILS send-list id")
 	}
+	suppressionIDs := cleanIDs(suppressionListIDs)
+	// HubSpot applies contactIlsLists exclusions AFTER inclusions, so a send-list id
+	// that also appears in the suppression set would silently exclude the ENTIRE
+	// selected audience — the PATCH returns 2xx while the email ends up with zero
+	// recipients. Reject that contradictory input up front (before the mutating PATCH)
+	// rather than let it look like a successful send-list assignment.
+	for _, s := range suppressionIDs {
+		if s == ilsListID {
+			return nil, fmt.Errorf("hubspot: SetSendList send-list id %q is also in the suppression list — the audience would be fully excluded", ilsListID)
+		}
+	}
 	to := map[string]any{
 		// Clear individual contacts the clone source may have carried over.
 		"contactIds": map[string]any{"include": []string{}, "exclude": []string{}},
 		// ilsListID is trimmed above — a whitespace-padded id sent raw could be
 		// rejected by HubSpot, leaving the email with no recipients.
-		"contactIlsLists": map[string]any{"include": []string{ilsListID}, "exclude": cleanIDs(suppressionListIDs)},
+		"contactIlsLists": map[string]any{"include": []string{ilsListID}, "exclude": suppressionIDs},
 	}
 	return c.patchEmail(ctx, id, map[string]any{"to": to})
 }
