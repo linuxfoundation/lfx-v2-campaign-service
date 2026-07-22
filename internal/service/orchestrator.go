@@ -529,16 +529,21 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			res.CampaignID = existing.PlatformCampaignID
 			return res
 		}
-		// A retained partial ORPHAN (a pending row that ALREADY carries an upstream id)
-		// is distinguishable from a claim held by a still-running worker: the upstream
-		// campaign exists but a prior dispatch failed mid-flow, and NOTHING will revisit
-		// it. Classifying it as a concurrent SKIP would let aggregateStatus mark an
-		// all-skipped retry job `succeeded`, hiding the unreconciled orphan forever.
-		// Report it as a FAILURE (reconciliation required) instead so the job does not
-		// look successful. (Automatic name-based reconciliation is tracked in LFXV2-2665.)
-		if existing != nil && existing.PlatformCampaignID != "" {
+		// A retained partial ORPHAN is distinguishable from a claim held by a still-
+		// running worker: a prior dispatch failed mid-flow after (maybe) creating the
+		// upstream campaign, and NOTHING will revisit it. It presents in two shapes, both
+		// of which must be caught so aggregateStatus can't mark an all-skipped retry job
+		// `succeeded` and hide the orphan:
+		//   1. a non-empty PlatformCampaignID (the created upstream id was recorded), or
+		//   2. an id-less partial that still carries a Result reconcile blob (the
+		//      ambiguous-create / group-orphan case — the id is empty by design but the
+		//      row was persisted WITH Result so it's reconcilable; see the retain branch
+		//      persist condition, which keeps such a row when len(Result) > 0).
+		// Either shape is reported as a FAILURE (reconciliation required), NOT a skip.
+		// (Automatic name-based reconciliation is tracked in LFXV2-2665.)
+		if existing != nil && (existing.PlatformCampaignID != "" || len(existing.Result) > 0) {
 			slog.ErrorContext(ctx, "retained partial orphan found on retry; reconciliation required",
-				"platform", p, "job_id", jobID, "platform_campaign_id", existing.PlatformCampaignID)
+				"platform", p, "job_id", jobID, "platform_campaign_id", existing.PlatformCampaignID, "has_result", len(existing.Result) > 0)
 			res.CampaignID = existing.PlatformCampaignID
 			res.Error = "a prior dispatch left an incomplete campaign upstream; reconciliation required"
 			return res
@@ -595,13 +600,16 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// The claim is RETAINED (outcome unknown, blind retry could double-create).
 			// The platform clients' partial-result contract lets Dispatch return a
 			// non-nil campaign carrying the created upstream id ALONGSIDE the error
-			// (the campaign POST succeeded but a later step failed). If it did, stamp
-			// that upstream id onto the retained pending row so the orphaned upstream
-			// campaign is RECONCILABLE later instead of leaving an anonymous claim.
-			// Persist on a context DETACHED from the dispatch ctx (mirroring the
-			// success path) so a shutdown-cancelled dispatch ctx can't drop the record
-			// of a paid campaign that actually exists.
-			if campaign != nil && campaign.PlatformCampaignID != "" {
+			// (the campaign POST succeeded but a later step failed) OR an id-less
+			// partial that still carries a Result reconcile blob (an ambiguous create /
+			// group-orphan, where the id is empty by design but Result holds the
+			// reconcile detail — e.g. a campaign name for a name-based lookup). In BOTH
+			// cases, persist the row so the orphan is RECONCILABLE later instead of
+			// leaving an anonymous claim that a retry can't distinguish from a live
+			// concurrent dispatch. Persist on a context DETACHED from the dispatch ctx
+			// (mirroring the success path) so a shutdown-cancelled dispatch ctx can't
+			// drop the record of a paid campaign that actually exists.
+			if campaign != nil && (campaign.PlatformCampaignID != "" || len(campaign.Result) > 0) {
 				campaign.JobID = &jobID
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
@@ -612,11 +620,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				campaign.Status = campaignStatusPending
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
-					slog.ErrorContext(ctx, "failed to record partial upstream campaign id on retained pending claim",
-						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", perr)
+					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
+						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
 				} else {
-					slog.ErrorContext(ctx, "platform dispatch failed after upstream create; recorded orphaned upstream id on retained pending claim",
-						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", derr)
+					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
+						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 				}
 				cancelPersist()
 			} else {

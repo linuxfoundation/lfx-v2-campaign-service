@@ -381,6 +381,36 @@ func TestOrchestrator_PendingOrphanWithIDIsNotAFastPathSuccess(t *testing.T) {
 	}
 }
 
+// TestOrchestrator_IDlessOrphanWithResultIsNotASkipSuccess covers the id-LESS orphan:
+// an ambiguous create persists a pending row with an EMPTY PlatformCampaignID but a
+// non-empty Result reconcile blob. On retry, ClaimCampaignDispatch returns not-claimed
+// with that row; it must NOT be classified as a live concurrent SKIP (which would let
+// aggregateStatus mark the retry job succeeded and hide the orphan) — it is a
+// reconciliation-required FAILURE, distinguished from a bare claim by the Result blob.
+func TestOrchestrator_IDlessOrphanWithResultIsNotASkipSuccess(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
+		// pending, NO upstream id, but carries a Result reconcile blob.
+		"b1|" + string(model.ProviderGoogleAds): {ID: "c1", Status: "pending", PlatformCampaignID: "", Result: []byte(`{"campaignName":"orphan-name"}`)},
+	}}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status == model.JobSucceeded {
+		t.Errorf("an id-less orphan carrying a Result must not make the retry succeed; job=%s result=%s", j.Status, j.Result)
+	}
+	if !strings.Contains(string(j.Result), "reconciliation required") {
+		t.Errorf("the result should flag the id-less orphan for reconciliation, got: %s", j.Result)
+	}
+}
+
 // TestOrchestrator_ClaimErrorIsFailure verifies that a failure to claim the
 // dispatch slot is recorded as a platform failure and the dispatcher is never
 // called (so no create can duplicate).
