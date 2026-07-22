@@ -348,8 +348,9 @@ func TestOrchestrator_SkipsAlreadyDispatchedPlatform(t *testing.T) {
 // does NOT report a retained partial orphan as a completed success. A mid-flow failure
 // persists a row with a `pending` status AND a non-empty upstream id (recorded for
 // reconciliation). A later CreateCampaigns must NOT short-circuit to success on that id
-// alone — it must fall through to the claim/reconcile path (here the dispatcher runs and
-// the job succeeds), rather than falsely reporting the still-pending orphan as done.
+// alone — the orphan is distinguishable from a concurrent claim, so it is classified as
+// a reconciliation-required FAILURE (not a skip that would let the job report succeeded),
+// which is what this test asserts.
 func TestOrchestrator_PendingOrphanWithIDIsNotAFastPathSuccess(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{

@@ -241,9 +241,10 @@ func unmarshalPlatformConfig(envelope []byte, key string, dst any) error {
 // envelopeHSToken extracts the OPTIONAL top-level `hsToken` from the campaign config
 // envelope. Per docs/api-catalog.md `hsToken` is a TOP-LEVEL field (sibling to the
 // per-platform config objects like redditConfig/metaConfig), NOT nested inside them —
-// so it is read from the envelope here, shared by every dispatcher. Returns "" when
-// absent or when the envelope is empty/unparseable (a malformed envelope surfaces via
-// unmarshalPlatformConfig's own error on the same input).
+// so it is read from the envelope here, shared by every dispatcher. Returns ("", nil)
+// when the envelope is empty or the field is absent. Returns an ERROR when the envelope
+// is malformed JSON, or when `hsToken` is present but not a string (a wrong-typed
+// documented field is a caller error, not a silent fallback).
 func envelopeHSToken(envelope []byte) (string, error) {
 	if len(envelope) == 0 {
 		return "", nil
