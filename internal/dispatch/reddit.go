@@ -46,10 +46,6 @@ type redditConfig struct {
 	PostURL           string             `json:"postUrl"`
 	ConversionPixelID string             `json:"conversionPixelId"`
 	VideoGoal         string             `json:"videoGoal"`
-	// HSToken is the documented TOP-LEVEL config field for HubSpot attribution
-	// (docs/api-catalog.md). It takes precedence over a token embedded in the brief's
-	// EventDetails/Copy; a request supplying it must not be silently ignored.
-	HSToken string `json:"hsToken"`
 }
 
 // briefFields is the subset of a brief's JSON blobs the adapters read. The brief
@@ -107,12 +103,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		return nil, notCreated(err)
 	}
 
-	// hsToken is a documented TOP-LEVEL field of the platform config envelope
-	// (docs/api-catalog.md), so a request-supplied config.hsToken takes precedence; the
-	// brief's EventDetails/Copy token is only a fallback. Without this a valid
-	// config.hsToken is silently ignored and the client falls back to the event slug for
-	// utm_campaign, losing the requested HubSpot attribution.
-	hsToken := strings.TrimSpace(cfg.HSToken)
+	// hsToken is a documented TOP-LEVEL field of the config envelope (docs/api-catalog.md
+	// — sibling to redditConfig, NOT nested inside it), so read it from the envelope. A
+	// request-supplied hsToken takes precedence; the brief's EventDetails/Copy token is
+	// only a fallback. Without this a valid hsToken is silently ignored and the client
+	// falls back to the event slug for utm_campaign, losing the HubSpot attribution.
+	hsToken := envelopeHSToken(config)
 	if hsToken == "" {
 		hsToken = bf.HSToken
 	}

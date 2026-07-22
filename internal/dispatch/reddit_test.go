@@ -246,9 +246,9 @@ func TestReddit_ConfigHSTokenTakesPrecedence(t *testing.T) {
 		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
 		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	// config carries hsToken (+ a postUrl/variant so the ad step runs and emits the
-	// utm click_url). registrationUrl gives the utm a base to decorate.
-	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"],"postUrl":"t3_abc123","hsToken":"HS-FROM-CONFIG","variants":[{"headline":"Join us"}]}}`)
+	// hsToken is a TOP-LEVEL envelope field (sibling to redditConfig, per api-catalog).
+	// A postUrl/variant drives the ad step so the utm click_url is emitted.
+	cfg := json.RawMessage(`{"hsToken":"HS-FROM-CONFIG","redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","subreddits":["kubernetes"],"postUrl":"t3_abc123","variants":[{"headline":"Join us"}]}}`)
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}

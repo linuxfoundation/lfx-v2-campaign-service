@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -137,4 +138,23 @@ func unmarshalPlatformConfig(envelope []byte, key string, dst any) error {
 		return fmt.Errorf("decode %s: %w", key, err)
 	}
 	return nil
+}
+
+// envelopeHSToken extracts the OPTIONAL top-level `hsToken` from the campaign config
+// envelope. Per docs/api-catalog.md `hsToken` is a TOP-LEVEL field (sibling to the
+// per-platform config objects like redditConfig/metaConfig), NOT nested inside them —
+// so it is read from the envelope here, shared by every dispatcher. Returns "" when
+// absent or when the envelope is empty/unparseable (a malformed envelope surfaces via
+// unmarshalPlatformConfig's own error on the same input).
+func envelopeHSToken(envelope []byte) string {
+	if len(envelope) == 0 {
+		return ""
+	}
+	var m struct {
+		HSToken string `json:"hsToken"`
+	}
+	if err := json.Unmarshal(envelope, &m); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(m.HSToken)
 }
