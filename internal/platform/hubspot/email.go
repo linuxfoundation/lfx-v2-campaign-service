@@ -80,21 +80,6 @@ type paging struct {
 	} `json:"next"`
 }
 
-// decodeCursor normalizes a HubSpot paging cursor to its RAW form before it is put
-// back into a query string. HubSpot returns `paging.next.after` already percent-encoded
-// (e.g. `MjA%3D`); handing that straight to url.Values.Encode would re-encode the `%`
-// as `%25`, corrupting the next-page request. PathUnescape (NOT QueryUnescape) decodes
-// `%XX` while PRESERVING a literal `+` — cursors are opaque base64 and legitimately
-// contain `+`, which QueryUnescape would wrongly turn into a space. A token that is NOT
-// encoded is returned unchanged, and a decode error falls back to the original so a
-// malformed token can't drop the whole walk.
-func decodeCursor(after string) string {
-	if dec, err := url.PathUnescape(after); err == nil {
-		return dec
-	}
-	return after
-}
-
 // maxListPages caps how many pages any paginated list-walk follows, so a portal with
 // a runaway result set (or an API that never stops returning a cursor) can't loop
 // unbounded. 200 pages × 100/page = 20k records, well past any realistic portal.
@@ -158,10 +143,16 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 			sortEmailsByUpdatedDesc(out)
 			return out, nil
 		}
-		// A non-advancing cursor (HubSpot or a proxy echoing the same `after`) would
-		// otherwise re-fetch the same page every iteration, duplicating results until
-		// the page cap. Refuse to loop on it.
-		next := decodeCursor(resp.Paging.Next.After)
+		// `paging.next.after` is an OPAQUE token from the JSON body — a JSON string field
+		// is NOT percent-encoded, so it arrives as the server's raw value and must be
+		// forwarded VERBATIM. url.Values.Encode below applies exactly one round of
+		// percent-encoding on the wire, which the server decodes once back to this raw
+		// token; pre-decoding it here would corrupt any token carrying a literal `%` (and
+		// diverges from the verbatim handling in the linkedin/googleads cursor walks).
+		next := resp.Paging.Next.After
+		// A non-advancing cursor (HubSpot or a proxy echoing the same raw `after`) would
+		// otherwise re-fetch the same page every iteration, duplicating results until the
+		// page cap. Refuse to loop on it — the raw-to-raw compare is exact.
 		if next == after {
 			return nil, fmt.Errorf("hubspot: SearchEmails cursor did not advance (repeated after token)")
 		}

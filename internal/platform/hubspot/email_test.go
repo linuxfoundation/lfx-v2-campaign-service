@@ -203,45 +203,42 @@ func TestSearchEmails_SortsByParsedInstantNotLexical(t *testing.T) {
 	}
 }
 
-func TestSearchEmails_DecodesEncodedCursor(t *testing.T) {
-	// HubSpot returns paging.next.after already percent-encoded (e.g. "MjA%3D").
-	// The next request must send the DECODED token ("MjA="), not a double-encoded
-	// "MjA%253D" — url.Values re-encodes it once on the way out.
-	var afters []string
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		afters = append(afters, r.URL.Query().Get("after")) // already url-decoded by net/http
-		if r.URL.Query().Get("after") == "" {
-			_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"A","subject":"x"}],"paging":{"next":{"after":"MjA%3D"}}}`)
-			return
-		}
-		_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"B","subject":"y"}]}`)
-	})
-	if _, err := c.SearchEmails(context.Background(), ""); err != nil {
-		t.Fatalf("SearchEmails: %v", err)
-	}
-	if len(afters) != 2 || afters[1] != "MjA=" {
-		t.Errorf("page-2 after must be the decoded cursor \"MjA=\", got %q (afters=%v)", afters[len(afters)-1], afters)
-	}
-}
-
-func TestSearchEmails_PreservesPlusInCursor(t *testing.T) {
-	// Base64 cursors legitimately contain literal '+'. PathUnescape must preserve it
-	// (QueryUnescape would corrupt "A+B/C=" into "A B/C="), so page-2 sends the token
-	// unchanged.
-	var afters []string
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		afters = append(afters, r.URL.Query().Get("after"))
-		if r.URL.Query().Get("after") == "" {
-			_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"A","subject":"x"}],"paging":{"next":{"after":"A+B/C="}}}`)
-			return
-		}
-		_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"B","subject":"y"}]}`)
-	})
-	if _, err := c.SearchEmails(context.Background(), ""); err != nil {
-		t.Fatalf("SearchEmails: %v", err)
-	}
-	if len(afters) != 2 || afters[1] != "A+B/C=" {
-		t.Errorf("page-2 after must preserve the literal '+', got %q", afters[len(afters)-1])
+func TestSearchEmails_ForwardsCursorVerbatim(t *testing.T) {
+	// `paging.next.after` is an OPAQUE token in the JSON body — NOT percent-encoded.
+	// The client must forward it VERBATIM: url.Values.Encode applies exactly one round
+	// of wire-encoding, and net/http on the receiving side decodes it once, so the
+	// `after` the server observes on page 2 equals the RAW token it sent on page 1 —
+	// for every character class, including those that require encoding on the wire
+	// (`=`, `+`, `/`, and a literal `%`). Pre-decoding would corrupt these.
+	for _, tc := range []struct {
+		name  string
+		token string
+	}{
+		{"plain-base64", "MjA="},
+		{"has-plus-and-slash", "A+B/C="},
+		{"has-literal-percent", "MjA%3D"}, // a raw token that literally contains "%3D"
+		{"has-space-and-amp", "a b&c=d"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var afters []string
+			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				after := r.URL.Query().Get("after") // net/http has already wire-decoded this
+				afters = append(afters, after)
+				if after == "" {
+					// The token is embedded in a JSON string; escape only what JSON needs.
+					jsonTok, _ := json.Marshal(tc.token)
+					_, _ = io.WriteString(w, `{"results":[{"id":"1","name":"A","subject":"x"}],"paging":{"next":{"after":`+string(jsonTok)+`}}}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"results":[{"id":"2","name":"B","subject":"y"}]}`)
+			})
+			if _, err := c.SearchEmails(context.Background(), ""); err != nil {
+				t.Fatalf("SearchEmails: %v", err)
+			}
+			if len(afters) != 2 || afters[1] != tc.token {
+				t.Errorf("page-2 after must equal the raw server token %q, got %q (afters=%v)", tc.token, afters[len(afters)-1], afters)
+			}
+		})
 	}
 }
 

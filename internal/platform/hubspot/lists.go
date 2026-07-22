@@ -308,10 +308,13 @@ func (c *Client) ListEventDefinitions(ctx context.Context) ([]EventDefinition, e
 		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
 			return out, nil
 		}
-		// A non-advancing cursor would re-fetch the same page forever, duplicating
-		// results until the page cap — refuse to loop on it. Decode the returned cursor
-		// once so an already-encoded token isn't double-encoded on the next request.
-		next := decodeCursor(resp.Paging.Next.After)
+		// `paging.next.after` is an OPAQUE JSON-body token: not percent-encoded, so it
+		// arrives raw and is forwarded VERBATIM. url.Values.Encode applies exactly one
+		// round of wire-encoding, which the server decodes once back to this token
+		// (matches the linkedin/googleads verbatim cursor walks).
+		next := resp.Paging.Next.After
+		// A non-advancing cursor would re-fetch the same page forever, duplicating results
+		// until the page cap — refuse to loop on it (raw-to-raw compare is exact).
 		if next == after {
 			return nil, fmt.Errorf("hubspot: ListEventDefinitions cursor did not advance (repeated after token)")
 		}
