@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -499,12 +500,70 @@ func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "hapikey=") {
 		t.Errorf("transportError.Error() leaked the request URL: %q", got)
 	}
-	if !strings.Contains(got, io.ErrUnexpectedEOF.Error()) {
-		t.Errorf("transportError.Error() should surface the underlying cause: %q", got)
+	// safeCause maps io.ErrUnexpectedEOF (through the *url.Error wrapper) to a fixed
+	// URL-free description rather than echoing the raw cause text.
+	if !strings.Contains(got, "connection closed") {
+		t.Errorf("transportError.Error() should surface a safe cause description: %q", got)
 	}
 	// JSON/reflection serialization must not leak the URL either (unexported cause).
 	if b, _ := json.Marshal(te); strings.Contains(string(b), "SECRET-abc123") || strings.Contains(string(b), "hapikey") || strings.Contains(string(b), "hubapi.com") {
 		t.Errorf("json.Marshal(transportError) leaked the request URL: %s", b)
+	}
+}
+
+// leakyTransport is a custom RoundTripper whose error TEXT itself embeds the request
+// URL — the exact vector a WithHTTPClient caller could introduce. safeCause must NOT
+// echo this text.
+type leakyTransport struct{}
+
+func (leakyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// The inner error text carries the full URL incl. ?after=<cursor>. http.Client
+	// wraps this in a *url.Error; peeling that wrapper still exposes this text.
+	return nil, fmt.Errorf("request %s failed", req.URL.String())
+}
+
+func TestSafeCause_DoesNotEchoCustomTransportErrorText(t *testing.T) {
+	// A custom transport (injectable via WithHTTPClient) can return an error whose text
+	// embeds the URL. safeCause must default-deny: render a generic, URL-free message,
+	// never the transport's arbitrary text.
+	c := NewClient(testCreds(), testAccount(),
+		WithBaseURL("https://api.hubapi.com"),
+		WithHTTPClient(&http.Client{Transport: leakyTransport{}}),
+		withRetryBaseDelay(0),
+	)
+	_, err := c.doRequest(context.Background(), http.MethodGet,
+		"/marketing/v3/emails?limit=100&after=SECRETCURSOR", nil, true)
+	if err == nil {
+		t.Fatal("expected the leaky transport to surface an error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "SECRETCURSOR") || strings.Contains(msg, "after=") || strings.Contains(msg, "hubapi.com") {
+		t.Errorf("safeCause echoed the custom-transport error text, leaking the URL/cursor: %q", msg)
+	}
+	if !strings.Contains(msg, "transport failure") {
+		t.Errorf("an unrecognized transport error should collapse to a generic description, got: %q", msg)
+	}
+}
+
+func TestSafeCause_NamesKnownSafeCauses(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   error
+		want string
+	}{
+		{"canceled", &url.Error{Op: "Get", URL: "https://api.hubapi.com/x?after=S", Err: context.Canceled}, "context canceled"},
+		{"deadline", &url.Error{Op: "Get", URL: "https://api.hubapi.com/x?after=S", Err: context.DeadlineExceeded}, "context deadline exceeded"},
+		{"eof", &url.Error{Op: "Get", URL: "https://api.hubapi.com/x?after=S", Err: io.ErrUnexpectedEOF}, "connection closed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := safeCause(tc.in)
+			if got != tc.want {
+				t.Errorf("safeCause = %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, "after=") || strings.Contains(got, "hubapi.com") {
+				t.Errorf("safeCause leaked the URL: %q", got)
+			}
+		})
 	}
 }
 

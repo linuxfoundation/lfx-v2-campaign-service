@@ -28,7 +28,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"syscall"
 	"time"
@@ -350,24 +349,43 @@ func (e *preSendError) Error() string {
 
 func (e *preSendError) Unwrap() error { return e.err }
 
-// safeCause renders a URL-free description of a round-trip error. A *url.Error's
-// %v embeds the request URL, so peel every *url.Error layer down to the underlying
-// cause (timeout/EOF/reset), which carries no URL.
+// safeCause renders a URL-free description of a round-trip error. Peeling a
+// *url.Error (whose %v embeds the request URL) is NOT sufficient on its own: because
+// WithHTTPClient accepts a custom http.RoundTripper, the INNER error text is
+// attacker/caller-controlled and can itself embed the URL — e.g. a transport that
+// returns fmt.Errorf("request %s failed", req.URL) leaves the `?after=<cursor>` in
+// err.Error() even after the *url.Error wrapper is peeled. So this NEVER echoes an
+// unknown error's text: it maps to a fixed vocabulary of URL-free descriptions and
+// falls back to a generic "transport failure" for anything it doesn't recognize.
 func safeCause(err error) string {
 	if err == nil {
 		return "transport failure"
 	}
-	for {
-		var ue *url.Error
-		if !errors.As(err, &ue) {
-			break
-		}
-		if ue.Err == nil {
-			return "transport failure"
-		}
-		err = ue.Err
+	// Context outcomes are safe, well-known, and URL-free — surface them precisely so
+	// a cancel/deadline stays diagnosable.
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "context deadline exceeded"
 	}
-	return err.Error()
+	// A timeout (i/o timeout, TLS handshake timeout, per-attempt deadline) is common
+	// and worth naming — but emit our OWN fixed string, never the error's text, since a
+	// custom transport's timeout error could embed the URL. errors.As reaches a
+	// net.Error even through a *url.Error wrapper.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+	// A bare io.EOF/ErrUnexpectedEOF (connection closed mid-response) is URL-free and
+	// worth distinguishing from a generic failure.
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "connection closed"
+	}
+	// Anything else — including any custom-transport error whose text we cannot vouch
+	// for — collapses to a generic, URL-free description. This is the allow-list's
+	// default-deny: unknown error text is NEVER rendered.
+	return "transport failure"
 }
 
 // isPreSendDialError reports whether a httpClient.Do error clearly happened BEFORE
