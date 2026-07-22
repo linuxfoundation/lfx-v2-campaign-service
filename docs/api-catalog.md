@@ -298,7 +298,12 @@ geoTargets?: string[]           — ISO country codes, e.g. ['US', 'JP']. Option
                                   empty list defaults to ['US']. Supplied entries are uppercased,
                                   trimmed, and filtered to valid ISO-2 codes; if entries were
                                   supplied but NONE survive validation the request is REJECTED
-                                  (it does not silently fall back to US).
+                                  (it does not silently fall back to US). The client also DROPS
+                                  Meta-ineligible countries: comprehensively sanctioned ones (IR,
+                                  CU, KP, RU, …) are removed by validation, and regulated markets
+                                  (SG, TW, KR) are filtered out during dispatch with a note — so a
+                                  request naming only ineligible/regulated countries is rejected,
+                                  and a mixed list proceeds with just the eligible entries.
 pixelId?: string                — Meta pixel id. REQUIRED (non-empty, NUMERIC) for the
                                   `conversions` objective — it becomes the promoted-object pixel; a
                                   missing or non-numeric pixelId fails the dispatch job pre-create.
