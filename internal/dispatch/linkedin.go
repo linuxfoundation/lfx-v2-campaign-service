@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -59,6 +60,14 @@ func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linked
 }
 
 // Dispatch implements service.PlatformDispatcher for LinkedIn.
+//
+// RETRY CAVEAT: unlike the reddit/twitter clients, the LinkedIn client's CreateCampaign
+// is NOT idempotent — dark posts and creatives have no name-based find-or-create lookup,
+// so a blind re-dispatch after an ambiguous failure would DUPLICATE them. A non-nil
+// partial result returned alongside an error therefore means "may exist — do NOT blindly
+// retry"; the orchestrator RETAINS the claim on it, and safe re-dispatch depends on the
+// planned per-(brief, platform) single-flight guard (LFXV2-2665). Callers must not treat
+// a LinkedIn ambiguous error as freely retryable the way name-idempotent platforms are.
 func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
 	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
 	if err != nil {
@@ -85,6 +94,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	var cfg linkedinConfig
 	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
 		return nil, notCreated(err)
+	}
+	// Reject an empty variant set BEFORE any upstream create. The client also refuses
+	// it (nil, err) after its own validation, but checking up front avoids the wasted
+	// connection resolve / input build and keeps the claim-release semantics obvious
+	// (a pre-create failure releases the claim).
+	if len(cfg.Variants) == 0 {
+		return nil, notCreated(fmt.Errorf("linkedin campaign creation requires at least one creative variant"))
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
@@ -156,14 +172,16 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		// A non-nil result means a permanent resource exists (campaign group, and maybe
 		// the campaign). This covers BOTH an ambiguous create AND a definite campaign
 		// failure after a successful group create — either way the claim must be retained.
-		return campaignFromLinkedIn(result), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
+		return campaignFromLinkedIn(ctx, result, len(cfg.Variants)), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
 	}
-	return campaignFromLinkedIn(result), nil
+	return campaignFromLinkedIn(ctx, result, len(cfg.Variants)), nil
 }
 
 // campaignFromLinkedIn maps the client result to the persistence model (upstream id,
 // name, result blob, and a "created" status on success — see campaignFromReddit).
-func campaignFromLinkedIn(r *linkedin.CampaignResult) *model.Campaign {
+// requestedVariants is how many creatives the caller asked for, used to detect a
+// creative shortfall (degraded).
+func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, requestedVariants int) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
@@ -179,8 +197,22 @@ func campaignFromLinkedIn(r *linkedin.CampaignResult) *model.Campaign {
 	// Result (below, CampaignGroupID) + the group_created status for reconciliation.
 	if c.PlatformCampaignID == "" && r.CampaignGroupID != "" {
 		c.Status = campaignStatusGroupCreated
+	} else if r.CampaignID != "" && r.CreativeCount < requestedVariants {
+		// The campaign exists but fewer creatives were created than requested — a
+		// DEGRADED success (mirrors the reddit/meta/twitter created_degraded handling).
+		// NOTE: today the LinkedIn client aborts (returns an error) on the FIRST creative
+		// failure, so a clean (result, nil) success normally has CreativeCount ==
+		// requested; this guard is defensive so a shortfall is never silently reported as
+		// a clean `created` (and it also flags the count on the retained-error path).
+		c.Status = campaignStatusCreatedDegraded
 	}
-	if raw, err := json.Marshal(r); err == nil {
+	if raw, err := json.Marshal(r); err != nil {
+		// A marshal failure should be near-impossible for this plain struct, but do NOT
+		// swallow it: leaving Result empty would make an orphaned campaign harder to
+		// reconcile. Log it (the row is still persisted with its id/status).
+		slog.WarnContext(ctx, "failed to marshal linkedin campaign result blob (Result left empty)",
+			"campaign_id", c.PlatformCampaignID, "error", err)
+	} else {
 		c.Result = raw
 	}
 	return c

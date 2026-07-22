@@ -67,6 +67,45 @@ func TestLinkedIn_BadConfigIsPreCreate(t *testing.T) {
 	}
 }
 
+// An empty variant set is rejected UP FRONT (pre-create, claim released) — no upstream
+// call is made. Per Rashad's #37 review.
+func TestLinkedIn_EmptyVariantsIsPreCreate(t *testing.T) {
+	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{})
+	// A well-formed config with NO variants.
+	cfg := json.RawMessage(`{"linkedInConfig":{"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01","variants":[]}}`)
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	var nuc interface{ NoUpstreamCreate() bool }
+	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("empty variants must be a pre-create (claim-releasing) error, got %T: %v", err, err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "at least one creative variant") {
+		t.Errorf("error should name the empty-variants cause, got: %v", err)
+	}
+}
+
+// campaignFromLinkedIn maps a creative shortfall (fewer creatives than requested) to
+// created_degraded, a group-only orphan to group_created, and a full result to created.
+// Per Rashad's #37 review (degraded-state detection).
+func TestLinkedIn_CampaignFromLinkedInStatus(t *testing.T) {
+	ctx := context.Background()
+	// Full success: 3 creatives created for 3 requested → clean created.
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 3}, 3); c.Status != campaignStatusCreated {
+		t.Errorf("3/3 creatives should be %q, got %q", campaignStatusCreated, c.Status)
+	}
+	// Creative shortfall: campaign created but only 2 of 3 creatives → degraded.
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 2}, 3); c.Status != campaignStatusCreatedDegraded {
+		t.Errorf("2/3 creatives should be %q, got %q", campaignStatusCreatedDegraded, c.Status)
+	}
+	// Group-only orphan: empty CampaignID + group id → group_created (not degraded).
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "", CampaignGroupID: "g1"}, 3); c.Status != campaignStatusGroupCreated {
+		t.Errorf("group-only orphan should be %q, got %q", campaignStatusGroupCreated, c.Status)
+	}
+	// The Result blob must be populated on the happy path.
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 3}, 3); len(c.Result) == 0 {
+		t.Error("Result blob should be marshaled on a normal result")
+	}
+}
+
 // ---- happy path through an httptest linkedin API --------------------------
 
 func TestLinkedIn_DispatchSuccessMapsResult(t *testing.T) {
