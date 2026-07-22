@@ -307,7 +307,7 @@ currencyOffset?: number         — Account minor-unit scale (1 for zero-decimal
                                   100 for most). Must be a NON-NEGATIVE INTEGER: it is decoded as an
                                   int64, so a fractional value fails config decoding and a negative
                                   value is rejected as malformed. 0/omitted → derived by the client.
-                                  100 for most). This is a FALLBACK, not an unconditional override:
+                                  This is a FALLBACK, not an unconditional override:
                                   the client's preflight derives the offset from the account's ISO
                                   currency and that is AUTHORITATIVE — a supplied value is used only
                                   when the currency can't be determined, and a supplied value that
@@ -345,6 +345,12 @@ Connection prerequisites (from the Meta connection, not this config): a valid `a
 (`act_<digits>`) and a numeric `page_id` — both REQUIRED, format-validated, and length-bounded
 (`MaxLength 64`) at connection creation (a missing/malformed/over-long value is a 4xx there, not
 a runtime dispatch failure).
+
+Destination URL: the ad points at the brief's registration URL. The Meta client validates it
+before any upstream create — it must be an absolute **HTTPS** URL with a real hostname, carry NO
+embedded userinfo/credentials, and have a cleanly parseable query. A URL that violates these
+fails the dispatch job pre-create (the brief endpoint accepts any string; this is enforced at
+dispatch, not at brief creation).
 
 ### JobCreateResponse (returned immediately from `POST .../campaigns`)
 
