@@ -290,6 +290,7 @@ endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate
                                   enforced by the client during dispatch — a violation fails the
                                   platform job pre-create, not a synchronous 4xx.)
 objective?: string              — awareness | traffic | engagement | leads | conversions.
+                                  Omitted or blank → defaults to `traffic`.
                                   NOTE: `leads` is INTERIM — it runs a website-traffic campaign
                                   (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration
                                   URL); it does NOT create an on-Facebook instant lead form. Full

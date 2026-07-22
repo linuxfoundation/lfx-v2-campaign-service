@@ -4,9 +4,11 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -172,22 +174,28 @@ func TestRegisterDispatchers_RegistersProviders(t *testing.T) {
 }
 
 // TestLogMissingDispatchers_SurfacesGaps verifies logMissingDispatchers actually
-// flags a known ad provider that has no adapter, so the startup gap stays visible. It
-// asserts the detection over adPlatformProviders rather than the log sink.
+// flags a known ad provider that has no adapter, so the startup gap stays visible. It asserts on the
+// EMITTED slog output (buffer-captured), so it fails if the function were a no-op.
 func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
+	// Capture the ACTUAL slog output (not a recomputed copy of the loop) so the test
+	// verifies logMissingDispatchers's behavior — it would fail if the function were
+	// gutted to a no-op (per @dealako's review). Swap the default logger for the call.
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	m := registerDispatchers(nil, nil)
-	var missing []model.Provider
-	for _, p := range adPlatformProviders {
-		if _, ok := m[p]; !ok {
-			missing = append(missing, p)
-		}
-	}
-	assert.NotEmpty(t, missing, "known providers without an adapter must be detected as missing")
-	for _, p := range registeredProviders {
-		assert.NotContains(t, missing, p, "%s is registered, so it must not be reported missing", p)
-	}
-	// logMissingDispatchers must run over that map without panicking (it only warns).
 	logMissingDispatchers(m)
+
+	out := buf.String()
+	assert.Contains(t, out, "no dispatcher registered", "the warning must be emitted when providers are missing")
+	// No registered provider may be logged as missing...
+	for _, p := range registeredProviders {
+		assert.NotContains(t, out, string(p), "%s is registered, so it must not be logged as missing", p)
+	}
+	// ...and at least one genuinely-unregistered known provider MUST be named.
+	assert.Contains(t, out, string(model.ProviderMicrosoftAds), "an unregistered known provider (microsoft-ads) must be surfaced in the log")
 }
 
 func TestNewContainer_NoDatabase(t *testing.T) {
