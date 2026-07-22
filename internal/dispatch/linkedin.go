@@ -116,10 +116,18 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		return nil, notCreated(fmt.Errorf("linkedin adAccountId %q does not match the connection's account %q — cross-account campaigns are not allowed", adAccountID, accountID))
 	}
 
+	// hsToken is a documented TOP-LEVEL config envelope field (docs/api-catalog.md);
+	// a request-supplied token takes precedence over the brief blobs, so a config
+	// hsToken drives the dark-post utm_campaign instead of being silently ignored.
+	hsToken := envelopeHSToken(config)
+	if hsToken == "" {
+		hsToken = bf.HSToken
+	}
+
 	in := linkedin.CampaignInput{
 		EventName:       bf.EventName,
 		RegistrationURL: bf.RegistrationURL,
-		HSToken:         bf.HSToken,
+		HSToken:         hsToken,
 		// Project stamped from the authenticated scope, not caller JSON (api-catalog).
 		Project:          brief.ProjectID,
 		BudgetUSD:        cfg.BudgetUSD,

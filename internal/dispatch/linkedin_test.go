@@ -172,8 +172,9 @@ func TestLinkedIn_AmbiguousCreateRetainsClaim(t *testing.T) {
 func TestLinkedIn_GroupCreatedButCampaignFails_RecordsGroupOrphan(t *testing.T) {
 	// The campaign GROUP is created, then the campaign create 5xx's. The client
 	// returns a non-nil result with CampaignGroupID set + empty CampaignID. The
-	// adapter must retain the claim AND capture the group orphan (as group:<id>) so
-	// it's reconcilable.
+	// adapter must retain the claim AND capture the group orphan — recorded via the
+	// group_created status plus the CampaignGroupID in Result (PlatformCampaignID stays
+	// empty) — so it's reconcilable.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
