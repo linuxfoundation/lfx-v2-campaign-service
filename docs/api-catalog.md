@@ -310,6 +310,9 @@ placements?: object             — Which feeds to run on; ALL keys optional boo
                                   Go field NAMES (no lowercase json aliases): FacebookFeed,
                                   InstagramFeed, Stories, Reels, AudienceNetwork, MessengerInbox.
                                   Omitted → the client's default (both feeds enabled).
+                                  NOTE: `MessengerInbox: true` is REJECTED — Meta removed the
+                                  Messenger Inbox placement (Nov 2025), so the client fails the
+                                  dispatch job pre-create if it is enabled. Leave it false/omitted.
 variants: AdVariant[]           — One ad per variant; at least one is required.
 ```
 
