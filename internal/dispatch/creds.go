@@ -243,25 +243,38 @@ func unmarshalPlatformConfig(envelope []byte, key string, dst any) error {
 // per-platform config objects like redditConfig/metaConfig), NOT nested inside them —
 // so it is read from the envelope here, shared by every dispatcher. Returns ("", nil)
 // when the envelope is empty or the field is absent. Returns an ERROR when the envelope
-// is malformed JSON, or when `hsToken` is present but not a string (a wrong-typed
-// documented field is a caller error, not a silent fallback).
+// is malformed JSON, or when `hsToken` is present but not a string — including an
+// explicit `null` (a wrong-typed documented field is a caller error, not a silent
+// fallback).
 func envelopeHSToken(envelope []byte) (string, error) {
 	if len(envelope) == 0 {
 		return "", nil
 	}
-	var m struct {
-		HSToken *json.RawMessage `json:"hsToken"`
-	}
+	// Decode into a map of raw messages to PRESERVE field presence. A struct field of
+	// type *json.RawMessage would be set to nil for BOTH an absent field AND an explicit
+	// `null` (Go's decoder nils the pointer on JSON null), making the two
+	// indistinguishable — so an explicit `null` would slip through the absent path. With
+	// a map, the KEY is present iff the field appears, and its value carries the literal
+	// bytes ("null" for JSON null).
+	var m map[string]json.RawMessage
 	if err := json.Unmarshal(envelope, &m); err != nil {
 		// The envelope as a whole is malformed. The caller already validated it via
 		// unmarshalPlatformConfig, so this is defensive; surface it rather than swallow.
 		return "", fmt.Errorf("decode campaign config envelope: %w", err)
 	}
-	if m.HSToken == nil {
+	raw, present := m["hsToken"]
+	if !present {
 		return "", nil // field absent — fine, caller falls back to the brief token
 	}
+	// The field is PRESENT. An explicit `null` is a present-but-not-a-string value, so
+	// it is a caller error (not the silent absent/fallback path) — consistent with the
+	// number/object cases below. json.Unmarshal("null", &s) is a no-op that would leave
+	// s="" WITHOUT an error, so `null` must be rejected explicitly.
+	if strings.TrimSpace(string(raw)) == "null" {
+		return "", fmt.Errorf("config hsToken must be a string, got null")
+	}
 	var s string
-	if err := json.Unmarshal(*m.HSToken, &s); err != nil {
+	if err := json.Unmarshal(raw, &s); err != nil {
 		// hsToken is PRESENT but not a string (e.g. a number/object). Do NOT silently
 		// swallow it and fall back — a wrong-typed documented field is a caller error.
 		return "", fmt.Errorf("config hsToken must be a string: %w", err)

@@ -46,6 +46,7 @@ func TestEnvelopeHSToken(t *testing.T) {
 		{"empty string", `{"hsToken":""}`, "", false},
 		{"wrong type number", `{"hsToken":123,"redditConfig":{}}`, "", true},
 		{"wrong type object", `{"hsToken":{"x":1}}`, "", true},
+		{"explicit null", `{"hsToken":null,"redditConfig":{}}`, "", true},
 		{"malformed envelope", `{bad`, "", true},
 	}
 	for _, tc := range cases {
