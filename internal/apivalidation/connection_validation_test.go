@@ -84,3 +84,29 @@ func assertValidation(t *testing.T, err error, wantErr bool, errSubstr string) {
 		t.Fatalf("expected no validation error, got: %v", err)
 	}
 }
+
+// TestValidateLinkedinAdsConnectionConfig guards the LinkedIn connection contract added
+// in the linkedin PR: account_id and org_id must be numeric (^[0-9]+$) and bounded, so a
+// value the client can't interpolate into a request path/URN is a 4xx at connection
+// creation rather than an async dispatch failure.
+func TestValidateLinkedinAdsConnectionConfig(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      *connsrv.LinkedinAdsConnectionConfigRequestBody
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "valid numeric ids", body: &connsrv.LinkedinAdsConnectionConfigRequestBody{AccountID: strp("538170226"), OrgID: strp("208777")}},
+		{name: "missing account_id", body: &connsrv.LinkedinAdsConnectionConfigRequestBody{OrgID: strp("208777")}, wantErr: true, errSubstr: "account_id"},
+		{name: "missing org_id", body: &connsrv.LinkedinAdsConnectionConfigRequestBody{AccountID: strp("538170226")}, wantErr: true, errSubstr: "org_id"},
+		{name: "non-numeric account_id", body: &connsrv.LinkedinAdsConnectionConfigRequestBody{AccountID: strp("urn:li:sponsoredAccount:538170226"), OrgID: strp("208777")}, wantErr: true, errSubstr: "account_id"},
+		{name: "non-numeric org_id (full URN)", body: &connsrv.LinkedinAdsConnectionConfigRequestBody{AccountID: strp("538170226"), OrgID: strp("urn:li:organization:208777")}, wantErr: true, errSubstr: "org_id"},
+		{name: "empty account_id", body: &connsrv.LinkedinAdsConnectionConfigRequestBody{AccountID: strp(""), OrgID: strp("208777")}, wantErr: true, errSubstr: "account_id"},
+		{name: "overlong org_id", body: &connsrv.LinkedinAdsConnectionConfigRequestBody{AccountID: strp("538170226"), OrgID: strp(strings.Repeat("9", 65))}, wantErr: true, errSubstr: "org_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertValidation(t, connsrv.ValidateLinkedinAdsConnectionConfigRequestBody(tc.body), tc.wantErr, tc.errSubstr)
+		})
+	}
+}
