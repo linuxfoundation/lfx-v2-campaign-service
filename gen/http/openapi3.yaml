@@ -17,12 +17,14 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   schema:
                     type: string
-                    description: Project UUID or slug that scopes the connection
+                    description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                     example: cncf
+                    pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+                    maxLength: 35
                   example: cncf
             requestBody:
                 required: true
@@ -1087,12 +1089,14 @@ paths:
             parameters:
                 - name: project_id
                   in: path
-                  description: Project UUID or slug that scopes the connection
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                   required: true
                   schema:
                     type: string
-                    description: Project UUID or slug that scopes the connection
+                    description: Canonical LFX project slug (NOT a UUID) that scopes the resource
                     example: cncf
+                    pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+                    maxLength: 35
                   example: cncf
                 - name: brief_id
                   in: path

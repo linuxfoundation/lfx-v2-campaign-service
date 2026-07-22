@@ -98,9 +98,11 @@ func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JW
 	return ctx, nil
 }
 
-// projectSlugRe matches a canonical LFX project slug: lowercase alphanumerics with
-// single internal hyphens, no leading/trailing hyphen.
-var projectSlugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+// projectSlugRe matches a canonical LFX project slug: one or more lowercase
+// alphanumeric segments joined by SINGLE internal hyphens (an alphanumeric on each
+// side of every hyphen), no leading/trailing hyphen and no consecutive hyphens
+// (`foo--bar` is rejected). Old `[a-z0-9-]*` in the middle wrongly allowed `--`.
+var projectSlugRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // projectUUIDRe matches a canonical UUID (the shape the project path also accepts on
 // read routes). A UUID in a campaign-naming path breaks the slug-based attribution

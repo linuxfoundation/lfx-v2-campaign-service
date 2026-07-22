@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	lfxv2campaignservicebriefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	goahttp "goa.design/goa/v3/http"
@@ -66,9 +67,16 @@ func DecodeCreateBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateBriefPayload(&body, projectID, bearerToken)
 		if payload.BearerToken != nil {
@@ -812,6 +820,10 @@ func DecodeCreateCampaignsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		briefID = params["brief_id"]
 		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
 		bearerTokenRaw := r.Header.Get("Authorization")

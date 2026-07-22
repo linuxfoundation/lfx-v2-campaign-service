@@ -241,6 +241,7 @@ reddit clients (which build UTM click-through params from it). GA's CreateCampai
 only a PAUSED shell today (no ad/final URL), so the field is accepted but not yet
 consumed; GA-3+ ad creation will use it. Reserved now so the platform-agnostic input
 shape stays stable.
+**Update** — Made the create-brief + create-campaigns `project_id` SLUG-ONLY in the published Goa contract (PR #36 review, copilot). The handlers already reject a UUID at runtime (validateProjectSlug), but both create methods still declared `projectIDAttr` ("UUID or slug"), so generated/OpenAPI clients accepted UUIDs the handlers then 400'd. Added `projectSlugAttr()` (Pattern `^[a-z0-9]+(-[a-z0-9]+)*$` + MaxLength(35)) to those two methods and regenerated the API; read/update/delete stay `projectIDAttr` (UUID-or-slug; migration 000003 preserved historical UUID rows). Also tightened `projectSlugRe` to reject consecutive hyphens (`foo--bar`) so it matches the "single internal hyphens" contract; added foo--bar/cncf- to the rejection test.
 
 **Update** — PR #40 review (round 11): two fixes. (1) Archived-brief lifecycle
 inconsistency (cursor): `ListAudiences` 404s on an archived parent brief, but

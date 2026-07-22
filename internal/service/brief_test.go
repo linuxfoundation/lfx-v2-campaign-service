@@ -199,7 +199,7 @@ func TestBriefService_CreateCampaigns_RejectsUnapprovedBrief(t *testing.T) {
 // path-param patterns, so this is guarded app-side.
 func TestBriefService_CreateBriefAndCampaigns_RejectNonSlugProjectID(t *testing.T) {
 	uuid := "a09410d0-0ec0-11ea-8e8f-416e2d8da950"
-	for _, bad := range []string{uuid, "CNCF", "cncf_x", "-cncf", "with space"} {
+	for _, bad := range []string{uuid, "CNCF", "cncf_x", "-cncf", "with space", "foo--bar", "cncf-"} {
 		s := newTestBriefService(newFakeBriefRepo())
 		if _, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
 			ProjectID: bad, Brief: &briefs.BriefInput{ProgramType: "events", EventSlug: "kubecon"},

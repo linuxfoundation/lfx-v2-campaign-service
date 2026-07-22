@@ -83,7 +83,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceBriefsCreateBriefFlags           = flag.NewFlagSet("create-brief", flag.ExitOnError)
 		lfxV2CampaignServiceBriefsCreateBriefBodyFlag        = lfxV2CampaignServiceBriefsCreateBriefFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceBriefsCreateBriefProjectIDFlag   = lfxV2CampaignServiceBriefsCreateBriefFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceBriefsCreateBriefProjectIDFlag   = lfxV2CampaignServiceBriefsCreateBriefFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceBriefsCreateBriefBearerTokenFlag = lfxV2CampaignServiceBriefsCreateBriefFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceBriefsGetBriefFlags           = flag.NewFlagSet("get-brief", flag.ExitOnError)
@@ -111,7 +111,7 @@ func ParseEndpoint(
 
 		lfxV2CampaignServiceBriefsCreateCampaignsFlags           = flag.NewFlagSet("create-campaigns", flag.ExitOnError)
 		lfxV2CampaignServiceBriefsCreateCampaignsBodyFlag        = lfxV2CampaignServiceBriefsCreateCampaignsFlags.String("body", "REQUIRED", "")
-		lfxV2CampaignServiceBriefsCreateCampaignsProjectIDFlag   = lfxV2CampaignServiceBriefsCreateCampaignsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceBriefsCreateCampaignsProjectIDFlag   = lfxV2CampaignServiceBriefsCreateCampaignsFlags.String("project-id", "REQUIRED", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 		lfxV2CampaignServiceBriefsCreateCampaignsBriefIDFlag     = lfxV2CampaignServiceBriefsCreateCampaignsFlags.String("brief-id", "REQUIRED", "Brief UUID")
 		lfxV2CampaignServiceBriefsCreateCampaignsBearerTokenFlag = lfxV2CampaignServiceBriefsCreateCampaignsFlags.String("bearer-token", "", "")
 
@@ -987,7 +987,7 @@ func lfxV2CampaignServiceBriefsCreateBriefUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
@@ -1104,7 +1104,7 @@ func lfxV2CampaignServiceBriefsCreateCampaignsUsage() {
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
 	fmt.Fprintln(os.Stderr, `    -brief-id STRING: Brief UUID`)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 

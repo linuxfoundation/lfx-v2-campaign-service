@@ -143,7 +143,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		Description("Create a brief.")
 		Payload(func() {
 			bearerToken()
-			projectIDAttr()
+			// Slug-only on CREATE: project_id becomes the campaign-name attribution key,
+			// so a UUID here would break the slug-based join (projectSlugAttr rejects it).
+			projectSlugAttr()
 			Attribute("brief", BriefInput)
 			Required("project_id", "brief")
 		})
@@ -248,7 +250,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		Description("Create campaigns across the selected platforms (async -> job).")
 		Payload(func() {
 			bearerToken()
-			projectIDAttr()
+			// Slug-only on CREATE: project_id is stamped into the campaign name and is the
+			// exact-match key for the dispatch connection lookup — a UUID breaks both.
+			projectSlugAttr()
 			briefIDAttr()
 			Attribute("input", CampaignCreateInput)
 			Required("project_id", "brief_id", "input")
