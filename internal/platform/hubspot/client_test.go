@@ -6,6 +6,7 @@ package hubspot
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -213,6 +214,30 @@ func TestClient_DoesNotFollowRedirects(t *testing.T) {
 	if followed {
 		t.Error("client followed the redirect — it must hand the 3xx back instead")
 	}
+	// A 3xx on a MUTATING request is AMBIGUOUS (the target may have been created before
+	// the redirect), so it must be UNCONFIRMED — assert the ambiguity, not just the error.
+	if !IsUnconfirmed(err) {
+		t.Errorf("a mutating 3xx must be UNCONFIRMED (it may have committed), got %T: %v", err, err)
+	}
+}
+
+func TestDoRequest_ConnectionRefusedIsPreSendNotUnconfirmed(t *testing.T) {
+	// A connection-refused dial failure is a DEFINITE pre-send error
+	// (isPreSendDialError: dial + ECONNREFUSED) — the request never reached HubSpot, so
+	// even a MUTATING call is NOT UNCONFIRMED (no mutation could have landed). Port 1 on
+	// loopback refuses immediately.
+	c := NewClient(testCreds(), testAccount(), WithBaseURL("http://127.0.0.1:1"), withRetryBaseDelay(0))
+	_, err := c.doRequest(context.Background(), http.MethodPost, "/crm/v3/lists", map[string]string{"x": "y"}, false)
+	if err == nil {
+		t.Fatal("expected a connection-refused dial failure to error")
+	}
+	var pe *preSendError
+	if !errors.As(err, &pe) {
+		t.Fatalf("a connection-refused dial failure must be a preSendError (definitely not sent), got %T: %v", err, err)
+	}
+	if IsUnconfirmed(err) {
+		t.Errorf("a pre-send (dial-refused) mutating failure must NOT be UNCONFIRMED, got: %v", err)
+	}
 }
 
 // A caller-supplied *http.Client that WOULD follow redirects must be force-overridden
@@ -337,11 +362,11 @@ func TestIsUnconfirmed_TransportErrorOnlyWhenMutating(t *testing.T) {
 	// A transport failure on a MUTATING request is UNCONFIRMED (may have landed); on
 	// an idempotent read it landed no mutation, so it's safely retryable and NOT
 	// reported as unconfirmed.
-	mut := &transportError{Method: http.MethodPost, Path: "/x", Err: io.ErrUnexpectedEOF, Mutating: true}
+	mut := &transportError{Method: http.MethodPost, Path: "/x", err: io.ErrUnexpectedEOF, Mutating: true}
 	if !IsUnconfirmed(mut) {
 		t.Error("a mutating transportError must be UNCONFIRMED")
 	}
-	read := &transportError{Method: http.MethodGet, Path: "/x", Err: io.ErrUnexpectedEOF, Mutating: false}
+	read := &transportError{Method: http.MethodGet, Path: "/x", err: io.ErrUnexpectedEOF, Mutating: false}
 	if IsUnconfirmed(read) {
 		t.Error("an idempotent-read transportError must NOT be UNCONFIRMED (safely retryable)")
 	}
@@ -353,7 +378,7 @@ func TestPreSendError_UnwrapsAndHidesURL(t *testing.T) {
 	secretURL := "https://api.hubapi.com/x?hapikey=SECRET"
 	pe := &preSendError{
 		Method: http.MethodPost, Path: "/x",
-		Err: &url.Error{Op: "Post", URL: secretURL, Err: &net.DNSError{Err: "no such host"}},
+		err: &url.Error{Op: "Post", URL: secretURL, Err: &net.DNSError{Err: "no such host"}},
 	}
 	if IsUnconfirmed(pe) {
 		t.Error("a pre-send error is a DEFINITE failure — not UNCONFIRMED")
@@ -364,6 +389,12 @@ func TestPreSendError_UnwrapsAndHidesURL(t *testing.T) {
 	}
 	if strings.Contains(pe.Error(), "SECRET") || strings.Contains(pe.Error(), "hapikey") {
 		t.Errorf("pre-send error leaked the request URL: %q", pe.Error())
+	}
+	// The cause is UNEXPORTED, so JSON/reflection serialization of the error (a
+	// structured logger, error middleware) cannot walk into the nested *url.Error.URL
+	// and leak the query/cursor — even though Error() already strips it.
+	if b, _ := json.Marshal(pe); strings.Contains(string(b), "SECRET") || strings.Contains(string(b), "hapikey") || strings.Contains(string(b), "hubapi.com") {
+		t.Errorf("json.Marshal(preSendError) leaked the request URL: %s", b)
 	}
 }
 
@@ -404,7 +435,7 @@ func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	te := &transportError{
 		Method: http.MethodPost,
 		Path:   "/crm/v3/lists/",
-		Err:    &url.Error{Op: "Post", URL: secretURL, Err: io.ErrUnexpectedEOF},
+		err:    &url.Error{Op: "Post", URL: secretURL, Err: io.ErrUnexpectedEOF},
 	}
 	got := te.Error()
 	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "hapikey=") {
@@ -412,6 +443,10 @@ func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	}
 	if !strings.Contains(got, io.ErrUnexpectedEOF.Error()) {
 		t.Errorf("transportError.Error() should surface the underlying cause: %q", got)
+	}
+	// JSON/reflection serialization must not leak the URL either (unexported cause).
+	if b, _ := json.Marshal(te); strings.Contains(string(b), "SECRET-abc123") || strings.Contains(string(b), "hapikey") || strings.Contains(string(b), "hubapi.com") {
+		t.Errorf("json.Marshal(transportError) leaked the request URL: %s", b)
 	}
 }
 
@@ -431,7 +466,7 @@ func TestParsePositiveInt(t *testing.T) {
 
 func TestDoRequest_ResponseBodyCapBoundary(t *testing.T) {
 	// The 10 MiB response-safety guard is load-bearing (bounds memory + retained
-	// nextPageToken strings). Exercise the boundary: a body AT the limit succeeds, a
+	// paging `after` cursor strings). Exercise the boundary: a body AT the limit succeeds, a
 	// body at limit+1 is a transportError, and for a MUTATING call that oversized
 	// body is UNCONFIRMED (the write may have committed).
 

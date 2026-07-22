@@ -117,8 +117,8 @@ func TestSearchEmails_FollowsCursorPagination(t *testing.T) {
 
 func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	// Order is guaranteed CLIENT-SIDE regardless of server order. The request sends
-	// `sort=-updatedAt` (a valid hint) and `properties` to restrict the returned fields
-	// so full email content doesn't blow the response cap at limit=100.
+	// `sort=-updatedAt` (a valid hint) and repeated `includedProperties` to restrict the
+	// returned fields so full email content doesn't blow the response cap at limit=100.
 	var gotSort string
 	var gotProps []string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

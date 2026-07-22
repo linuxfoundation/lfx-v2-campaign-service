@@ -2,6 +2,21 @@
 
 ## 2026-07-21
 
+**Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review
+(context/concurrency, error-classification, test-completeness, API-contract/docs, security)
+with adversarial verification of each finding. One REAL bug + polish:
+(1) SECURITY: `transportError` and `preSendError` had EXPORTED `Err error` fields holding a
+`*url.Error` whose exported `.URL` carries the full request URL incl. `?after=<cursor>`.
+`Error()` strips it via safeCause, but JSON/reflection serialization of the error (a
+structured logger, error middleware) walks the exported field and leaks the cursor — the
+exact vector the package already eliminated for `apiError` (no Body field). Unexported both
+to `err` (like `unconfirmedError`); `Unwrap()`/`errors.Is/As` and the URL-free `Error()`
+are unaffected. Added json.Marshal leak-regression assertions to both leak tests.
+(2) Test coverage: mutating-3xx-is-UNCONFIRMED, connection-refused-is-preSend-NOT-unconfirmed
+(dial+ECONNREFUSED → definite pre-send), ListEventDefinitions malformed-body + stuck-cursor
+guards. (3) Fixed two stale test comments (`properties`→`includedProperties`,
+`nextPageToken`→paging `after` cursor).
+
 **Update** — HubSpot ctx-cancel pre-send guard (PR #35 review, copilot — a REAL
 correctness bug, not a nit). `doRequest` fired `httpClient.Do(req)` even when the caller's
 context was ALREADY done before send. A ctx cancellation isn't an `isPreSendDialError`, so

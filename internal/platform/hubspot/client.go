@@ -288,10 +288,18 @@ func (e *apiError) Error() string {
 // isPreSendDialError) is NOT wrapped as transportError. Error() renders a URL-free
 // cause so a request URL (which can carry query material) never leaks; Unwrap()
 // retains the cause for errors.Is/As. Mirrors the twitter client's safeTransportCause.
+//
+// The wrapped cause is UNEXPORTED (`err`): the cause is typically a `*url.Error` whose
+// EXPORTED `URL` field carries the full request URL incl. the `?after=<cursor>` query.
+// Error() strips it via safeCause, but an EXPORTED field would let reflection/JSON
+// serialization of the error (a structured logger, error middleware) walk into that URL
+// and leak the cursor — the exact vector the package eliminated for apiError (no Body
+// field). Keeping it unexported (like unconfirmedError) closes that walk while Unwrap()
+// still exposes the cause for errors.Is/As.
 type transportError struct {
 	Method string
 	Path   string
-	Err    error
+	err    error
 	// Mutating is true when the failed request was NON-idempotent (a create/clone/
 	// patch). Only then is the outcome UNCONFIRMED — for an idempotent read/search
 	// no mutation could have landed, so a transport failure there is safely
@@ -300,27 +308,28 @@ type transportError struct {
 }
 
 func (e *transportError) Error() string {
-	return fmt.Sprintf("hubspot %s %s: %s", e.Method, e.Path, safeCause(e.Err))
+	return fmt.Sprintf("hubspot %s %s: %s", e.Method, e.Path, safeCause(e.err))
 }
 
-func (e *transportError) Unwrap() error { return e.Err }
+func (e *transportError) Unwrap() error { return e.err }
 
-// preSendError is a DEFINITE pre-send failure (DNS/dial before the request left) —
-// the request never reached HubSpot, so no mutation happened (NOT ambiguous, unlike
-// transportError). Error() is URL-free (via safeCause) so a request URL never leaks;
-// Unwrap() retains the cause so errors.Is/As still work on the dial error. Mirrors
-// the twitter client's preSendError.
+// preSendError is a DEFINITE pre-send failure (DNS/dial before the request left, or an
+// already-cancelled ctx) — the request never reached HubSpot, so no mutation happened
+// (NOT ambiguous, unlike transportError). Error() is URL-free (via safeCause) so a
+// request URL never leaks; Unwrap() retains the cause so errors.Is/As still work. The
+// cause is UNEXPORTED (`err`) for the same reflection/JSON-leak reason as transportError
+// above — the dial `*url.Error` carries the full URL/query in its exported URL field.
 type preSendError struct {
 	Method string
 	Path   string
-	Err    error
+	err    error
 }
 
 func (e *preSendError) Error() string {
-	return fmt.Sprintf("hubspot %s %s: %s", e.Method, e.Path, safeCause(e.Err))
+	return fmt.Sprintf("hubspot %s %s: %s", e.Method, e.Path, safeCause(e.err))
 }
 
-func (e *preSendError) Unwrap() error { return e.Err }
+func (e *preSendError) Unwrap() error { return e.err }
 
 // safeCause renders a URL-free description of a round-trip error. A *url.Error's
 // %v embeds the request URL, so peel every *url.Error layer down to the underlying
@@ -427,7 +436,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		// a ctx that expires during a 429 retry backoff. Mirrors the ctx.Err() pre-send
 		// guard in the googleads/reddit/meta clients.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, &preSendError{Method: method, Path: path, Err: ctxErr}
+			return nil, &preSendError{Method: method, Path: path, err: ctxErr}
 		}
 
 		resp, err := c.httpClient.Do(req)
@@ -435,9 +444,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			if isPreSendDialError(err) {
 				// Definitely not sent — a clean pre-send failure (NOT ambiguous).
 				// Typed so the dial cause survives errors.Is/As; URL-free via safeCause.
-				return nil, &preSendError{Method: method, Path: path, Err: err}
+				return nil, &preSendError{Method: method, Path: path, err: err}
 			}
-			return nil, &transportError{Method: method, Path: path, Err: err, Mutating: !idempotent}
+			return nil, &transportError{Method: method, Path: path, err: err, Mutating: !idempotent}
 		}
 
 		// 429: retry only an idempotent call; a mutating 429 may have committed.
@@ -476,10 +485,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			// A 2xx whose body could not be fully read is AMBIGUOUS for a mutation (the
 			// change may have been applied server-side even though we couldn't read the
 			// reply); for an idempotent read it's just a failed read, safely retryable.
-			return nil, &transportError{Method: method, Path: path, Err: rErr, Mutating: !idempotent}
+			return nil, &transportError{Method: method, Path: path, err: rErr, Mutating: !idempotent}
 		}
 		if int64(len(raw)) > maxResponseBody {
-			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response body exceeds %d bytes", maxResponseBody), Mutating: !idempotent}
+			return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("response body exceeds %d bytes", maxResponseBody), Mutating: !idempotent}
 		}
 		return raw, nil
 	}

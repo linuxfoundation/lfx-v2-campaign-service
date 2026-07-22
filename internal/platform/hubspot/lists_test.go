@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -351,5 +352,38 @@ func TestListEventDefinitions_FollowsCursorPagination(t *testing.T) {
 	}
 	if len(afters) != 2 || afters[0] != "" || afters[1] != "C2" {
 		t.Errorf("cursor not forwarded: %v", afters)
+	}
+}
+
+func TestListEventDefinitions_MalformedBodyErrors(t *testing.T) {
+	// A 2xx `{}`/`null` (Results==nil) must error, not return a clean empty success. A
+	// genuinely empty portal returns `{"results":[]}` (non-nil) → 0 results, no error.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if _, err := c.ListEventDefinitions(context.Background()); err == nil {
+		t.Error("a 2xx body with no results array must error, not return empty success")
+	}
+	cEmpty, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	if got, err := cEmpty.ListEventDefinitions(context.Background()); err != nil || len(got) != 0 {
+		t.Errorf("a genuinely empty portal must return (0, nil), got (%d, %v)", len(got), err)
+	}
+}
+
+func TestListEventDefinitions_StuckCursorErrors(t *testing.T) {
+	// A server that echoes the same `after` token must not loop forever — the walker
+	// errors on a non-advancing cursor (matches SearchEmails).
+	var calls int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_, _ = io.WriteString(w, `{"results":[{"fullyQualifiedName":"pe_a","name":"a"}],"paging":{"next":{"after":"SAME"}}}`)
+	})
+	if _, err := c.ListEventDefinitions(context.Background()); err == nil {
+		t.Error("a non-advancing cursor must error, not loop to the page cap")
+	}
+	if n := atomic.LoadInt32(&calls); n > 3 {
+		t.Errorf("stuck-cursor guard should stop after ~2 calls, got %d", n)
 	}
 }
