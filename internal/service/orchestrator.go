@@ -57,9 +57,20 @@ const dispatchQueueTimeout = 10 * time.Minute
 // context is otherwise only cancelled at shutdown, so a provider call that hangs
 // (unresponsive upstream, dropped connection with no client timeout) would leave
 // its job "running" forever and permanently occupy one of the maxParallelDispatch
-// semaphore slots. This ceiling guarantees the slot and job are released. It is
-// generous: real ad-platform create flows are multi-request but complete in well
-// under a minute.
+// semaphore slots. This ceiling guarantees the slot and job are released.
+//
+// It is a DELIBERATE fail-fast ceiling, NOT the sum of a client's worst-case retry
+// policy. Real create flows complete in well under a minute; a client's full 429
+// backoff ceiling can exceed this (e.g. the reddit client's worst-case single-create
+// wait is ~7m: retryMax*maxRetryWait + attempt timeouts), so on sustained throttling
+// this cap truncates the client's best-effort retries and the create is returned as a
+// retained partial that the reconcile path handles — preferred over letting one
+// throttled create hold a semaphore slot for many minutes. Raising this to cover a
+// client's full worst case is NOT free: dispatchQueueTimeout (10m) + providerCallTimeout
+// must stay comfortably below staleJobCutoff (15m) so the stale sweeper never fails a
+// still-progressing job — 10m + 7m would break that. Rebalancing the queue/stale budget
+// to honor the full per-client worst case is an infra-owned timeout review, tracked
+// separately.
 const providerCallTimeout = 2 * time.Minute
 
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
