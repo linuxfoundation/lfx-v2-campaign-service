@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -135,7 +136,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("meta campaign creation failed before any upstream create: %w", cerr))
 		}
-		return campaignFromMeta(result), fmt.Errorf("meta campaign creation UNCONFIRMED: %w", cerr)
+		return campaignFromMeta(ctx, result), fmt.Errorf("meta campaign creation UNCONFIRMED: %w", cerr)
 	}
 	// Meta creates one ad per requested variant but treats per-variant ad failures as
 	// NON-fatal (the client records them in Steps and continues), so a nil error can
@@ -147,7 +148,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// for a human/monitor to reconcile. Mirrors the reddit/twitter partial-ad handling.
 	// All requested variants are valid here (the client fails fast on a malformed
 	// variant), so len(cfg.Variants) is the requested count.
-	camp := campaignFromMeta(result)
+	camp := campaignFromMeta(ctx, result)
 	if result.AdCount < len(cfg.Variants) {
 		camp.Status = campaignStatusCreatedDegraded
 	}
@@ -155,13 +156,22 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 }
 
 // campaignFromMeta maps the client result to the persistence model.
-func campaignFromMeta(r *meta.CampaignResult) *model.Campaign {
+func campaignFromMeta(ctx context.Context, r *meta.CampaignResult) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
-	if raw, err := json.Marshal(r); err == nil {
+	if raw, err := json.Marshal(r); err != nil {
+		// A marshal failure should be near-impossible for this plain struct, but do NOT
+		// swallow it: on the degraded/ambiguous-orphan paths Result is the sole carrier
+		// of the per-variant failure Steps and the reconcile-by-name payload, so a
+		// silently-empty Result loses reconciliation data precisely when it's most
+		// needed. Log it (the row is still persisted with its id/status). Mirrors the
+		// linkedin adapter.
+		slog.WarnContext(ctx, "failed to marshal meta campaign result blob (Result left empty)",
+			"campaign_id", c.PlatformCampaignID, "error", err)
+	} else {
 		c.Result = raw
 	}
 	return c

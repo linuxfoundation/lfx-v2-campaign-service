@@ -319,8 +319,9 @@ description?: string
 ```
 
 Connection prerequisites (from the Meta connection, not this config): a valid `account_id`
-(`act_<digits>`) and a numeric `page_id` — both REQUIRED and format-validated at connection
-creation (a missing/malformed value is a 4xx there, not a runtime dispatch failure).
+(`act_<digits>`) and a numeric `page_id` — both REQUIRED, format-validated, and length-bounded
+(`MaxLength 64`) at connection creation (a missing/malformed/over-long value is a 4xx there, not
+a runtime dispatch failure).
 
 ### JobCreateResponse (returned immediately from `POST .../campaigns`)
 

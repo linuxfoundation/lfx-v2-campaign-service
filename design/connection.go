@@ -390,6 +390,10 @@ var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	Attribute("account_id", String, "Meta ad account ID", func() {
 		Example("act_193556282970417")
 		Pattern(`^act_[0-9]+$`)
+		// The pattern bounds shape but not length; cap the stored size so an arbitrarily
+		// long numeric string can't be persisted at the 4xx boundary (real Meta ids are
+		// far shorter).
+		MaxLength(64)
 	})
 	// page_id must be a non-empty NUMERIC Facebook page id. Required alone only checks
 	// presence — {"page_id":""} would still pass, be stored active, and then always
@@ -398,6 +402,8 @@ var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	Attribute("page_id", String, "Facebook page ID", func() {
 		Example("123456789012345")
 		Pattern(`^[0-9]+$`)
+		// Bound the stored size (see account_id); real Facebook page ids are far shorter.
+		MaxLength(64)
 	})
 	Attribute("app_id", String, "Meta app ID")
 	// page_id is required at connection time: the Meta dispatcher needs it to attach

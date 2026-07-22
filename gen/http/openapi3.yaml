@@ -7521,6 +7521,7 @@ components:
                     description: Meta ad account ID
                     example: act_193556282970417
                     pattern: ^act_[0-9]+$
+                    maxLength: 64
                 app_id:
                     type: string
                     description: Meta app ID
@@ -7534,6 +7535,7 @@ components:
                     description: Facebook page ID
                     example: "123456789012345"
                     pattern: ^[0-9]+$
+                    maxLength: 64
             example:
                 account_id: act_193556282970417
                 app_id: Minus id deleniti.
