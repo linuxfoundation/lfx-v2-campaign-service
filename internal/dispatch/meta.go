@@ -106,7 +106,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// request-supplied token takes precedence over the brief blobs; without this a
 	// documented config.hsToken is silently ignored and the client falls back to the
 	// event slug for utm_campaign, losing the HubSpot attribution.
-	hsToken := envelopeHSToken(config)
+	hsToken, err := envelopeHSToken(config)
+	if err != nil {
+		return nil, notCreated(err) // a wrong-typed hsToken is a caller error (pre-create)
+	}
 	if hsToken == "" {
 		hsToken = bf.HSToken
 	}
