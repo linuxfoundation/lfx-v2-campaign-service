@@ -368,7 +368,7 @@ var LinkedInAdsConnectionConfig = Type("linkedin-ads-connection-config", func() 
 
 var LinkedInAdsConnection = Type("linkedin-ads-connection", func() {
 	commonConnectionAttrs()
-	Attribute("org_id", String, "LinkedIn organization URN id")
+	Attribute("org_id", String, "LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)")
 	commonConnectionRequired()
 })
 

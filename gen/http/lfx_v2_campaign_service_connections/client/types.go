@@ -262,7 +262,8 @@ type CreateLinkedinAdsResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, not the full
+	// urn:li:organization: URN)
 	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
 }
 
@@ -284,7 +285,8 @@ type GetLinkedinAdsResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, not the full
+	// urn:li:organization: URN)
 	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
 }
 
@@ -306,7 +308,8 @@ type UpdateLinkedinAdsResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, not the full
+	// urn:li:organization: URN)
 	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
 }
 

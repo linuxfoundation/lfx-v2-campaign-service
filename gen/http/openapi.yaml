@@ -5257,7 +5257,7 @@ definitions:
                 example: Qui vitae iste.
             org_id:
                 type: string
-                description: LinkedIn organization URN id
+                description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                 example: Dolore voluptatem consequatur aut vero.
             project_id:
                 type: string

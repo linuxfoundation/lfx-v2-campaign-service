@@ -479,7 +479,8 @@ type LinkedinAdsConnection struct {
 	Version int64
 	// ETag header value (mirrors version)
 	Etag string
-	// LinkedIn organization URN id
+	// LinkedIn organization ID (the bare NUMERIC id, not the full
+	// urn:li:organization: URN)
 	OrgID *string
 }
 

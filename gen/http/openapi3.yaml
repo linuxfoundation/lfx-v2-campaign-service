@@ -6926,7 +6926,7 @@ components:
                     example: Adipisci et laboriosam veritatis saepe numquam rem.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                     example: Iste ullam sunt rem non doloribus omnis.
                 project_id:
                     type: string
@@ -6985,7 +6985,7 @@ components:
                     example: Amet laborum.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                     example: Et rem magnam.
                 project_id:
                     type: string
@@ -7042,7 +7042,7 @@ components:
                     example: Amet voluptatem adipisci.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                     example: Labore quidem explicabo tenetur.
                 project_id:
                     type: string
@@ -7099,7 +7099,7 @@ components:
                     example: Omnis corporis mollitia quia provident nam.
                 org_id:
                     type: string
-                    description: LinkedIn organization URN id
+                    description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
                     example: Illo aut.
                 project_id:
                     type: string
