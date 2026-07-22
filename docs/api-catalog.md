@@ -284,12 +284,21 @@ budget: number                  — Whole units of the account currency (e.g. 25
 lifetimeBudget?: boolean        — true → lifetime budget over the flight; false/absent → daily budget
 startDate: string               — YYYY-MM-DD
 endDate: string                 — YYYY-MM-DD
-objective?: string              — awareness | traffic | engagement | leads | conversions
+objective?: string              — awareness | traffic | engagement | leads | conversions.
+                                  NOTE: `leads` is INTERIM — it runs a website-traffic campaign
+                                  (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration
+                                  URL); it does NOT create an on-Facebook instant lead form. Full
+                                  LEAD_GENERATION parity is deferred (LFXV2-2665).
 geoTargets: string[]            — ISO country codes, e.g. ['US', 'JP']
 pixelId?: string                — Meta pixel id (required to attach a conversion promoted object)
-currencyOffset?: number         — Account minor-unit scale override (1 for zero-decimal currencies
-                                  like JPY, 100 for most). Left 0/absent → derived from the account's
-                                  ISO currency during the client's preflight.
+currencyOffset?: number         — Account minor-unit scale (1 for zero-decimal currencies like JPY,
+                                  100 for most). This is a FALLBACK, not an unconditional override:
+                                  the client's preflight derives the offset from the account's ISO
+                                  currency and that is AUTHORITATIVE — a supplied value is used only
+                                  when the currency can't be determined, and a supplied value that
+                                  CONFLICTS with a recognized account currency is REJECTED (a 4xx)
+                                  rather than trusted. Omit it unless the account currency is
+                                  unrecognized.
 placements?: object             — Which feeds to run on; ALL keys optional booleans. Keys are the
                                   Go field NAMES (no lowercase json aliases): FacebookFeed,
                                   InstagramFeed, Stories, Reels, AudienceNetwork, MessengerInbox.
