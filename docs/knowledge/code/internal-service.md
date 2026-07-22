@@ -28,12 +28,16 @@ cold-start DB retry and returns a typed `503` (routes mounted) when no repo is w
 platform sets (a duplicate would create two paid upstream campaigns), then hands
 off to the `Orchestrator`, which persists a job and dispatches per platform
 asynchronously (bounded concurrency). Dispatch is idempotent: a brief already
-carrying a campaign with an upstream id for a platform is reused rather than
-re-created. The idempotency fast-path lookup (`GetCampaignByPlatform`)
-distinguishes its outcomes: an existing campaign with an upstream id short-circuits
-to reuse; `ErrNotFound` (no row yet) falls through to `ClaimCampaignDispatch`; but a
-REAL DB error (anything else) is surfaced as a platform failure (logged at ERROR)
-rather than silently treated like "no existing campaign" — proceeding to
+carrying a COMPLETED campaign for a platform is reused rather than re-created. The
+idempotency fast-path lookup (`GetCampaignByPlatform`) distinguishes its outcomes: an
+existing campaign with an upstream id AND a terminal status (`created` /
+`created_degraded`) short-circuits to reuse; a `pending` row — even one carrying an
+upstream id or a Result reconcile blob — is a retained partial ORPHAN, not a
+completed campaign, so it does NOT short-circuit (on retry it is reported as
+reconciliation-required rather than a false success); `ErrNotFound` (no row yet) falls
+through to `ClaimCampaignDispatch`; but a REAL DB error (anything else) is surfaced as
+a platform failure (logged at ERROR) rather than silently treated like "no existing
+campaign" — proceeding to
 claim/dispatch when an existing campaign merely couldn't be loaded could duplicate an
 upstream create, so it fails loud instead. Replacing a brief's
 content resets it to `draft` (re-approval required). Optimistic concurrency is enforced via
