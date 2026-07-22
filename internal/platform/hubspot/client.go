@@ -480,8 +480,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			}
 			req, rerr := http.NewRequestWithContext(attemptCtx, method, u, reqBody)
 			if rerr != nil {
-				// Request build failure is definitively pre-send (nothing was sent).
-				return nil, 0, true, fmt.Errorf("hubspot build request %s %s: %w", method, path, rerr)
+				// Request build failure is definitively pre-send (nothing was sent). Return a
+				// preSendError, NOT a raw fmt.Errorf wrapping rerr: url.Parse fails with a
+				// *url.Error whose text embeds the full URL `u` (incl. ?after=<cursor>), so
+				// wrapping it verbatim would leak the cursor even though `path` was stripped.
+				// preSendError renders the cause through safeCause (URL-free) and keeps it
+				// unexported so JSON/reflection can't walk into the URL either.
+				return nil, 0, true, &preSendError{Method: method, Path: path, err: rerr}
 			}
 			req.Header.Set("Authorization", "Bearer "+c.creds.PrivateAppToken)
 			req.Header.Set("Accept", "application/json")

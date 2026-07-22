@@ -198,6 +198,38 @@ func TestDoRequest_ErrorPathStripsQueryString(t *testing.T) {
 	}
 }
 
+func TestDoRequest_BuildRequestFailureIsPreSendAndURLFree(t *testing.T) {
+	// If the request URL can't be parsed (e.g. an invalid WithBaseURL), the url.Parse
+	// error text embeds the FULL URL incl. ?after=<cursor>. doRequest must surface this
+	// build failure as a URL-free preSendError (nothing was sent), NOT a raw wrap that
+	// leaks the cursor. A base URL with a control byte makes NewRequestWithContext fail.
+	c := NewClient(testCreds(), testAccount(),
+		WithBaseURL("http://host\x7f"), // survives WithBaseURL (only trims slashes); fails url.Parse
+		withRetryBaseDelay(0),
+	)
+	// Mutating POST so we also assert the build failure is NOT reported UNCONFIRMED —
+	// a request that could not be built definitely applied no mutation.
+	_, err := c.doRequest(context.Background(), http.MethodPost,
+		"/marketing/v3/emails?after=SECRETCURSOR", map[string]string{"x": "y"}, false)
+	if err == nil {
+		t.Fatal("expected a build-request failure to error")
+	}
+	var pe *preSendError
+	if !errors.As(err, &pe) {
+		t.Fatalf("a build-request failure must be a preSendError (definitely not sent), got %T: %v", err, err)
+	}
+	if strings.Contains(err.Error(), "SECRETCURSOR") || strings.Contains(err.Error(), "after=") {
+		t.Errorf("build-request error leaked the cursor: %q", err.Error())
+	}
+	if IsUnconfirmed(err) {
+		t.Errorf("a pre-send build failure on a mutating call must NOT be UNCONFIRMED, got: %v", err)
+	}
+	// JSON/reflection serialization must not leak it either (unexported cause).
+	if b, _ := json.Marshal(pe); strings.Contains(string(b), "SECRETCURSOR") || strings.Contains(string(b), "after=") {
+		t.Errorf("json.Marshal(preSendError) leaked the cursor: %s", b)
+	}
+}
+
 func TestClient_DoesNotFollowRedirects(t *testing.T) {
 	var followed bool
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
