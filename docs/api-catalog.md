@@ -299,8 +299,14 @@ geoTargets?: string[]           — ISO country codes, e.g. ['US', 'JP']. Option
                                   trimmed, and filtered to valid ISO-2 codes; if entries were
                                   supplied but NONE survive validation the request is REJECTED
                                   (it does not silently fall back to US).
-pixelId?: string                — Meta pixel id (required to attach a conversion promoted object)
+pixelId?: string                — Meta pixel id. REQUIRED (non-empty, NUMERIC) for the
+                                  `conversions` objective — it becomes the promoted-object pixel; a
+                                  missing or non-numeric pixelId fails the dispatch job pre-create.
+                                  Ignored by the other objectives.
 currencyOffset?: number         — Account minor-unit scale (1 for zero-decimal currencies like JPY,
+                                  100 for most). Must be a NON-NEGATIVE INTEGER: it is decoded as an
+                                  int64, so a fractional value fails config decoding and a negative
+                                  value is rejected as malformed. 0/omitted → derived by the client.
                                   100 for most). This is a FALLBACK, not an unconditional override:
                                   the client's preflight derives the offset from the account's ISO
                                   currency and that is AUTHORITATIVE — a supplied value is used only
