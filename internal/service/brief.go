@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -97,11 +98,55 @@ func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JW
 	return ctx, nil
 }
 
+// projectSlugRe matches a canonical LFX project slug: one or more lowercase
+// alphanumeric segments joined by SINGLE internal hyphens (an alphanumeric on each
+// side of every hyphen), no leading/trailing hyphen and no consecutive hyphens
+// (`foo--bar` is rejected). Old `[a-z0-9-]*` in the middle wrongly allowed `--`.
+var projectSlugRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// projectUUIDRe matches a canonical UUID (the shape the project path also accepts on
+// read routes). A UUID in a campaign-naming path breaks the slug-based attribution
+// join, so it is rejected explicitly. The generated HTTP decoder also validates the
+// slug Pattern/MaxLength for the create routes; this app-level guard duplicates that
+// for direct/non-HTTP callers (e.g. service tests) — belt-and-suspenders, not the sole
+// enforcement.
+var projectUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// projectSlugProblem returns a human-readable reason if projectID is NOT a canonical
+// slug, or "" if it is valid. It guards the CREATE paths only (brief-create,
+// campaign-create): those store project_id as the campaign-name attribution key AND
+// the exact-match key for the connection lookup at dispatch, so a brief-slug and a
+// connection-UUID would never join. Read/update/delete stay UUID-or-slug (migration
+// 000003 preserved historical UUID rows). The generated HTTP decoder validates the
+// same Pattern/MaxLength on the create routes; this guard duplicates it for
+// direct/non-HTTP callers.
+func projectSlugProblem(projectID string) string {
+	if projectUUIDRe.MatchString(projectID) {
+		return "project_id must be the canonical project slug, not a UUID"
+	}
+	if len(projectID) > 35 || !projectSlugRe.MatchString(projectID) {
+		return "project_id must be a canonical lowercase project slug (e.g. 'cncf', 'tlf')"
+	}
+	return ""
+}
+
+// validateProjectSlug wraps projectSlugProblem as a briefs BadRequestError for the
+// brief/campaign create endpoints.
+func validateProjectSlug(projectID string) error {
+	if msg := projectSlugProblem(projectID); msg != "" {
+		return &briefs.BadRequestError{Code: "400", Message: msg}
+	}
+	return nil
+}
+
 // ─── Briefs ───
 
 func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPayload) (*briefs.Brief, error) {
 	briefRepo, _, _, _, err := s.ready()
 	if err != nil {
+		return nil, err
+	}
+	if err := validateProjectSlug(p.ProjectID); err != nil {
 		return nil, err
 	}
 	in := p.Brief
@@ -199,6 +244,14 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCampaignsPayload) (*briefs.JobCreateResponse, error) {
 	briefRepo, _, _, orch, err := s.ready()
 	if err != nil {
+		return nil, err
+	}
+	// Campaign creation stamps project_id into the campaign name (the attribution join
+	// key) AND uses it as the exact-match key for the connection lookup at dispatch, so
+	// a UUID-scoped request would break the slug-based attribution join and never match
+	// a slug-keyed connection. Reject a non-slug scope up front; every dispatcher then
+	// receives a guaranteed-canonical slug.
+	if err := validateProjectSlug(p.ProjectID); err != nil {
 		return nil, err
 	}
 	brief, err := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)

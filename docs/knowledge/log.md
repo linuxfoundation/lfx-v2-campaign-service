@@ -241,6 +241,7 @@ reddit clients (which build UTM click-through params from it). GA's CreateCampai
 only a PAUSED shell today (no ad/final URL), so the field is accepted but not yet
 consumed; GA-3+ ad creation will use it. Reserved now so the platform-agnostic input
 shape stays stable.
+**Update** — Made the create-brief + create-campaigns `project_id` SLUG-ONLY in the published Goa contract (PR #36 review, copilot). The handlers already reject a UUID at runtime (validateProjectSlug), but both create methods still declared `projectIDAttr` ("UUID or slug"), so generated/OpenAPI clients accepted UUIDs the handlers then 400'd. Added `projectSlugAttr()` (Pattern `^[a-z0-9]+(-[a-z0-9]+)*$` + MaxLength(35)) to those two methods and regenerated the API; read/update/delete stay `projectIDAttr` (UUID-or-slug; migration 000003 preserved historical UUID rows). Also tightened `projectSlugRe` to reject consecutive hyphens (`foo--bar`) so it matches the "single internal hyphens" contract; added foo--bar/cncf- to the rejection test. **Update** (same PR, later review): extended the SAME slug-only contract to ALL SEVEN connection-CREATE endpoints (`create-{provider}` via `connectionMethods`) — a connection is stored keyed by `project_id`, the exact-match key for the dispatch lookup, so a UUID-keyed connection could never join a dispatched campaign. `validateConnectionProjectSlug` guards each `Create*` service method (connections-flavored 400); the generated decoder validates the pattern too; get/update/delete/set-credential/test stay permissive for historical UUID rows. Compatibility-impacting: a UUID connection-create payload now 400s where it previously succeeded.
 
 **Update** — PR #40 review (round 11): two fixes. (1) Archived-brief lifecycle
 inconsistency (cursor): `ListAudiences` 404s on an archived parent brief, but
@@ -373,6 +374,26 @@ service. Wired into the container (no-db / 503-boot / live / cold-start-retry pa
 and mounted in the server (`buildMux` + a route-mount test asserting
 `GET …/audiences` resolves non-404 + a nil-endpoints fail-loud case). Service-layer
 tests cover create/defaults/If-Match(428/412/success)/404/late-binding. Full gate green.
+**Creation** — Added `internal/dispatch` — the per-platform PlatformDispatcher
+adapters that wire the orchestrator to the ad-platform clients (LFXV2-2639, Reddit
+first). Until now the orchestrator's `dispatchers` map was empty, so campaign creation
+recorded jobs that dispatched to nothing. The package has: a SHARED `credsSource`
+doing the one mechanical step common to every platform (ConnectionReader.Get →
+Encryptor.Decrypt, returning the raw plaintext + AccountID/ProviderConfig/Status) —
+deliberately NOT interpreting the blob, since credential shapes differ per platform;
+and a PER-PLATFORM `RedditDispatcher` that unmarshals its own `redditCreds` (OAuth2),
+maps the brief's event fields + the per-platform `config` onto `reddit.CampaignInput`,
+calls the client, and maps the result → `model.Campaign`. Claim contract: pre-create
+failures (missing/invalid connection, config/credential errors, or a client `(nil,
+err)`) are wrapped `notCreated` → a `preCreateError` implementing
+`NoUpstreamCreate()`, so the orchestrator RELEASES the claim; ANY non-nil client
+result + error (ambiguous create — the decision keys on result!=nil, NOT on a
+populated id, since an ambiguous create returns a name-only partial whose id may be
+empty) is handed back so the claim is RETAINED and the orphan recorded. Registered in
+`internal/container`
+(`registerDispatchers`, called from both the fast path and the cold-start retry path);
+`logMissingDispatchers` warns for ad providers still without an adapter. Concept doc +
+index added; dispatch/container/service tests green (-race).
 
 ## 2026-07-20
 

@@ -167,7 +167,7 @@ type CampaignUpdateInput struct {
 type CreateBriefPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID string
 	Brief     *BriefInput
 }
@@ -177,7 +177,7 @@ type CreateBriefPayload struct {
 type CreateCampaignsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID string
 	// Brief UUID
 	BriefID string

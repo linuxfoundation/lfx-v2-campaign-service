@@ -18,6 +18,22 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
+// validateConnectionProjectSlug guards the connection CREATE endpoints: project_id
+// must be a canonical slug, not a UUID. A connection is stored keyed by project_id and
+// that value is the EXACT-MATCH key for the dispatch lookup (ConnectionRepo.Get), while
+// brief/campaign create already require a slug — so a UUID-keyed connection could never
+// be joined to a dispatched campaign. Reuses the shared projectSlugProblem logic and
+// wraps it as a connections BadRequestError. Get/update/delete/set-credential/test stay
+// permissive (historical UUID rows). The generated HTTP decoder validates the same
+// Pattern/MaxLength on the create routes; this guard duplicates it for direct/non-HTTP
+// callers (belt-and-suspenders), and is where the connections-flavored 400 is produced.
+func validateConnectionProjectSlug(projectID string) error {
+	if msg := projectSlugProblem(projectID); msg != "" {
+		return &conn.BadRequestError{Code: "400", Message: msg}
+	}
+	return nil
+}
+
 // ─── GoogleAds ───
 
 func (s *ConnectionService) buildGoogleAdsResult(c *model.Connection) *conn.GoogleAdsConnection {
@@ -36,6 +52,9 @@ func (s *ConnectionService) buildGoogleAdsResult(c *model.Connection) *conn.Goog
 }
 
 func (s *ConnectionService) CreateGoogleAds(ctx context.Context, p *conn.CreateGoogleAdsPayload) (*conn.GoogleAdsConnection, error) {
+	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
 	cfg := p.Config
 	m := &model.Connection{
 		ProjectID: p.ProjectID,
@@ -111,6 +130,9 @@ func (s *ConnectionService) buildLinkedinAdsResult(c *model.Connection) *conn.Li
 }
 
 func (s *ConnectionService) CreateLinkedinAds(ctx context.Context, p *conn.CreateLinkedinAdsPayload) (*conn.LinkedinAdsConnection, error) {
+	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
 	cfg := p.Config
 	m := &model.Connection{
 		ProjectID: p.ProjectID,
@@ -187,6 +209,9 @@ func (s *ConnectionService) buildMetaAdsResult(c *model.Connection) *conn.MetaAd
 }
 
 func (s *ConnectionService) CreateMetaAds(ctx context.Context, p *conn.CreateMetaAdsPayload) (*conn.MetaAdsConnection, error) {
+	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
 	cfg := p.Config
 	m := &model.Connection{
 		ProjectID: p.ProjectID,
@@ -263,6 +288,9 @@ func (s *ConnectionService) buildRedditAdsResult(c *model.Connection) *conn.Redd
 }
 
 func (s *ConnectionService) CreateRedditAds(ctx context.Context, p *conn.CreateRedditAdsPayload) (*conn.RedditAdsConnection, error) {
+	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
 	cfg := p.Config
 	m := &model.Connection{
 		ProjectID:      p.ProjectID,
@@ -334,6 +362,9 @@ func (s *ConnectionService) buildTwitterAdsResult(c *model.Connection) *conn.Twi
 }
 
 func (s *ConnectionService) CreateTwitterAds(ctx context.Context, p *conn.CreateTwitterAdsPayload) (*conn.TwitterAdsConnection, error) {
+	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
 	cfg := p.Config
 	m := &model.Connection{
 		ProjectID: p.ProjectID,
@@ -409,6 +440,9 @@ func (s *ConnectionService) buildMicrosoftAdsResult(c *model.Connection) *conn.M
 }
 
 func (s *ConnectionService) CreateMicrosoftAds(ctx context.Context, p *conn.CreateMicrosoftAdsPayload) (*conn.MicrosoftAdsConnection, error) {
+	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
 	cfg := p.Config
 	m := &model.Connection{
 		ProjectID: p.ProjectID,
@@ -487,6 +521,9 @@ func (s *ConnectionService) buildHubspotResult(c *model.Connection) *conn.Hubspo
 }
 
 func (s *ConnectionService) CreateHubspot(ctx context.Context, p *conn.CreateHubspotPayload) (*conn.HubspotConnection, error) {
+	if err := validateConnectionProjectSlug(p.ProjectID); err != nil {
+		return nil, err
+	}
 	cfg := p.Config
 	m := &model.Connection{
 		ProjectID: p.ProjectID,

@@ -15,6 +15,7 @@ import (
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -242,22 +243,58 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 // /readyz reflects DB connectivity. It also recovers jobs orphaned by a prior pod
 // restart and starts the periodic recovery sweeper. Shared by the fast path (and,
 // once brief/orchestrator late-binding exists, reusable from the retry path).
+
+// registerDispatchers builds the per-provider PlatformDispatcher map from the
+// connection repo + encryptor. Adapters resolve+decrypt each project's connection
+// themselves. Called from BOTH the fast path and the cold-start retry path so the
+// registered set stays identical regardless of how the DB comes up. Add a provider
+// here as its adapter lands; a provider with no entry records jobs that report "no
+// dispatcher registered" for that platform (logged as a startup warning).
+func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor) map[model.Provider]service.PlatformDispatcher {
+	return map[model.Provider]service.PlatformDispatcher{
+		model.ProviderRedditAds: dispatch.NewRedditDispatcher(repo, enc),
+	}
+}
+
+// adPlatformProviders is the full set of providers a brief can select (per the
+// CreateCampaigns contract); any without a registered dispatcher is logged at startup
+// so the gap is visible in production. MicrosoftAds and HubSpot are included even
+// though no adapter exists yet — CreateCampaigns accepts both, so a selection of
+// either would otherwise fail silently with "no dispatcher registered" and never be
+// surfaced here. (HubSpot is the email channel; its adapter lands with LFXV2-2777.)
+var adPlatformProviders = []model.Provider{
+	model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds,
+	model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds,
+	model.ProviderHubSpot,
+}
+
+// logMissingDispatchers warns about ad providers that have no adapter yet — those
+// platforms record jobs that finish "failed" with "no dispatcher registered".
+func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispatcher) {
+	var missing []string
+	for _, p := range adPlatformProviders {
+		if _, ok := dispatchers[p]; !ok {
+			missing = append(missing, string(p))
+		}
+	}
+	if len(missing) > 0 {
+		slog.Warn("some ad platforms have no dispatcher registered; campaigns for them record jobs but perform no upstream dispatch",
+			"missing", missing, "registered", len(dispatchers))
+	}
+}
+
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
 	repo := postgres.NewConnectionRepo(pool)
 	c.Connections = service.NewConnectionService(repo, enc)
 	briefRepo := postgres.NewBriefRepo(pool)
 	campaignRepo := postgres.NewCampaignRepo(pool)
 	jobRepo := postgres.NewJobRepo(pool)
-	// No platform dispatchers are registered yet; campaign creation records a
-	// job whose platforms report "no dispatcher" until the per-platform adapters
-	// land (LFXV2-2636..2640). The orchestration flow (job lifecycle,
-	// persistence) is exercised end to end regardless. Log a startup warning so
-	// this gap is visible in production logs rather than silently producing jobs
-	// that always finish "failed" with "no dispatcher registered".
-	dispatchers := map[model.Provider]service.PlatformDispatcher{}
-	if len(dispatchers) == 0 {
-		slog.Warn("no platform dispatchers registered; campaign creation will record jobs but perform no upstream dispatch")
-	}
+	// Register the per-provider dispatchers. Providers WITHOUT an adapter yet record
+	// jobs that report "no dispatcher registered" for that platform (the remaining
+	// ad-platform + email adapters land incrementally, LFXV2-2636..2642 / 2777);
+	// warn so that gap is visible in production logs.
+	dispatchers := registerDispatchers(repo, enc)
+	logMissingDispatchers(dispatchers)
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
@@ -298,17 +335,17 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 		if err == nil {
 			c.setPool(pool)
 			// Late-bind the connection service.
-			b.SetBackend(postgres.NewConnectionRepo(pool), enc)
+			connRepo := postgres.NewConnectionRepo(pool)
+			b.SetBackend(connRepo, enc)
 			// Late-bind the brief service (repos + orchestrator) so brief/job routes go
 			// live, and run the stuck-job recovery + start the periodic sweeper — the
 			// same work wireLiveBackends does on the fast path.
 			briefRepo := postgres.NewBriefRepo(pool)
 			campaignRepo := postgres.NewCampaignRepo(pool)
 			jobRepo := postgres.NewJobRepo(pool)
-			dispatchers := map[model.Provider]service.PlatformDispatcher{}
-			if len(dispatchers) == 0 {
-				slog.Warn("no platform dispatchers registered; campaign creation will record jobs but perform no upstream dispatch")
-			}
+			// Same dispatcher set as the fast path (see registerDispatchers).
+			dispatchers := registerDispatchers(connRepo, enc)
+			logMissingDispatchers(dispatchers)
 			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
 			// goroutine returns) before it reads c.orch, so this write happens-before

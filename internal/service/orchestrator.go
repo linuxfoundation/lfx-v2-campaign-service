@@ -37,6 +37,14 @@ const CancelGracePeriod = jobFinalizeTimeout + persistResultTimeout + time.Secon
 // a context detached from the (possibly-cancelled) dispatch context.
 const claimReleaseTimeout = 5 * time.Second
 
+// campaignStatusPending is the status of a claim/orphan row that is NOT a completed
+// campaign: either a bare single-flight claim, or a retained partial where the upstream
+// campaign exists but a later step failed (the id is recorded for reconciliation). The
+// idempotency fast path must NOT treat such a row as a completed success just because
+// it carries an upstream id — otherwise a retry after a partial failure reports success
+// while the campaign is still incomplete/orphaned.
+const campaignStatusPending = "pending"
+
 // dispatchQueueTimeout bounds how long a platform waits for a semaphore slot
 // before it's recorded as failed. Without it, a large backlog could keep a job
 // queued longer than staleJobCutoff, so the recovery sweep would wrongly fail a
@@ -49,9 +57,20 @@ const dispatchQueueTimeout = 10 * time.Minute
 // context is otherwise only cancelled at shutdown, so a provider call that hangs
 // (unresponsive upstream, dropped connection with no client timeout) would leave
 // its job "running" forever and permanently occupy one of the maxParallelDispatch
-// semaphore slots. This ceiling guarantees the slot and job are released. It is
-// generous: real ad-platform create flows are multi-request but complete in well
-// under a minute.
+// semaphore slots. This ceiling guarantees the slot and job are released.
+//
+// It is a DELIBERATE fail-fast ceiling, NOT the sum of a client's worst-case retry
+// policy. Real create flows complete in well under a minute; a client's full 429
+// backoff ceiling can exceed this (e.g. the reddit client's worst-case single-create
+// wait is ~7m: retryMax*maxRetryWait + attempt timeouts), so on sustained throttling
+// this cap truncates the client's best-effort retries and the create is returned as a
+// retained partial that the reconcile path handles — preferred over letting one
+// throttled create hold a semaphore slot for many minutes. Raising this to cover a
+// client's full worst case is NOT free: dispatchQueueTimeout (10m) + providerCallTimeout
+// must stay comfortably below staleJobCutoff (15m) so the stale sweeper never fails a
+// still-progressing job — 10m + 7m would break that. Rebalancing the queue/stale budget
+// to honor the full per-client worst case is an infra-owned timeout review, tracked
+// separately.
 const providerCallTimeout = 2 * time.Minute
 
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
@@ -470,13 +489,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Only ErrNotFound is a clean "nothing yet, proceed".
 	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p)
 	switch {
-	case lerr == nil && existing.PlatformCampaignID != "":
+	case lerr == nil && existing.PlatformCampaignID != "" && existing.Status != campaignStatusPending:
+		// A COMPLETED campaign (created / created_degraded — both terminal, since a
+		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently.
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
 		return res
 	case lerr == nil:
-		// A row exists but has no upstream id yet (a prior pending/failed attempt) —
-		// fall through to the claim path, which reconciles it.
+		// A row exists but is not a completed campaign — either it has no upstream id
+		// yet (a prior pending/failed attempt) OR it is a retained partial orphan
+		// (pending status WITH an upstream id, recorded for reconciliation after a
+		// mid-flow failure). In both cases fall through to the claim path, which
+		// reconciles it rather than falsely reporting the pending orphan as a success.
 	case errors.Is(lerr, domain.ErrNotFound):
 		// No campaign for this pair yet — fall through to claim/dispatch.
 	default:
@@ -507,23 +531,51 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	}
 	if !claimed {
 		// Another worker owns (or already completed) this pair.
-		if existing != nil && existing.PlatformCampaignID != "" {
-			// Already created upstream — reuse it (idempotent).
+		if existing != nil && existing.PlatformCampaignID != "" && existing.Status != campaignStatusPending {
+			// Already created upstream AND completed (created / created_degraded) —
+			// reuse it (idempotent). A pending row WITH an id is a retained partial
+			// orphan, not a success, so it falls through to the skip path below rather
+			// than being reported as a completed campaign.
 			res.OK = true
 			res.CampaignID = existing.PlatformCampaignID
 			return res
 		}
-		// Another worker holds the pending claim: don't dispatch again (the point of
-		// the claim). This job did not create the campaign — its outcome belongs to
-		// the owning dispatch — so record it as SKIPPED, not failed. Recording a skip
-		// as a failure would falsely drive THIS job to terminal failed/partial even
-		// when the owner succeeds (GetJob only decodes the stored result and never
-		// re-checks the campaign row, so the false failure would be permanent).
-		// aggregateStatus excludes skipped platforms from the failure tally and
-		// returns succeeded for a wholly-skipped job (leaving it running would strand
-		// it until the staleness sweeper failed it, since nothing revisits a running
-		// job). Fully adopting the owner's async result into this job is tracked under
-		// LFXV2-2665.
+		// A retained partial ORPHAN is distinguishable from a claim held by a still-
+		// running worker: a prior dispatch failed mid-flow after (maybe) creating the
+		// upstream campaign, and NOTHING will revisit it. It presents in two shapes, both
+		// of which must be caught so aggregateStatus can't mark an all-skipped retry job
+		// `succeeded` and hide the orphan:
+		//   1. a non-empty PlatformCampaignID (the created upstream id was recorded), or
+		//   2. an id-less partial that still carries a Result reconcile blob (the
+		//      ambiguous-create / group-orphan case — the id is empty by design but the
+		//      row was persisted WITH Result so it's reconcilable; see the retain branch
+		//      persist condition, which keeps such a row when len(Result) > 0).
+		// Either shape is reported as a FAILURE (reconciliation required), NOT a skip.
+		// (Automatic name-based reconciliation is tracked in LFXV2-2665.)
+		if existing != nil && (existing.PlatformCampaignID != "" || len(existing.Result) > 0) {
+			slog.ErrorContext(ctx, "retained partial orphan found on retry; reconciliation required",
+				"platform", p, "job_id", jobID, "platform_campaign_id", existing.PlatformCampaignID, "has_result", len(existing.Result) > 0)
+			res.CampaignID = existing.PlatformCampaignID
+			res.Error = "a prior dispatch left an incomplete campaign upstream; reconciliation required"
+			return res
+		}
+		// A BARE pending claim (no upstream id AND no Result blob): typically a claim
+		// held by another still-running worker, so we treat it as SKIPPED rather than
+		// re-dispatching (the point of the claim). Recording a skip as a failure would
+		// falsely drive THIS job to terminal failed/partial even when the owner succeeds
+		// (GetJob only decodes the stored result and never re-checks the campaign row, so
+		// the false failure would be permanent). aggregateStatus excludes skipped
+		// platforms from the failure tally and returns succeeded for a wholly-skipped job.
+		//
+		// KNOWN RESIDUAL GAP: a bare pending claim can ALSO be a terminally-stranded row
+		// — e.g. a dispatcher that returned (nil, err) after possibly creating a campaign
+		// but with no reconcile detail, a failed partial persist, or a panic after the
+		// claim. Those are indistinguishable HERE from a live owner without a claim
+		// lease/timestamp, so such a stranded claim can still let an all-skipped retry
+		// report succeeded. Disambiguating an active owner from a terminal/unknown claim
+		// requires the claim-lease (claimed_at) reconciliation work tracked in LFXV2-2665;
+		// this PR closes the id-carrying and Result-carrying cases, which are the ones
+		// that persist a reconcilable signal.
 		res.Skipped = true
 		res.Error = "skipped: another concurrent dispatch owns this platform"
 		return res
@@ -565,13 +617,16 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// The claim is RETAINED (outcome unknown, blind retry could double-create).
 			// The platform clients' partial-result contract lets Dispatch return a
 			// non-nil campaign carrying the created upstream id ALONGSIDE the error
-			// (the campaign POST succeeded but a later step failed). If it did, stamp
-			// that upstream id onto the retained pending row so the orphaned upstream
-			// campaign is RECONCILABLE later instead of leaving an anonymous claim.
-			// Persist on a context DETACHED from the dispatch ctx (mirroring the
-			// success path) so a shutdown-cancelled dispatch ctx can't drop the record
-			// of a paid campaign that actually exists.
-			if campaign != nil && campaign.PlatformCampaignID != "" {
+			// (the campaign POST succeeded but a later step failed) OR an id-less
+			// partial that still carries a Result reconcile blob (an ambiguous create /
+			// group-orphan, where the id is empty by design but Result holds the
+			// reconcile detail — e.g. a campaign name for a name-based lookup). In BOTH
+			// cases, persist the row so the orphan is RECONCILABLE later instead of
+			// leaving an anonymous claim that a retry can't distinguish from a live
+			// concurrent dispatch. Persist on a context DETACHED from the dispatch ctx
+			// (mirroring the success path) so a shutdown-cancelled dispatch ctx can't
+			// drop the record of a paid campaign that actually exists.
+			if campaign != nil && (campaign.PlatformCampaignID != "" || len(campaign.Result) > 0) {
 				campaign.JobID = &jobID
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
@@ -579,14 +634,14 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// Keep the row 'pending' so it stays a recoverable orphan (not a
 				// completed campaign): the dispatch did not succeed, only the upstream
 				// create partially happened.
-				campaign.Status = "pending"
+				campaign.Status = campaignStatusPending
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
-					slog.ErrorContext(ctx, "failed to record partial upstream campaign id on retained pending claim",
-						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", perr)
+					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
+						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
 				} else {
-					slog.ErrorContext(ctx, "platform dispatch failed after upstream create; recorded orphaned upstream id on retained pending claim",
-						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", derr)
+					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
+						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 				}
 				cancelPersist()
 			} else {

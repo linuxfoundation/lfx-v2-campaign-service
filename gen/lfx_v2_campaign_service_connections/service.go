@@ -168,7 +168,7 @@ type ConnectionTestResult struct {
 type CreateGoogleAdsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID   string
 	Config      *GoogleAdsConnectionConfig
 	Credentials *GoogleAdsCredentials
@@ -179,7 +179,7 @@ type CreateGoogleAdsPayload struct {
 type CreateHubspotPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID   string
 	Config      *HubspotConnectionConfig
 	Credentials *HubspotCredentials
@@ -190,7 +190,7 @@ type CreateHubspotPayload struct {
 type CreateLinkedinAdsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID   string
 	Config      *LinkedinAdsConnectionConfig
 	Credentials *LinkedinAdsCredentials
@@ -201,7 +201,7 @@ type CreateLinkedinAdsPayload struct {
 type CreateMetaAdsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID   string
 	Config      *MetaAdsConnectionConfig
 	Credentials *MetaAdsCredentials
@@ -212,7 +212,7 @@ type CreateMetaAdsPayload struct {
 type CreateMicrosoftAdsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID   string
 	Config      *MicrosoftAdsConnectionConfig
 	Credentials *MicrosoftAdsCredentials
@@ -223,7 +223,7 @@ type CreateMicrosoftAdsPayload struct {
 type CreateRedditAdsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID   string
 	Config      *RedditAdsConnectionConfig
 	Credentials *RedditAdsCredentials
@@ -234,7 +234,7 @@ type CreateRedditAdsPayload struct {
 type CreateTwitterAdsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
-	// Project UUID or slug that scopes the connection
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID   string
 	Config      *TwitterAdsConnectionConfig
 	Credentials *TwitterAdsCredentials

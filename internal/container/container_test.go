@@ -4,9 +4,11 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -147,6 +149,43 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Close returned nil; a shutdown timeout (dispatches still running) must be observable to the caller")
 	}
+}
+
+// TestRegisterDispatchers_RegistersReddit guards the one line that makes this PR's
+// production fix real: the reddit dispatcher must be mapped to ProviderRedditAds. A
+// regression that drops it from the map would silently restore the "no dispatcher
+// registered" behavior with every other test still green (the adapter is unit-tested
+// by instantiating RedditDispatcher directly, which bypasses the map). registerDispatchers
+// only stores its args, so nil repo/encryptor build the map without a deref.
+func TestRegisterDispatchers_RegistersReddit(t *testing.T) {
+	m := registerDispatchers(nil, nil)
+	_, ok := m[model.ProviderRedditAds]
+	assert.True(t, ok, "ProviderRedditAds must be registered — this is the wiring the PR adds")
+}
+
+// TestLogMissingDispatchers_SurfacesGaps verifies logMissingDispatchers actually
+// flags a known ad provider that has no adapter, so the startup gap stays visible. It
+// asserts on the EMITTED LOG OUTPUT (captured via a buffer-backed default handler), not
+// a recomputed copy of the function's loop — so it fails if logMissingDispatchers were
+// gutted to a no-op (per @dealako's review).
+func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
+	// Capture the ACTUAL slog output (not a recomputed copy of the loop) so the test
+	// verifies logMissingDispatchers's behavior — it would fail if the function were
+	// gutted to a no-op. Swap the default logger to a buffer-backed handler for the call.
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	m := registerDispatchers(nil, nil) // registers reddit (+ linkedin/meta/twitter as they land)
+	logMissingDispatchers(m)
+
+	out := buf.String()
+	assert.Contains(t, out, "no dispatcher registered", "the warning message must be emitted when providers are missing")
+	// The registered provider (reddit) must NOT be logged as missing...
+	assert.NotContains(t, out, string(model.ProviderRedditAds), "reddit is registered, so it must not be logged as missing")
+	// ...and at least one genuinely-unregistered known provider MUST be named.
+	assert.Contains(t, out, string(model.ProviderMicrosoftAds), "an unregistered known provider (microsoft-ads) must be surfaced in the log")
 }
 
 func TestNewContainer_NoDatabase(t *testing.T) {

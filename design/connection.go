@@ -40,10 +40,30 @@ func bearerToken() {
 	})
 }
 
-// projectIDAttr declares the project path parameter.
+// projectIDAttr declares the project path parameter (UUID-or-slug) for the
+// read/update/delete routes, which stay permissive (migration 000003 preserved
+// historical UUID-keyed rows).
 func projectIDAttr() {
 	Attribute("project_id", String, "Project UUID or slug that scopes the connection", func() {
 		Example("cncf")
+	})
+}
+
+// projectSlugAttr declares project_id constrained to a CANONICAL SLUG (not a UUID) for
+// the campaign-naming CREATE routes only (create-brief, create-campaigns). project_id is
+// stamped into the campaign-name attribution key and is the exact-match key for the
+// connection lookup at dispatch, so a UUID there breaks the slug-based join. The Pattern
+// requires single internal hyphens (no `foo--bar`) and MaxLength(35) rejects a canonical
+// 36-char UUID (RE2 has no negative lookahead, so the length bound is the reliable UUID
+// discriminator). Declaring the Pattern/MaxLength here makes Goa BOTH publish the
+// constraint in the OpenAPI contract AND generate the request-decoder validation for
+// the create routes; the handlers additionally guard with validateProjectSlug /
+// projectSlugProblem so direct/non-HTTP callers get the same rejection.
+func projectSlugAttr() {
+	Attribute("project_id", String, "Canonical LFX project slug (NOT a UUID) that scopes the resource", func() {
+		Example("cncf")
+		Pattern(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+		MaxLength(35)
 	})
 }
 
@@ -138,7 +158,14 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 		Description("Create the project's " + title + " connection (singleton; 409 if one already exists).")
 		Payload(func() {
 			bearerToken()
-			projectIDAttr()
+			// A connection is created keyed by project_id, which is later the EXACT-MATCH
+			// key for the dispatch lookup (ConnectionRepo.Get). brief/campaign create
+			// already require a canonical slug, so a UUID-keyed connection could never be
+			// joined to a dispatched campaign — constrain create to a slug too. get/update/
+			// delete/set-credential/test stay permissive (projectIDAttr) for historical
+			// UUID-keyed rows (migration 000003). The generated decoder validates the
+			// pattern; the service additionally guards via validateConnectionProjectSlug.
+			projectSlugAttr()
 			Attribute("config", config)
 			Attribute("credentials", creds)
 			Required("project_id", "config", "credentials")

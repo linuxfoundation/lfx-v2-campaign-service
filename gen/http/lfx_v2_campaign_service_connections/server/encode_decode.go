@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	lfxv2campaignserviceconnections "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	goahttp "goa.design/goa/v3/http"
@@ -64,9 +65,16 @@ func DecodeCreateGoogleAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateGoogleAdsPayload(&body, projectID, bearerToken)
 		if payload.BearerToken != nil {
@@ -768,9 +776,16 @@ func DecodeCreateLinkedinAdsRequest(mux goahttp.Muxer, decoder func(*http.Reques
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateLinkedinAdsPayload(&body, projectID, bearerToken)
 		if payload.BearerToken != nil {
@@ -1473,9 +1488,16 @@ func DecodeCreateMetaAdsRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateMetaAdsPayload(&body, projectID, bearerToken)
 		if payload.BearerToken != nil {
@@ -2176,9 +2198,16 @@ func DecodeCreateRedditAdsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateRedditAdsPayload(&body, projectID, bearerToken)
 		if payload.BearerToken != nil {
@@ -2880,9 +2909,16 @@ func DecodeCreateTwitterAdsRequest(mux goahttp.Muxer, decoder func(*http.Request
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateTwitterAdsPayload(&body, projectID, bearerToken)
 		if payload.BearerToken != nil {
@@ -3584,9 +3620,16 @@ func DecodeCreateMicrosoftAdsRequest(mux goahttp.Muxer, decoder func(*http.Reque
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateMicrosoftAdsPayload(&body, projectID, bearerToken)
 		if payload.BearerToken != nil {
@@ -4290,9 +4333,16 @@ func DecodeCreateHubspotRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
 		}
 		payload = NewCreateHubspotPayload(&body, projectID, bearerToken)
 		if payload.BearerToken != nil {

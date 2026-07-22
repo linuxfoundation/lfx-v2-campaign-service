@@ -73,8 +73,34 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		// Goa/OpenAPI can't express uniqueItems, so duplicate rejection stays in
 		// the handler.
 		MinLength(1)
+		// Pin a deterministic example that MATCHES the config envelope example below
+		// (redditConfig + metaConfig). Without it Goa auto-picks an enum value (e.g.
+		// linkedin-ads), producing a published example whose platforms don't match the
+		// supplied config — a copyable request that fails asynchronously.
+		Example([]string{"reddit-ads", "meta-ads"})
 	})
-	Attribute("config", Any, "Per-platform campaign configuration")
+	Attribute("config", Any, "Per-platform campaign configuration", func() {
+		// config is an OBJECT ENVELOPE keyed by per-platform config name
+		// (redditConfig / linkedInConfig / metaConfig / twitterConfig — plus the
+		// top-level hsToken sibling), NOT a string. Goa renders an Any without an
+		// example as an empty-string example, which a consumer would copy and then
+		// hit "cannot unmarshal string into map" after the 202. Publish a deterministic
+		// OBJECT example (matching the reddit-ads + meta-ads platforms example above) so
+		// the copyable contract is a valid envelope.
+		Example(map[string]any{
+			"hsToken": "hs-abc123",
+			"redditConfig": map[string]any{
+				"budgetUsd": 50, "startDate": "2099-08-01", "endDate": "2099-08-31",
+				"objective": "traffic", "subreddits": []string{"kubernetes"},
+				"postUrl": "t3_abc123", "variants": []map[string]any{{"headline": "Join us"}},
+			},
+			"metaConfig": map[string]any{
+				"budget": 2500, "startDate": "2099-08-01", "endDate": "2099-08-31",
+				"objective": "traffic", "geoTargets": []string{"US"},
+				"variants": []map[string]any{{"primaryText": "Join us at KubeCon", "headline": "KubeCon 2099"}},
+			},
+		})
+	})
 	Required("platforms")
 })
 
@@ -143,7 +169,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		Description("Create a brief.")
 		Payload(func() {
 			bearerToken()
-			projectIDAttr()
+			// Slug-only on CREATE: project_id becomes the campaign-name attribution key,
+			// so a UUID here would break the slug-based join (projectSlugAttr rejects it).
+			projectSlugAttr()
 			Attribute("brief", BriefInput)
 			Required("project_id", "brief")
 		})
@@ -248,7 +276,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		Description("Create campaigns across the selected platforms (async -> job).")
 		Payload(func() {
 			bearerToken()
-			projectIDAttr()
+			// Slug-only on CREATE: project_id is stamped into the campaign name and is the
+			// exact-match key for the dispatch connection lookup — a UUID breaks both.
+			projectSlugAttr()
 			briefIDAttr()
 			Attribute("input", CampaignCreateInput)
 			Required("project_id", "brief_id", "input")
