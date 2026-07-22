@@ -31,13 +31,18 @@ func NewCampaignRepo(pool *Pool) *CampaignRepo { return &CampaignRepo{db: pool} 
 
 var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 
-// ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
-// by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
-// unique index makes the claim single-winner across all replicas without holding
-// a connection or a blocking lock: INSERT ... ON CONFLICT DO NOTHING inserts a
-// row (claimed) or does nothing (already claimed/completed). No RETURNING is used
-// because ON CONFLICT DO NOTHING returns no row on conflict, so we detect the
-// winner via RowsAffected and then read the current row to return it.
+// ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform) by
+// inserting a placeholder pending campaign row. The (brief_id, platform) unique index
+// makes the claim single-winner across all replicas without holding a connection or a
+// blocking lock. The claim is one INSERT ... ON CONFLICT with two conflict actions
+// (see the inline block): DO NOTHING (reclaimAfter<=0) or a stale-orphan-stealing DO
+// UPDATE (reclaimAfter>0). We use `RETURNING (xmax = 0)` to detect the winner: a row
+// comes back only when THIS caller inserted or stole (xmax=0 → fresh insert, else a
+// steal); a conflict that did nothing (or a DO UPDATE whose WHERE didn't match) returns
+// no row (pgx.ErrNoRows → claimed=false). NOTE the load-bearing invariants keyed on
+// below: status == model.CampaignStatusPending ('pending') and the EMPTY-STRING (not
+// NULL) platform_campaign_id mark an un-completed claim; a Go writer that drifts from
+// either silently breaks the steal/skip logic (campaigns.status has no CHECK).
 func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string, reclaimAfter time.Duration) (bool, *model.Campaign, error) {
 	// The claim is one atomic INSERT ... ON CONFLICT. Two conflict actions:
 	//   - reclaimAfter <= 0: DO NOTHING — a conflicting row is never touched (today's

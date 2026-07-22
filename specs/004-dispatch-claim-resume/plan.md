@@ -182,6 +182,17 @@ later (out of scope; note as a follow-up).
 - Regression: an actively-owned pending claim (recent lease) still skips (no double
   dispatch) — the existing single-flight test must still pass.
 
+## Status on merge: DORMANT until an adapter opts in
+
+This change ships the resume MECHANISM (the `claimed_at` column, the steal SQL, the
+`Resumable()` capability, and the orchestrator gate) but NO production dispatcher
+implements `Resumable()` yet — so on merge every real claim takes the `reclaimAfter==0`
+`DO NOTHING` path and behavior in prod is unchanged. Resume goes live only when the
+LinkedIn and Twitter adapters add `func (…) Resumable() bool { return true }` (a
+follow-up, once the dispatcher stack + this branch are on main). Landing the mechanism
+ahead of the opt-in is deliberate: it keeps the risky schema/SQL change small and
+independently reviewable, and makes enabling each platform a one-line, low-risk edit.
+
 ## Rollout / sequencing
 
 1. Depends on: #42 (orphan is recorded) merged, and the dispatcher stack merged (so the

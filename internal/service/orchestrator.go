@@ -604,10 +604,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
-				// Keep the row 'pending' so it stays a recoverable orphan (not a
+				// Keep the row pending so it stays a recoverable orphan (not a
 				// completed campaign): the dispatch did not succeed, only the upstream
-				// create partially happened.
-				campaign.Status = "pending"
+				// create partially happened. The canonical constant must match the
+				// 'pending' literal the claim/steal SQL keys on (campaign_repo.go).
+				campaign.Status = model.CampaignStatusPending
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign id on retained pending claim",
