@@ -184,11 +184,19 @@ func TestLinkedIn_ForeignAccountIDRejected(t *testing.T) {
 	// rejected up front (pre-create) — appending it to the allowlist would defeat the
 	// client's cross-tenant fail-closed check.
 	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{})
-	cfg := json.RawMessage(`{"linkedInConfig":{"adAccountId":"999999999","targetingProfile":"x","targetingProfiles":[{"id":"x","label":"X"}]}}`)
+	// A variant IS supplied so the flow gets PAST the empty-variants pre-create check
+	// and actually reaches the cross-account guard — otherwise this test would pass on
+	// the wrong error and a broken account guard would go unnoticed.
+	cfg := json.RawMessage(`{"linkedInConfig":{"adAccountId":"999999999","targetingProfile":"x","targetingProfiles":[{"id":"x","label":"X"}],"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]}}`)
 	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
 	var nuc interface{ NoUpstreamCreate() bool }
 	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
 		t.Errorf("a foreign adAccountId must be rejected pre-create, got %T: %v", err, err)
+	}
+	// The rejection must be the ACCOUNT-mismatch guard, not the empty-variants check —
+	// assert the cause so this test genuinely exercises the cross-account rejection.
+	if err != nil && strings.Contains(err.Error(), "creative variant") {
+		t.Errorf("test must reach the account guard, but failed on empty-variants instead: %v", err)
 	}
 }
 
