@@ -256,14 +256,16 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor) ma
 	}
 }
 
-// adPlatformProviders is the full set of paid providers a brief can select (per the
+// adPlatformProviders is the full set of providers a brief can select (per the
 // CreateCampaigns contract); any without a registered dispatcher is logged at startup
-// so the gap is visible in production. MicrosoftAds is included even though no adapter
-// exists yet — CreateCampaigns accepts it, so a Microsoft selection would otherwise
-// fail silently with "no dispatcher registered" and never be surfaced here.
+// so the gap is visible in production. MicrosoftAds and HubSpot are included even
+// though no adapter exists yet — CreateCampaigns accepts both, so a selection of
+// either would otherwise fail silently with "no dispatcher registered" and never be
+// surfaced here. (HubSpot is the email channel; its adapter lands with LFXV2-2777.)
 var adPlatformProviders = []model.Provider{
 	model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds,
 	model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds,
+	model.ProviderHubSpot,
 }
 
 // logMissingDispatchers warns about ad providers that have no adapter yet — those
