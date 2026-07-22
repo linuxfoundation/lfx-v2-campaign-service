@@ -22,6 +22,13 @@ import (
 // campaignFromLinkedIn).
 const campaignStatusGroupCreated = "group_created"
 
+// campaignStatusUnconfirmed marks a LinkedIn dispatch where NEITHER the campaign nor
+// its group was confirmed created — a group-ambiguous partial returns both
+// CampaignID == "" and CampaignGroupID == "". Distinct from campaignStatusCreated so
+// the object is never falsely labelled "created" when nothing was confirmed; the
+// claim is retained by the caller and Result carries the reconcile blob.
+const campaignStatusUnconfirmed = "unconfirmed"
+
 // linkedinCreds mirrors LinkedinAdsCredentials's field name (no json tag) — the
 // persisted JSON key is the Go field name (AccessToken), see redditCreds. LinkedIn
 // authenticates with a single OAuth2 bearer access token.
@@ -185,26 +192,40 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
-		Status:             campaignStatusCreated,
 	}
-	// LinkedIn can create the campaign GROUP but fail/leave-ambiguous the CAMPAIGN,
-	// returning CampaignGroupID with an EMPTY CampaignID. We must NOT stuff the group
-	// id into PlatformCampaignID: the orchestrator's idempotency treats ANY non-empty
-	// PlatformCampaignID as "campaign finished upstream" and short-circuits a later
-	// dispatch to success — so a group-only orphan would look permanently succeeded
-	// and the campaign would never be created on retry. PlatformCampaignID stays EMPTY
-	// (no campaign exists) so a retry re-attempts; the group orphan is preserved in
-	// Result (below, CampaignGroupID) + the group_created status for reconciliation.
-	if c.PlatformCampaignID == "" && r.CampaignGroupID != "" {
+	// Derive the status from what was actually confirmed created. Start UNCONFIRMED and
+	// only claim `created` once a real campaign id exists — a group-*ambiguous* partial
+	// returns BOTH CampaignID == "" and CampaignGroupID == "" (client.go buildResult on
+	// the group-create failure path), and defaulting to `created` there would stamp
+	// "created" on an object where nothing was confirmed.
+	switch {
+	case r.CampaignID != "":
+		c.Status = campaignStatusCreated
+		if r.CreativeCount < requestedVariants {
+			// The campaign exists but fewer creatives were created than requested — a
+			// DEGRADED success (mirrors the reddit/meta/twitter created_degraded handling).
+			// NOTE: today the LinkedIn client aborts (returns an error) on the FIRST
+			// creative failure, so a clean (result, nil) success normally has
+			// CreativeCount == requested; this guard is defensive so a shortfall is never
+			// silently reported as a clean `created` (and flags the count on the
+			// retained-error path).
+			c.Status = campaignStatusCreatedDegraded
+		}
+	case r.CampaignGroupID != "":
+		// The campaign GROUP was created but the CAMPAIGN failed/left-ambiguous with an
+		// EMPTY CampaignID. We must NOT stuff the group id into PlatformCampaignID: the
+		// orchestrator's idempotency treats ANY non-empty PlatformCampaignID as "campaign
+		// finished upstream" and short-circuits a later dispatch to success — so a
+		// group-only orphan would look permanently succeeded and the campaign would never
+		// be created on retry. PlatformCampaignID stays EMPTY (no campaign exists) so a
+		// retry re-attempts; the group orphan is preserved in Result (CampaignGroupID) +
+		// the group_created status for reconciliation.
 		c.Status = campaignStatusGroupCreated
-	} else if r.CampaignID != "" && r.CreativeCount < requestedVariants {
-		// The campaign exists but fewer creatives were created than requested — a
-		// DEGRADED success (mirrors the reddit/meta/twitter created_degraded handling).
-		// NOTE: today the LinkedIn client aborts (returns an error) on the FIRST creative
-		// failure, so a clean (result, nil) success normally has CreativeCount ==
-		// requested; this guard is defensive so a shortfall is never silently reported as
-		// a clean `created` (and it also flags the count on the retained-error path).
-		c.Status = campaignStatusCreatedDegraded
+	default:
+		// Neither id present — a group-ambiguous partial where even the group create is
+		// unconfirmed. Leave the status unconfirmed rather than falsely `created`; the
+		// claim is retained by the caller and Result carries the reconcile blob.
+		c.Status = campaignStatusUnconfirmed
 	}
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT

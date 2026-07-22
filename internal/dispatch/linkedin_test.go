@@ -100,6 +100,11 @@ func TestLinkedIn_CampaignFromLinkedInStatus(t *testing.T) {
 	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "", CampaignGroupID: "g1"}, 3); c.Status != campaignStatusGroupCreated {
 		t.Errorf("group-only orphan should be %q, got %q", campaignStatusGroupCreated, c.Status)
 	}
+	// Group-AMBIGUOUS partial: BOTH ids empty (the group create itself was
+	// unconfirmed) → unconfirmed, NOT a false "created" (dealako #37).
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "", CampaignGroupID: ""}, 3); c.Status != campaignStatusUnconfirmed {
+		t.Errorf("both-ids-empty ambiguous partial should be %q, got %q", campaignStatusUnconfirmed, c.Status)
+	}
 	// The Result blob must be populated on the happy path.
 	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 3}, 3); len(c.Result) == 0 {
 		t.Error("Result blob should be marshaled on a normal result")
@@ -204,7 +209,66 @@ func TestLinkedIn_AmbiguousCreateRetainsClaim(t *testing.T) {
 		t.Error("an ambiguous create must NOT be NoUpstreamCreate — the claim must be retained")
 	}
 	if camp == nil {
-		t.Error("an ambiguous create must return a non-nil campaign for orphan recording")
+		t.Fatal("an ambiguous create must return a non-nil campaign for orphan recording")
+	}
+	// Both the group and campaign creates 5xx'd, so BOTH ids are empty — the object
+	// must be `unconfirmed`, never a false `created` (dealako #37).
+	if camp.PlatformCampaignID != "" {
+		t.Errorf("an ambiguous group create yields no campaign id, got %q", camp.PlatformCampaignID)
+	}
+	if camp.Status != campaignStatusUnconfirmed {
+		t.Errorf("a both-ids-empty ambiguous create must be %q, got %q", campaignStatusUnconfirmed, camp.Status)
+	}
+}
+
+func TestLinkedIn_ConfigHSTokenTakesPrecedence(t *testing.T) {
+	// hsToken is a documented TOP-LEVEL config field (sibling to linkedInConfig, per
+	// api-catalog). A request supplying config.hsToken must be honored — it drives
+	// utm_campaign for HubSpot attribution on the dark post's destination URL — and take
+	// precedence over any token in the brief blobs, mirroring the reddit adapter.
+	var gotPostBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			body, _ := io.ReadAll(r.Body)
+			gotPostBody = string(body) // the dark post carries the utm destination URL
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
+	)
+	// hsToken is a TOP-LEVEL envelope field (sibling to linkedInConfig, per api-catalog).
+	cfg := json.RawMessage(`{"hsToken":"HS-FROM-CONFIG","linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !strings.Contains(gotPostBody, "HS-FROM-CONFIG") {
+		t.Errorf("config.hsToken must drive utm_campaign on the dark post; body did not carry it: %q", gotPostBody)
 	}
 }
 
