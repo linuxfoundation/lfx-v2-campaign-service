@@ -289,7 +289,11 @@ objective?: string              — awareness | traffic | engagement | leads | c
                                   (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration
                                   URL); it does NOT create an on-Facebook instant lead form. Full
                                   LEAD_GENERATION parity is deferred (LFXV2-2665).
-geoTargets: string[]            — ISO country codes, e.g. ['US', 'JP']
+geoTargets?: string[]           — ISO country codes, e.g. ['US', 'JP']. Optional: omitted or an
+                                  empty list defaults to ['US']. Supplied entries are uppercased,
+                                  trimmed, and filtered to valid ISO-2 codes; if entries were
+                                  supplied but NONE survive validation the request is REJECTED
+                                  (it does not silently fall back to US).
 pixelId?: string                — Meta pixel id (required to attach a conversion promoted object)
 currencyOffset?: number         — Account minor-unit scale (1 for zero-decimal currencies like JPY,
                                   100 for most). This is a FALLBACK, not an unconditional override:
