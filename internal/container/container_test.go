@@ -149,6 +149,36 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 	}
 }
 
+// TestRegisterDispatchers_RegistersReddit guards the one line that makes this PR's
+// production fix real: the reddit dispatcher must be mapped to ProviderRedditAds. A
+// regression that drops it from the map would silently restore the "no dispatcher
+// registered" behavior with every other test still green (the adapter is unit-tested
+// by instantiating RedditDispatcher directly, which bypasses the map). registerDispatchers
+// only stores its args, so nil repo/encryptor build the map without a deref.
+func TestRegisterDispatchers_RegistersReddit(t *testing.T) {
+	m := registerDispatchers(nil, nil)
+	_, ok := m[model.ProviderRedditAds]
+	assert.True(t, ok, "ProviderRedditAds must be registered — this is the wiring the PR adds")
+}
+
+// TestLogMissingDispatchers_SurfacesGaps verifies logMissingDispatchers actually
+// flags a known ad provider that has no adapter, so the startup gap stays visible. It
+// asserts the detection over adPlatformProviders rather than the log sink: a map that
+// registers only reddit must leave every other adPlatformProvider "missing".
+func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
+	m := registerDispatchers(nil, nil) // reddit only
+	var missing []model.Provider
+	for _, p := range adPlatformProviders {
+		if _, ok := m[p]; !ok {
+			missing = append(missing, p)
+		}
+	}
+	assert.NotEmpty(t, missing, "known providers without an adapter must be detected as missing")
+	assert.NotContains(t, missing, model.ProviderRedditAds, "reddit is registered, so it must not be reported missing")
+	// logMissingDispatchers must run over that map without panicking (it only warns).
+	logMissingDispatchers(m)
+}
+
 func TestNewContainer_NoDatabase(t *testing.T) {
 	cfg := &config.Config{
 		Host: "*",

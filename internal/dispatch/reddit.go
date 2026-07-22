@@ -152,7 +152,13 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// ambiguous partial and risk a duplicate on retry.
 	//   - (nil, err)      → pre-create; notCreated releases the claim.
 	//   - (result, err)   → may exist; return the (possibly id-less) campaign + error
-	//                       so the orchestrator retains the claim and records the orphan.
+	//                       so the orchestrator RETAINS THE CLAIM (blocking a duplicate
+	//                       on retry). When the partial carries an upstream id the
+	//                       orchestrator also persists the name + Result reconcile blob;
+	//                       for a truly id-less ambiguous partial (CampaignID == "") it
+	//                       currently keeps only the bare pending claim row and logs —
+	//                       the name/blob are not written (orchestrator.go, out of scope
+	//                       here). The safety property (no duplicate) holds either way.
 	//   - (result, nil)   → success.
 	result, cerr := client.CreateCampaign(ctx, in)
 	if cerr != nil {
