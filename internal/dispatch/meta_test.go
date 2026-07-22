@@ -70,6 +70,42 @@ func TestMeta_BadConfigIsPreCreate(t *testing.T) {
 	}
 }
 
+// TestMeta_ClientPreCreateRejectionReleasesClaim exercises the `result == nil`
+// RELEASE branch (meta.go: "failed before any upstream create" -> notCreated), which
+// the other pre-create tests don't reach — they fail during envelope decode or before
+// the client is called. Here the connection is active and the config is syntactically
+// valid and passes the dispatcher's own checks, so the flow reaches the real Meta
+// client; the client then rejects it BEFORE its first upstream create because it
+// carries no ad variants (client.go: "at least one ad variant is required"), returning
+// (nil, err). The adapter must map that to a NoUpstreamCreate error so the orchestrator
+// RELEASES the claim (nothing was created upstream) — the release half of the
+// client-result contract.
+func TestMeta_ClientPreCreateRejectionReleasesClaim(t *testing.T) {
+	// A server that fails any request, proving the rejection happens BEFORE the client
+	// issues its first create (no request should reach here).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("client must reject the variant-less config before any upstream HTTP call")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	// Valid budget/dates/objective but NO variants — passes envelope decode + the
+	// dispatcher's checks, reaches the client, and is rejected pre-create.
+	cfg := json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if camp != nil {
+		t.Errorf("a pre-create rejection must return a nil campaign, got %+v", camp)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a client pre-create rejection must be NoUpstreamCreate (release the claim), got %T: %v", err, err)
+	}
+}
+
 // ---- happy path through an httptest meta API ------------------------------
 
 func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
