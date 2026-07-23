@@ -110,9 +110,16 @@ entity is updated by POSTing to its node id with `{"status": "ACTIVE"|"PAUSED"}`
 API updates a node by POSTing to the node id with the changed field; the same status enum the
 create path sets). Meta persists the ad set id (in the campaign result) but NOT the individual
 ad ids, so the ads are DISCOVERED via `GET /{adSetID}/ads` (paged; an unexpected/looping
-cursor or the page cap fails the discovery rather than silently truncating). Order on ACTIVATE
-is parent-first; activating with no ad set id is refused up front; a child failure after the
-campaign POST is a `partialCascadeError` (Unconfirmed). `StatusActive`/`StatusPaused` are the
+cursor, the page cap, or an ad with no usable id fails the discovery rather than silently
+truncating). Ordering is STATUS-DEPENDENT (Meta gates a child's serving by its parent's status
+— a paused parent is inherited by all children): ACTIVATE updates the ads + ad set FIRST (still
+gated by the paused campaign, so not serving) and flips the campaign ACTIVE LAST, so a
+mid-cascade failure leaves NOTHING serving; PAUSE flips the campaign gate FIRST then the
+children. Ids are validated numeric up front (nothing applied on a bad id); activating with no
+ad set id is refused. A failure once an upstream change may have landed (the pause path, or an
+ambiguous 5xx/transport outcome) is a `partialCascadeError` (Unconfirmed); a DEFINITE (4xx)
+child failure on the activate path — before the campaign flip, nothing serving — is a clean
+failure. `StatusActive`/`StatusPaused` are the
 accepted values; ids are validated numeric (`numericIDRE`) before interpolation. The narrower
 `UpdateCampaignStatus(ctx, campaignID, status)` (campaign node only) is retained as the
 building block. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classifier (and honors
