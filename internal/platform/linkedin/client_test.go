@@ -6,6 +6,7 @@ package linkedin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -995,5 +996,56 @@ func TestUpdateCampaignStatus_RejectsEmptyToken(t *testing.T) {
 				t.Errorf("%s token must be rejected before sending an invalid Bearer header", name)
 			}
 		})
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_EncodesCreativeURNInPath verifies the creative update
+// path percent-encodes the URN's colons (LinkedIn's required single-entity key form) AND that
+// the encoded path passes the client's path validation (which allows %).
+func TestUpdateCampaignAndCreativesStatus_EncodesCreativeURNInPath(t *testing.T) {
+	var creativePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			creativePath = r.URL.EscapedPath()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	if !strings.Contains(creativePath, "creatives/urn%3Ali%3AsponsoredCreative%3A900") {
+		t.Errorf("creative path = %q, want the %%3A-encoded URN key", creativePath)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_TruncatedDiscoveryFails verifies a stuck/looping finder
+// cursor fails the toggle (INCOMPLETE discovery) rather than silently succeeding — otherwise
+// the service would persist ACTIVE while undiscovered creatives stay DRAFT.
+func TestUpdateCampaignAndCreativesStatus_TruncatedDiscoveryFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			// Always return the SAME non-empty cursor → a stuck cursor.
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{"nextPageToken":"STUCK"}}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error when creative discovery does not terminate")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("incomplete discovery after the campaign update must be Unconfirmed(), got %T: %v", err, err)
 	}
 }

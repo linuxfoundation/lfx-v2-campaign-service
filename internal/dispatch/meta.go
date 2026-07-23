@@ -163,11 +163,13 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 
 // ToggleStatus pauses or resumes an existing Meta campaign on the platform. It resolves the
 // connection (an inactive/undecryptable/incomplete connection is a clean error), builds the
-// client, and POSTs status to the campaign node. campaign is the persisted row; Meta is a
-// single-node update (no child cascade like Reddit), so only campaign.PlatformCampaignID is
-// used. status is model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when
-// the platform confirms; an UNCONFIRMED outcome is wrapped so the caller reports "verify
-// before retry" (via the Unconfirmed() behavioral interface).
+// client, and CASCADES the status to the campaign, its ad set, and every ad — Meta's create
+// PAUSES all three, so toggling only the campaign to ACTIVE would not serve. campaign is the
+// persisted row; the ad set id is read from its CampaignResult (Meta persists the ad set id
+// but not the individual ad ids, which the client discovers via GET /{adSetID}/ads). status
+// is model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when the platform
+// confirms; an UNCONFIRMED outcome (including a partial cascade) is wrapped so the caller
+// reports "verify before retry" (via the Unconfirmed() behavioral interface).
 func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	metaStatus, err := metaRunStatus(status)
 	if err != nil {

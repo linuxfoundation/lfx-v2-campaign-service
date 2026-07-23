@@ -826,18 +826,21 @@ func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error
 			}
 		}
 		if resp.Paging.Next == "" {
-			return ids, nil
+			return ids, nil // fully enumerated
 		}
 		// paging.next is an ABSOLUTE Graph URL; doRequest prefixes baseURL, so pass only the
 		// part after the host by trimming the base. If it doesn't share the base (unexpected),
-		// stop rather than fetch an arbitrary URL.
+		// discovery is INCOMPLETE — fail rather than silently truncate (which would let the
+		// cascade report success and persist ACTIVE while undiscovered ads stay PAUSED).
 		next, ok := strings.CutPrefix(resp.Paging.Next, c.baseURL)
 		if !ok {
-			return ids, nil
+			return nil, fmt.Errorf("ad discovery for ad set %s returned an unexpected paging cursor; cannot guarantee all ads were enumerated", adSetID)
 		}
 		path = next
 	}
-	return ids, nil
+	// Reached the page cap with a non-empty cursor still pending: discovery is INCOMPLETE, so
+	// fail rather than silently truncate.
+	return nil, fmt.Errorf("ad discovery for ad set %s exceeded %d pages; too many ads to enumerate", adSetID, adDiscoveryMaxPages)
 }
 
 // partialCascadeError marks a cascade that changed the campaign upstream but then failed on a

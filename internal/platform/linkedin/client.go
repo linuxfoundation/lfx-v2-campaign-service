@@ -256,7 +256,11 @@ type responseElement struct {
 	CampaignGroup string `json:"campaignGroup"`
 }
 
-var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:?=&.-]*$`)
+// pathValidRE allow-lists the characters a built request path may contain. `%` is included
+// so a percent-encoded segment (e.g. a creative URN key `urn%3Ali%3AsponsoredCreative%3A123`,
+// which LinkedIn requires for single-entity URN keys) passes; the encoding itself is produced
+// only by encodeURNForPath from validated URN input, never from arbitrary caller strings.
+var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:%?=&.-]*$`)
 
 // apiError is a non-2xx HTTP response from the LinkedIn API. It carries the
 // status code, method, and path so an error message names exactly which call
@@ -480,7 +484,7 @@ func (c *Client) UpdateCampaignAndCreativesStatus(ctx context.Context, campaignI
 	}
 	creativeStatus := creativeIntendedStatus(status)
 	for _, urn := range creativeURNs {
-		path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, url.PathEscape(urn))
+		path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(urn))
 		body := map[string]any{"patch": map[string]any{"$set": map[string]any{"intendedStatus": creativeStatus}}}
 		headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
 		if _, uerr := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); uerr != nil {
@@ -539,15 +543,31 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 		}
 		next := resp.Metadata.NextPageToken
 		if next == "" {
-			return urns, nil
+			return urns, nil // fully enumerated
 		}
 		if _, dup := seen[next]; dup {
-			return urns, nil // stuck cursor — stop rather than loop
+			// A stuck cursor means discovery is INCOMPLETE — returning the partial set as
+			// success would let the cascade report success and the service persist ACTIVE
+			// while undiscovered creatives stay DRAFT (not serving). Fail instead.
+			return nil, fmt.Errorf("creative discovery for campaign %s did not terminate (repeated page cursor)", campaignID)
 		}
 		seen[next] = struct{}{}
 		pageToken = next
 	}
-	return urns, nil
+	// Reached the page cap with a non-empty cursor still pending: discovery is INCOMPLETE, so
+	// fail rather than silently truncate (which would leave undiscovered creatives DRAFT while
+	// the service records the campaign ACTIVE).
+	return nil, fmt.Errorf("creative discovery for campaign %s exceeded %d pages; too many creatives to enumerate", campaignID, maxListPages)
+}
+
+// encodeURNForPath percent-encodes a LinkedIn URN for use as a single-entity path key. The
+// Marketing API expects the URN's reserved characters encoded in the path
+// (urn:li:sponsoredCreative:123 → urn%3Ali%3AsponsoredCreative%3A123); url.PathEscape does
+// NOT escape ':' in a path segment, so the colons are encoded explicitly. Only ':' needs
+// encoding for a well-formed sponsoredCreative URN (letters/digits are path-safe); the input
+// is a URN produced by creativeURN (already prefix-validated), not an arbitrary string.
+func encodeURNForPath(urn string) string {
+	return strings.ReplaceAll(urn, ":", "%3A")
 }
 
 // creativeURN returns the sponsoredCreative URN for a finder element, preferring an explicit

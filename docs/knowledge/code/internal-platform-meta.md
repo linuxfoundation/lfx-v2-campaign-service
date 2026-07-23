@@ -103,12 +103,20 @@ oversized, so an ambiguous outcome is never downgraded to a definite failure.
 
 ## Campaign status toggle
 
-`UpdateCampaignStatus(ctx, campaignID, status)` pauses/resumes an existing campaign. Meta's
-Graph API updates a node by POSTing to the node id with the changed field, so this is
-`POST /{campaignID}` with `{"status": "ACTIVE"|"PAUSED"}` (the same status enum the create
-path sets). `StatusActive`/`StatusPaused` are the accepted values; `campaignID` is validated
-numeric (`numericIDRE`) before interpolation. `IsOutcomeUnconfirmed(err)` exposes the shared
-ambiguity classifier so a caller can tell a maybe-applied outcome (transport/5xx/3xx-mutating)
-from a definite rejection.
+`UpdateCampaignAndChildrenStatus(ctx, campaignID, adSetID, status)` pauses/resumes a campaign
+AND cascades to its ad set + ads, because Meta's create PAUSES all three — toggling only the
+campaign to ACTIVE would leave the ad set/ads PAUSED and the campaign would not serve. Each
+entity is updated by POSTing to its node id with `{"status": "ACTIVE"|"PAUSED"}` (Meta's Graph
+API updates a node by POSTing to the node id with the changed field; the same status enum the
+create path sets). Meta persists the ad set id (in the campaign result) but NOT the individual
+ad ids, so the ads are DISCOVERED via `GET /{adSetID}/ads` (paged; an unexpected/looping
+cursor or the page cap fails the discovery rather than silently truncating). Order on ACTIVATE
+is parent-first; activating with no ad set id is refused up front; a child failure after the
+campaign POST is a `partialCascadeError` (Unconfirmed). `StatusActive`/`StatusPaused` are the
+accepted values; ids are validated numeric (`numericIDRE`) before interpolation. The narrower
+`UpdateCampaignStatus(ctx, campaignID, status)` (campaign node only) is retained as the
+building block. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classifier (and honors
+the `Unconfirmed()` behavioral interface) so a caller can tell a maybe-applied outcome
+(transport/5xx/3xx-mutating, or a partial cascade) from a definite rejection.
 
 See [internal/platform/meta](../../../internal/platform/meta).
