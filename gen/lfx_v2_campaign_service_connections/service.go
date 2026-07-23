@@ -788,10 +788,10 @@ type TwitterAdsConnection struct {
 type TwitterAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
-	// X/Twitter Ads account ID
+	// X/Twitter Ads account ID (alphanumeric handle)
 	AccountID string
-	// Funding instrument for the ad account
-	FundingInstrumentID *string
+	// X/Twitter funding instrument id (alphanumeric)
+	FundingInstrumentID string
 }
 
 // X/Twitter Ads OAuth 1.0a credential set. Write-only; never returned.

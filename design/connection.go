@@ -454,9 +454,28 @@ var TwitterAdsCredentials = Type("twitter-ads-credentials", func() {
 
 var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
-	Attribute("account_id", String, "X/Twitter Ads account ID", func() { Example("8r7gb") })
-	Attribute("funding_instrument_id", String, "Funding instrument for the ad account")
-	Required("account_id")
+	// account_id is the X Ads account identifier — an ALPHANUMERIC handle (e.g. "8r7gb"),
+	// NOT numeric-only. The twitter client rejects anything outside ^[A-Za-z0-9]+$ before
+	// dispatch, so a non-conforming value stored on an active connection could never
+	// create a campaign; validating the same Pattern here rejects it as a 4xx at creation.
+	// MaxLength bounds the stored size (real X account ids are far shorter).
+	Attribute("account_id", String, "X/Twitter Ads account ID (alphanumeric handle)", func() {
+		Example("8r7gb")
+		Pattern(`^[A-Za-z0-9]+$`)
+		MaxLength(64)
+	})
+	// funding_instrument_id is REQUIRED by the X Ads campaign-create flow (the client
+	// rejects an empty value) and is interpolated into the account-scoped request path,
+	// so — like account_id — it is restricted to the safe alphanumeric charset (a value
+	// with '/', '?', whitespace, … could redirect the POST). Requiring + pattern-checking
+	// it here rejects a missing/malformed value as a 4xx at connection creation instead of
+	// an asynchronous dispatch failure.
+	Attribute("funding_instrument_id", String, "X/Twitter funding instrument id (alphanumeric)", func() {
+		Example("lygyi")
+		Pattern(`^[A-Za-z0-9]+$`)
+		MaxLength(64)
+	})
+	Required("account_id", "funding_instrument_id")
 })
 
 var TwitterAdsConnection = Type("twitter-ads-connection", func() {

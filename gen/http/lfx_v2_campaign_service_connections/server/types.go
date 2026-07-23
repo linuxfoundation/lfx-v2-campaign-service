@@ -2420,9 +2420,9 @@ type RedditAdsCredentialsRequestBody struct {
 type TwitterAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// X/Twitter Ads account ID
+	// X/Twitter Ads account ID (alphanumeric handle)
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// Funding instrument for the ad account
+	// X/Twitter funding instrument id (alphanumeric)
 	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
 }
 
@@ -5643,6 +5643,25 @@ func ValidateRedditAdsCredentialsRequestBody(body *RedditAdsCredentialsRequestBo
 func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionConfigRequestBody) (err error) {
 	if body.AccountID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.FundingInstrumentID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("funding_instrument_id", "body"))
+	}
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[A-Za-z0-9]+$"))
+	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
+		}
+	}
+	if body.FundingInstrumentID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.funding_instrument_id", *body.FundingInstrumentID, "^[A-Za-z0-9]+$"))
+	}
+	if body.FundingInstrumentID != nil {
+		if utf8.RuneCountInString(*body.FundingInstrumentID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.funding_instrument_id", *body.FundingInstrumentID, utf8.RuneCountInString(*body.FundingInstrumentID), 64, false))
+		}
 	}
 	return
 }

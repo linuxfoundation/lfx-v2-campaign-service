@@ -421,42 +421,28 @@ func TestBuildTwitterCampaignName(t *testing.T) {
 	}
 }
 
-func TestBuildTwitterUtmURL(t *testing.T) {
-	got := buildTwitterUtmURL(CampaignInput{
+// TestDisplayTwitterUtmURL verifies the SANITIZED display URL (persisted in Steps /
+// campaigns.result) drops secrets — userinfo, the caller's original query, and any
+// fragment — while keeping the generated utm_* params.
+func TestDisplayTwitterUtmURL(t *testing.T) {
+	got := displayTwitterUtmURL(CampaignInput{
 		EventName:       "Open Source Summit",
-		RegistrationURL: "https://events.lf.org/oss/",
+		RegistrationURL: "https://user:pass@events.lf.org/oss/?token=SECRET&ref=1#frag-SECRET",
 	})
-	if !strings.HasPrefix(got, "https://events.lf.org/oss/?") {
-		t.Errorf("bad base: %q", got)
+	if strings.Contains(got, "SECRET") || strings.Contains(got, "user:pass") || strings.Contains(got, "ref=1") || strings.Contains(got, "#") {
+		t.Errorf("display URL must drop userinfo/original-query/fragment secrets, got: %s", got)
 	}
-	for _, want := range []string{
-		"utm_source=twitter",
-		"utm_medium=paid-social",
-		"utm_campaign=open-source-summit",
-		"utm_term=open-source-summit",
-		"utm_content=promoted-tweet",
-	} {
+	if !strings.HasPrefix(got, "https://events.lf.org/oss/?") {
+		t.Errorf("display URL should keep scheme+host+path, got: %s", got)
+	}
+	for _, want := range []string{"utm_source=twitter", "utm_campaign=open-source-summit", "utm_content=promoted-tweet"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("utm url missing %q: %s", want, got)
+			t.Errorf("display URL missing generated %q: %s", want, got)
 		}
 	}
-
-	// Existing query params are preserved (merged into the query).
-	got2 := buildTwitterUtmURL(CampaignInput{
-		EventName:       "Event",
-		RegistrationURL: "https://x.com/reg?ref=1",
-	})
-	if !strings.Contains(got2, "ref=1") || !strings.Contains(got2, "utm_source=twitter") {
-		t.Errorf("existing query param not preserved alongside utm: %s", got2)
-	}
-
-	// A URL fragment must stay at the END (query before #, not inside it).
-	got3 := buildTwitterUtmURL(CampaignInput{
-		EventName:       "Event",
-		RegistrationURL: "https://x.com/reg#details",
-	})
-	if !strings.HasSuffix(got3, "#details") || strings.Contains(got3, "#details?") {
-		t.Errorf("fragment not preserved at end: %s", got3)
+	// An unparseable/relative URL must never echo the raw value.
+	if got := displayTwitterUtmURL(CampaignInput{EventName: "E", RegistrationURL: "not a url?token=SECRET"}); strings.Contains(got, "SECRET") {
+		t.Errorf("unparseable URL must not leak the raw value: %s", got)
 	}
 }
 
@@ -695,11 +681,53 @@ func TestCreateCampaignValidation(t *testing.T) {
 		// NaN / Inf budgets.
 		{EventName: "E", Project: "tlf", BudgetUsd: math.NaN(), StartDate: "2026-01-01", EndDate: "2026-01-02"},
 		{EventName: "E", Project: "tlf", BudgetUsd: math.Inf(1), StartDate: "2026-01-01", EndDate: "2026-01-02"},
+		// A well-shaped, order-valid, but PAST start date must be rejected pre-create
+		// (X requires a future start_time; otherwise the campaign is created and only
+		// the line-item POST fails, leaving a retained orphan).
+		{EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2000-01-01", EndDate: "2000-01-02"},
 	}
 	for i, in := range cases {
 		if _, err := c.CreateCampaign(context.Background(), in); err == nil {
 			t.Errorf("case %d: expected validation error", i)
 		}
+	}
+}
+
+// TestCreateCampaign_PastStartDateIsPreCreateRejection asserts the future-start-time
+// rule specifically: a past start date fails BEFORE any upstream call (the test server
+// t.Errors if any request arrives) with an error naming the past-start cause.
+func TestCreateCampaign_PastStartDateIsPreCreateRejection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no upstream call may happen for a non-future start date")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	newC := func(now time.Time) *Client {
+		c := NewClient(Credentials{}, AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"}, WithBaseURL(srv.URL))
+		c.timeFn = func() time.Time { return now }
+		return c
+	}
+	// A strictly-past start date.
+	if _, err := newC(time.Date(2098, 6, 1, 0, 0, 0, 0, time.UTC)).CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2098-05-31", EndDate: "2098-06-30",
+	}); err == nil || !strings.Contains(err.Error(), "too soon") {
+		t.Errorf("a past start date must be a pre-create rejection, got: %v", err)
+	}
+	// SAME-DAY start: the date is sent as <date>T00:00:00Z, which is already past at any
+	// time after midnight — it must be rejected too (Copilot #39). Here now is midday.
+	if _, err := newC(time.Date(2098, 6, 1, 12, 0, 0, 0, time.UTC)).CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2098-06-01", EndDate: "2098-06-30",
+	}); err == nil || !strings.Contains(err.Error(), "too soon") {
+		t.Errorf("a same-day start (00:00:00Z already past) must be rejected, got: %v", err)
+	}
+	// CLOCK-CROSSING: a start whose effective instant is in the future but WITHIN the
+	// lead-time buffer (here "now" is 2 minutes before the start's midnight, less than
+	// minStartLead=5m) must be rejected — otherwise the multi-request create flow could
+	// cross the start and leave the very orphan this check prevents (Copilot #39).
+	if _, err := newC(time.Date(2098, 5, 31, 23, 58, 0, 0, time.UTC)).CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", BudgetUsd: 100, StartDate: "2098-06-01", EndDate: "2098-06-30",
+	}); err == nil || !strings.Contains(err.Error(), "too soon") {
+		t.Errorf("a start within the lead-time buffer must be rejected, got: %v", err)
 	}
 }
 
@@ -773,8 +801,8 @@ func TestCreateCampaignRejectsOversizedComposedName(t *testing.T) {
 		EventName:       strings.Repeat("x", maxEventNameLen), // valid per-field
 		Project:         "CNCF",
 		BudgetUsd:       500,
-		StartDate:       "2026-03-01",
-		EndDate:         "2026-03-10",
+		StartDate:       "2099-03-01",
+		EndDate:         "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -817,8 +845,8 @@ func TestCreateCampaignRejectsEmptyProject(t *testing.T) {
 			EventName:       "KubeCon EU",
 			Project:         project,
 			BudgetUsd:       500,
-			StartDate:       "2026-03-01",
-			EndDate:         "2026-03-10",
+			StartDate:       "2099-03-01",
+			EndDate:         "2099-03-10",
 			RegistrationURL: "https://events.lf.org/reg",
 		})
 		if err == nil {
@@ -882,8 +910,8 @@ func TestCreateCampaignEventNameRuneLimit(t *testing.T) {
 		EventName:       multiByteName,
 		Project:         "CNCF",
 		BudgetUsd:       500,
-		StartDate:       "2026-03-01",
-		EndDate:         "2026-03-10",
+		StartDate:       "2099-03-01",
+		EndDate:         "2099-03-10",
 		TweetID:         "1234567890",
 		RegistrationURL: "https://events.lf.org/kubecon",
 	}); err != nil {
@@ -895,8 +923,8 @@ func TestCreateCampaignEventNameRuneLimit(t *testing.T) {
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: tooLong,
 		BudgetUsd: 500,
-		StartDate: "2026-03-01",
-		EndDate:   "2026-03-10",
+		StartDate: "2099-03-01",
+		EndDate:   "2099-03-10",
 	})
 	if err == nil {
 		t.Fatal("event name over the rune limit should be rejected")
@@ -935,7 +963,7 @@ func TestCreateCampaignRejectsEmptyAccountConfig(t *testing.T) {
 
 	base := CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	}
 	cases := []struct {
@@ -982,7 +1010,7 @@ func TestCreateCampaignRejectsUnsafeAccountID(t *testing.T) {
 
 	base := CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	}
 	cases := []struct {
@@ -1100,8 +1128,8 @@ func TestCreateCampaignFlow(t *testing.T) {
 		EventName:       "KubeCon EU",
 		Project:         "CNCF",
 		BudgetUsd:       500,
-		StartDate:       "2026-03-01",
-		EndDate:         "2026-03-10",
+		StartDate:       "2099-03-01",
+		EndDate:         "2099-03-10",
 		TweetID:         "1234567890",
 		RegistrationURL: "https://events.lf.org/kubecon",
 	})
@@ -1160,7 +1188,7 @@ func TestCreateCampaignIdempotent(t *testing.T) {
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
@@ -1315,7 +1343,7 @@ func TestFindByNameMatchWithoutIDErrors(t *testing.T) {
 	// genuine (id-less) match on the campaign lookup path.
 	in := CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	}
 	campaignName := buildTwitterCampaignName(in)
@@ -1438,7 +1466,7 @@ func TestCreateSendsQueryParams(t *testing.T) {
 
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "111",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "111",
 		RegistrationURL: "https://events.lf.org/reg",
 	}); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
@@ -1484,11 +1512,11 @@ func TestCreateSendsQueryParams(t *testing.T) {
 
 	// Line-item create: required start_time/end_time present, entity_status=PAUSED,
 	// bid_strategy (not bid_type), params on the query string.
-	if lineItemQuery.Get("start_time") != "2026-03-01T00:00:00Z" {
-		t.Errorf("line item start_time = %q, want 2026-03-01T00:00:00Z", lineItemQuery.Get("start_time"))
+	if lineItemQuery.Get("start_time") != "2099-03-01T00:00:00Z" {
+		t.Errorf("line item start_time = %q, want 2099-03-01T00:00:00Z", lineItemQuery.Get("start_time"))
 	}
-	if lineItemQuery.Get("end_time") != "2026-03-10T00:00:00Z" {
-		t.Errorf("line item end_time = %q, want 2026-03-10T00:00:00Z", lineItemQuery.Get("end_time"))
+	if lineItemQuery.Get("end_time") != "2099-03-10T00:00:00Z" {
+		t.Errorf("line item end_time = %q, want 2099-03-10T00:00:00Z", lineItemQuery.Get("end_time"))
 	}
 	if lineItemQuery.Get("entity_status") != "PAUSED" {
 		t.Errorf("line item entity_status = %q, want PAUSED", lineItemQuery.Get("entity_status"))
@@ -1596,7 +1624,7 @@ func TestPromotedTweetMissingIDWarns(t *testing.T) {
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
@@ -1673,7 +1701,7 @@ func TestPromotedTweetPostErrorWarns(t *testing.T) {
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
@@ -1741,7 +1769,7 @@ func TestPromotedTweetDuplicateSurfacesWarning(t *testing.T) {
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
@@ -1815,7 +1843,7 @@ func TestPromotedTweetDuplicateCodeOn5xxIsUnconfirmed(t *testing.T) {
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
@@ -1871,7 +1899,7 @@ func TestCreateCampaignLookupErrorAborts(t *testing.T) {
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -1942,7 +1970,7 @@ func TestTweetIDWhitespaceNotPromoted(t *testing.T) {
 
 	if _, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "   ",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "   ",
 		RegistrationURL: "https://events.lf.org/reg",
 	}); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
@@ -2012,7 +2040,7 @@ func TestAccountConfigTrimmedInRequests(t *testing.T) {
 
 	if _, err := c2.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "E", Project: "tlf", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	}); err != nil {
 		t.Fatalf("CreateCampaign with padded account config: %v", err)
@@ -2048,7 +2076,7 @@ func TestAccountConfigTrimmedInRequests(t *testing.T) {
 		// (Project is validated first; without it this would fail on "invalid
 		// project" and never exercise the whitespace-account-id rejection).
 		_, err := cw.CreateCampaign(context.Background(), CampaignInput{
-			EventName: "E", Project: "tlf", BudgetUsd: 500, StartDate: "2026-03-01", EndDate: "2026-03-10",
+			EventName: "E", Project: "tlf", BudgetUsd: 500, StartDate: "2099-03-01", EndDate: "2099-03-10",
 			RegistrationURL: "https://events.lf.org/reg",
 		})
 		if err == nil {
@@ -2103,7 +2131,7 @@ func TestTweetIDFormatValidatedUpFront(t *testing.T) {
 	}
 	base := CampaignInput{
 		EventName: "E", Project: "tlf", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	}
 
@@ -2219,7 +2247,7 @@ func TestTweetIDInt64OverflowRejected(t *testing.T) {
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: overflow,
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: overflow,
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -2283,7 +2311,7 @@ func TestCreateCampaignValidatesRegistrationURL(t *testing.T) {
 	}
 	base := CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 	}
 
 	// Invalid URLs must be rejected before any network call.
@@ -2496,7 +2524,7 @@ func TestPartialResultAfterLineItemCreated(t *testing.T) {
 
 	res, err := c.CreateCampaign(ctx, CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -2585,7 +2613,7 @@ func TestPartialResultAfterCampaignCreated(t *testing.T) {
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -2636,7 +2664,7 @@ func TestCreateCampaignLineItemAmbiguousIsUnconfirmed(t *testing.T) {
 	c.timeFn = staticTime
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -2680,7 +2708,7 @@ func TestCreateCampaignLineItemNoIDIsUnconfirmed(t *testing.T) {
 	c.timeFn = staticTime
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -2718,7 +2746,7 @@ func TestCreateCampaignAmbiguousCampaignIsUnconfirmed(t *testing.T) {
 	c.timeFn = staticTime
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -2761,7 +2789,7 @@ func TestCreateCampaignNoCampaignIDIsUnconfirmed(t *testing.T) {
 	c.timeFn = staticTime
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10", TweetID: "123",
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err == nil {
@@ -2900,7 +2928,7 @@ func TestReuseExistingCampaignSurfacesWarning(t *testing.T) {
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 750,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
@@ -2915,6 +2943,65 @@ func TestReuseExistingCampaignSurfacesWarning(t *testing.T) {
 	if !stepsContain(res.Steps, "reused existing campaign existingCmp by name") ||
 		!stepsContain(res.Steps, "NOT updated to match this request") {
 		t.Errorf("expected a campaign-reuse config-drift warning step, got steps: %v", res.Steps)
+	}
+	// Budget in the operator-visible step must NOT be dollar-denominated (the value is
+	// account currency); a '$' would mislead a EUR/GBP/etc. account operator.
+	for _, s := range res.Steps {
+		if strings.Contains(s, "$") {
+			t.Errorf("budget step must not use '$' (value is account currency): %q", s)
+		}
+	}
+	if !res.Reused {
+		t.Error("res.Reused must be true when an existing campaign was reused (structured signal, not just Steps)")
+	}
+}
+
+// TestReuseThenDownstreamErrorKeepsReusedFlag covers the partial-result path: a
+// campaign is REUSED, then a downstream step fails, so CreateCampaign returns a
+// partialResult() with an error. The Reused flag must still be set on that partial
+// (not just the final success), so a reconciliation consumer keeps the config-drift
+// signal via the structured field, not only the free-text Steps.
+func TestReuseThenDownstreamErrorKeepsReusedFlag(t *testing.T) {
+	campaignName := buildTwitterCampaignName(CampaignInput{EventName: "KubeCon EU", Project: "CNCF"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			b, _ := json.Marshal(map[string]any{"data": []map[string]string{{"id": "existingCmp", "name": campaignName}}})
+			_, _ = w.Write(b) // reuse the campaign
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			w.WriteHeader(http.StatusBadGateway) // line-item lookup fails AFTER the reuse
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 750,
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err == nil {
+		t.Fatal("expected a downstream error after the reuse")
+	}
+	if res == nil {
+		t.Fatal("a partial result must be returned alongside the error")
+	}
+	if res.CampaignID != "existingCmp" {
+		t.Errorf("partial must carry the reused campaign id, got %q", res.CampaignID)
+	}
+	if !res.Reused {
+		t.Error("Reused must be true on the partial result after a campaign reuse + downstream error")
 	}
 }
 
@@ -2961,7 +3048,7 @@ func TestReuseExistingLineItemSurfacesWarning(t *testing.T) {
 
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
-		StartDate: "2026-03-01", EndDate: "2026-03-10",
+		StartDate: "2099-03-01", EndDate: "2099-03-10",
 		RegistrationURL: "https://events.lf.org/reg",
 	})
 	if err != nil {
@@ -2976,6 +3063,12 @@ func TestReuseExistingLineItemSurfacesWarning(t *testing.T) {
 	if !stepsContain(res.Steps, "reused existing line item existingLi by name") ||
 		!stepsContain(res.Steps, "NOT reset to the requested PAUSED") {
 		t.Errorf("expected a line-item-reuse status/dates warning step, got steps: %v", res.Steps)
+	}
+	// The structured Reused flag must ALSO be set on the line-item-only reuse branch —
+	// not just campaign reuse — so a consumer using the flag (not the free-text steps)
+	// still sees the config-drift signal.
+	if !res.Reused {
+		t.Error("line-item reuse must set res.Reused = true (the structured reuse signal)")
 	}
 }
 
@@ -3191,7 +3284,10 @@ func TestCreateOutcomeAmbiguous_Twitter(t *testing.T) {
 		{"302-GET-not-a-create", &apiError{StatusCode: http.StatusFound, Method: http.MethodGet, Path: "campaigns"}, false},
 		{"307-DELETE", &apiError{StatusCode: http.StatusTemporaryRedirect, Method: http.MethodDelete, Path: "campaigns"}, true},
 		{"500", &apiError{StatusCode: http.StatusInternalServerError, Method: http.MethodPost, Path: "campaigns"}, true},
-		{"429", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodPost, Path: "campaigns"}, false}, // handled by retry, not ambiguity
+		// An EXHAUSTED 429 on a mutating request is ambiguous: retries already gave up,
+		// and the throttled write MAY have committed — verify-before-retry.
+		{"429-POST-exhausted", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodPost, Path: "campaigns"}, true},
+		{"429-GET-not-a-create", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodGet, Path: "campaigns"}, false},
 		{"400", &apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPost, Path: "campaigns"}, false},
 		{"transport", &transportError{Method: http.MethodPost, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
 		{"5xx-not-method-gated", &apiError{StatusCode: http.StatusBadGateway, Method: http.MethodGet, Path: "campaigns"}, true},
@@ -3282,5 +3378,47 @@ func TestIsPreSendDialError_Twitter(t *testing.T) {
 		if got := isPreSendDialError(tc.err); got != tc.want {
 			t.Errorf("%s: isPreSendDialError = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestValidateRegistrationURL_ErrorDoesNotLeakSecrets verifies a validation error for a
+// bad registration URL does NOT echo the raw URL's userinfo/query/fragment (which can
+// carry secrets) — the dispatcher wraps this error and the orchestrator may persist it.
+func TestValidateRegistrationURL_ErrorDoesNotLeakSecrets(t *testing.T) {
+	// A non-http scheme with secret-bearing userinfo/query/fragment.
+	err := validateRegistrationURL("ftp://user:pass@host/path?token=SECRET#frag-SECRET")
+	if err == nil {
+		t.Fatal("expected a scheme rejection")
+	}
+	if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "user:pass") {
+		t.Errorf("validation error must not leak URL secrets, got: %v", err)
+	}
+	// An unparseable URL likewise must not be echoed raw.
+	if err := validateRegistrationURL("://bad?token=SECRET"); err != nil && strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("unparseable-URL error must not leak the raw value, got: %v", err)
+	}
+	// An absolute HTTPS URL with embedded userinfo must be REJECTED (credentials never
+	// belong in an ad destination), and the error must not leak them.
+	uerr := validateRegistrationURL("https://user:pass@events.lf.org/reg")
+	if uerr == nil || !strings.Contains(uerr.Error(), "credentials") {
+		t.Errorf("a URL with embedded userinfo must be rejected, got: %v", uerr)
+	}
+	if uerr != nil && strings.Contains(uerr.Error(), "user:pass") {
+		t.Errorf("the userinfo-rejection error must not echo the credentials, got: %v", uerr)
+	}
+}
+
+// TestIsDuplicatePromotedTweetErr_Excludes429 verifies a DUPLICATE_PROMOTABLE_ENTITY
+// carried on a 429 is NOT classified as a known duplicate — after exhausted rate-limit
+// retries the POST may have committed, so it must stay UNCONFIRMED (verify before retry).
+func TestIsDuplicatePromotedTweetErr_Excludes429(t *testing.T) {
+	dup := []string{errCodeDuplicatePromotableEntity}
+	// A definitive 4xx (e.g. 400) carrying the code IS a known duplicate.
+	if !isDuplicatePromotedTweetErr(&apiError{StatusCode: http.StatusBadRequest, ErrorCodes: dup}) {
+		t.Error("a 400 with DUPLICATE_PROMOTABLE_ENTITY must be treated as a duplicate")
+	}
+	// The SAME code on a 429 must NOT be treated as a duplicate (it's rate-limited).
+	if isDuplicatePromotedTweetErr(&apiError{StatusCode: http.StatusTooManyRequests, ErrorCodes: dup}) {
+		t.Error("a 429 carrying DUPLICATE_PROMOTABLE_ENTITY must NOT be classified as a duplicate (verify-before-retry)")
 	}
 }

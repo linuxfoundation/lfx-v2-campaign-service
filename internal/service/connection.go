@@ -372,7 +372,7 @@ func (s *ConnectionService) CreateTwitterAds(ctx context.Context, p *conn.Create
 		Label:     strVal(cfg.Label),
 		AccountID: cfg.AccountID,
 		ProviderConfig: map[string]string{
-			"funding_instrument_id": strVal(cfg.FundingInstrumentID),
+			"funding_instrument_id": cfg.FundingInstrumentID,
 		},
 		CreatedBy: actorFromCtx(ctx),
 	}
@@ -399,7 +399,7 @@ func (s *ConnectionService) UpdateTwitterAds(ctx context.Context, p *conn.Update
 		Label:     strVal(cfg.Label),
 		AccountID: cfg.AccountID,
 		ProviderConfig: map[string]string{
-			"funding_instrument_id": strVal(cfg.FundingInstrumentID),
+			"funding_instrument_id": cfg.FundingInstrumentID,
 		},
 		UpdatedBy: actorFromCtx(ctx),
 	}

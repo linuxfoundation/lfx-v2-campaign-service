@@ -110,3 +110,34 @@ func TestValidateLinkedinAdsConnectionConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateTwitterAdsConnectionConfig guards the X/Twitter connection contract
+// (LFXV2-2642): account_id AND funding_instrument_id must both match ^[A-Za-z0-9]+$,
+// both Required, both MaxLength(64). Both are interpolated into the account-scoped
+// request path, so a malformed value stored on an active connection could redirect a
+// paid POST — validating here rejects it as a 4xx at creation instead of an async
+// dispatch failure.
+func TestValidateTwitterAdsConnectionConfig_PatternsAndRequired(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      *connsrv.TwitterAdsConnectionConfigRequestBody
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "valid alphanumeric ids", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("lygyi")}},
+		{name: "missing account_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
+		{name: "missing funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb")}, wantErr: true, errSubstr: "funding_instrument_id"},
+		{name: "empty account_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp(""), FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
+		{name: "empty funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("")}, wantErr: true, errSubstr: "funding_instrument_id"},
+		{name: "account_id with slash (path-injection)", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb/../x"), FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
+		{name: "funding_instrument_id with slash", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("ly/gyi")}, wantErr: true, errSubstr: "funding_instrument_id"},
+		{name: "overlong account_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("a", 65)), FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
+		{name: "overlong funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp(strings.Repeat("a", 65))}, wantErr: true, errSubstr: "funding_instrument_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := connsrv.ValidateTwitterAdsConnectionConfigRequestBody(tc.body)
+			assertValidation(t, err, tc.wantErr, tc.errSubstr)
+		})
+	}
+}

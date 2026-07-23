@@ -272,7 +272,7 @@ platforms?: CampaignPlatform[]
 linkedInConfig?: object         — LinkedIn-specific params
 redditConfig?: object           — Reddit-specific params
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
-twitterConfig?: object          — X/Twitter-specific params
+twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
 ```
 
 #### MetaConfig (the `metaConfig` object)
@@ -359,6 +359,43 @@ before any upstream create — it must be an absolute **HTTPS** URL with a real 
 embedded userinfo/credentials, and have a cleanly parseable query. A URL that violates these
 fails the dispatch job pre-create (the brief endpoint accepts any string; this is enforced at
 dispatch, not at brief creation).
+
+#### TwitterConfig (the `twitterConfig` object)
+
+X (Twitter) per-platform config. **Budget is in the ad ACCOUNT's currency**, not USD — X
+serializes it as `daily_budget_amount_local_micro`, interpreted in the account's local currency;
+the service does no FX conversion.
+
+```
+budgetAmount: number            — DAILY budget in whole units of the account currency (e.g. 500 =
+                                  500 USD/JPY/…). Must be POSITIVE; a non-positive or non-finite
+                                  value is rejected by the client during dispatch (a pre-create job
+                                  failure, since campaign creation is async).
+startDate: string               — YYYY-MM-DD. Must be in the future by at least a few minutes
+                                  (a start too close to now can cross UTC midnight before the
+                                  line-item POST and orphan the campaign, so it is rejected).
+endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate. (Both date rules
+                                  are enforced by the client during dispatch — a violation fails the
+                                  platform job pre-create, not a synchronous 4xx.)
+tweetId?: string                — An existing promotable tweet id to promote. Omitted → the
+                                  manual-tweet workflow: the campaign + line item are created and
+                                  the operator attaches the promoted tweet manually (the result
+                                  carries a warning + the sanitized destination URL). A create that
+                                  can't confirm the promoted-tweet association is reported as an
+                                  UNCONFIRMED degraded outcome, not a clean success.
+```
+
+Connection prerequisites (from the X connection, not this config): the OAuth1 4-tuple (consumer
+key/secret + access token/secret), plus an `account_id` AND a `funding_instrument_id` — both
+REQUIRED, both ALPHANUMERIC (`^[A-Za-z0-9]+$`, e.g. `account_id` `8r7gb`), and both
+pattern/length-validated (`MaxLength 64`) at connection creation. The X client requires both and
+interpolates them into the account-scoped request path, so a missing/malformed value is rejected as
+a 4xx at connection creation rather than surfacing as an asynchronous dispatch failure.
+
+Destination URL: the ad points at the brief's registration URL. The X client validates it before any
+upstream create — it must be an absolute **http/https** URL with a real hostname and carry NO
+embedded userinfo/credentials; a violation fails the dispatch job pre-create. Validation errors
+redact the URL (scheme+host+path only) so a persisted error can't leak a userinfo/query secret.
 
 ### JobCreateResponse (returned immediately from `POST .../campaigns`)
 
