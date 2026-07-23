@@ -158,9 +158,13 @@ campaign + ad-group at the ad step) so an ambiguous failure leaves the tree reco
 `CampaignServiceAdTypeInvalid`). The currently-addable Search text ad is the
 `ResponsiveSearchAd`: **3–15 unique headline assets** and **2–4 unique description assets**,
 each a `TextAsset` wrapped in an `AssetLink`, plus a required `FinalUrls`. Asset length is
-WIDTH-AWARE: single-width copy allows 30 (headline) / 90 (description) characters, but copy
-containing double-width characters (CJK/Korean/Japanese/Chinese or emoji) is capped at 15 /
-45; each asset must also contain at least one word and no newline — this word check applies
+WIDTH-AWARE: normal copy allows 30 (headline) / 90 (description) final characters; Microsoft
+documents a reduced 15 / 45 cap "for languages with double-width characters"
+(CJK/Korean/Japanese/Chinese or emoji). v13 publishes no per-character weighted formula, so
+the client conservatively applies the reduced 15 / 45 cap whenever ANY double-width character
+is present — never emitting an over-length asset (which would fail the ad after its parents
+were created), at the cost of truncating mixed copy slightly short of the theoretical maximum.
+Each asset must also contain at least one word and no newline — this word check applies
 to BOTH caller-supplied copy (`checkAdCopyList`) and auto-composed assets (`boundedUniqueCopy`
 drops any candidate lacking a word, so a punctuation-only `EventName` never reaches AddAds).
 The composed `FinalUrls` (registration URL + `utm_*`) is length-checked against Microsoft's

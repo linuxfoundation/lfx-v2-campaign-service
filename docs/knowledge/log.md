@@ -14,9 +14,12 @@ built at runtime via `url.UserPassword` instead of a `user:pass@host` literal th
 secretlint (mirrors the reddit client tests).
 
 **Update** — Microsoft Ads MS-2.5 v13-contract hardening (PR #45 review, copilot + cursor —
-VERIFIED against learn.microsoft.com). (1) RSA copy limits are WIDTH-AWARE: single-width
-30/90, double-width (CJK/Korean/Japanese/Chinese/emoji) 15/45 — validation AND truncation now
-detect double-width content and apply the reduced caps. (2) Each asset must contain ≥1 word
+VERIFIED against learn.microsoft.com). (1) RSA copy limits are WIDTH-AWARE: normal copy
+30/90; Microsoft documents a reduced 15/45 cap "for languages with double-width characters"
+(CJK/Korean/Japanese/Chinese/emoji). v13 gives no per-character weighted formula, so the
+client conservatively applies 15/45 whenever ANY double-width char is present (never
+over-length, may truncate mixed copy slightly short) — validation AND truncation both do
+this. (2) Each asset must contain ≥1 word
 and no newline (enforced up front). (3) The composed `FinalUrls` (registration URL + utm_*) is
 length-checked against Microsoft's 2,048-char limit up front (not just the raw URL). (4)
 `AddAdGroups` body carries the docs-required `ReturnInheritedBidStrategyTypes` (reserved; sent

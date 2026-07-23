@@ -460,6 +460,12 @@ type queryAdsResponse struct {
 // (the v13 GetAdsByAdGroupId REST operation is a POST-with-body, not a GET). A READ
 // (idempotent). Matching on the destination keeps a retry from stacking duplicate ads
 // (ads have no stable name to key on, and v13 permits duplicate responsive search ads).
+//
+// An ad whose FinalUrls MATCHES the target but whose Id is nil or unparseable is NOT
+// treated as absent: the ad almost certainly exists (its destination matched) but its id
+// is unreadable, so returning "" would let the caller create a SECOND ad for the same
+// destination (v13 permits duplicate RSAs). That is reported as errNoID (UNCONFIRMED) so
+// the caller verifies before retrying rather than blindly duplicating.
 func (c *Client) findAdByFinalURL(ctx context.Context, adGroupID, finalURL string) (string, error) {
 	req := queryAdsRequest{AdGroupId: json.Number(adGroupID), AdTypes: []string{adTypeResponsiveSearch}}
 	body, err := c.doRequest(ctx, http.MethodPost, "Ads/QueryByAdGroupId", req, true)
@@ -471,16 +477,22 @@ func (c *Client) findAdByFinalURL(ctx context.Context, adGroupID, finalURL strin
 		return "", fmt.Errorf("decode Ads/QueryByAdGroupId response: %w", uErr)
 	}
 	for _, ad := range resp.Ads {
-		if ad.Id == nil {
-			continue
-		}
+		matchesDest := false
 		for _, u := range ad.FinalUrls {
 			if u == finalURL {
-				if id := numberID(ad.Id); id != "" {
-					return id, nil
-				}
+				matchesDest = true
+				break
 			}
 		}
+		if !matchesDest {
+			continue
+		}
+		if id := numberID(ad.Id); id != "" {
+			return id, nil
+		}
+		// Destination matched but the id is nil/unparseable: the ad exists yet we
+		// cannot key on it. Ambiguous — do not report "absent".
+		return "", fmt.Errorf("ad for %q found with no usable id: %w", finalURL, errNoID)
 	}
 	return "", nil
 }
@@ -574,8 +586,18 @@ func composeAdCopy(in CampaignInput) (headlines, descriptions []string) {
 }
 
 // hasDoubleWidth reports whether s contains any character Microsoft treats as double-width
-// (CJK / Korean / Japanese / Chinese ideographs, or an emoji), which halves the allowed
-// asset length. A conservative over-detection is harmless here (it only tightens the cap).
+// (CJK / Korean / Japanese / Chinese ideographs, or an emoji).
+//
+// Microsoft's documented rule is language-scoped: "for languages with double-width
+// characters" a headline is capped at 15 final chars (vs 30) and a description at 45 (vs
+// 90) — see the ResponsiveSearchAd Headlines/Descriptions element docs. The v13 REST
+// contract does NOT publish a per-character weighted formula, so rather than guess one we
+// apply the reduced 15/45 cap whenever ANY double-width character is present. This is
+// deliberately conservative: it may truncate otherwise-valid mixed ASCII+wide copy a hair
+// shorter than strictly required, but it can never emit an asset LONGER than Microsoft
+// accepts (which would fail the ad AFTER its parent campaign/ad group were created). The
+// copy composed here is auto-generated marketing text on a PAUSED shell, so a slightly
+// tighter bound is an acceptable trade for guaranteed acceptance.
 func hasDoubleWidth(s string) bool {
 	for _, r := range s {
 		switch {

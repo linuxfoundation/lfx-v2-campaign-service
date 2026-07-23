@@ -142,6 +142,44 @@ func TestCreateCampaign_ReusesExistingAdGroupAndAd(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_AdLookupMatchWithNoIDIsUnconfirmed(t *testing.T) {
+	// The ad lookup finds an ad whose destination MATCHES the target but whose Id is null.
+	// The ad almost certainly exists, so treating it as absent and POSTing /Ads would stack
+	// a DUPLICATE responsive search ad (v13 permits duplicates). The step must instead be
+	// UNCONFIRMED (verify before retry) and issue NO ad create.
+	in := validInput()
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+	api := &campaignsAPI{
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":null,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+	}
+	adPostReached := false
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Ads") {
+			adPostReached = true
+		}
+		base(w, r)
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED error when the matching ad has no usable id")
+	}
+	if adPostReached {
+		t.Error("ad create POST issued despite a destination-matching ad (would duplicate)")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a destination-match with an unusable id must be UNCONFIRMED, got: %v", err)
+	}
+	if res == nil || res.AdGroupID != "111" {
+		t.Fatalf("expected a partial carrying the created ad group 111, got %+v", res)
+	}
+	if res.AdID != "" {
+		t.Errorf("AdID = %q, want empty on an unconfirmed ad step", res.AdID)
+	}
+}
+
 func TestCreateCampaign_AdGroupBodyCarriesRequiredFields(t *testing.T) {
 	// AddAdGroups lists ReturnInheritedBidStrategyTypes as a required body element (reserved,
 	// but no optional note), so it must be present in the JSON even as false. Assert it is
@@ -173,7 +211,13 @@ func TestCreateCampaign_AdGroupBodyCarriesRequiredFields(t *testing.T) {
 }
 
 func TestComposeAdCopy_DoubleWidthUsesReducedLimit(t *testing.T) {
-	// A long CJK headline must be truncated to the 15-char double-width limit, not 30.
+	// All-CJK content: Microsoft's documented cap for double-width-language headlines is 15
+	// final chars (not 30), so a long CJK headline must truncate to 15. This asserts the
+	// all-wide case, which matches the doc exactly. (The client applies that reduced cap
+	// whenever ANY wide char is present — a deliberately conservative approximation of the
+	// language-scoped rule, since v13 publishes no per-character weighted formula; see
+	// hasDoubleWidth. So it never emits an over-length asset, at the cost of occasionally
+	// truncating mixed ASCII+wide copy a little short.)
 	hs, _ := composeAdCopy(CampaignInput{EventName: strings.Repeat("字", 40), Project: "字"})
 	for _, h := range hs {
 		if hasDoubleWidth(h) && utf8.RuneCountInString(h) > maxAdHeadlineRunesWide {

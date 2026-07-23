@@ -122,9 +122,13 @@ type CampaignInput struct {
 	RegistrationURL string
 	// Headlines / Descriptions override the auto-composed responsive-search-ad copy. A
 	// Microsoft responsive search ad REQUIRES 3-15 unique headlines and 2-4 unique
-	// descriptions. Character limits are WIDTH-DEPENDENT: single-width copy allows 30
-	// (headline) / 90 (description) characters, but copy containing DOUBLE-WIDTH characters
-	// (CJK, Korean, Japanese, Chinese, or emoji) is limited to 15 / 45. Each entry must also
+	// descriptions. Character limits are WIDTH-DEPENDENT: normal copy allows 30 (headline) /
+	// 90 (description) final characters; Microsoft documents a reduced 15 / 45 cap "for
+	// languages with double-width characters" (CJK, Korean, Japanese, Chinese, or emoji).
+	// v13 publishes no per-character weighted formula, so this client conservatively applies
+	// the reduced 15 / 45 cap whenever ANY double-width character is present — it never emits
+	// an over-length asset (which would fail the ad after its parents were created), at the
+	// cost of truncating mixed copy a little short of the theoretical maximum. Each entry must also
 	// contain at least one word and no newline. When a caller supplies fewer than the
 	// minimum, deterministic placeholders derived from EventName/Project pad the lists up to
 	// the minimum (a safe PAUSED default a human edits before enabling); supplying more than
