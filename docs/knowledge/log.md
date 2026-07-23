@@ -22,7 +22,8 @@ to `ResponsiveSearchAd`: 3–15 unique headline assets (≤30) + 2–4 unique de
 (≤90), each a `TextAsset` in an `AssetLink`, plus required `FinalUrls`. Ad group now sends
 `AdGroupType: SearchStandard` (required to host an RSA) and a `Language` (campaign sets
 none). `Ad.Status` defaults to Active on Add, so the ad sends `Status: Paused` explicitly.
-`Ad.Type` is Add:Read-only → not sent. `CampaignInput.Headline/Description` (singular)
+`Ad.Type` "ResponsiveSearch" IS sent as the AddAds polymorphic discriminator (Add:Read-only
+bars changing the type, not omitting the wire discriminator). `CampaignInput.Headline/Description` (singular)
 became `Headlines/Descriptions` (lists); `composeAdCopy` de-dups/truncates/pads to the
 minimum, `validateAdCopy` rejects over-count/over-long up front. Also: ad URL + copy now
 validated BEFORE the campaign create (not before the ad group) so a bad input never

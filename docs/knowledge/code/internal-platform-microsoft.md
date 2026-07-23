@@ -160,9 +160,12 @@ campaign + ad-group at the ad step) so an ambiguous failure leaves the tree reco
 description assets** (≤90 chars), each a `TextAsset` wrapped in an `AssetLink`, plus a
 required `FinalUrls`. Its ad group is created with `AdGroupType` "SearchStandard" (the
 "SearchDynamic" type takes only dynamic search ads) and a `Language` (the MS-2 campaign sets
-no campaign-level languages, so the ad group must carry one). `Ad.Type` is "Add: Read-only"
-so it is NOT sent; `Ad.Status` defaults to *Active* on Add, so the ad sends `Status: Paused`
-explicitly (otherwise it would be eligible to serve once a human enables the campaign).
+no campaign-level languages, so the ad group must carry one). The AddAds body is polymorphic
+(an array of the base `Ad`), so the responsive search ad DOES send `Type: "ResponsiveSearch"`
+as the wire discriminator that selects the derived subtype ("Add: Read-only" on `Ad.Type`
+bars CHANGING the type, not omitting the discriminator — without it the create is rejected).
+`Ad.Status` defaults to *Active* on Add, so the ad sends `Status: Paused` explicitly
+(otherwise it would be eligible to serve once a human enables the campaign).
 `composeAdCopy` de-duplicates (case-insensitively), rune-truncates, and pads the caller's
 `Headlines`/`Descriptions` up to the required minimum with deterministic placeholders;
 `validateAdCopy` rejects an over-count or over-long caller entry up front.

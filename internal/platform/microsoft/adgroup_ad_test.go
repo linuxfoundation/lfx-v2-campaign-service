@@ -45,9 +45,12 @@ func TestCreateCampaign_CreatesFullHierarchyPaused(t *testing.T) {
 	if group.AdGroups[0].Language == "" {
 		t.Error("ad group Language is empty; Add requires a language when the campaign sets none")
 	}
-	// Ad is a PAUSED responsive search ad: >=3 headline assets, >=2 description assets, the
-	// destination + UTM params, and NO Type field (Ad.Type is Add:Read-only).
+	// Ad is a PAUSED responsive search ad: the polymorphic Type discriminator, >=3 headline
+	// assets, >=2 description assets, the destination + UTM params.
 	got := ad.Ads[0]
+	if got.Type != adTypeResponsiveSearch {
+		t.Errorf("ad Type = %q, want %q (the AddAds polymorphic discriminator)", got.Type, adTypeResponsiveSearch)
+	}
 	if got.Status != adStatusPaused {
 		t.Errorf("ad Status = %q, want %q (Ad.Status defaults to Active on Add)", got.Status, adStatusPaused)
 	}
@@ -364,6 +367,7 @@ func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
 		"too many descriptions": func(in *CampaignInput) { in.Descriptions = make([]string, maxAdDescriptions+1) },
 		"over-long headline":    func(in *CampaignInput) { in.Headlines = []string{strings.Repeat("x", maxAdHeadlineRunes+1)} },
 		"over-long description": func(in *CampaignInput) { in.Descriptions = []string{strings.Repeat("x", maxAdDescriptionRunes+1)} },
+		"duplicate headline":    func(in *CampaignInput) { in.Headlines = []string{"Register", "register"} }, // case-insensitive dup
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
