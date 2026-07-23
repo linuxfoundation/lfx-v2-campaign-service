@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -817,5 +819,142 @@ func TestCreateCampaign_LookupServerErrorIsUnconfirmed(t *testing.T) {
 				t.Errorf("a 5xx lookup must be UNCONFIRMED (ambiguous), got: %v", err)
 			}
 		})
+	}
+}
+
+// TestCreateCampaign_DuplicateAdGroupReconciledAsExisting: a 1214 (duplicate ad group) on the
+// create — a race lost after the find-first lookup — is reconciled by re-looking the group up
+// by name, not surfaced as a hard failure. The re-lookup returns the winner's id.
+func TestCreateCampaign_DuplicateAdGroupReconciledAsExisting(t *testing.T) {
+	in := validInput()
+	adGroupName := composeAdGroupName(in)
+	firstLookup := true
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+		case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+			// First lookup: absent (so the create runs). After the 1214, the re-lookup finds it.
+			if firstLookup {
+				firstLookup = false
+				_, _ = io.WriteString(w, `{"AdGroups":[]}`)
+			} else {
+				_, _ = io.WriteString(w, `{"AdGroups":[{"Id":111,"Name":`+jsonString(adGroupName)+`}]}`)
+			}
+		case strings.HasSuffix(p, "/Ads/QueryByAdGroupId"):
+			_, _ = io.WriteString(w, `{"Ads":[]}`)
+		case strings.HasSuffix(p, "/Campaigns"):
+			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/AdGroups"):
+			// The create loses the duplicate race → 1214.
+			_, _ = io.WriteString(w, `{"AdGroupIds":[null],"PartialErrors":[{"Code":1214}]}`)
+		case strings.HasSuffix(p, "/Ads"):
+			_, _ = io.WriteString(w, `{"AdIds":[987],"PartialErrors":[]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, p)
+		}
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("a 1214 duplicate ad group should reconcile to the existing group, got: %v", err)
+	}
+	if res.AdGroupID != "111" {
+		t.Errorf("AdGroupID = %q, want the reconciled 111", res.AdGroupID)
+	}
+}
+
+// TestCreateCampaign_CreateBodiesCarryV13Contract asserts the central v13 body fields the
+// creates depend on: the ad group carries AdGroupType/Language/Status and the campaign-scoped
+// CampaignId; the ad carries the Type discriminator + PAUSED status + a FinalUrls.
+func TestCreateCampaign_CreateBodiesCarryV13Contract(t *testing.T) {
+	var group createAdGroupsRequest
+	var ad createAdsRequest
+	api := &campaignsAPI{adGroupSeen: &group, adSeen: &ad}
+	c := newAPIClient(t, api.handler(t))
+	if _, err := c.CreateCampaign(context.Background(), validInput()); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if len(group.AdGroups) != 1 {
+		t.Fatalf("ad group request carried %d groups, want 1", len(group.AdGroups))
+	}
+	g := group.AdGroups[0]
+	if g.AdGroupType != adGroupTypeSearchStandard || g.Language == "" || g.Status != adGroupStatusPaused {
+		t.Errorf("ad group body = %+v, want SearchStandard + a language + PAUSED", g)
+	}
+	if string(group.CampaignId) == "" {
+		t.Error("ad group body must carry the CampaignId (AddAdGroups requires it in the body)")
+	}
+	if len(ad.Ads) != 1 {
+		t.Fatalf("ad request carried %d ads, want 1", len(ad.Ads))
+	}
+	a := ad.Ads[0]
+	if a.Type != adTypeResponsiveSearch || a.Status != adStatusPaused || len(a.FinalUrls) != 1 {
+		t.Errorf("ad body = Type %q Status %q FinalUrls %v, want ResponsiveSearch/PAUSED/one-url", a.Type, a.Status, a.FinalUrls)
+	}
+}
+
+// cancelAfterCampaignTransport wraps a base RoundTripper and cancels ctx once the campaign
+// CREATE response body has been fully read+closed by the client. That makes the cancellation
+// land deterministically BETWEEN the completed campaign create and the ad-group step's
+// ctx.Err() guard — the exact "clean abort before the ad-group step" boundary.
+type cancelAfterCampaignTransport struct {
+	base   http.RoundTripper
+	cancel context.CancelFunc
+}
+
+func (t *cancelAfterCampaignTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(r)
+	// The bare create route ends in "/Campaigns" (not "/Campaigns/QueryByAccountId").
+	if err == nil && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Campaigns") {
+		resp.Body = &cancelOnCloseBody{ReadCloser: resp.Body, cancel: t.cancel}
+	}
+	return resp, err
+}
+
+type cancelOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel() // campaign response fully consumed → cancel before the ad-group guard
+	return err
+}
+
+// TestCreateCampaign_ContextCancelledBeforeAdGroupIsCleanAbort: a context cancelled right after
+// the campaign create completes (before the ad-group step) is a clean abort carrying the
+// campaign id — NOT an UNCONFIRMED ad-group outcome (nothing was attempted for the ad group).
+func TestCreateCampaign_ContextCancelledBeforeAdGroupIsCleanAbort(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tok := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tok.Close)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+		case strings.HasSuffix(p, "/Campaigns"):
+			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
+		default:
+			t.Errorf("no ad-group/ad request should be issued after a pre-step cancel: %s %s", r.Method, p)
+		}
+	}))
+	t.Cleanup(api.Close)
+	transport := &cancelAfterCampaignTransport{base: http.DefaultTransport, cancel: cancel}
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tok.URL), WithBaseURL(api.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond), WithHTTPClient(&http.Client{Transport: transport}))
+
+	res, err := c.CreateCampaign(ctx, validInput())
+	if err == nil {
+		t.Fatal("expected an abort error after the context was cancelled")
+	}
+	if res == nil || res.CampaignID != "321" {
+		t.Fatalf("expected a partial carrying the created campaign 321, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "aborted") {
+		t.Errorf("a pre-ad-group cancel should read as an abort, got: %v", err)
 	}
 }
