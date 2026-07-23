@@ -440,7 +440,7 @@ func TestLinkedIn_ToggleStatus_PartialUpdate(t *testing.T) {
 		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, "555", model.CampaignRunPaused); err != nil {
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
 	got := <-gotCh
@@ -453,7 +453,7 @@ func TestLinkedIn_ToggleStatus_PartialUpdate(t *testing.T) {
 	if got.status != "PAUSED" {
 		t.Errorf("status = %q, want PAUSED", got.status)
 	}
-	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, "555", "RUNNING"); err == nil {
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, "RUNNING"); err == nil {
 		t.Error("expected an error for an unsupported run status")
 	}
 }
@@ -467,7 +467,7 @@ func TestLinkedIn_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, "555", model.CampaignRunActive)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunActive)
 	if err == nil {
 		t.Fatal("expected an error on a 5xx toggle")
 	}
@@ -495,7 +495,7 @@ func TestLinkedIn_ToggleStatus_NoOrgIDNeeded(t *testing.T) {
 		fakeConnReader{conn: conn}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, "555", model.CampaignRunPaused); err != nil {
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus must work without an org_id: %v", err)
 	}
 }

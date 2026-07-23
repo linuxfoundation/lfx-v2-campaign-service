@@ -193,9 +193,11 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 // ToggleStatus pauses or resumes an existing LinkedIn campaign on the platform. It resolves
 // the connection (active + access token; a status update needs the account id but not the
 // org id, which is creation-only), builds the client, and issues the RestLi PARTIAL_UPDATE.
-// platformCampaignID is the numeric campaign id; status is model.CampaignRunActive/Paused. An
-// UNCONFIRMED outcome is wrapped so the caller reports "verify before retry".
-func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+// campaign is the persisted row; LinkedIn is a single-node update (no child cascade like
+// Reddit), so only campaign.PlatformCampaignID (the numeric campaign id) is used. status is
+// model.CampaignRunActive/Paused. An UNCONFIRMED outcome is wrapped so the caller reports
+// "verify before retry".
+func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	liStatus, err := linkedinRunStatus(status)
 	if err != nil {
 		return err
@@ -223,7 +225,7 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
 	}
 	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
-	if uerr := client.UpdateCampaignStatus(ctx, platformCampaignID, liStatus); uerr != nil {
+	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
 		if linkedin.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
