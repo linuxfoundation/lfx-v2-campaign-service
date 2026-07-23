@@ -101,4 +101,14 @@ UNCONFIRMED, so a create that may have committed is not blind-retried into a
 duplicate. The status is preserved even when the response body is unreadable or
 oversized, so an ambiguous outcome is never downgraded to a definite failure.
 
+## Campaign status toggle
+
+`UpdateCampaignStatus(ctx, campaignID, status)` pauses/resumes an existing campaign. Meta's
+Graph API updates a node by POSTing to the node id with the changed field, so this is
+`POST /{campaignID}` with `{"status": "ACTIVE"|"PAUSED"}` (the same status enum the create
+path sets). `StatusActive`/`StatusPaused` are the accepted values; `campaignID` is validated
+numeric (`numericIDRE`) before interpolation. `IsOutcomeUnconfirmed(err)` exposes the shared
+ambiguity classifier so a caller can tell a maybe-applied outcome (transport/5xx/3xx-mutating)
+from a definite rejection.
+
 See [internal/platform/meta](../../../internal/platform/meta).

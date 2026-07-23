@@ -106,6 +106,12 @@ without touching every adapter. **reddit** implements it: `resolveRedditClient` 
 `Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
 then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
 its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
-PAUSES all three, so toggling only the campaign would not serve. Meta/X/Twitter toggles follow.
+PAUSES all three, so toggling only the campaign would not serve. **meta** implements it too
+(POST status to the campaign node; needs only the access token, not the page id; a single node,
+so no cascade). **linkedin** implements it (RestLi PARTIAL_UPDATE of the campaign status;
+single node, no cascade). An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`)
+is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
+package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). X/Twitter's toggle
+follows once its dispatcher lands on main.
 
 See [internal/dispatch](../../../internal/dispatch).

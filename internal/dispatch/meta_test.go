@@ -415,3 +415,57 @@ func TestMeta_AmbiguousCreateRetainsClaim(t *testing.T) {
 		t.Error("an ambiguous create must retain the result blob for reconciliation")
 	}
 }
+
+// TestMeta_ToggleStatus_PostsStatus verifies the dispatcher resolves creds and POSTs the
+// status to the campaign node via the meta client.
+func TestMeta_ToggleStatus_PostsStatus(t *testing.T) {
+	var gotMethod, gotPath, gotStatus string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if s, ok := body["status"].(string); ok {
+			gotStatus = s
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/23847290" {
+		t.Errorf("request = %s %s, want POST /23847290", gotMethod, gotPath)
+	}
+	if gotStatus != "PAUSED" {
+		t.Errorf("status = %q, want PAUSED", gotStatus)
+	}
+	// An unsupported run state is rejected before any call.
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", "RUNNING"); err == nil {
+		t.Error("expected an error for an unsupported run status")
+	}
+}
+
+// TestMeta_ToggleStatus_5xxIsUnconfirmed verifies a 5xx surfaces as Unconfirmed().
+func TestMeta_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx toggle")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+	}
+}

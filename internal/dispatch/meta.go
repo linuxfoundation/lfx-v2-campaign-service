@@ -161,6 +161,55 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	return camp, nil
 }
 
+// ToggleStatus pauses or resumes an existing Meta campaign on the platform. It resolves the
+// connection (an inactive/undecryptable/incomplete connection is a clean error), builds the
+// client, and POSTs status to the campaign node. platformCampaignID is the upstream Meta
+// campaign id; status is model.CampaignRunActive or model.CampaignRunPaused. Returns nil only
+// when the platform confirms; an UNCONFIRMED outcome is wrapped so the caller reports
+// "verify before retry" (via the Unconfirmed() behavioral interface).
+func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+	metaStatus, err := metaRunStatus(status)
+	if err != nil {
+		return err
+	}
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	if res.status != model.StatusActive {
+		return fmt.Errorf("meta connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds metaCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return fmt.Errorf("decode meta credentials: %w", err)
+	}
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return fmt.Errorf("meta credentials are incomplete (need accessToken)")
+	}
+	// A status update targets the campaign node by id (POST /{campaignID}); it needs no
+	// account id or page id, so those are not required here (unlike Dispatch).
+	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	if uerr := client.UpdateCampaignStatus(ctx, platformCampaignID, metaStatus); uerr != nil {
+		if meta.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
+}
+
+// metaRunStatus maps the service run state (active/paused) to Meta's status enum.
+func metaRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return meta.StatusActive, nil
+	case model.CampaignRunPaused:
+		return meta.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
+}
+
 // campaignFromMeta maps the client result to the persistence model.
 func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfig) *model.Campaign {
 	c := &model.Campaign{

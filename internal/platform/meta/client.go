@@ -703,6 +703,41 @@ func createOutcomeAmbiguous(err error) bool {
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
 }
 
+// IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
+// UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied by
+// Meta even though it errored (a transportError, a 5xx, or a 3xx on a mutating method). A
+// definite 4xx or a proven pre-send failure returns false. Exposes the same classifier the
+// create paths use so a toggle caller can distinguish "may already reflect the change" from
+// "definitely not applied". Mirrors reddit.IsOutcomeUnconfirmed.
+func IsOutcomeUnconfirmed(err error) bool { return createOutcomeAmbiguous(err) }
+
+// Campaign run states for UpdateCampaignStatus (Meta's Campaign.status enum values).
+const (
+	StatusActive = "ACTIVE"
+	StatusPaused = "PAUSED"
+)
+
+// UpdateCampaignStatus sets an existing campaign's status to ACTIVE or PAUSED. Meta's Graph
+// API updates a node via POST to the node id itself with the changed field, so this POSTs
+// /{campaignID} with {"status": ...} (the same status enum the create path sets). campaignID
+// is validated numeric (numericIDRE) before interpolation to prevent path/query injection.
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	campaignID = strings.TrimSpace(campaignID)
+	if campaignID == "" {
+		return fmt.Errorf("meta: campaign id is required")
+	}
+	if !numericIDRE.MatchString(campaignID) {
+		return fmt.Errorf("meta: invalid campaign id %q: must be numeric", campaignID)
+	}
+	if status != StatusActive && status != StatusPaused {
+		return fmt.Errorf("meta: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
+	}
+	if err := c.doRequest(ctx, http.MethodPost, "/"+campaignID, map[string]any{"status": status}, nil); err != nil {
+		return fmt.Errorf("meta: update campaign %s status to %s: %w", campaignID, status, err)
+	}
+	return nil
+}
+
 // isMutatingMethod reports whether an HTTP method can create/modify server state,
 // so a 3xx on it may hide a committed mutation. Mirrors the reddit client.
 func isMutatingMethod(method string) bool {
