@@ -404,6 +404,16 @@ func TestValidateAccountIDs(t *testing.T) {
 	if err := (&Client{account: AccountConfig{AccountID: "1", CustomerID: "bad/id"}}).validateAccountIDs(); err == nil {
 		t.Error("a non-numeric customer id must be rejected")
 	}
+	// An oversized invalid id must not embed its full (unbounded, user-supplied) value in
+	// the error — it is clipped so a huge id can't bloat a returned/logged/persisted error.
+	huge := strings.Repeat("x", 5000)
+	err := (&Client{account: AccountConfig{AccountID: huge}}).validateAccountIDs()
+	if err == nil {
+		t.Fatal("an oversized non-numeric account id must be rejected")
+	}
+	if len(err.Error()) > 200 {
+		t.Errorf("error embeds the full oversized id (%d bytes); want it clipped", len(err.Error()))
+	}
 }
 
 func TestIsPreSendDialError(t *testing.T) {

@@ -536,14 +536,26 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // a header. Mirrors the google-ads customerIDRE.
 var accountIDRE = regexp.MustCompile(`^[0-9]+$`)
 
+// clipID bounds an invalid id before it is embedded in an error. The id is a
+// user-supplied connection field of unbounded length, so a very large value would
+// otherwise produce a very large error that is returned, logged, and persisted on the
+// campaign step. 32 runes is enough to identify the offending value.
+func clipID(s string) string {
+	const max = 32
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "…"
+}
+
 // validateAccountIDs rejects an AccountID (and, when set, CustomerID) that isn't a
 // digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
 	if !accountIDRE.MatchString(c.account.AccountID) {
-		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be digits only", c.account.AccountID)
+		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be digits only", clipID(c.account.AccountID))
 	}
 	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
-		return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", c.account.CustomerID)
+		return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
 	}
 	return nil
 }
