@@ -4043,3 +4043,41 @@ func TestUpdateCampaignAndChildrenStatus_ActivateAdSetMutatedThenDiscoveryFailsI
 		t.Errorf("discovery failure after the ad set POST committed must be Unconfirmed, got %T: %v", err, err)
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst proves the PAUSE-ordering
+// invariant: the campaign gate is flipped BEFORE the ad set/ads, so delivery stops immediately
+// even if a later child update fails. A future reorder that paused children first would break
+// this — the test would then see the ad set POST before the campaign POST.
+func TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst(t *testing.T) {
+	orderCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			orderCh <- "ads-get"
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{}}`)
+			return
+		}
+		switch r.URL.Path {
+		case "/23847290":
+			orderCh <- "campaign"
+		case "/999":
+			orderCh <- "adset"
+		case "/111":
+			orderCh <- "ad"
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus (pause): %v", err)
+	}
+	close(orderCh)
+	var seq []string
+	for s := range orderCh {
+		seq = append(seq, s)
+	}
+	if len(seq) == 0 || seq[0] != "campaign" {
+		t.Fatalf("campaign gate must be flipped FIRST on pause; sequence = %v", seq)
+	}
+}

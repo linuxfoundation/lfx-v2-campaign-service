@@ -772,7 +772,9 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 //     is the outcome Unconfirmed.
 //   - PAUSE: campaign FIRST (delivery stops at the gate immediately), then ad set, then ads.
 //
-// An empty adSetID (a degraded create) toggles the campaign alone.
+// An empty adSetID toggles the campaign alone — but this is allowed only on PAUSE (a degraded
+// create can still be paused); ACTIVATE with no ad set id is REJECTED, since a campaign with no
+// ad set cannot serve.
 func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adSetID, status string) error {
 	if status == StatusActive && strings.TrimSpace(adSetID) == "" {
 		return fmt.Errorf("meta: cannot activate campaign %s: no ad set id is known, so the tree cannot be made servable", campaignID)
