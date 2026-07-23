@@ -23,6 +23,18 @@ is unconfirmed/absent or the campaign/line-item was reused. Client changes landi
 it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
 classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
 with `redactURLForError` so a persisted validation error can't leak a secret.
+## 2026-07-23 (3)
+
+**Update** — Campaign status toggle extended to LinkedIn (LFXV2-2807, on PR #47 with Meta).
+`linkedin.UpdateCampaignStatus` uses LinkedIn's RestLi PARTIAL_UPDATE (POST
+/adAccounts/{acct}/adCampaigns/{id}, header X-Restli-Method: PARTIAL_UPDATE, body
+{"patch":{"$set":{"status": ACTIVE|PAUSED}}}) — VERIFIED against Microsoft Learn LinkedIn
+Marketing API docs. `doRequest` gained an optional per-call headers map to carry the
+X-Restli-Method header (5 existing call sites updated to pass nil). `linkedin.IsOutcomeUnconfirmed`
++ `LinkedInDispatcher.ToggleStatus`. Reddit, Meta, and LinkedIn now implement StatusToggler;
+X/Twitter + GoogleAds follow once their dispatchers land on main (#39/#41). Tests are race-safe
+(channel capture, per the #47 review).
+
 ## 2026-07-23 (2)
 
 **Update** — Campaign status toggle extended to Meta (LFXV2-2807, follow-up to the Reddit

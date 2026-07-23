@@ -43,4 +43,14 @@ responsibility (the orchestrator's per-(brief, platform) claim), tracked
 separately and not provided here. A 429 (idempotent methods only) is retried
 with bounded backoff.
 
+## Campaign status toggle
+
+`UpdateCampaignStatus(ctx, campaignID, status)` pauses/resumes an existing campaign via
+LinkedIn's RestLi PARTIAL_UPDATE: `POST /adAccounts/{acct}/adCampaigns/{id}` with header
+`X-Restli-Method: PARTIAL_UPDATE` and body `{"patch":{"$set":{"status": ACTIVE|PAUSED}}}`. The
+account id is resolved+validated from the runtime config (same as create); `campaignID` must
+be numeric. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classifier so a caller
+can tell a maybe-applied outcome from a definite rejection. `doRequest` gained an optional
+per-call headers map to carry the `X-Restli-Method` header.
+
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
