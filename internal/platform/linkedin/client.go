@@ -571,16 +571,32 @@ func encodeURNForPath(urn string) string {
 }
 
 // creativeURN returns the sponsoredCreative URN for a finder element, preferring an explicit
-// URN field and falling back to the id (which flexibleID renders as a URN string when the
-// server sent one). Returns "" if none is usable.
+// URN field and falling back to the id. The creatives FINDER can return the id in EITHER
+// form — a full URN string ("urn:li:sponsoredCreative:123") or a bare numeric long ("123")
+// via flexibleID — so a numeric id is reconstructed into its URN rather than dropped (which
+// would silently skip activating that creative). Returns "" if none is usable.
 func creativeURN(el responseElement) string {
+	const prefix = "urn:li:sponsoredCreative:"
 	for _, cand := range []string{el.URN, el.DURN, el.ID.String()} {
-		if s := strings.TrimSpace(cand); strings.HasPrefix(s, "urn:li:sponsoredCreative:") {
+		s := strings.TrimSpace(cand)
+		if s == "" {
+			continue
+		}
+		if strings.HasPrefix(s, prefix) {
 			return s
+		}
+		// A bare numeric id (the finder returned a JSON number) → reconstruct the URN.
+		if creativeNumericIDRE.MatchString(s) {
+			return prefix + s
 		}
 	}
 	return ""
 }
+
+// creativeNumericIDRE matches a bare numeric creative id (the flexibleID numeric form) so it
+// can be reconstructed into a sponsoredCreative URN. A positive integer only — no sign,
+// decimal, or exponent — so a malformed id can't produce a bogus URN.
+var creativeNumericIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // partialCascadeError marks a cascade that updated the campaign upstream but then failed on a
 // creative: the run state is PARTIALLY applied. Its Unconfirmed() reports true so
