@@ -1049,3 +1049,29 @@ func TestUpdateCampaignAndCreativesStatus_TruncatedDiscoveryFails(t *testing.T) 
 		t.Errorf("incomplete discovery after the campaign update must be Unconfirmed(), got %T: %v", err, err)
 	}
 }
+
+// TestUpdateCampaignAndCreativesStatus_NumericCreativeIDReconstructed verifies a finder element
+// whose id is a bare NUMBER (flexibleID numeric form) is reconstructed into a sponsoredCreative
+// URN and updated — not silently dropped (which would leave that creative DRAFT).
+func TestUpdateCampaignAndCreativesStatus_NumericCreativeIDReconstructed(t *testing.T) {
+	var creativePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":119962155}],"metadata":{}}`) // NUMERIC id
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			creativePath = r.URL.EscapedPath()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	if !strings.Contains(creativePath, "creatives/urn%3Ali%3AsponsoredCreative%3A119962155") {
+		t.Errorf("numeric creative id was not reconstructed into a URN + updated; path = %q", creativePath)
+	}
+}
