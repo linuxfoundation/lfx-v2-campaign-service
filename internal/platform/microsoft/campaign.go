@@ -365,11 +365,17 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 		return "", fmt.Errorf("decode QueryByAccountId response: %w", uErr)
 	}
 	for _, cp := range resp.Campaigns {
-		if strings.EqualFold(cp.Name, name) {
-			if id := numberID(cp.Id); id != "" {
-				return id, nil
-			}
+		if !strings.EqualFold(cp.Name, name) {
+			continue
 		}
+		if id := numberID(cp.Id); id != "" {
+			return id, nil
+		}
+		// The name matched but the id is null/unparseable: the campaign almost certainly
+		// exists (its unique name matched). Reporting "" (absent) would let CreateCampaigns
+		// run and create a DUPLICATE. Return an error so the caller treats it as UNCONFIRMED
+		// (verify before retrying) rather than proceeding to create.
+		return "", fmt.Errorf("campaign %q found in lookup with no usable id", name)
 	}
 	return "", nil
 }
@@ -385,9 +391,23 @@ var errPartialFailure = errors.New("campaign create reported a PartialError")
 // isDuplicateCampaignNameErr distinguishes the reconcilable already-exists case.
 var errDuplicateName = fmt.Errorf("%w (duplicate campaign name)", errPartialFailure)
 
-// errCodeDuplicateCampaign is Microsoft's PartialError code (string ErrorCode) when a
-// campaign name already exists. Matched case-insensitively via hasErrorCode semantics.
-const errCodeDuplicateCampaign = "CampaignServiceCannotCreateDuplicateCampaign"
+// errCodeDuplicateCampaign is Microsoft's PartialError code when a campaign name already
+// exists. v13 surfaces this either as the string ErrorCode enum
+// ("CampaignServiceCannotCreateDuplicateCampaign") OR, in a BatchError, as the numeric Code
+// 1115 — the two are the same error, so both must be recognized (see
+// isDuplicateCampaignPartial). Matched case-insensitively via codeString semantics.
+const (
+	errCodeDuplicateCampaign        = "CampaignServiceCannotCreateDuplicateCampaign"
+	errCodeDuplicateCampaignNumeric = "1115"
+)
+
+// isDuplicateCampaignPartial reports whether a PartialErrors array carries the
+// duplicate-campaign-name rejection under EITHER the symbolic ErrorCode enum or the
+// equivalent numeric Code 1115.
+func isDuplicateCampaignPartial(items []msErrorItem) bool {
+	return partialErrorsHaveCode(items, errCodeDuplicateCampaign) ||
+		partialErrorsHaveCode(items, errCodeDuplicateCampaignNumeric)
+}
 
 // isDuplicateCampaignNameErr reports whether err is the duplicate-name rejection.
 func isDuplicateCampaignNameErr(err error) bool { return errors.Is(err, errDuplicateName) }
@@ -426,7 +446,7 @@ func firstCampaignID(body []byte) (string, error) {
 	// is unknown → UNCONFIRMED.
 	if partialErrorsHaveAny(resp.PartialErrors) {
 		codes := partialErrorCodes(resp.PartialErrors)
-		if partialErrorsHaveCode(resp.PartialErrors, errCodeDuplicateCampaign) {
+		if isDuplicateCampaignPartial(resp.PartialErrors) {
 			return "", fmt.Errorf("%w: %s", errDuplicateName, codes)
 		}
 		return "", fmt.Errorf("%w: %s", errPartialFailure, codes)
