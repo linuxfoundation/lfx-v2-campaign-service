@@ -421,22 +421,32 @@ const (
 // {"patch":{"$set":{"status": ...}}}. The account id is resolved+validated from the runtime
 // config (same as the create path); campaignID must be the numeric id (validated) so it can't
 // alter the request path.
-func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
-	// Fail on a missing/whitespace token up front (doRequest does not validate it, and
-	// CreateCampaign's preflight is bypassed here) — otherwise an empty or padded token would
-	// be sent as an invalid `Authorization: Bearer ` header.
+// validateToggleInput runs the shared status-toggle preflight — a missing/whitespace access
+// token (doRequest does not validate it and CreateCampaign's preflight is bypassed here), an
+// empty/non-numeric campaign id (so it can't alter the request path), and an unsupported
+// status — returning the trimmed campaign id. It is a pure, no-HTTP check so a bad input fails
+// cleanly BEFORE any creative discovery or mutation, regardless of cascade ordering.
+func (c *Client) validateToggleInput(campaignID, status string) (string, error) {
 	if strings.TrimSpace(c.creds.AccessToken) == "" {
-		return fmt.Errorf("linkedin: access token is required")
+		return "", fmt.Errorf("linkedin: access token is required")
 	}
 	campaignID = strings.TrimSpace(campaignID)
 	if campaignID == "" {
-		return fmt.Errorf("linkedin: campaign id is required")
+		return "", fmt.Errorf("linkedin: campaign id is required")
 	}
 	if !accountIDRE.MatchString(campaignID) {
-		return fmt.Errorf("linkedin: invalid campaign id %q: must be numeric", campaignID)
+		return "", fmt.Errorf("linkedin: invalid campaign id %q: must be numeric", campaignID)
 	}
 	if status != StatusActive && status != StatusPaused {
-		return fmt.Errorf("linkedin: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
+		return "", fmt.Errorf("linkedin: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
+	}
+	return campaignID, nil
+}
+
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	campaignID, err := c.validateToggleInput(campaignID, status)
+	if err != nil {
+		return err
 	}
 	accountID, err := c.resolveAccountID("")
 	if err != nil {
@@ -476,35 +486,55 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // partialCascadeError (Unconfirmed) so the caller verifies rather than reporting "not
 // modified"; a retry re-runs the idempotent cascade.
 func (c *Client) UpdateCampaignAndCreativesStatus(ctx context.Context, campaignID, status string) error {
+	// Validate inputs FIRST, before any HTTP work (discovery or mutation), regardless of the
+	// cascade ordering below — a bad campaign id / status / token fails cleanly, not after a
+	// round of creative discovery.
+	campaignID, err := c.validateToggleInput(campaignID, status)
+	if err != nil {
+		return err
+	}
 	accountID, err := c.resolveAccountID("")
 	if err != nil {
 		return fmt.Errorf("linkedin: %w", err)
 	}
 	if status == StatusActive {
-		// Creatives first (still gated by the paused campaign), campaign last.
-		if err := c.updateCreativesStatus(ctx, accountID, campaignID, status); err != nil {
+		// Creatives first (still gated by the paused campaign), campaign last. NOTHING has
+		// mutated yet, so a discovery/creative failure here is a CLEAN failure (mutatedBefore
+		// = false) — not "unconfirmed", which would wrongly tell the caller a change may have
+		// applied when none did.
+		if err := c.updateCreativesStatus(ctx, accountID, campaignID, status, false); err != nil {
 			return err
 		}
 		if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
+			// Creatives were already lifted (but still gated by the paused campaign, so not
+			// serving) — the tree is partially applied, so this is Unconfirmed.
 			return &partialCascadeError{stage: "campaign activate", err: err}
 		}
 		return nil
 	}
-	// PAUSE: campaign gate first (stops delivery now), then creatives.
+	// PAUSE: campaign gate first (stops delivery now), then creatives — the campaign HAS
+	// mutated before creative discovery, so a later failure is Unconfirmed (mutatedBefore = true).
 	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
 		return err
 	}
-	return c.updateCreativesStatus(ctx, accountID, campaignID, status)
+	return c.updateCreativesStatus(ctx, accountID, campaignID, status, true)
 }
 
 // updateCreativesStatus discovers the campaign's creatives and PARTIAL_UPDATEs each one's
-// intendedStatus to match the run status. On a PAUSE, the specific 400 LinkedIn returns for an
-// in-review creative (which cannot be paused) is tolerated — the campaign gate has already
-// stopped delivery; every other failure is a partialCascadeError (Unconfirmed).
-func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignID, status string) error {
+// intendedStatus to match the run status. mutatedBefore says whether an upstream change has
+// ALREADY committed (the PAUSE path flips the campaign first): when true, a discovery or
+// creative failure is a partialCascadeError (Unconfirmed — the tree is partially applied);
+// when false (the ACTIVATE path, creatives-first, nothing mutated yet), the DISCOVERY failure
+// is returned as-is (a clean, definite failure). Once ANY creative has been updated, a
+// subsequent failure is always Unconfirmed. On a PAUSE, the specific 400 LinkedIn returns for
+// an in-review creative (which cannot be paused) is tolerated — the campaign gate stops it.
+func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignID, status string, mutatedBefore bool) error {
 	creativeURNs, err := c.listCreativeURNs(ctx, accountID, campaignID)
 	if err != nil {
-		return &partialCascadeError{stage: "creative discovery", err: err}
+		if mutatedBefore {
+			return &partialCascadeError{stage: "creative discovery", err: err}
+		}
+		return fmt.Errorf("linkedin: creative discovery for campaign %s: %w", campaignID, err)
 	}
 	creativeStatus := creativeIntendedStatus(status)
 	for _, urn := range creativeURNs {
@@ -515,6 +545,9 @@ func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignI
 			if creativeStatus == StatusPaused && isBadRequest(uerr) {
 				continue // in-review creative can't be paused; the campaign gate already stopped it
 			}
+			// A mutating creative PATCH that errors MAY have committed on LinkedIn, so from the
+			// first creative attempt onward the outcome is Unconfirmed — even on the activate
+			// path where nothing had mutated before this loop.
 			return &partialCascadeError{stage: "creative", err: uerr}
 		}
 	}
