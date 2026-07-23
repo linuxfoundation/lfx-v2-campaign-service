@@ -3820,13 +3820,15 @@ func TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
-	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	// PAUSE: the campaign gate is flipped before ad discovery, so an incomplete discovery is a
+	// partial application (Unconfirmed). Either way, truncation must FAIL, not silently succeed.
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusPaused)
 	if err == nil {
 		t.Fatal("expected an error when ad discovery cannot be completed")
 	}
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
-		t.Errorf("incomplete discovery after the campaign update must be Unconfirmed(), got %T: %v", err, err)
+		t.Errorf("incomplete discovery after the campaign was paused must be Unconfirmed(), got %T: %v", err, err)
 	}
 }
 
@@ -3884,12 +3886,83 @@ func TestUpdateCampaignAndChildrenStatus_UnusableAdIDFails(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
-	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	// PAUSE so the campaign gate mutates before ad discovery → a no-usable-id failure is a
+	// partial application (Unconfirmed). Either way it must FAIL, not skip the ad silently.
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusPaused)
 	if err == nil {
 		t.Fatal("expected an error when a discovered ad has no usable id")
 	}
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
-		t.Errorf("a no-usable-id ad after the campaign update must be Unconfirmed(), got %T: %v", err, err)
+		t.Errorf("a no-usable-id ad after the campaign was paused must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildrenBeforeCampaign verifies that on
+// ACTIVATE the ad set + ads are updated BEFORE the campaign is flipped ACTIVE (children stay
+// gated by the paused campaign until the final flip, so a partial failure serves nothing).
+func TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildrenBeforeCampaign(t *testing.T) {
+	orderCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			orderCh <- "ads-get"
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{}}`)
+			return
+		}
+		switch r.URL.Path {
+		case "/23847290":
+			orderCh <- "campaign"
+		case "/999":
+			orderCh <- "adset"
+		case "/111":
+			orderCh <- "ad"
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	close(orderCh)
+	var seq []string
+	for s := range orderCh {
+		seq = append(seq, s)
+	}
+	if len(seq) == 0 || seq[len(seq)-1] != "campaign" {
+		t.Fatalf("campaign must be flipped LAST on activate; sequence = %v", seq)
+	}
+	for _, s := range seq[:len(seq)-1] {
+		if s == "campaign" {
+			t.Errorf("campaign was updated before its children on activate; sequence = %v", seq)
+		}
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateDefiniteChildFailureIsClean verifies that on
+// ACTIVATE, a DEFINITE (4xx) failure on a child (before the campaign flip) is a clean error —
+// nothing is serving yet, so it must NOT be reported Unconfirmed.
+func TestUpdateCampaignAndChildrenStatus_ActivateDefiniteChildFailureIsClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/23847290" { // campaign flip must NOT happen if a child failed first
+			t.Errorf("campaign flipped despite a failed child on activate")
+		}
+		if r.URL.Path == "/999" { // ad set POST returns a definite 400
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error on a definite child failure")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a definite child failure before the campaign flip must NOT be Unconfirmed, got: %v", err)
 	}
 }

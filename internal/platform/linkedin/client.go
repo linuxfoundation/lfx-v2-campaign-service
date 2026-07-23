@@ -537,6 +537,7 @@ func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignI
 		return fmt.Errorf("linkedin: creative discovery for campaign %s: %w", campaignID, err)
 	}
 	creativeStatus := creativeIntendedStatus(status)
+	mutated := mutatedBefore
 	for _, urn := range creativeURNs {
 		path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(urn))
 		body := map[string]any{"patch": map[string]any{"$set": map[string]any{"intendedStatus": creativeStatus}}}
@@ -545,11 +546,16 @@ func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignI
 			if creativeStatus == StatusPaused && isBadRequest(uerr) {
 				continue // in-review creative can't be paused; the campaign gate already stopped it
 			}
-			// A mutating creative PATCH that errors MAY have committed on LinkedIn, so from the
-			// first creative attempt onward the outcome is Unconfirmed — even on the activate
-			// path where nothing had mutated before this loop.
-			return &partialCascadeError{stage: "creative", err: uerr}
+			// If an upstream change may already have landed (mutatedBefore, an earlier
+			// successful creative, or an AMBIGUOUS outcome here) the result is Unconfirmed.
+			// Otherwise — the activate path, before the campaign flip, with a DEFINITE (4xx)
+			// rejection — nothing is serving yet, so it is a clean, definite failure.
+			if mutated || createOutcomeAmbiguous(uerr) {
+				return &partialCascadeError{stage: "creative", err: uerr}
+			}
+			return fmt.Errorf("linkedin: creative update failed: %w", uerr)
 		}
+		mutated = true
 	}
 	return nil
 }

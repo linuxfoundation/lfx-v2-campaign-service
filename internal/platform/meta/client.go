@@ -762,46 +762,82 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // campaign to ACTIVE would leave the ad set/ads PAUSED and the campaign would not serve.
 //
 // Meta persists the ad set id (in the campaign result) but NOT the individual ad ids, so the
-// ads are DISCOVERED via GET /{adSetID}/ads and each is POSTed to ACTIVE/PAUSED. Order on
-// ACTIVATE is parent-first (campaign -> ad set -> ads) so an intermediate failure never
-// leaves a servable child under a paused parent. Any per-entity failure AFTER the campaign
-// status already committed is returned as a partialCascadeError (Unconfirmed) so the caller
-// verifies rather than reporting "not modified"; a retry re-runs the idempotent cascade. An
-// empty adSetID (a degraded create) toggles the campaign alone.
+// ads are DISCOVERED via GET /{adSetID}/ads and each is POSTed to ACTIVE/PAUSED. Meta gates a
+// child's serving by its parent's status ("all the objects below it automatically inherit"
+// a paused/archived parent), so ordering is STATUS-DEPENDENT to avoid a partial activation
+// leaving paid delivery running:
+//   - ACTIVATE: ads FIRST, then ad set, then the campaign LAST — every child is still gated by
+//     the paused campaign until the final flip, so a mid-cascade failure leaves NOTHING serving
+//     (clean, since nothing was made servable). Only once a servable mutation may have landed
+//     is the outcome Unconfirmed.
+//   - PAUSE: campaign FIRST (delivery stops at the gate immediately), then ad set, then ads.
+//
+// An empty adSetID (a degraded create) toggles the campaign alone.
 func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adSetID, status string) error {
-	// Activating with no known ad set id cannot make the tree servable, so refuse rather
-	// than POST only the campaign and let the caller persist a misleading "active".
 	if status == StatusActive && strings.TrimSpace(adSetID) == "" {
 		return fmt.Errorf("meta: cannot activate campaign %s: no ad set id is known, so the tree cannot be made servable", campaignID)
 	}
-	// Validate the ad set id BEFORE the campaign POST (pre-flight): a malformed persisted id
-	// is a definite, retry-won't-help failure, so fail cleanly with NOTHING applied rather
-	// than committing the campaign change and then reporting an ambiguous partial activation.
+	// Validate ids BEFORE any HTTP (pre-flight): a malformed persisted id is a definite,
+	// retry-won't-help failure, so fail cleanly with NOTHING applied.
+	campaignID = strings.TrimSpace(campaignID)
+	if !numericIDRE.MatchString(campaignID) {
+		return fmt.Errorf("meta: invalid campaign id %q: must be numeric", campaignID)
+	}
 	adSetID = strings.TrimSpace(adSetID)
 	if adSetID != "" && !numericIDRE.MatchString(adSetID) {
 		return fmt.Errorf("meta: invalid ad set id %q: must be numeric", adSetID)
 	}
+	if status == StatusActive {
+		// Children first (still gated by the paused campaign), campaign last.
+		if err := c.updateAdSetAndAds(ctx, adSetID, status, false); err != nil {
+			return err
+		}
+		if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
+			return &partialCascadeError{stage: "campaign activate", err: err}
+		}
+		return nil
+	}
+	// PAUSE: campaign gate first (stops delivery now), then the children.
 	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
 		return err
 	}
+	return c.updateAdSetAndAds(ctx, adSetID, status, true)
+}
+
+// updateAdSetAndAds POSTs the status to the ad set and each discovered ad. mutatedBefore says
+// whether an upstream change has already committed (the PAUSE path flips the campaign first):
+// when false (the ACTIVATE path, before the campaign flip), a DEFINITE 4xx or a discovery
+// failure is a CLEAN error (nothing serving yet); an ambiguous failure (5xx/transport) is
+// Unconfirmed. When true, any failure is Unconfirmed. An empty adSetID is a no-op.
+func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, mutatedBefore bool) error {
 	if adSetID == "" {
 		return nil
 	}
-	// The campaign POST already committed; a child failure past this point is a PARTIAL
-	// application, surfaced as partialCascadeError (Unconfirmed).
 	if err := c.doRequest(ctx, http.MethodPost, "/"+adSetID, map[string]any{"status": status}, nil); err != nil {
-		return &partialCascadeError{stage: "ad set", err: err}
+		return classifyCascadeErr("ad set", err, mutatedBefore)
 	}
 	adIDs, err := c.listAdIDs(ctx, adSetID)
 	if err != nil {
-		return &partialCascadeError{stage: "ad discovery", err: err}
+		return classifyCascadeErr("ad discovery", err, mutatedBefore)
 	}
 	for _, adID := range adIDs {
 		if err := c.doRequest(ctx, http.MethodPost, "/"+adID, map[string]any{"status": status}, nil); err != nil {
-			return &partialCascadeError{stage: "ad", err: err}
+			return classifyCascadeErr("ad", err, mutatedBefore)
 		}
 	}
 	return nil
+}
+
+// classifyCascadeErr decides whether a cascade-step error is Unconfirmed. Once an upstream
+// change may have committed (mutatedBefore, or an ambiguous outcome), it is a
+// partialCascadeError (Unconfirmed). Otherwise — the activate path before the campaign flip,
+// with a DEFINITE failure (a 4xx / clean rejection) — nothing is serving yet, so it is a clean
+// error the caller may treat as "not applied".
+func classifyCascadeErr(stage string, err error, mutatedBefore bool) error {
+	if mutatedBefore || createOutcomeAmbiguous(err) {
+		return &partialCascadeError{stage: stage, err: err}
+	}
+	return fmt.Errorf("meta: %s update failed: %w", stage, err)
 }
 
 // listAdIDs discovers the ad ids under an ad set via GET /{adSetID}/ads (the Graph API ads
