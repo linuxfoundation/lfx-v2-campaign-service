@@ -221,9 +221,10 @@ func entityState(existed bool) string {
 }
 
 // createAdGroupAndAd completes the hierarchy under an already-created/found campaign:
-// it find-or-creates a PAUSED ad group, then creates a PAUSED Text Ad under it. Each
-// step accumulates its ids into the result so an ambiguous failure at a later step
-// leaves the whole tree reconcilable, never orphaned anonymously.
+// it find-or-creates a PAUSED ad group, then creates a PAUSED Responsive Search Ad under it
+// (v13 does not support adding TextAd). Each step accumulates its ids into the result so an
+// ambiguous failure at a later step leaves the whole tree reconcilable, never orphaned
+// anonymously.
 //
 // campaignPartial() returns the result carrying everything known so far (campaign id +
 // name); this function extends it with the ad-group and ad ids/names as they land.
@@ -408,11 +409,17 @@ func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string)
 		return "", fmt.Errorf("decode AdGroups/QueryByCampaignId response: %w", uErr)
 	}
 	for _, g := range resp.AdGroups {
-		if strings.EqualFold(g.Name, name) {
-			if id := numberID(g.Id); id != "" {
-				return id, nil
-			}
+		if !strings.EqualFold(g.Name, name) {
+			continue
 		}
+		if id := numberID(g.Id); id != "" {
+			return id, nil
+		}
+		// The name matched (ad-group names are case-insensitively unique under a campaign)
+		// but the id is null/unparseable: the group almost certainly exists. Reporting ""
+		// (absent) would issue POST /AdGroups and create a DUPLICATE. Return errNoID so the
+		// caller treats it as UNCONFIRMED (verify before retry).
+		return "", fmt.Errorf("ad group %q found with no usable id: %w", name, errNoID)
 	}
 	return "", nil
 }
@@ -519,7 +526,7 @@ func (c *Client) findAdByFinalURL(ctx context.Context, adGroupID, finalURL strin
 		}
 		// Destination matched but the id is nil/unparseable: the ad exists yet we
 		// cannot key on it. Ambiguous — do not report "absent".
-		return "", fmt.Errorf("ad for %q found with no usable id: %w", finalURL, errNoID)
+		return "", fmt.Errorf("ad for %q found with no usable id: %w", redactAdURL(finalURL), errNoID)
 	}
 	return "", nil
 }
@@ -629,7 +636,9 @@ func hasDoubleWidth(s string) bool {
 	for _, r := range s {
 		switch {
 		case r >= 0x1100 && r <= 0x11FF, // Hangul Jamo
+			r >= 0x2600 && r <= 0x27BF, // BMP emoji: Misc Symbols + Dingbats (☀ ❤ ✈ ✉ …)
 			r >= 0x2E80 && r <= 0x9FFF, // CJK radicals … unified ideographs
+			r == 0xFE0F,                // emoji variation selector (VS16, promotes a BMP glyph to emoji)
 			r >= 0xAC00 && r <= 0xD7AF, // Hangul syllables
 			r >= 0xF900 && r <= 0xFAFF, // CJK compatibility ideographs
 			r >= 0xFF00 && r <= 0xFFEF, // full-width forms
@@ -733,20 +742,25 @@ func validateAdCopy(in CampaignInput) error {
 	return checkAdCopyList("description", in.Descriptions, maxAdDescriptions, maxAdDescriptionRunes, maxAdDescriptionRunesWide)
 }
 
-// checkAdCopyList validates one caller list. Empty entries are ignored (composeAdCopy skips
-// them); every non-empty entry must contain at least one word, no newline, be within its
-// width-aware rune cap, and be case-insensitively unique. Checks apply to the trimmed value
-// the ad will actually carry.
+// checkAdCopyList validates one caller list. A genuinely EMPTY string ("") is ignored
+// (composeAdCopy pads the list to the minimum); a WHITESPACE-only entry is NOT — it is a
+// non-empty caller value that carries no word, which the CampaignInput contract rejects, so
+// it fails the hasWord check below rather than being silently dropped. Every other non-empty
+// entry must contain at least one word, no newline, be within its width-aware rune cap, and
+// be case-insensitively unique. Checks apply to the trimmed value the ad will actually carry.
 func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLimit int) error {
 	if n := len(items); n > maxCount {
 		return fmt.Errorf("at most %d %ss are allowed, got %d", maxCount, kind, n)
 	}
 	seen := make([]string, 0, len(items))
 	for i, raw := range items {
-		s := strings.TrimSpace(raw)
-		if s == "" {
+		// Only a genuinely empty string is skippable; a whitespace-only raw value is a
+		// caller-supplied entry with no word and must be rejected (per the contract), so it
+		// falls through to the hasWord check rather than being silently discarded.
+		if raw == "" {
 			continue
 		}
+		s := strings.TrimSpace(raw)
 		if strings.ContainsAny(raw, "\n\r") {
 			return fmt.Errorf("%s %d must not contain a newline", kind, i+1)
 		}
