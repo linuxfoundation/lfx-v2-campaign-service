@@ -88,9 +88,11 @@ const (
 	// response cannot exhaust memory. Mirrors the sibling clients.
 	maxResponseBytes = 8 << 20 // 8 MiB
 
-	// maxErrorBodyChars bounds how much of a non-2xx body is retained on apiError
-	// for internal classification. The body is never surfaced by Error(); the cap
-	// only keeps the retained value from bloating on a large error page.
+	// maxErrorBodyChars caps the length (in runes) of an untrusted string embedded in
+	// an error message — currently a redacted destination URL (see redactAdURL) — so a
+	// pathologically long value can't bloat a persisted campaign step. It is NOT an
+	// error-body snapshot: a non-2xx body is never retained (only its parsed error
+	// codes are; see apiError).
 	maxErrorBodyChars = 400
 
 	// retryMax is the number of times an HTTP 429 (rate-limited) IDEMPOTENT
@@ -287,10 +289,11 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 // Error types (mirror the meta/reddit/google-ads ambiguity contract)
 // ---------------------------------------------------------------------------
 
-// apiError is a non-2xx response from the Microsoft Advertising or OAuth
-// endpoint. It carries status/method/path so an error names exactly which call
-// failed. The upstream body is retained for internal classification but
-// deliberately not surfaced in Error(), since it can reflect request material.
+// apiError is a non-2xx response from the Microsoft Advertising API (the OAuth
+// token exchange never produces an apiError — its failures are plain errors that
+// never echo the token-endpoint body). It carries status/method/path so an error
+// names exactly which call failed. Only the parsed machine-readable ErrorCodes are
+// kept; the raw upstream body is dropped after code extraction (see below).
 type apiError struct {
 	StatusCode int
 	Method     string
@@ -933,9 +936,8 @@ func codeString(raw json.RawMessage) string {
 }
 
 // hasErrorCode reports whether the apiError carried the given Microsoft error code
-// (string enum or stringified numeric). It reads the ErrorCodes parsed from the
-// FULL body in doRequest — NOT the truncated Body — so classification works for
-// error payloads longer than maxErrorBodyChars.
+// (string enum or stringified numeric). It reads the ErrorCodes parsed from the FULL
+// body in doRequest, so classification works even for large error payloads.
 func (e *apiError) hasErrorCode(code string) bool {
 	for _, c := range e.ErrorCodes {
 		if strings.EqualFold(c, code) {
@@ -988,8 +990,10 @@ func createOutcomeAmbiguous(err error) bool {
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
 }
 
-// truncate returns at most n runes of s (byte-safe via a rune slice), so a large
-// error body can't bloat a retained apiError.
+// truncate returns at most n runes of s, cutting on a rune boundary (never splitting a
+// multibyte rune), so an untrusted string embedded in an error can't grow without bound.
+// It walks byte offsets rather than materializing a []rune, so a large input isn't
+// copied 4× just to keep a short prefix (see the body of the function).
 func truncate(s string, n int) string {
 	if n <= 0 {
 		return ""
