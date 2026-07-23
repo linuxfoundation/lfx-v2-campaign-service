@@ -698,6 +698,14 @@ func createOutcomeAmbiguous(err error) bool {
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
 }
 
+// IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
+// UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied
+// upstream even though it errored (a transportError, a 5xx, or a 3xx on a mutating method).
+// A definite 4xx or a proven pre-send failure returns false (the change was NOT applied). It
+// exposes the same classifier the create paths use so callers can distinguish "the platform
+// may already reflect the change, verify before retry" from "definitely not applied".
+func IsOutcomeUnconfirmed(err error) bool { return createOutcomeAmbiguous(err) }
+
 // isMutatingMethod reports whether an HTTP method can create/modify a resource
 // (POST/PUT/PATCH/DELETE). Used to decide whether a 3xx response is a possible
 // (UNCONFIRMED) create vs a harmless GET redirect.

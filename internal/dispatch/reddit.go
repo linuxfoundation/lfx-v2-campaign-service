@@ -223,8 +223,31 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	if err != nil {
 		return err
 	}
-	return client.UpdateCampaignStatus(ctx, platformCampaignID, redditStatus)
+	if uerr := client.UpdateCampaignStatus(ctx, platformCampaignID, redditStatus); uerr != nil {
+		// An UNCONFIRMED outcome (transport/5xx/3xx-mutating) means the PATCH MAY have
+		// applied upstream — wrap it in an error that reports Unconfirmed() so the caller
+		// (across the package boundary, via errors.As on the behavioral interface — same
+		// pattern as NoUpstreamCreate) reports "verify before retry", not a flat "not
+		// applied". A definite rejection passes through as an ordinary error.
+		if reddit.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
 }
+
+// unconfirmedToggleError wraps a toggle whose platform outcome is unknowable (the change may
+// have been applied). Callers detect it via the Unconfirmed() behavioral interface with
+// errors.As — no shared sentinel needed across the dispatch/service package boundary (mirrors
+// preCreateError / NoUpstreamCreate).
+type unconfirmedToggleError struct{ err error }
+
+func (e *unconfirmedToggleError) Error() string {
+	return "status change outcome is unconfirmed (it may have been applied): " + e.err.Error()
+}
+func (e *unconfirmedToggleError) Unwrap() error     { return e.err }
+func (e *unconfirmedToggleError) Unconfirmed() bool { return true }
 
 // redditRunStatus maps the service-level run state (active/paused) to the reddit client's
 // configured_status enum.

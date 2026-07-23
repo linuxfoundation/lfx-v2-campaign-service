@@ -385,3 +385,29 @@ func TestReddit_ToggleStatus_PatchesPlatform(t *testing.T) {
 		t.Error("expected an error for an unsupported run status")
 	}
 }
+
+// TestReddit_ToggleStatus_5xxIsUnconfirmed verifies a 5xx on the PATCH surfaces as an
+// error whose Unconfirmed() is true (the change may have applied upstream).
+func TestReddit_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on the PATCH
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, "t3_c", model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx toggle")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
