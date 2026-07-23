@@ -5,7 +5,9 @@ package microsoft
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -134,6 +136,35 @@ func TestCreateCampaign_ReusesExistingAdGroupAndAd(t *testing.T) {
 	}
 	if res.AdGroupID != "111" || res.AdID != "222" {
 		t.Errorf("AdGroupID=%q AdID=%q, want the existing 111/222", res.AdGroupID, res.AdID)
+	}
+}
+
+func TestCreateCampaign_AdsLookupSendsRequiredAdTypes(t *testing.T) {
+	// GetAdsByAdGroupId REQUIRES an AdTypes array (only ReturnAdditionalFields is optional);
+	// omitting it rejects the idempotency lookup before the ad create is reached. Assert the
+	// lookup body carries AdTypes.
+	var adQuery queryAdsRequest
+	api := &campaignsAPI{}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Ads/QueryByAdGroupId") {
+			if err := json.NewDecoder(r.Body).Decode(&adQuery); err != nil {
+				t.Errorf("decode ads query body: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"Ads":[]}`)
+			return
+		}
+		base(w, r)
+	})
+	if _, err := c.CreateCampaign(context.Background(), validInput()); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if len(adQuery.AdTypes) == 0 {
+		t.Fatal("ads lookup omitted the required AdTypes array")
+	}
+	if adQuery.AdTypes[0] != adTypeResponsiveSearch {
+		t.Errorf("AdTypes[0] = %q, want %q", adQuery.AdTypes[0], adTypeResponsiveSearch)
 	}
 }
 

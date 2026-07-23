@@ -72,6 +72,11 @@ const (
 	maxAdHeadlines    = 15
 	minAdDescriptions = 2
 	maxAdDescriptions = 4
+
+	// adTypeResponsiveSearch is the ad type this client creates. It is NOT sent on the ad
+	// create (Ad.Type is Add:Read-only there), but IS sent as the required AdTypes filter on
+	// the Ads/QueryByAdGroupId idempotency lookup (that operation requires AdTypes).
+	adTypeResponsiveSearch = "ResponsiveSearch"
 )
 
 // msAdGroup is one AdGroup in the POST /AdGroups body. Only Name is strictly Add:Required,
@@ -155,9 +160,14 @@ type createAdsResponse struct {
 	PartialErrors []msErrorItem  `json:"PartialErrors"`
 }
 
-// queryAdsRequest is the POST /Ads/QueryByAdGroupId body used by findTextAdByFinalURL.
+// queryAdsRequest is the POST /Ads/QueryByAdGroupId body used by findAdByFinalURL. Unlike
+// AdGroups/QueryByCampaignId (only CampaignId), GetAdsByAdGroupId marks AdTypes REQUIRED
+// ("unless otherwise noted... all request elements are required", and only
+// ReturnAdditionalFields is noted optional) — omitting it rejects the lookup before the ad
+// create is reached. We query the ResponsiveSearch type this client creates.
 type queryAdsRequest struct {
 	AdGroupId json.Number `json:"AdGroupId"`
+	AdTypes   []string    `json:"AdTypes"`
 }
 
 // createAdGroupAndAd completes the hierarchy under an already-created/found campaign:
@@ -386,7 +396,7 @@ type queryAdsResponse struct {
 // (idempotent). Matching on the destination keeps a retry from stacking duplicate ads
 // (ads have no stable name to key on, and v13 permits duplicate responsive search ads).
 func (c *Client) findAdByFinalURL(ctx context.Context, adGroupID, finalURL string) (string, error) {
-	req := queryAdsRequest{AdGroupId: json.Number(adGroupID)}
+	req := queryAdsRequest{AdGroupId: json.Number(adGroupID), AdTypes: []string{adTypeResponsiveSearch}}
 	body, err := c.doRequest(ctx, http.MethodPost, "Ads/QueryByAdGroupId", req, true)
 	if err != nil {
 		return "", err

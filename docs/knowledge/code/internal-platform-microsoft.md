@@ -170,7 +170,10 @@ explicitly (otherwise it would be eligible to serve once a human enables the cam
 Ad-group idempotency is the (case-insensitively unique) ad-group name; ads have no stable
 name (and v13 ALLOWS duplicate responsive search ads in an ad group), so ad idempotency is
 keyed on the destination (`findAdByFinalURL` matches an existing ad whose `FinalUrls`
-contains the composed URL). The ad destination and ad copy are validated UP FRONT in
+contains the composed URL). NOTE: `GetAdsByAdGroupId` (`Ads/QueryByAdGroupId`) marks
+`AdTypes` REQUIRED (unlike `AdGroups/QueryByCampaignId`, which needs only `CampaignId`), so
+the ad lookup sends `AdTypes: ["ResponsiveSearch"]` or the lookup is rejected before the
+create is reached. The ad destination and ad copy are validated UP FRONT in
 `CreateCampaign`, before the campaign create (`validateAdURL`: https/http, absolute, no
 userinfo, well-formed query; `redactAdURL` for errors; `validateAdCopy` for the copy), so a
 bad URL/copy fails cleanly `(nil, err)` without orphaning a PAUSED campaign or ad group. The
