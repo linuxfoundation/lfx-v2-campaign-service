@@ -41,15 +41,40 @@ type Campaign struct {
 	UpdatedAt          time.Time
 }
 
-// Campaign run states settable via the status toggle (Campaign.Status is a plain string
-// that also carries create-time values like "created"/"created_degraded"). These are the
-// two states a caller can toggle a live campaign between; they match the design enum
-// ("active"/"paused") and are mapped to each platform's own status vocabulary by that
-// platform's dispatcher.
+// Campaign.Status is a plain string that carries TWO kinds of value: a provisioning state
+// stamped by the create/dispatch flow (pending / created / created_degraded) and a run state
+// set by the status toggle (active / paused).
+//
+// Run states — the two a caller can toggle a live campaign between (match the design enum,
+// mapped to each platform's own vocabulary by its dispatcher):
 const (
 	CampaignRunActive = "active"
 	CampaignRunPaused = "paused"
 )
+
+// Provisioning states — stamped during creation. Mirrors the dispatch package's
+// campaignStatusCreated/CreatedDegraded and the orchestrator's "pending" placeholder. The
+// status toggle keys off these: it is safe to toggle a fully-created campaign, but a
+// "pending" (ambiguous orphan) or "created_degraded" (a sub-step still needs reconciliation)
+// campaign must NOT be toggled — doing so would activate an incomplete campaign and/or erase
+// the reconciliation marker.
+const (
+	CampaignStatusPending         = "pending"
+	CampaignStatusCreated         = "created"
+	CampaignStatusCreatedDegraded = "created_degraded"
+)
+
+// CampaignStatusToggleable reports whether a campaign in the given status may have its run
+// state toggled: only a cleanly-created campaign (or one already in a run state) is safe. A
+// pending/degraded/other provisioning state is not — see the provisioning-state constants.
+func CampaignStatusToggleable(status string) bool {
+	switch status {
+	case CampaignStatusCreated, CampaignRunActive, CampaignRunPaused:
+		return true
+	default:
+		return false
+	}
+}
 
 // JobStatus is the status vocabulary shared by campaign_jobs and the API's
 // JobCreateResponse/JobPollResponse.
