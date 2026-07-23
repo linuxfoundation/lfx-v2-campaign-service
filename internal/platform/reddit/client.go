@@ -704,7 +704,17 @@ func createOutcomeAmbiguous(err error) bool {
 // A definite 4xx or a proven pre-send failure returns false (the change was NOT applied). It
 // exposes the same classifier the create paths use so callers can distinguish "the platform
 // may already reflect the change, verify before retry" from "definitely not applied".
-func IsOutcomeUnconfirmed(err error) bool { return createOutcomeAmbiguous(err) }
+//
+// It also honors any error reporting Unconfirmed() bool via the behavioral interface — a
+// partialCascadeError (campaign PATCHed, a child PATCH then failed) is partially applied and
+// must be treated as unconfirmed even though its underlying child error might be a definite 4xx.
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
 
 // isMutatingMethod reports whether an HTTP method can create/modify a resource
 // (POST/PUT/PATCH/DELETE). Used to decide whether a 3xx response is a possible
@@ -1619,21 +1629,50 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // classification so the service does not persist a run state the platform did not fully
 // apply.
 func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID, status string) error {
+	// Activating a campaign whose child ad group id is unknown cannot make the tree
+	// servable (the ad group stays PAUSED), so refuse rather than PATCH only the campaign
+	// and let the caller persist a misleading "active". Pausing is fine without children —
+	// pausing the parent already stops delivery.
+	if status == StatusActive && strings.TrimSpace(adGroupID) == "" {
+		return fmt.Errorf("reddit: cannot activate campaign %s: no ad group id is known, so the tree cannot be made servable", campaignID)
+	}
 	if err := c.updateEntityStatus(ctx, "campaigns", campaignID, status); err != nil {
 		return err
 	}
+	// The campaign PATCH already committed. A subsequent CHILD failure means the tree is
+	// PARTIALLY applied (parent changed, child not) — that is NOT "not modified", and a
+	// retry is safe because every PATCH is idempotent. Surface it as a partial-cascade
+	// error whose Unconfirmed() is true so the caller reports "verify/retry" and does not
+	// persist a run state the whole tree does not yet reflect.
 	if strings.TrimSpace(adGroupID) != "" {
 		if err := c.updateEntityStatus(ctx, "ad_groups", adGroupID, status); err != nil {
-			return err
+			return &partialCascadeError{stage: "ad group", err: err}
 		}
 	}
 	if strings.TrimSpace(adID) != "" {
 		if err := c.updateEntityStatus(ctx, "ads", adID, status); err != nil {
-			return err
+			return &partialCascadeError{stage: "ad", err: err}
 		}
 	}
 	return nil
 }
+
+// partialCascadeError marks a cascade that changed the campaign upstream but then failed on
+// a child entity: the run state is PARTIALLY applied. Its Unconfirmed() reports true so the
+// caller (via the shared IsOutcomeUnconfirmed classifier) treats it as "may be applied —
+// verify before retrying" rather than "not modified"; a retry re-runs the idempotent cascade.
+type partialCascadeError struct {
+	stage string
+	err   error
+}
+
+func (e *partialCascadeError) Error() string {
+	return "reddit: campaign status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+}
+func (e *partialCascadeError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *partialCascadeError) Unconfirmed() bool { return true }
 
 // updateEntityStatus PATCHes one entity's configured_status via
 // PATCH /ad_accounts/{accountID}/{entity}/{id} with the create path's envelope
