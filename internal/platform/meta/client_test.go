@@ -4009,3 +4009,27 @@ func TestPartialCascadeError_MessageDoesNotAssertCampaignChanged(t *testing.T) {
 type errStub string
 
 func (e errStub) Error() string { return string(e) }
+
+// TestUpdateCampaignAndChildrenStatus_ActivateAdSetMutatedThenDiscoveryFailsIsUnconfirmed:
+// on ACTIVATE the ad set is POSTed ACTIVE before ad discovery; if discovery then fails, the ad
+// set has ALREADY changed upstream, so the outcome must be Unconfirmed (not a clean failure).
+func TestUpdateCampaignAndChildrenStatus_ActivateAdSetMutatedThenDiscoveryFailsIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			w.WriteHeader(http.StatusForbidden) // definite 403 on discovery, AFTER the ad set POST
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`) // ad set POST succeeds
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error when discovery fails after the ad set was mutated")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("discovery failure after the ad set POST committed must be Unconfirmed, got %T: %v", err, err)
+	}
+}

@@ -813,19 +813,26 @@ func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, 
 	if adSetID == "" {
 		return nil
 	}
+	// Capture the "this is an activate cascade, campaign not yet flipped" intent BEFORE the ad
+	// set POST flips mutatedBefore — the zero-ads guard below keys on the original intent, not
+	// on whether an upstream mutation has since happened.
+	activating := !mutatedBefore && status == StatusActive
 	if err := c.doRequest(ctx, http.MethodPost, "/"+adSetID, map[string]any{"status": status}, nil); err != nil {
 		return classifyCascadeErr("ad set", err, mutatedBefore)
 	}
+	// The ad set POST has now committed (even on the activate path where the campaign hasn't
+	// flipped yet — the ad set itself changed upstream), so every subsequent failure is a
+	// partial application: classify with mutatedBefore=true from here on.
+	mutatedBefore = true
 	adIDs, err := c.listAdIDs(ctx, adSetID)
 	if err != nil {
 		return classifyCascadeErr("ad discovery", err, mutatedBefore)
 	}
-	// On ACTIVATE (mutatedBefore==false, before the campaign flip), a tree with ZERO ads can
-	// never serve — Meta creation treats per-variant ad failures as non-fatal, so a degraded
-	// broker campaign can legitimately have an active ad set but no ads. Flipping the campaign
-	// ACTIVE here would report success for a campaign that cannot deliver. Refuse cleanly
-	// (nothing has been made servable yet). PAUSE with zero ads is fine (nothing to pause).
-	if !mutatedBefore && status == StatusActive && len(adIDs) == 0 {
+	// On ACTIVATE, a tree with ZERO ads can never serve — Meta creation treats per-variant ad
+	// failures as non-fatal, so a degraded broker campaign can legitimately have an active ad
+	// set but no ads. Flipping the campaign ACTIVE would report success for a campaign that
+	// cannot deliver. Refuse (nothing servable). PAUSE with zero ads is fine (nothing to pause).
+	if activating && len(adIDs) == 0 {
 		return fmt.Errorf("meta: cannot activate ad set %s: it has no ads, so the campaign cannot serve", adSetID)
 	}
 	for _, adID := range adIDs {
