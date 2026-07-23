@@ -80,8 +80,13 @@ campaign would not serve. Each entity is set via `PATCH /ad_accounts/{accountID}
 with `{"data":{"configured_status": "ACTIVE"|"PAUSED"}}` — the same envelope + `configured_status`
 field the create path sets (`configured_status` is the advertiser-set state, distinct from the
 read-only `effective_status`). The cascade is parent-first (campaign → ad group → ad) so an
-intermediate failure never leaves a servable child under a paused parent; an empty child id
-(a degraded create) is skipped and only the campaign is toggled. `StatusActive`/`StatusPaused`
+intermediate failure never leaves a servable child under a paused parent. Two edge cases:
+ACTIVATING with no known ad group id is REFUSED before any PATCH (activating only the campaign
+would leave the tree unable to serve, so the caller must not persist "active"); PAUSING with no
+child id is fine (pausing the parent already halts delivery) and toggles the campaign alone. If
+the campaign PATCH commits but a later child PATCH fails, the result is a `partialCascadeError`
+whose `Unconfirmed()` is true (via `IsOutcomeUnconfirmed`), so the service reports 503-unconfirmed
+("verify before retry") rather than "not modified" — a retry re-runs the idempotent cascade. `StatusActive`/`StatusPaused`
 are the two accepted values. Every id is validated with the letters/digits/underscores guard
 (rejecting `/`, `?`, `#`) before interpolation. A PATCH is idempotent, so `request()` may
 safely retry it on a 429. (`UpdateCampaignStatus(ctx, campaignID, status)` toggles the campaign
