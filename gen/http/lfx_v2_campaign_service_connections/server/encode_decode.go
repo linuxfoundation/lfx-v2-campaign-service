@@ -5113,7 +5113,7 @@ func unmarshalTwitterAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnect
 	res := &lfxv2campaignserviceconnections.TwitterAdsConnectionConfig{
 		Label:               v.Label,
 		AccountID:           *v.AccountID,
-		FundingInstrumentID: v.FundingInstrumentID,
+		FundingInstrumentID: *v.FundingInstrumentID,
 	}
 
 	return res

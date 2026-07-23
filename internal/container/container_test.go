@@ -152,7 +152,7 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 }
 
 // registeredProviders is the set of providers registerDispatchers wires up on this
-// branch (one entry lands per adapter PR: reddit, linkedin, meta). Each is guarded so
+// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter). Each is guarded so
 // dropping its map entry — the production wiring each PR adds — fails a test rather
 // than silently restoring "no dispatcher registered" (the adapters are unit-tested by
 // direct instantiation, which bypasses the map).
@@ -160,6 +160,7 @@ var registeredProviders = []model.Provider{
 	model.ProviderRedditAds,
 	model.ProviderLinkedInAds,
 	model.ProviderMetaAds,
+	model.ProviderTwitterAds,
 }
 
 // TestRegisterDispatchers_RegistersProviders asserts every expected provider maps to a

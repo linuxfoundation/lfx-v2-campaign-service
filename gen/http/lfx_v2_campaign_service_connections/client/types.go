@@ -2420,10 +2420,10 @@ type RedditAdsCredentialsRequestBody struct {
 type TwitterAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// X/Twitter Ads account ID
+	// X/Twitter Ads account ID (alphanumeric handle)
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// Funding instrument for the ad account
-	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
+	// X/Twitter funding instrument id (alphanumeric)
+	FundingInstrumentID string `form:"funding_instrument_id" json:"funding_instrument_id" xml:"funding_instrument_id"`
 }
 
 // TwitterAdsCredentialsRequestBody is used to define fields on request body
@@ -7752,6 +7752,20 @@ func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigReq
 	err = goa.MergeErrors(err, goa.ValidatePattern("body.page_id", body.PageID, "^[0-9]+$"))
 	if utf8.RuneCountInString(body.PageID) > 64 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.page_id", body.PageID, utf8.RuneCountInString(body.PageID), 64, false))
+	}
+	return
+}
+
+// ValidateTwitterAdsConnectionConfigRequestBody runs the validations defined
+// on twitter-ads-connection-configRequestBody
+func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionConfigRequestBody) (err error) {
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[A-Za-z0-9]+$"))
+	if utf8.RuneCountInString(body.AccountID) > 64 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 64, false))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.funding_instrument_id", body.FundingInstrumentID, "^[A-Za-z0-9]+$"))
+	if utf8.RuneCountInString(body.FundingInstrumentID) > 64 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.funding_instrument_id", body.FundingInstrumentID, utf8.RuneCountInString(body.FundingInstrumentID), 64, false))
 	}
 	return
 }

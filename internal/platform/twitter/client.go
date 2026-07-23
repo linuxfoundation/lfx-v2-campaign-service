@@ -48,6 +48,15 @@ const (
 
 	// requestTimeout mirrors TWITTER_REQUEST_TIMEOUT_MS.
 	requestTimeout = 30 * time.Second
+	// minStartLead is the minimum lead time a line-item start must have over "now" at
+	// validation. The line-item POST (which enforces X's future-start rule) runs only
+	// AFTER account verification, two lookups, the campaign POST, and pacing/retries —
+	// the orchestrator allows the whole call up to providerCallTimeout (2m). Requiring
+	// the start to be at least this far ahead ensures it is still in the future by the
+	// time the line-item POST happens (so a create started just before UTC midnight
+	// can't cross midnight and leave the orphan this check exists to prevent). Sized
+	// above that 2m budget with margin.
+	minStartLead = 5 * time.Minute
 	// writeDelay mirrors TWITTER_API_WRITE_DELAY_MS (1 write req/sec).
 	writeDelay = 1 * time.Second
 	// maxBudgetUsd caps the budget well below the int64 micro-unit overflow
@@ -613,6 +622,15 @@ func createOutcomeAmbiguous(err error) bool {
 	if ae.StatusCode >= 500 {
 		return true
 	}
+	// A 429 that SURVIVED the retry/backoff loop on a MUTATING request is ambiguous:
+	// the throttle can be reported at or after the write is accepted, and doRequest
+	// gives up only once retries are exhausted, so the create MAY already have
+	// committed. Treat it as UNCONFIRMED (verify-before-retry), not a definite 4xx
+	// rejection — a blind retry of a non-idempotent create (e.g. promoted_tweets)
+	// could duplicate it. A 429 on a GET is not a create, so it stays non-ambiguous.
+	if ae.StatusCode == http.StatusTooManyRequests && isMutatingMethod(ae.Method) {
+		return true
+	}
 	// A 3xx on a MUTATING request reached a responder and may have committed a
 	// resource before redirecting — UNCONFIRMED. A 3xx on a GET is not a create, so
 	// it stays non-ambiguous. Gating on the method keeps this helper's contract
@@ -1042,13 +1060,30 @@ var spaceRe = regexp.MustCompile(`\s+`)
 
 // validateRegistrationURL ensures a user-supplied registration URL is an
 // absolute http/https URL with a real host, before any mutating call. In the
-// manual-tweet workflow (TweetID omitted) this URL is the only ad destination
-// (it feeds the UTM/destination via buildTwitterUtmURL), and url.Parse alone is
+// manual-tweet workflow (TweetID omitted) this URL is surfaced (sanitized, via
+// displayTwitterUtmURL) as the destination the operator attaches manually, and
+// url.Parse alone is
 // far too permissive: url.Parse("") succeeds (yielding a query-only
 // "?utm_source=..." string), relative URLs are accepted, and "https://:443/x"
 // parses with an empty Hostname(). Mirrors validateRegistrationURL in the
 // reddit/linkedin clients: TrimSpace, require IsAbs()+Hostname()!="", scheme
 // http/https.
+// redactURLForError reduces a URL to scheme+host+path for inclusion in an error
+// message, so a validation error (which the dispatcher wraps and the orchestrator may
+// persist) never carries the userinfo/query/fragment that can hold secrets. A value
+// that can't be parsed as an absolute URL is reported as an opaque placeholder rather
+// than echoed raw.
+func redactURLForError(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
+		if err == nil && u.Scheme != "" && u.Host != "" {
+			return u.Scheme + "://" + u.Host
+		}
+		return "(redacted)"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+}
+
 func validateRegistrationURL(raw string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -1056,22 +1091,32 @@ func validateRegistrationURL(raw string) error {
 	}
 	u, err := url.Parse(trimmed)
 	if err != nil {
-		return fmt.Errorf("registration URL %q is not a valid URL: %w", raw, err)
+		// Do NOT echo the raw URL (it may carry secrets in userinfo/query/fragment) —
+		// the message and the wrapped url.Error can both be persisted.
+		return fmt.Errorf("registration URL %q is not a valid URL", redactURLForError(raw))
 	}
 	// Require a real host: url.Parse accepts "https://:443/path" (Host=":443")
 	// where Hostname() is empty, so check Hostname() not just Host.
 	if !u.IsAbs() || u.Hostname() == "" {
-		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", raw)
+		return fmt.Errorf("registration URL %q must be absolute (include scheme and host)", redactURLForError(raw))
+	}
+	// Reject embedded userinfo (user[:password]@host): an ad destination never needs
+	// URL credentials, and forwarding them downstream would leak a basic-auth secret.
+	// Mirrors the reddit/meta clients' validators.
+	if u.User != nil {
+		return fmt.Errorf("registration URL %q must not contain embedded credentials (userinfo)", redactURLForError(raw))
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
 		return nil
 	default:
-		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", raw, u.Scheme)
+		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", redactURLForError(raw), u.Scheme)
 	}
 }
 
-func buildTwitterUtmURL(in CampaignInput) string {
+// twitterUTMParams is the allowlist of utm_* params THIS client generates (the source
+// of truth for both the real destination URL and the sanitized display copy).
+func twitterUTMParams(in CampaignInput) map[string]string {
 	slug := in.EventSlug
 	if slug == "" {
 		slug = spaceRe.ReplaceAllString(strings.ToLower(in.EventName), "-")
@@ -1080,7 +1125,22 @@ func buildTwitterUtmURL(in CampaignInput) string {
 	if campaign == "" {
 		campaign = slug
 	}
+	return map[string]string{
+		"utm_source":   "twitter",
+		"utm_medium":   "paid-social",
+		"utm_campaign": campaign,
+		"utm_term":     spaceRe.ReplaceAllString(strings.ToLower(in.EventName), "-"),
+		"utm_content":  "promoted-tweet",
+	}
+}
 
+// buildTwitterUtmURL merges the generated utm_* params into the registration URL's
+// existing query, preserving the caller's original query/fragment. It is the canonical
+// full-URL builder (kept as the reference the sanitized displayTwitterUtmURL derives
+// from, and exercised by tests); it is NOT emitted to X or persisted directly — the
+// manual-tweet step uses the sanitized displayTwitterUtmURL, and the promoted-tweet
+// path's destination comes from the tweet itself.
+func buildTwitterUtmURL(in CampaignInput) string {
 	raw := strings.TrimSpace(in.RegistrationURL)
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -1091,12 +1151,37 @@ func buildTwitterUtmURL(in CampaignInput) string {
 	// lands before any fragment (a naive string append would put it inside the
 	// fragment, e.g. https://x/reg#a?utm_...).
 	q := u.Query()
-	q.Set("utm_source", "twitter")
-	q.Set("utm_medium", "paid-social")
-	q.Set("utm_campaign", campaign)
-	q.Set("utm_term", spaceRe.ReplaceAllString(strings.ToLower(in.EventName), "-"))
-	q.Set("utm_content", "promoted-tweet")
+	for k, v := range twitterUTMParams(in) {
+		q.Set(k, v)
+	}
 	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// displayTwitterUtmURL builds a click URL SAFE TO PERSIST in Steps / return to callers:
+// it strips any userinfo, fragment, and PRE-EXISTING query params from the registration
+// URL (which may carry secrets like ?token=...) and keeps ONLY the generated utm_*
+// params. This is the ONLY UTM URL this client emits (in the manual-tweet step); the
+// query-bearing registration URL is NOT sent to X by this client — the ad destination
+// on the promoted-tweet path comes from the tweet itself. Mirrors the reddit client's
+// displayRedditUTMURL.
+func displayTwitterUtmURL(in CampaignInput) string {
+	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
+		// Never echo a raw/unparseable value with its secrets: reduce to a scheme+host
+		// or, failing that, an opaque placeholder.
+		if err == nil && u.Scheme != "" && u.Host != "" {
+			return u.Scheme + "://" + u.Host
+		}
+		return "(destination URL redacted)"
+	}
+	u.User = nil    // drop any basic-auth userinfo
+	u.Fragment = "" // a fragment can carry sensitive data; drop it for display
+	safe := url.Values{}
+	for k, v := range twitterUTMParams(in) {
+		safe.Set(k, v)
+	}
+	u.RawQuery = safe.Encode()
 	return u.String()
 }
 
@@ -1141,8 +1226,16 @@ type CampaignResult struct {
 	// duplicate this signal exists to prevent. Read the warning text; do not assume
 	// manual addition is always safe.
 	PromotedTweetWarning string
-	TwitterURL           string
-	Steps                []string
+	// Reused is true when this call REUSED an existing campaign and/or line item by
+	// name instead of creating fresh ones, and therefore did NOT apply this request's
+	// budget/config/flight-dates to it (find-or-create is idempotent by name; an
+	// authoritative reconcile is the orchestrator's job, LFXV2-2665). The details are
+	// in Steps. Consumers MUST NOT treat a reused result as an unqualified success:
+	// the campaign may be serving under a DIFFERENT budget/config, or an existing line
+	// item may already be ENABLED under different dates than this request expects.
+	Reused     bool
+	TwitterURL string
+	Steps      []string
 }
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -1247,6 +1340,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if in.EndDate <= in.StartDate {
 		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
 	}
+	// X requires a line-item start_time in the FUTURE. A past start is only caught at the
+	// line-item POST, AFTER the campaign is already created — leaving a retained orphan.
+	// Reject it here, before any mutating call. The date is sent to X as UTC midnight
+	// (toIso8601Utc → "<date>T00:00:00Z"), so compare THAT effective start instant
+	// against now PLUS a lead-time buffer: the line-item POST runs after several other
+	// requests (up to providerCallTimeout), so a start only moments ahead could be past
+	// by the time it's submitted (e.g. a create started just before UTC midnight crossing
+	// into the next day). Requiring minStartLead of headroom keeps the start in the future
+	// through the whole create flow.
+	if start, perr := time.Parse(time.RFC3339, toIso8601Utc(in.StartDate)); perr == nil {
+		if !start.After(c.timeFn().UTC().Add(minStartLead)) {
+			return nil, fmt.Errorf("start date %s is too soon (X requires a start_time in the future; it must be at least %s ahead of now to survive the create flow; the date is sent as %s)", in.StartDate, minStartLead, toIso8601Utc(in.StartDate))
+		}
+	}
 
 	// Validate the registration URL up front, before any mutating call. In the
 	// manual-tweet workflow (TweetID omitted) it is the only ad destination and is
@@ -1337,7 +1444,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// a warning step (mirroring the promoted-tweet warning pattern) so an operator
 		// can see the existing config was NOT changed to match this request.
 		steps = append(steps, fmt.Sprintf("Reusing existing campaign: %s", campaignID))
-		steps = append(steps, fmt.Sprintf("Warning: reused existing campaign %s by name; its budget/config were NOT updated to match this request ($%.2f/day) — verify/reconcile in X Ads Manager", campaignID, in.BudgetUsd))
+		steps = append(steps, fmt.Sprintf("Warning: reused existing campaign %s by name; its budget/config were NOT updated to match this request (%.2f/day in the account currency) — verify/reconcile in X Ads Manager", campaignID, in.BudgetUsd))
 	} else {
 		// X Ads v12 create endpoints take parameters as URL query params (not a
 		// JSON body), and use entity_status=PAUSED (not paused=true). Note: the
@@ -1397,7 +1504,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// not a bare failure.
 			return campaignNamePartial(), fmt.Errorf("x campaign creation UNCONFIRMED (X returned a 2xx with no campaign ID; a PAUSED campaign %q may exist — verify in X Ads Manager before retrying)", campaignName)
 		}
-		steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%.2f/day)", campaignID, in.BudgetUsd))
+		steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, %.2f/day in the account currency)", campaignID, in.BudgetUsd))
 	}
 
 	// partialResult builds a *CampaignResult carrying the already-created (PAUSED)
@@ -1420,8 +1527,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			CampaignID:   campaignID,
 			LineItemName: lineItemName,
 			LineItemID:   lineItemID,
-			TwitterURL:   AdsManagerURL,
-			Steps:        steps,
+			// Reused must be set on partial results too, not just the final success —
+			// a downstream error AFTER a campaign/line-item reuse still carries the
+			// config-drift signal (the closure reads the current campaignReused/
+			// lineItemReused by reference, so a line-item reuse set below is reflected).
+			Reused:     campaignReused || lineItemReused,
+			TwitterURL: AdsManagerURL,
+			Steps:      steps,
 		}
 	}
 	// campaignStatus / lineItemStatus describe, in partial-failure error messages,
@@ -1568,9 +1680,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 		}
 	} else {
-		utmURL := buildTwitterUtmURL(in)
+		// Use the SANITIZED display URL for the persisted step — the raw registration
+		// URL can carry secrets in its userinfo/query/fragment, and Steps is written to
+		// the unencrypted campaigns.result column. It is a TEMPLATE (only the generated
+		// utm_* params survive; the brief URL's original query/fragment are dropped), so
+		// tell the operator to reapply any required routing params from the brief's
+		// original registration URL — mirrors the reddit manual workflow.
 		steps = append(steps, "No tweet ID provided — post a tweet manually, then add it as a promoted tweet in X Ads Manager")
-		steps = append(steps, fmt.Sprintf("Destination URL with UTM: %s", utmURL))
+		steps = append(steps, fmt.Sprintf("Destination URL template (sanitized — utm_* only; reapply any required params from the brief's registration URL): %s", displayTwitterUtmURL(in)))
 	}
 
 	return &CampaignResult{
@@ -1581,6 +1698,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		LineItemID:           lineItemID,
 		PromotedTweetID:      promotedTweetID,
 		PromotedTweetWarning: promotedTweetWarning,
+		Reused:               campaignReused || lineItemReused,
 		TwitterURL:           AdsManagerURL,
 		Steps:                steps,
 	}, nil
@@ -1645,8 +1763,15 @@ func extractID(resp *apiResponse) string {
 // to createOutcomeAmbiguous.
 func isDuplicatePromotedTweetErr(err error) bool {
 	var ae *apiError
+	// A 429 is EXCLUDED even if it carries DUPLICATE_PROMOTABLE_ENTITY: after rate-limit
+	// retries are exhausted the throttled promoted_tweets POST may already have committed,
+	// so it must NOT be reported as a known-duplicate. In the promoted-tweet switch it
+	// then falls to createOutcomeAmbiguous, which classifies a mutating 429 as AMBIGUOUS
+	// (UNCONFIRMED / verify-before-retry) — the intended outcome — rather than a definite
+	// failure. Known-error-code matching is gated on a definitive (non-429) status.
 	return errors.As(err, &ae) &&
 		ae.StatusCode >= 400 && ae.StatusCode < 500 &&
+		ae.StatusCode != http.StatusTooManyRequests &&
 		ae.hasErrorCode(errCodeDuplicatePromotableEntity)
 }
 
