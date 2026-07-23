@@ -95,6 +95,14 @@ const (
 	// codes are; see apiError).
 	maxErrorBodyChars = 400
 
+	// maxErrorCodeScanBytes bounds the prefix of a non-2xx body that parseErrorCodes
+	// decodes. The body is already read-capped at maxResponseBytes (8 MiB), but a hostile
+	// 8 MiB error body full of tiny items would still be fully materialized by
+	// json.Unmarshal (each json.RawMessage copies its bytes) just to extract a handful of
+	// error codes. Real Microsoft error envelopes are a few KiB at most, so scanning only
+	// the first 64 KiB bounds that amplification with no effect on genuine responses.
+	maxErrorCodeScanBytes = 64 << 10 // 64 KiB
+
 	// retryMax is the number of times an HTTP 429 (rate-limited) IDEMPOTENT
 	// request is retried before giving up. Mirrors the sibling clients.
 	retryMax = 3
@@ -903,6 +911,13 @@ type msErrorItem struct {
 func parseErrorCodes(body []byte) []string {
 	if len(body) == 0 {
 		return nil
+	}
+	// Bound the amount decoded: extracting a handful of error codes never needs more than
+	// a few KiB, so a hostile large body can't force a full materialization. A truncated
+	// body simply fails to unmarshal (→ nil), which is the same clean "no codes" outcome
+	// as a malformed body.
+	if len(body) > maxErrorCodeScanBytes {
+		body = body[:maxErrorCodeScanBytes]
 	}
 	var env msErrorEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {
