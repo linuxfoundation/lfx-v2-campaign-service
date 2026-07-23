@@ -805,9 +805,11 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 }
 
 // listAdIDs discovers the ad ids under an ad set via GET /{adSetID}/ads (the Graph API ads
-// edge returns {"data":[{"id":...}], "paging":{...}}). It follows paging so a large ad set
-// is fully covered, bounded by adDiscoveryMaxPages as a runaway guard. Only numeric ids are
-// returned (a non-numeric id is skipped defensively — it can't be a valid node to PATCH).
+// edge returns {"data":[{"id":...}], "paging":{...}}). It follows paging (via the opaque
+// after cursor) so a large ad set is fully covered, bounded by adDiscoveryMaxPages. A returned
+// ad with a missing/non-numeric id FAILS discovery (fail-closed) rather than being skipped —
+// a skipped ad would make discovery look complete and let the cascade persist ACTIVE while
+// that ad stays PAUSED.
 func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error) {
 	var ids []string
 	after := ""
@@ -837,9 +839,15 @@ func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error
 			return nil, err
 		}
 		for _, a := range resp.Data {
-			if id := strings.TrimSpace(a.ID); numericIDRE.MatchString(id) {
-				ids = append(ids, id)
+			id := strings.TrimSpace(a.ID)
+			if !numericIDRE.MatchString(id) {
+				// The edge returned an ad but its id is missing/non-numeric — we can't PATCH
+				// it. Silently skipping would make discovery look complete and let the cascade
+				// persist ACTIVE while this ad stays PAUSED (the fail-open trap the
+				// fail-not-truncate guards close). Fail instead.
+				return nil, fmt.Errorf("ad discovery for ad set %s returned an ad with no usable id", adSetID)
 			}
+			ids = append(ids, id)
 		}
 		// No `next` link means this was the last page; an empty `after` cursor with a `next`
 		// link present is malformed (can't advance) → treat as incomplete.

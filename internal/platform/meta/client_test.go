@@ -3869,3 +3869,27 @@ func TestUpdateCampaignAndChildrenStatus_PagesViaCursor(t *testing.T) {
 		}
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_UnusableAdIDFails verifies a discovered ad with a
+// missing/non-numeric id FAILS the toggle (fail-closed) rather than being silently skipped
+// (which would persist ACTIVE while that ad stays PAUSED).
+func TestUpdateCampaignAndChildrenStatus_UnusableAdIDFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			_, _ = io.WriteString(w, `{"data":[{"id":"not-numeric"}],"paging":{}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error when a discovered ad has no usable id")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a no-usable-id ad after the campaign update must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
