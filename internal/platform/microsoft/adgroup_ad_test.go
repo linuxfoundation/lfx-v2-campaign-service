@@ -5,7 +5,6 @@ package microsoft
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -88,10 +87,13 @@ func TestCreateCampaign_ReusesExistingAdGroupAndAd(t *testing.T) {
 	adGroupPostReached, adPostReached := false, false
 	base := api.handler(t)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/AdGroupsByCampaignId") {
+		// The CREATE routes are the bare /AdGroups and /Ads; the lookups are
+		// /AdGroups/QueryByCampaignId and /Ads/QueryByAdGroupId, so a "/AdGroups" /
+		// "/Ads" suffix matches only the create and never the query.
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/AdGroups") {
 			adGroupPostReached = true
 		}
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/AdsByAdGroupId") {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Ads") {
 			adPostReached = true
 		}
 		base(w, r)
@@ -136,6 +138,30 @@ func TestCreateCampaign_AdGroupPartialErrorCarriesCampaign(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_AdGroupNullPartialErrorIsUnconfirmed(t *testing.T) {
+	// A 200 with a null id slot AND only a null PartialErrors placeholder (position-aligned,
+	// no actual error) is a MALFORMED success, not a definite rejection: the ad group MAY
+	// have been created. It must be UNCONFIRMED (verify before retry), carrying the campaign
+	// id — mirroring TestCreateCampaign_NullPartialErrorIsUnconfirmed at the campaign level.
+	api := &campaignsAPI{
+		adGroupPostBody: `{"AdGroupIds":[null],"PartialErrors":[null]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+	res, err := c.CreateCampaign(context.Background(), validInput())
+	if err == nil {
+		t.Fatal("expected an error on a malformed ad-group create")
+	}
+	if res == nil || res.CampaignID != "321" {
+		t.Fatalf("expected a partial carrying campaign 321, got %+v", res)
+	}
+	if res.AdGroupID != "" {
+		t.Errorf("AdGroupID = %q, want empty on an unconfirmed ad-group create", res.AdGroupID)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a null-only PartialErrors ad-group create must be UNCONFIRMED, not rejected: %v", err)
+	}
+}
+
 func TestCreateCampaign_AdGroup5xxIsUnconfirmedCarriesCampaign(t *testing.T) {
 	api := &campaignsAPI{adGroupStatus: http.StatusInternalServerError, adGroupPostBody: `{"Errors":[{"ErrorCode":"InternalError"}]}`}
 	c := newAPIClient(t, api.handler(t))
@@ -171,11 +197,35 @@ func TestCreateCampaign_AdFailureCarriesCampaignAndAdGroup(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_AdNullPartialErrorIsUnconfirmed(t *testing.T) {
+	// The ad-group create succeeds (654); the ad create returns a 200 with a null id slot
+	// and only a null PartialErrors placeholder → malformed success. The ad MAY exist, so
+	// UNCONFIRMED (not rejected), carrying the campaign + ad-group ids for reconcile.
+	api := &campaignsAPI{
+		adPostBody: `{"AdIds":[null],"PartialErrors":[null]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+	res, err := c.CreateCampaign(context.Background(), validInput())
+	if err == nil {
+		t.Fatal("expected an error on a malformed ad create")
+	}
+	if res == nil || res.CampaignID != "321" || res.AdGroupID != "654" {
+		t.Fatalf("expected a partial carrying campaign 321 + ad group 654, got %+v", res)
+	}
+	if res.AdID != "" {
+		t.Errorf("AdID = %q, want empty on an unconfirmed ad create", res.AdID)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a null-only PartialErrors ad create must be UNCONFIRMED, not rejected: %v", err)
+	}
+}
+
 // ---- ad destination validation ---------------------------------------------
 
 func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
-	// The campaign create still succeeds (id 321), but a bad destination fails before
-	// the ad-group create — surfaced as a partial carrying the campaign id.
+	// A bad destination URL is rejected UP FRONT, before the campaign create, so nothing
+	// is created: a clean (nil, err), NOT a partial. This avoids orphaning a PAUSED
+	// campaign (and ad group) behind a URL that was never going to work.
 	cases := map[string]string{
 		"empty":     "",
 		"no scheme": "events.example.org/register",
@@ -184,19 +234,24 @@ func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
 	}
 	for name, badURL := range cases {
 		t.Run(name, func(t *testing.T) {
+			var reached bool
 			api := &campaignsAPI{}
-			c := newAPIClient(t, api.handler(t))
+			base := api.handler(t)
+			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+				reached = true // any API call means we failed to validate up front
+				base(w, r)
+			})
 			in := validInput()
 			in.RegistrationURL = badURL
 			res, err := c.CreateCampaign(context.Background(), in)
 			if err == nil {
 				t.Fatalf("%s: expected an ad-URL validation error", name)
 			}
-			if res == nil || res.CampaignID != "321" {
-				t.Errorf("%s: expected a partial carrying campaign 321, got %+v", name, res)
+			if res != nil {
+				t.Errorf("%s: a bad URL must fail cleanly (nil result), got %+v", name, res)
 			}
-			if res != nil && res.AdGroupID != "" {
-				t.Errorf("%s: no ad group should be created for a bad URL, got %q", name, res.AdGroupID)
+			if reached {
+				t.Errorf("%s: no API call should be made — the URL is invalid up front", name)
 			}
 			// A userinfo URL error must not echo the password.
 			if strings.Contains(err.Error(), "pass") {
@@ -248,19 +303,5 @@ func TestValidateAdURL(t *testing.T) {
 	}
 }
 
-func TestNumberID(t *testing.T) {
-	n := jsonNumber("42")
-	if numberID(&n) != "42" {
-		t.Error("valid id must render")
-	}
-	zero := jsonNumber("0")
-	if numberID(&zero) != "" {
-		t.Error("zero id must be empty")
-	}
-	if numberID(nil) != "" {
-		t.Error("nil id must be empty")
-	}
-}
-
-// jsonNumber builds a json.Number for a test (encoding/json import lives here).
-func jsonNumber(s string) json.Number { return json.Number(s) }
+// numberID's full contract (valid/zero/negative/fractional/exponent/nil) is covered by
+// TestNumberID in campaign_test.go, alongside the numberID definition in campaign.go.
