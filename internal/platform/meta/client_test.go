@@ -3994,8 +3994,15 @@ func TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
-	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err == nil {
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
 		t.Fatal("expected an error activating an ad set with zero ads")
+	}
+	// The ad set was already POSTed ACTIVE before the zero-ads check, so this is a PARTIAL
+	// application — it must be Unconfirmed (verify/reconcile), not a plain "not modified".
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("zero-ads activate (ad set already flipped) must be Unconfirmed, got %T: %v", err, err)
 	}
 	close(flipCh)
 	if _, flipped := <-flipCh; flipped {
