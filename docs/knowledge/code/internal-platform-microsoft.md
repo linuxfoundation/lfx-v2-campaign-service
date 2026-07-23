@@ -144,16 +144,21 @@ follows the same v13 REST shape as campaigns: **creates are `POST /<Entity>` wit
 PARENT ID in the body** (`POST /AdGroups` with `CampaignId`, `POST /Ads` with `AdGroupId`
 — NOT in the URL); **reads are `POST /<Entity>/QueryBy…`** (`AdGroups/QueryByCampaignId`,
 `Ads/QueryByAdGroupId`), not GETs. Each level uses the shared `firstEntityID` classifier
-(valid id → success; a real null-slot PartialError → `errPartialFailure`; else
-malformed-200 → UNCONFIRMED) and returns a partial carrying the ids known so far
-(campaign id at the ad-group step; campaign + ad-group at the ad step) so an ambiguous
-failure leaves the tree reconcilable.
+(a positive-integer id via `numberID` → success; a null id slot with an ACTUAL
+PartialError, gated on `partialErrorsHaveAny` so a null-only placeholder slice does not
+count → `errPartialFailure`; else a malformed 200 → the `errNoID` sentinel). Both
+`errNoID` and the ambiguous-transport set are treated as UNCONFIRMED at the create call
+sites (the entity MAY have been created — the ad-group/ad create has no idempotency key,
+so a blind retry could duplicate); only a real PartialError is a clean rejection. Each
+step returns a partial carrying the ids known so far (campaign id at the ad-group step;
+campaign + ad-group at the ad step) so an ambiguous failure leaves the tree reconcilable.
 
 Ad-group idempotency is the (case-insensitively unique) ad-group name; ads have no stable
 name, so ad idempotency is keyed on the destination (`findTextAdByFinalURL` matches an
 existing ad whose `FinalUrls` contains the composed URL). The ad destination is validated
-before any ad-group create (`validateAdURL`: https/http, absolute, no userinfo, well-formed
-query; `redactAdURL` for errors). The ad's `FinalUrls` is the registration URL with LFX
+UP FRONT in `CreateCampaign`, before the campaign create (`validateAdURL`: https/http,
+absolute, no userinfo, well-formed query; `redactAdURL` for errors), so a bad URL fails
+cleanly `(nil, err)` without orphaning a PAUSED campaign or ad group. The ad's `FinalUrls` is the registration URL with LFX
 `utm_*` params SET (`buildAdFinalURL` preserves every other query param). Ad copy is
 caller-supplied (`Headline`/`Description`) or derived from the sanitized `EventName`,
 rune-bounded to Microsoft's Text Ad limits (Title 30, Text 90).

@@ -256,6 +256,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 
+	// Validate the ad destination URL up front, BEFORE the campaign is created. It becomes
+	// the Ad's FinalUrls in a later step; deferring the check until then would let a bad
+	// URL fail only AFTER a PAUSED campaign (and possibly ad group) already exists,
+	// orphaning them. This is pure input validation with no side effects, so a bad URL is a
+	// clean (nil, err) failure — nothing has been created yet.
+	if err := validateAdURL(in.RegistrationURL); err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign requires a valid ad destination URL: %w", err)
+	}
+
 	var steps []string
 	microsoftAdsURL := "https://ads.microsoft.com/campaign/vnext/campaigns?aid=" + c.account.AccountID
 

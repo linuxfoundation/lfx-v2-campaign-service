@@ -29,9 +29,10 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	// adGroupStatusPaused / adStatusPaused create the ad group and ad PAUSED. Microsoft
-	// uses "Paused" for AdGroup.Status; an Ad has no independent runnable status beyond
-	// its EditorialStatus, so it is created under the PAUSED ad group (nothing serves).
+	// adGroupStatusPaused creates the ad group PAUSED. Microsoft uses "Paused" for
+	// AdGroup.Status; an Ad has no independent runnable status beyond its EditorialStatus,
+	// so the ad is created under this PAUSED ad group (nothing serves) — there is no
+	// separate ad-status constant.
 	adGroupStatusPaused = "Paused"
 
 	// maxAdGroupNameRunes bounds the composed ad-group name. Microsoft limits
@@ -129,14 +130,10 @@ func (c *Client) createAdGroupAndAd(
 	steps *[]string,
 	campaignPartial func() *CampaignResult,
 ) (*CampaignResult, error) {
-	// Validate the ad destination BEFORE any ad-group create: the URL becomes the ad's
-	// FinalUrls, and an empty/malformed value would otherwise be caught only at the ad
-	// POST — after the ad group already exists, orphaning it. Fail before any mutating
-	// call here instead. (This runs after the campaign create by design: the campaign
-	// may already exist from a prior run, and re-validating is cheap.)
-	if err := validateAdURL(in.RegistrationURL); err != nil {
-		return campaignPartial(), fmt.Errorf("microsoft-ads ad destination invalid (campaign %s created; fix before retrying): %w", campaignID, err)
-	}
+	// The ad destination URL (in.RegistrationURL) is validated up front in CreateCampaign,
+	// BEFORE the campaign create, so a bad URL fails cleanly without orphaning a PAUSED
+	// campaign or ad group. No re-validation here: the input hasn't changed, and repeating
+	// it would only risk the two checks drifting apart.
 
 	adGroupName := composeAdGroupName(in)
 	if err := validateEntityName("ad group", adGroupName, utf8.RuneCountInString(adGroupName), maxAdGroupNameRunes, "characters"); err != nil {
@@ -157,7 +154,10 @@ func (c *Client) createAdGroupAndAd(
 	// already exists, so it is surfaced as a reconcilable partial rather than (nil,err).
 	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName)
 	if err != nil {
-		if createOutcomeAmbiguous(err) {
+		// createOutcomeAmbiguous covers transport/5xx/mutating-429; errNoID covers a
+		// malformed 2xx that returned no id (the ad group MAY have been created). Both are
+		// UNCONFIRMED: verify before retry so a duplicate isn't stacked.
+		if createOutcomeAmbiguous(err) || errors.Is(err, errNoID) {
 			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation UNCONFIRMED (campaign %s created; %q may exist — verify before retrying): %w", campaignID, adGroupName, err)
 		}
 		if errors.Is(err, errPartialFailure) {
@@ -187,7 +187,9 @@ func (c *Client) createAdGroupAndAd(
 
 	adID, existed, err := c.findOrCreateTextAd(ctx, adGroupID, title, text, finalURL)
 	if err != nil {
-		if createOutcomeAmbiguous(err) {
+		// Same classification as the ad group: errNoID (malformed 2xx, no id) joins the
+		// ambiguous set — the ad MAY have been created, so UNCONFIRMED not failed.
+		if createOutcomeAmbiguous(err) || errors.Is(err, errNoID) {
 			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation UNCONFIRMED (campaign %s + ad group %s created; an ad may exist — verify before retrying): %w", campaignID, adGroupID, err)
 		}
 		if errors.Is(err, errPartialFailure) {
@@ -302,9 +304,9 @@ func (c *Client) findOrCreateTextAd(ctx context.Context, adGroupID, title, text,
 	return newID, false, nil
 }
 
-// getAdsResponse is the (subset of the) Ads/QueryByAdGroupId response used to match an
+// queryAdsResponse is the (subset of the) Ads/QueryByAdGroupId response used to match an
 // existing ad by its destination for idempotency.
-type getAdsResponse struct {
+type queryAdsResponse struct {
 	Ads []struct {
 		Id        *json.Number `json:"Id"`
 		FinalUrls []string     `json:"FinalUrls"`
@@ -322,7 +324,7 @@ func (c *Client) findTextAdByFinalURL(ctx context.Context, adGroupID, finalURL s
 	if err != nil {
 		return "", err
 	}
-	var resp getAdsResponse
+	var resp queryAdsResponse
 	if uErr := json.Unmarshal(body, &resp); uErr != nil {
 		return "", fmt.Errorf("decode Ads/QueryByAdGroupId response: %w", uErr)
 	}
@@ -341,12 +343,20 @@ func (c *Client) findTextAdByFinalURL(ctx context.Context, adGroupID, finalURL s
 	return "", nil
 }
 
+// errNoID marks a 2xx create response that carried neither a usable id NOR a
+// PartialError explaining a rejection — a malformed success. The mutation MAY have
+// committed upstream, so createAdGroupAndAd classifies it as UNCONFIRMED (verify before
+// retry), never as a clean failure. firstCampaignID's caller reaches the same UNCONFIRMED
+// outcome via an explicit else; the ad-group/ad path keys off this sentinel because its
+// call sites branch on createOutcomeAmbiguous first.
+var errNoID = errors.New("create response carried no id")
+
 // firstEntityID decodes a create-entities 200 body via extract (which returns the
 // id slice + PartialErrors) and returns the created id. It mirrors firstCampaignID's
-// contract exactly: a valid first id is success; a null id slot WITH a PartialError is
-// a definite rejection (errPartialFailure); anything else (no id, no error) is a
-// malformed 200 → the caller treats it as UNCONFIRMED. Extracted so the ad-group and
-// ad creates share one classification path.
+// contract exactly: a valid first id is success; a null id slot WITH an ACTUAL
+// PartialError is a definite rejection (errPartialFailure); anything else (no id, no
+// real error) is a malformed 200 → errNoID, which the caller treats as UNCONFIRMED.
+// Extracted so the ad-group and ad creates share one classification path.
 func firstEntityID(body []byte, idField string, extract func([]byte) ([]*json.Number, []msErrorItem, error)) (string, error) {
 	ids, partials, err := extract(body)
 	if err != nil {
@@ -357,10 +367,14 @@ func firstEntityID(body []byte, idField string, extract func([]byte) ([]*json.Nu
 			return id, nil
 		}
 	}
-	if len(partials) > 0 {
+	// No valid id. Only an ACTUAL PartialError is a definite rejection; a PartialErrors
+	// slice of nothing but null placeholders (position-aligned with the id slots) does
+	// NOT explain a failure, so it must fall through to UNCONFIRMED — mirroring
+	// firstCampaignID. len(partials) would wrongly treat a null-only slice as a rejection.
+	if partialErrorsHaveAny(partials) {
 		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(partials))
 	}
-	return "", fmt.Errorf("%s response carried no id", idField)
+	return "", fmt.Errorf("%s %w", idField, errNoID)
 }
 
 // composeAdGroupName builds a deterministic ad-group name from the input, mirroring
