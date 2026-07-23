@@ -369,10 +369,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// campaignPartial carries the campaign id + name (and accumulates ad-group/ad ids as
 	// they land) so an ambiguous ad-group/ad failure leaves the whole tree reconcilable.
+	// It deliberately does NOT set AlreadyExisted: a partial is returned on a failed or
+	// UNCONFIRMED ad-group/ad step, where this run may have created (or attempted) a lower
+	// level even though the campaign was reused — so "created nothing" is not true. Only the
+	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
 	campaignPartial := func() *CampaignResult {
 		r := namePartial()
 		r.CampaignID = campaignID
-		r.AlreadyExisted = alreadyExisted
 		return r
 	}
 

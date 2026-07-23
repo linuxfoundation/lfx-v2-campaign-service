@@ -234,6 +234,29 @@ func TestCreateCampaign_AdGroupUnparseable200IsUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_ReusedCampaignFailedAdGroupNotAlreadyExisted(t *testing.T) {
+	// Campaign is REUSED (found by name), but the ad-group create is rejected. The returned
+	// partial must NOT report AlreadyExisted=true: this run attempted a lower level, so
+	// "created nothing" is false — even though the campaign itself pre-existed.
+	in := validInput()
+	name := composeName(in)
+	api := &campaignsAPI{
+		getBody:         `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupPostBody: `{"AdGroupIds":[null],"PartialErrors":[{"ErrorCode":"AdGroupServiceInvalidName"}]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an ad-group rejection error")
+	}
+	if res == nil || res.CampaignID != "999" {
+		t.Fatalf("expected a partial carrying the reused campaign 999, got %+v", res)
+	}
+	if res.AlreadyExisted {
+		t.Error("AlreadyExisted = true on a failed ad-group step; want false (this run attempted a lower level)")
+	}
+}
+
 func TestCreateCampaign_AdGroup5xxIsUnconfirmedCarriesCampaign(t *testing.T) {
 	api := &campaignsAPI{adGroupStatus: http.StatusInternalServerError, adGroupPostBody: `{"Errors":[{"ErrorCode":"InternalError"}]}`}
 	c := newAPIClient(t, api.handler(t))
