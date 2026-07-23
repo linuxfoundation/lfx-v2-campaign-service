@@ -851,3 +851,74 @@ func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
 		t.Errorf("doRequest blocked %v; should have aborted on cancel", elapsed)
 	}
 }
+
+func TestUpdateCampaignStatus_PartialUpdate(t *testing.T) {
+	// Capture the request over a channel (race-safe) to assert LinkedIn's RestLi
+	// PARTIAL_UPDATE shape: POST /adAccounts/{acct}/adCampaigns/{id},
+	// X-Restli-Method: PARTIAL_UPDATE, body {"patch":{"$set":{"status":...}}}.
+	type req struct{ method, path, restliMethod, status string }
+	gotCh := make(chan req, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Patch struct {
+				Set struct {
+					Status string `json:"status"`
+				} `json:"$set"`
+			} `json:"patch"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+		gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), body.Patch.Set.Status}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignStatus: %v", err)
+	}
+	got := <-gotCh
+	if got.method != http.MethodPost || got.path != "/adAccounts/123456789/adCampaigns/555" {
+		t.Errorf("request = %s %s, want POST /adAccounts/123456789/adCampaigns/555", got.method, got.path)
+	}
+	if got.restliMethod != "PARTIAL_UPDATE" {
+		t.Errorf("X-Restli-Method = %q, want PARTIAL_UPDATE", got.restliMethod)
+	}
+	if got.status != StatusPaused {
+		t.Errorf("patch.$set.status = %q, want %q", got.status, StatusPaused)
+	}
+}
+
+func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen for invalid input: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	cases := map[string]struct{ id, status string }{
+		"empty id":    {"", StatusPaused},
+		"non-numeric": {"urn:li:x", StatusActive},
+		"bad status":  {"555", "DRAFT"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := c.UpdateCampaignStatus(context.Background(), tc.id, tc.status); err == nil {
+				t.Errorf("%s: expected a validation error", name)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess verifies a status update (which decodes
+// no body) treats a 2xx with an oversized/unreadable body as SUCCESS, not a false-unconfirmed
+// transportError.
+func TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"x":"` + strings.Repeat("A", maxResponseBytes+100) + `"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Errorf("a 2xx status update with an oversized body must succeed: %v", err)
+	}
+}

@@ -419,7 +419,9 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	path := fmt.Sprintf("adAccounts/%s/adCampaigns/%s", accountID, campaignID)
 	body := map[string]any{"patch": map[string]any{"$set": map[string]any{"status": status}}}
 	headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
-	if _, err := c.doRequest(ctx, http.MethodPost, path, body, nil, headers); err != nil {
+	// A PARTIAL_UPDATE returns no useful body; pass noResponseBody so a 2xx with an
+	// unreadable body is a success, not a false-unconfirmed transportError.
+	if _, err := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); err != nil {
 		return fmt.Errorf("linkedin: update campaign %s status to %s: %w", campaignID, status, err)
 	}
 	return nil
@@ -428,7 +430,14 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // doRequest performs one API call. It honors ctx, sets the OAuth2 bearer and
 // LinkedIn headers, applies the client timeout, and promotes x-restli-id into
 // the returned ID. Mirrors linkedInRequest().
-func (c *Client) doRequest(ctx context.Context, method, path string, body map[string]any, params, headers map[string]string) (*linkedInResponse, error) {
+// doRequest performs one Marketing API call. When the caller ignores the response
+// (noResponseBody, used by status updates that decode nothing), a 2xx whose body is
+// unreadable/oversized/undecodable is treated as SUCCESS — there is nothing to parse, so an
+// unreadable body must NOT downgrade a server-confirmed mutation to an ambiguous
+// transportError (which would report the toggle unconfirmed and leave the DB stale). For a
+// caller that needs the body (the default), those cases stay ambiguous as before.
+func (c *Client) doRequest(ctx context.Context, method, path string, body map[string]any, params, headers map[string]string, noResponseBody ...bool) (*linkedInResponse, error) {
+	skipBody := len(noResponseBody) > 0 && noResponseBody[0]
 	sanitized := strings.TrimPrefix(path, "/")
 	if !pathValidRE.MatchString(sanitized) || strings.Contains(sanitized, "..") {
 		return nil, fmt.Errorf("invalid LinkedIn API path: %q", sanitized)
@@ -559,6 +568,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// (a plain failure), instead of dropping the status/method into a plain error
 			// that would always read as a safe non-create. Mirrors the Reddit/Meta clients.
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				if skipBody {
+					return nil, nil // 2xx success; caller decodes no body
+				}
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
 			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
@@ -578,6 +590,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// a GET / definite 4xx stays a plain failure — rather than discarding the
 			// status into a plain error. Mirrors the Reddit/Meta clients.
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				if skipBody {
+					return nil, nil // 2xx success; caller decodes no body
+				}
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
@@ -591,6 +606,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			_ = resp.Body.Close()
 			cancel()
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
+		}
+
+		// A 2xx SUCCESS when the caller decodes no body (status updates): return without
+		// touching the body, so an unreadable/undecodable payload can't downgrade a
+		// server-confirmed mutation to ambiguous.
+		if skipBody {
+			_ = resp.Body.Close()
+			cancel()
+			return nil, nil
 		}
 
 		out := &linkedInResponse{}

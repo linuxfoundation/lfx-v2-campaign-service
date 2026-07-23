@@ -476,3 +476,26 @@ func TestLinkedIn_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
 	}
 }
+
+// TestLinkedIn_ToggleStatus_NoOrgIDNeeded proves a status update works with a connection
+// that has an access token + account id but NO org_id (Dispatch requires org_id; a toggle
+// must not) — locking in that contract against a future refactor.
+func TestLinkedIn_ToggleStatus_NoOrgIDNeeded(t *testing.T) {
+	conn := &model.Connection{
+		Provider:             model.ProviderLinkedInAds,
+		AccountID:            "123456789",
+		EncryptedCredentials: []byte(goodLinkedInCreds), // {"AccessToken":"tok"} — no org_id in ProviderConfig
+		Status:               model.StatusActive,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, "555", model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus must work without an org_id: %v", err)
+	}
+}
