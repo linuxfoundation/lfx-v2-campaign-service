@@ -1,5 +1,19 @@
 # Log
 
+## 2026-07-23
+
+**Update** — Registered the Google Ads PlatformDispatcher (LFXV2-2643, PR #41).
+`registerDispatchers` now wires `model.ProviderGoogleAds` →
+`dispatch.NewGoogleAdsDispatcher`, so Google Ads campaigns dispatch upstream instead of
+recording "no dispatcher registered". The adapter resolves the OAuth2-app + developer-token
+connection (clientId/secret/refreshToken/developerToken, plus AccountID = customer id and
+an optional `login_customer_id` MCC from ProviderConfig), maps the brief + `googleAdsConfig`
+(`budget` in ACCOUNT currency, no FX) onto the client's `CreateCampaign`, and maps the
+result back to a `model.Campaign`. Uses `NameSuffix = brief.ID` for deterministic,
+at-most-once-retry budget/campaign names. Release decision keys on `result == nil` alone so
+an ambiguous/duplicate-name create (a non-nil name-only result) retains the claim and the
+possibly-orphaned budget stays reconcilable by `CampaignBudgetName`.
+
 ## 2026-07-22
 
 **Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).
