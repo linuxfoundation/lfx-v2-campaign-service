@@ -812,6 +812,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// *APIError. (An oversized error/redirect body is anomalous, but we classify
 			// on status, not payload.)
 			if status >= 200 && status < 300 {
+				// A 2xx with an oversized body is a SUCCESS when the caller decodes no
+				// response (out == nil, e.g. a status update): there is nothing to parse, so
+				// the unreadable body doesn't matter and the mutation is confirmed. Only when
+				// we NEEDED the body (out != nil) is it ambiguous.
+				if out == nil {
+					return nil
+				}
 				return &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
 			}
 			return &APIError{
@@ -844,6 +851,12 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// treated as "may exist". Mirrors the reddit client wrapping 2xx read/decode
 			// failures as transportError.
 			if status >= 200 && status < 300 {
+				// As with the oversized case: a 2xx is a SUCCESS when out == nil (no response
+				// to read), so an unreadable body doesn't downgrade a confirmed mutation to
+				// ambiguous. Only a caller that needed the body sees a transportError.
+				if out == nil {
+					return nil
+				}
 				return &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
 			}
 			// A read failure on a NON-2xx still must preserve the HTTP status: a
