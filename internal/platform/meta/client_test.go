@@ -3729,3 +3729,21 @@ func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess verifies a status update (which decodes
+// no response) treats a 2xx with an unreadable/oversized body as SUCCESS, not an ambiguous
+// transportError — otherwise the toggle would be reported unconfirmed even though Meta
+// confirmed it.
+func TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Write far more than the response cap; UpdateCampaignStatus decodes no body.
+		_, _ = w.Write([]byte(`{"x":"` + strings.Repeat("A", maxResponseBody+100) + `"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "23847290", StatusPaused); err != nil {
+		t.Errorf("a 2xx status update with an oversized body must succeed (nothing to decode), got: %v", err)
+	}
+}

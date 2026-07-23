@@ -471,3 +471,27 @@ func TestMeta_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
 	}
 }
+
+// TestMeta_ToggleStatus_NoPageIDNeeded proves a status update works with a connection that
+// has an access token + account id but NO page_id (Dispatch requires page_id; a toggle must
+// not) — locking in that contract against a future refactor.
+func TestMeta_ToggleStatus_NoPageIDNeeded(t *testing.T) {
+	conn := &model.Connection{
+		Provider:             model.ProviderMetaAds,
+		AccountID:            "act_1",
+		EncryptedCredentials: []byte(goodMetaCreds), // {"AccessToken":"tok"} — no page_id in ProviderConfig
+		Status:               model.StatusActive,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus must work without a page_id: %v", err)
+	}
+}
