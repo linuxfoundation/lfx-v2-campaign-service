@@ -702,8 +702,11 @@ type stubToggler struct {
 func (d *stubToggler) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }
-func (d *stubToggler) ToggleStatus(_ context.Context, _ string, _ model.Provider, platformCampaignID, status string) error {
-	d.gotID, d.gotStat = platformCampaignID, status
+func (d *stubToggler) ToggleStatus(_ context.Context, _ string, _ model.Provider, campaign *model.Campaign, status string) error {
+	if campaign != nil {
+		d.gotID = campaign.PlatformCampaignID
+	}
+	d.gotStat = status
 	return d.err
 }
 

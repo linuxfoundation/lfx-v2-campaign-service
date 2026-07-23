@@ -154,8 +154,11 @@ type PlatformDispatcher interface {
 type StatusToggler interface {
 	// ToggleStatus sets the platform campaign's run state. status is
 	// model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when the
-	// platform confirms the change.
-	ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error
+	// platform confirms the change. campaign is the persisted row so an adapter can reach
+	// any child ids it stored at creation (e.g. Reddit persists the ad group + ad ids in
+	// Result and must cascade the status to them; a single-node platform like Meta/LinkedIn
+	// ignores it and toggles the campaign alone).
+	ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error
 }
 
 // Status-toggle classification sentinels. These distinguish a client/state error (the
@@ -841,10 +844,10 @@ func aggregateStatus(results []platformResult) model.JobStatus {
 // StatusToggler (else ErrToggleUnsupported), and delegates the platform call. The caller
 // (the service) updates the persisted row only after this returns nil. platformCampaignID
 // is the campaign's stored upstream id; status is model.CampaignRunActive/Paused.
-func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	// Pre-platform guards return classifiable sentinels: these NEVER contact the ad
 	// platform, so the caller must NOT report them as a platform failure.
-	if strings.TrimSpace(platformCampaignID) == "" {
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
 		return ErrCampaignNotProvisioned
 	}
 	d, ok := o.dispatchers[platform]
@@ -859,5 +862,5 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	}
 	// Any error from here is from the platform call itself (or the dispatcher's own
 	// pre-flight cred resolution) — surfaced as a platform failure by the caller.
-	return toggler.ToggleStatus(ctx, projectID, platform, platformCampaignID, status)
+	return toggler.ToggleStatus(ctx, projectID, platform, campaign, status)
 }

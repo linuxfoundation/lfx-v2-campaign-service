@@ -73,12 +73,20 @@ clean failure.
 
 ## Campaign status toggle
 
-`UpdateCampaignStatus(ctx, campaignID, status)` pauses/resumes an existing campaign:
-`PATCH /ad_accounts/{accountID}/campaigns/{campaignID}` with
-`{"data":{"configured_status": "ACTIVE"|"PAUSED"}}` — the same envelope + `configured_status`
-field the create path sets (`configured_status` is the advertiser-set state, distinct from
-the read-only `effective_status`). `StatusActive`/`StatusPaused` are the two accepted values.
-Both ids are validated with the letters/digits/underscores guard (rejecting `/`, `?`, `#`)
-before interpolation. A PATCH is idempotent, so `request()` may safely retry it on a 429.
+`UpdateCampaignAndChildrenStatus(ctx, campaignID, adGroupID, adID, status)` pauses/resumes a
+campaign AND cascades to its child ad group + ad, because the create path PAUSES all three
+entities — toggling only the campaign to ACTIVE would leave the ad group/ad PAUSED and the
+campaign would not serve. Each entity is set via `PATCH /ad_accounts/{accountID}/{entity}/{id}`
+with `{"data":{"configured_status": "ACTIVE"|"PAUSED"}}` — the same envelope + `configured_status`
+field the create path sets (`configured_status` is the advertiser-set state, distinct from the
+read-only `effective_status`). The cascade is parent-first (campaign → ad group → ad) so an
+intermediate failure never leaves a servable child under a paused parent; an empty child id
+(a degraded create) is skipped and only the campaign is toggled. `StatusActive`/`StatusPaused`
+are the two accepted values. Every id is validated with the letters/digits/underscores guard
+(rejecting `/`, `?`, `#`) before interpolation. A PATCH is idempotent, so `request()` may
+safely retry it on a 429. (`UpdateCampaignStatus(ctx, campaignID, status)` toggles the campaign
+alone and is retained as the per-entity building block / for callers with only a campaign id.)
+The child ids are read from the persisted `CampaignResult` (`adGroupId`/`adId`) by the reddit
+dispatcher's `ToggleStatus`, which now receives the full persisted `*model.Campaign`.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).

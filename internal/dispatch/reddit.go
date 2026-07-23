@@ -211,10 +211,17 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 
 // ToggleStatus pauses or resumes an existing reddit campaign on the platform. It resolves
 // the connection (same pre-check as Dispatch: an inactive/undecryptable connection is a
-// clean error), builds the client, and PATCHes configured_status. platformCampaignID is the
-// upstream Reddit campaign id (from the stored row); status is model.CampaignRunActive or
-// model.CampaignRunPaused. Returns nil only when the platform confirms the change.
-func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+// clean error), builds the client, and PATCHes configured_status on the campaign AND its
+// child ad group + ad. status is model.CampaignRunActive or model.CampaignRunPaused;
+// returns nil only when the platform confirms every change.
+//
+// The cascade matters because CreateCampaign sets configured_status to PAUSED on all THREE
+// entities (campaign, ad group, ad). Toggling only the campaign to ACTIVE would leave the
+// ad group/ad PAUSED, so the campaign would not actually serve. The child ids are read from
+// the persisted CampaignResult blob (Result), which the create path stored; if they are
+// absent (a degraded/partial create) only the campaign is toggled — such campaigns are
+// already rejected as non-toggleable by the service guard, so this is just defensive.
+func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	redditStatus, err := redditRunStatus(status)
 	if err != nil {
 		return err
@@ -223,7 +230,8 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	if err != nil {
 		return err
 	}
-	if uerr := client.UpdateCampaignStatus(ctx, platformCampaignID, redditStatus); uerr != nil {
+	adGroupID, adID := redditChildIDs(campaign)
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, redditStatus); uerr != nil {
 		// An UNCONFIRMED outcome (transport/5xx/3xx-mutating) means the PATCH MAY have
 		// applied upstream — wrap it in an error that reports Unconfirmed() so the caller
 		// (across the package boundary, via errors.As on the behavioral interface — same
@@ -235,6 +243,23 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 		return uerr
 	}
 	return nil
+}
+
+// redditChildIDs pulls the ad group + ad ids the create path stored in the persisted
+// CampaignResult blob. A missing/unparseable blob yields empty ids (only the campaign is
+// toggled) rather than an error — the service already blocks toggling a degraded campaign.
+func redditChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return "", ""
+	}
+	var blob struct {
+		AdGroupID string `json:"adGroupId"`
+		AdID      string `json:"adId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return "", ""
+	}
+	return blob.AdGroupID, blob.AdID
 }
 
 // unconfirmedToggleError wraps a toggle whose platform outcome is unknowable (the change may

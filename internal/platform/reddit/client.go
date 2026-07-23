@@ -1595,39 +1595,79 @@ const (
 
 // UpdateCampaignStatus sets an existing campaign's configured_status to ACTIVE or PAUSED
 // via PATCH /ad_accounts/{accountID}/campaigns/{campaignID} (the same envelope shape the
-// create path uses: {"data": {"configured_status": ...}}). It is the platform side of the
-// campaign status toggle — the DB row is updated by the service only AFTER this confirms.
+// create path uses: {"data": {"configured_status": ...}}).
 //
-// A PATCH is idempotent (setting PAUSED on an already-paused campaign is a no-op), so a
-// 429 IS retried by request(). Both ids are interpolated into the path, so the account id
-// is validated with the same accountIDRe guard the create path uses and the campaign id is
-// validated with the letters/digits/underscores guard (rejecting '/', '?', '#' and any
-// other path/query-altering character). status must be one of the two constants above.
+// NOTE: this toggles the CAMPAIGN alone. Because CreateCampaign sets configured_status to
+// PAUSED on the campaign, ad group, AND ad, a full activate must also toggle the children —
+// use UpdateCampaignAndChildrenStatus for that. This narrower method is retained for callers
+// that only have a campaign id (and for the per-entity building block below).
 func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	return c.updateEntityStatus(ctx, "campaigns", campaignID, status)
+}
+
+// UpdateCampaignAndChildrenStatus sets configured_status on the campaign and, when their ids
+// are supplied, its child ad group and ad — the platform side of the campaign status toggle.
+// The DB row is updated by the service only AFTER this confirms. CreateCampaign PAUSES all
+// three entities, so toggling only the campaign to ACTIVE would leave the ad group/ad PAUSED
+// and the campaign would not serve; cascading keeps the run state consistent across the tree.
+//
+// Order on ACTIVATE is parent-first (campaign → ad group → ad) so an intermediate failure
+// never leaves a servable child under a paused parent; the reverse is harmless because a
+// PATCH is idempotent. An empty adGroupID/adID is skipped (a degraded/partial create that
+// stored no child id — already blocked from toggling by the service guard). Any per-entity
+// error stops the cascade and is returned, preserving the UNCONFIRMED vs rejected
+// classification so the service does not persist a run state the platform did not fully
+// apply.
+func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID, status string) error {
+	if err := c.updateEntityStatus(ctx, "campaigns", campaignID, status); err != nil {
+		return err
+	}
+	if strings.TrimSpace(adGroupID) != "" {
+		if err := c.updateEntityStatus(ctx, "ad_groups", adGroupID, status); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(adID) != "" {
+		if err := c.updateEntityStatus(ctx, "ads", adID, status); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateEntityStatus PATCHes one entity's configured_status via
+// PATCH /ad_accounts/{accountID}/{entity}/{id} with the create path's envelope
+// ({"data": {"configured_status": ...}}). A PATCH is idempotent (setting PAUSED on an
+// already-paused entity is a no-op), so a 429 IS retried by request(). Both ids are
+// interpolated into the path, so the account id is validated with the same accountIDRe guard
+// the create path uses and the entity id is validated with the letters/digits/underscores
+// guard (rejecting '/', '?', '#' and any other path/query-altering character). status must
+// be one of the two constants above.
+func (c *Client) updateEntityStatus(ctx context.Context, entity, id, status string) error {
 	accountID := strings.TrimSpace(c.account.AccountID)
-	campaignID = strings.TrimSpace(campaignID)
+	id = strings.TrimSpace(id)
 	if accountID == "" {
 		return fmt.Errorf("reddit: account id is required")
 	}
 	if !accountIDRe.MatchString(accountID) {
 		return fmt.Errorf("invalid reddit account ID %q: must contain only letters, digits, and underscores", accountID)
 	}
-	if campaignID == "" {
-		return fmt.Errorf("reddit: campaign id is required")
+	if id == "" {
+		return fmt.Errorf("reddit: %s id is required", entity)
 	}
 	// Validate with the SAME letters/digits/underscores guard as the account id (Reddit ids
 	// look like "t3_xxxx"). This categorically rejects any path-altering character — '/', but
 	// also '?' and '#', which request() would otherwise treat as a query/fragment separator
 	// and use to truncate or rewrite the path rather than escape.
-	if !accountIDRe.MatchString(campaignID) {
-		return fmt.Errorf("invalid reddit campaign ID %q: must contain only letters, digits, and underscores", campaignID)
+	if !accountIDRe.MatchString(id) {
+		return fmt.Errorf("invalid reddit %s ID %q: must contain only letters, digits, and underscores", entity, id)
 	}
 	if status != StatusActive && status != StatusPaused {
 		return fmt.Errorf("reddit: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
 	}
 	body := map[string]any{"data": map[string]any{"configured_status": status}}
-	if _, err := c.request(ctx, http.MethodPatch, "/ad_accounts/"+accountID+"/campaigns/"+campaignID, body); err != nil {
-		return fmt.Errorf("reddit: update campaign %s status to %s: %w", campaignID, status, err)
+	if _, err := c.request(ctx, http.MethodPatch, "/ad_accounts/"+accountID+"/"+entity+"/"+id, body); err != nil {
+		return fmt.Errorf("reddit: update %s %s status to %s: %w", entity, id, status, err)
 	}
 	return nil
 }

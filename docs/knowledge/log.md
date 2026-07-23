@@ -81,6 +81,17 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
+## 2026-07-23 (2)
+
+**Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
+CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
+would activate a campaign whose children stayed PAUSED — it would not serve. Added
+`reddit.UpdateCampaignAndChildrenStatus` (PATCHes campaign → ad group → ad, parent-first,
+skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
+`StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
+the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
+(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
+
 ## 2026-07-23
 
 **Update** — Campaign status toggle (LFXV2-2806, PR #46). New
