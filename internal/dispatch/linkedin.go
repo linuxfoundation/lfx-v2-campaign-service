@@ -190,12 +190,6 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), nil
 }
 
-// campaignFromLinkedIn maps the client result to the persistence model: upstream id,
-// name, result blob, the budget/schedule/ConfigSnapshot (via applyCampaignConfig), and
-// a status derived from what was confirmed created — one of `created`,
-// `created_degraded` (creative shortfall), `group_created` (group only), or
-// `unconfirmed` (neither id). requestedVariants is how many creatives the caller asked
-// for, used to detect a creative shortfall.
 // ToggleStatus pauses or resumes an existing LinkedIn campaign on the platform. It resolves
 // the connection (active + access token; a status update needs the account id but not the
 // org id, which is creation-only), builds the client, and issues the RestLi PARTIAL_UPDATE.
@@ -250,6 +244,12 @@ func linkedinRunStatus(status string) (string, error) {
 	}
 }
 
+// campaignFromLinkedIn maps the client result to the persistence model: upstream id,
+// name, result blob, the budget/schedule/ConfigSnapshot (via applyCampaignConfig), and
+// a status derived from what was confirmed created — one of `created`,
+// `created_degraded` (creative shortfall), `group_created` (group only), or
+// `unconfirmed` (neither id). requestedVariants is how many creatives the caller asked
+// for, used to detect a creative shortfall.
 func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, requestedVariants int, cfg linkedinConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
