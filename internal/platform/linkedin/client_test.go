@@ -1003,7 +1003,9 @@ func TestUpdateCampaignStatus_RejectsEmptyToken(t *testing.T) {
 // path percent-encodes the URN's colons (LinkedIn's required single-entity key form) AND that
 // the encoded path passes the client's path validation (which allows %).
 func TestUpdateCampaignAndCreativesStatus_EncodesCreativeURNInPath(t *testing.T) {
-	var creativePath string
+	// Capture the creative path over a buffered channel so the handler-goroutine write
+	// happens-before the test-goroutine read (race-safe under `go test -race`).
+	pathCh := make(chan string, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
 			w.Header().Set("Content-Type", "application/json")
@@ -1011,7 +1013,7 @@ func TestUpdateCampaignAndCreativesStatus_EncodesCreativeURNInPath(t *testing.T)
 			return
 		}
 		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
-			creativePath = r.URL.EscapedPath()
+			pathCh <- r.URL.EscapedPath()
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -1020,6 +1022,8 @@ func TestUpdateCampaignAndCreativesStatus_EncodesCreativeURNInPath(t *testing.T)
 	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
 		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
 	}
+	close(pathCh)
+	creativePath := <-pathCh
 	if !strings.Contains(creativePath, "creatives/urn%3Ali%3AsponsoredCreative%3A900") {
 		t.Errorf("creative path = %q, want the %%3A-encoded URN key", creativePath)
 	}
@@ -1054,7 +1058,7 @@ func TestUpdateCampaignAndCreativesStatus_TruncatedDiscoveryFails(t *testing.T) 
 // whose id is a bare NUMBER (flexibleID numeric form) is reconstructed into a sponsoredCreative
 // URN and updated — not silently dropped (which would leave that creative DRAFT).
 func TestUpdateCampaignAndCreativesStatus_NumericCreativeIDReconstructed(t *testing.T) {
-	var creativePath string
+	pathCh := make(chan string, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
 			w.Header().Set("Content-Type", "application/json")
@@ -1062,7 +1066,7 @@ func TestUpdateCampaignAndCreativesStatus_NumericCreativeIDReconstructed(t *test
 			return
 		}
 		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
-			creativePath = r.URL.EscapedPath()
+			pathCh <- r.URL.EscapedPath()
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -1071,7 +1075,56 @@ func TestUpdateCampaignAndCreativesStatus_NumericCreativeIDReconstructed(t *test
 	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
 		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
 	}
+	close(pathCh)
+	creativePath := <-pathCh
 	if !strings.Contains(creativePath, "creatives/urn%3Ali%3AsponsoredCreative%3A119962155") {
 		t.Errorf("numeric creative id was not reconstructed into a URN + updated; path = %q", creativePath)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_UnusableElementIDFails verifies a finder element with no
+// usable sponsoredCreative id FAILS the toggle (fail-closed) rather than being silently dropped
+// (which would persist ACTIVE while that creative stays DRAFT).
+func TestUpdateCampaignAndCreativesStatus_UnusableElementIDFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			// An element with an id that is neither a sponsoredCreative URN nor numeric.
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCampaign:5"}],"metadata":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error when a finder element has no usable creative id")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a no-usable-id element after the campaign update must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_Non400OnPauseAborts verifies that on a PAUSE, only a 400
+// (in-review) is tolerated: a 403 (or other non-400 4xx) on a creative ABORTS the toggle.
+func TestUpdateCampaignAndCreativesStatus_Non400OnPauseAborts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			w.WriteHeader(http.StatusForbidden) // 403 on the creative — NOT the tolerated 400
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused); err == nil {
+		t.Fatal("a 403 on a creative during a pause must abort, not be tolerated")
 	}
 }

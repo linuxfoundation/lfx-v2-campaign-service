@@ -385,15 +385,12 @@ func createOutcomeAmbiguous(err error) bool {
 	return false
 }
 
-// isDefiniteClientError reports whether err is a definite non-429 4xx apiError — LinkedIn
-// received and REJECTED the request (nothing ambiguous). Used to tolerate the expected 400
-// when pausing a creative that is in review.
-func isDefiniteClientError(err error) bool {
+// isBadRequest reports whether err is exactly an HTTP 400 apiError. Used to tolerate the
+// specific 400 LinkedIn returns when pausing an in-review creative — a narrower check than
+// "any 4xx" so a 401/403/404/other still aborts the toggle.
+func isBadRequest(err error) bool {
 	var ae *apiError
-	if !errors.As(err, &ae) {
-		return false
-	}
-	return ae.StatusCode >= 400 && ae.StatusCode < 500 && ae.StatusCode != http.StatusTooManyRequests
+	return errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest
 }
 
 // IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
@@ -488,10 +485,12 @@ func (c *Client) UpdateCampaignAndCreativesStatus(ctx context.Context, campaignI
 		body := map[string]any{"patch": map[string]any{"$set": map[string]any{"intendedStatus": creativeStatus}}}
 		headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
 		if _, uerr := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); uerr != nil {
-			// You can't PAUSE an in-review creative (LinkedIn returns 400). On a pause, a
-			// DEFINITE 4xx on one creative is expected/benign — the campaign is already paused
-			// (the effective gate), so skip that creative rather than fail the whole toggle.
-			if creativeStatus == StatusPaused && isDefiniteClientError(uerr) {
+			// You can't PAUSE an in-review creative — LinkedIn returns exactly a 400. On a
+			// PAUSE, tolerate ONLY that 400 (the campaign is already paused, the effective
+			// gate). A 401/403 auth failure, a 404 from a bad creative key, or any other status
+			// is a real failure and must abort the toggle (partialCascadeError), not be
+			// swallowed as if the creative were benignly in review.
+			if creativeStatus == StatusPaused && isBadRequest(uerr) {
 				continue
 			}
 			return &partialCascadeError{stage: "creative", err: uerr}
@@ -536,9 +535,15 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 		}
 		if resp.Elements != nil {
 			for _, el := range *resp.Elements {
-				if urn := creativeURN(el); urn != "" {
-					urns = append(urns, urn)
+				urn := creativeURN(el)
+				if urn == "" {
+					// The finder returned a creative element but we can't extract a usable
+					// sponsoredCreative URN from it. Silently skipping would let the cascade
+					// report success and persist ACTIVE while this creative stays DRAFT — the
+					// same fail-open trap the fail-not-truncate guards close. Fail instead.
+					return nil, fmt.Errorf("creative discovery for campaign %s returned an element with no usable id", campaignID)
 				}
+				urns = append(urns, urn)
 			}
 		}
 		next := resp.Metadata.NextPageToken
