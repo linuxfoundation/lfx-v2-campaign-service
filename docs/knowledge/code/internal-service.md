@@ -54,4 +54,16 @@ and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).
 
+## Campaign status toggle
+
+`BriefService.ToggleCampaignStatus` (backing `PATCH .../campaigns/{id}/status`
+{active|paused}) pauses/resumes a campaign ON THE PLATFORM, then persists. Unlike
+`UpdateCampaign` (DB-only), the platform call happens FIRST via
+`Orchestrator.ToggleCampaignStatus` → the platform's `StatusToggler`; the DB row is written
+only after the platform confirms. A stale `If-Match` fails BEFORE the paid platform call;
+failures are classified (`ErrCampaignNotProvisioned` → 409 for a campaign with no upstream id
+yet, `ErrToggleUnsupported` → 400, a real platform failure → 503) rather than all blamed on
+the platform; and the post-platform `ReplaceCampaign` runs on `context.WithoutCancel` so the
+row can't diverge from the platform if the request is cancelled after the PATCH commits.
+
 See [internal/service](../../../internal/service).

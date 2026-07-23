@@ -71,4 +71,14 @@ as "may exist", so callers require verification before a manual retry. A definit
 received and REJECTED the request, so nothing was created and the caller gets a
 clean failure.
 
+## Campaign status toggle
+
+`UpdateCampaignStatus(ctx, campaignID, status)` pauses/resumes an existing campaign:
+`PATCH /ad_accounts/{accountID}/campaigns/{campaignID}` with
+`{"data":{"configured_status": "ACTIVE"|"PAUSED"}}` — the same envelope + `configured_status`
+field the create path sets (`configured_status` is the advertiser-set state, distinct from
+the read-only `effective_status`). `StatusActive`/`StatusPaused` are the two accepted values.
+Both ids are validated with the letters/digits/underscores guard (rejecting `/`, `?`, `#`)
+before interpolation. A PATCH is idempotent, so `request()` may safely retry it on a 429.
+
 See [internal/platform/reddit](../../../internal/platform/reddit).
