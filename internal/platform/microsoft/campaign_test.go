@@ -340,6 +340,24 @@ func TestCreateCampaign_Malformed200IsUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_MalformedCampaignIDIsUnconfirmed(t *testing.T) {
+	// A 200 whose CampaignIds[0] is a non-positive-integer (here negative) is NOT a usable
+	// id — firstCampaignID rejects it via numberID and the outcome is UNCONFIRMED, not a
+	// bogus success carrying "-5".
+	api := &campaignsAPI{postBody: `{"CampaignIds":[-5],"PartialErrors":[]}`}
+	c := newAPIClient(t, api.handler(t))
+	res, err := c.CreateCampaign(context.Background(), validInput())
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED error on a malformed campaign id")
+	}
+	if res == nil || res.CampaignID != "" {
+		t.Fatalf("expected a name-only partial with no id, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error should be UNCONFIRMED, got: %v", err)
+	}
+}
+
 func TestCreateCampaign_NullPartialErrorIsUnconfirmed(t *testing.T) {
 	// PartialErrors is position-aligned and can contain null placeholders. A
 	// {"CampaignIds":[null],"PartialErrors":[null]} body has a non-empty PartialErrors
@@ -442,4 +460,25 @@ func TestToMSDate(t *testing.T) {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+func TestNumberID(t *testing.T) {
+	valid := map[string]string{"42": "42", "1": "1", "9999999999": "9999999999", " 3 ": "3"}
+	for in, want := range valid {
+		n := json.Number(in)
+		if got := numberID(&n); got != want {
+			t.Errorf("numberID(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// Malformed numbers must be rejected (→ "" → treated as UNCONFIRMED/no-id), not
+	// accepted as a bogus id: zero, negative, fractional, and exponent forms.
+	for _, bad := range []string{"0", "-1", "1.5", "1e3", "0.0", "+5", "abc", ""} {
+		n := json.Number(bad)
+		if got := numberID(&n); got != "" {
+			t.Errorf("numberID(%q) = %q, want empty (malformed id must be rejected)", bad, got)
+		}
+	}
+	if numberID(nil) != "" {
+		t.Error("numberID(nil) must be empty")
+	}
 }

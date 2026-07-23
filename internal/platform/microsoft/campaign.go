@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -412,9 +413,11 @@ func firstCampaignID(body []byte) (string, error) {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return "", fmt.Errorf("decode create-campaigns response: %w", err)
 	}
-	if len(resp.CampaignIds) > 0 && resp.CampaignIds[0] != nil {
-		id := strings.TrimSpace(resp.CampaignIds[0].String())
-		if id != "" && id != "0" {
+	if len(resp.CampaignIds) > 0 {
+		// numberID rejects a non-positive-integer id (negative/fractional/exponent), so a
+		// malformed 200 carrying a bogus id falls through to the UNCONFIRMED path below
+		// rather than being reported as a successful create with an unusable id.
+		if id := numberID(resp.CampaignIds[0]); id != "" {
 			return id, nil
 		}
 	}
@@ -444,14 +447,21 @@ func partialErrorsHaveAny(items []msErrorItem) bool {
 	return false
 }
 
-// numberID renders a *json.Number id to a trimmed string, returning "" for a nil,
-// empty, or zero id (a zero id is never a real Microsoft entity id).
+// idRE matches a POSITIVE integer id (no sign, decimal point, or exponent). Microsoft
+// entity ids are positive int64s, so a negative/fractional/exponent-form JSON number is
+// malformed and must NOT be accepted as a valid id.
+var idRE = regexp.MustCompile(`^[1-9][0-9]*$`)
+
+// numberID renders a *json.Number id to a trimmed string, returning "" for a nil id or
+// any value that is not a positive integer. A *json.Number preserves the raw JSON token,
+// so this rejects "0", "-1", "1.5", and "1e3" — accepting one of those would report a
+// malformed 200 as a successful create with an unusable id instead of UNCONFIRMED.
 func numberID(n *json.Number) string {
 	if n == nil {
 		return ""
 	}
 	id := strings.TrimSpace(n.String())
-	if id == "" || id == "0" {
+	if !idRE.MatchString(id) {
 		return ""
 	}
 	return id
