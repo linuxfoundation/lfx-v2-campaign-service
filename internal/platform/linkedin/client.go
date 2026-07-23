@@ -402,6 +402,12 @@ const (
 // config (same as the create path); campaignID must be the numeric id (validated) so it can't
 // alter the request path.
 func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	// Fail on a missing/whitespace token up front (doRequest does not validate it, and
+	// CreateCampaign's preflight is bypassed here) — otherwise an empty or padded token would
+	// be sent as an invalid `Authorization: Bearer ` header.
+	if strings.TrimSpace(c.creds.AccessToken) == "" {
+		return fmt.Errorf("linkedin: access token is required")
+	}
 	campaignID = strings.TrimSpace(campaignID)
 	if campaignID == "" {
 		return fmt.Errorf("linkedin: campaign id is required")

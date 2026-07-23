@@ -922,3 +922,19 @@ func TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess(t *testing.T) {
 		t.Errorf("a 2xx status update with an oversized body must succeed: %v", err)
 	}
 }
+
+func TestUpdateCampaignStatus_RejectsEmptyToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen with an empty token: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	for name, tok := range map[string]string{"empty": "", "whitespace": "   "} {
+		t.Run(name, func(t *testing.T) {
+			c := NewClient(Credentials{AccessToken: tok}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			if err := c.UpdateCampaignStatus(context.Background(), "555", StatusPaused); err == nil {
+				t.Errorf("%s token must be rejected before sending an invalid Bearer header", name)
+			}
+		})
+	}
+}
