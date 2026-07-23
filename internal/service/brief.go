@@ -396,7 +396,12 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
 		default:
 			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution
-			// failing: the ad platform was not updated. 503 with an accurate message.
+			// failing: the ad platform was not updated. Log the underlying error (the client
+			// gets only a sanitized message) so an operator has a diagnostic record, then 503.
+			slog.WarnContext(ctx, "campaign status toggle failed on the ad platform",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+				"requested_status", p.Status, "error", terr)
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status could not be changed on the ad platform; the campaign was not modified"}
 		}
 	}
