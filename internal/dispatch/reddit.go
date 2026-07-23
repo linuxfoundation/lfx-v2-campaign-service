@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -73,25 +74,22 @@ func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.O
 
 // Dispatch implements service.PlatformDispatcher for Reddit.
 func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
-	// Resolve creds FIRST (pre-create): a missing/undecryptable connection is a
-	// not-created error → the orchestrator releases the claim.
-	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
+	// Resolve creds + build the client FIRST (pre-create): a missing/undecryptable/
+	// inactive connection is a not-created error → the orchestrator releases the claim.
+	// resolveRedditClient is shared with ToggleStatus so both accept EXACTLY the same
+	// connections; here its (bare) error is wrapped as notCreated for the claim contract.
+	// The credsSource.resolve error is already a preCreateError, so it is passed through
+	// untouched; the post-resolve validation errors are wrapped.
+	client, err := d.resolveRedditClient(ctx, brief.ProjectID, platform)
 	if err != nil {
-		return nil, err // already a preCreateError
-	}
-	if res.status != model.StatusActive {
-		return nil, notCreated(fmt.Errorf("reddit connection for project %s is %s, not active", brief.ProjectID, res.status))
-	}
-
-	var creds redditCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode reddit credentials: %w", err))
-	}
-	if creds.ClientID == "" || creds.ClientSecret == "" || creds.RefreshToken == "" {
-		return nil, notCreated(fmt.Errorf("reddit credentials are incomplete (need clientId, clientSecret, refreshToken)"))
-	}
-	if strings.TrimSpace(res.accountID) == "" {
-		return nil, notCreated(fmt.Errorf("reddit connection for project %s has no account id", brief.ProjectID))
+		// resolve() already returns a preCreateError (NoUpstreamCreate); the post-resolve
+		// validation errors are bare and must be wrapped so the orchestrator still releases
+		// the claim (nothing was created either way).
+		var nuc interface{ NoUpstreamCreate() bool }
+		if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
+			return nil, err
+		}
+		return nil, notCreated(err)
 	}
 
 	var cfg redditConfig
@@ -140,12 +138,6 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		VideoGoal:         cfg.VideoGoal,
 	}
 
-	client := reddit.NewClient(
-		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
-		reddit.AccountConfig{AccountID: res.accountID, Label: res.label},
-		d.opts...,
-	)
-
 	// The reddit client's contract: (nil, err) ONLY when NOTHING was (or may have
 	// been) created — a validation/pre-send/definite-4xx failure. Otherwise it
 	// returns a NON-NIL partial result alongside the error (an ambiguous create, or a
@@ -185,6 +177,114 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		camp.Status = campaignStatusCreatedDegraded
 	}
 	return camp, nil
+}
+
+// resolveRedditClient runs the shared pre-flight both Dispatch and ToggleStatus need:
+// resolve the connection, require it ACTIVE, decode + completeness-check the credentials,
+// require an account id, and build the reddit client. Centralising it keeps the credential
+// shape / active-status rule in ONE place so a create and a toggle can never diverge on
+// which connections they accept (the block was previously duplicated).
+func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID string, platform model.Provider) (*reddit.Client, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if res.status != model.StatusActive {
+		return nil, fmt.Errorf("reddit connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds redditCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return nil, fmt.Errorf("decode reddit credentials: %w", err)
+	}
+	if creds.ClientID == "" || creds.ClientSecret == "" || creds.RefreshToken == "" {
+		return nil, fmt.Errorf("reddit credentials are incomplete (need clientId, clientSecret, refreshToken)")
+	}
+	if strings.TrimSpace(res.accountID) == "" {
+		return nil, fmt.Errorf("reddit connection for project %s has no account id", projectID)
+	}
+	return reddit.NewClient(
+		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
+		reddit.AccountConfig{AccountID: res.accountID, Label: res.label},
+		d.opts...,
+	), nil
+}
+
+// ToggleStatus pauses or resumes an existing reddit campaign on the platform. It resolves
+// the connection (same pre-check as Dispatch: an inactive/undecryptable connection is a
+// clean error), builds the client, and PATCHes configured_status on the campaign AND its
+// child ad group + ad. status is model.CampaignRunActive or model.CampaignRunPaused;
+// returns nil only when the platform confirms every change.
+//
+// The cascade matters because CreateCampaign sets configured_status to PAUSED on all THREE
+// entities (campaign, ad group, ad). Toggling only the campaign to ACTIVE would leave the
+// ad group/ad PAUSED, so the campaign would not actually serve. The child ids are read from
+// the persisted CampaignResult blob (Result), which the create path stored; if they are
+// absent (a degraded/partial create) only the campaign is toggled — such campaigns are
+// already rejected as non-toggleable by the service guard, so this is just defensive.
+func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
+	redditStatus, err := redditRunStatus(status)
+	if err != nil {
+		return err
+	}
+	client, err := d.resolveRedditClient(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	adGroupID, adID := redditChildIDs(campaign)
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, redditStatus); uerr != nil {
+		// An UNCONFIRMED outcome (transport/5xx/3xx-mutating) means the PATCH MAY have
+		// applied upstream — wrap it in an error that reports Unconfirmed() so the caller
+		// (across the package boundary, via errors.As on the behavioral interface — same
+		// pattern as NoUpstreamCreate) reports "verify before retry", not a flat "not
+		// applied". A definite rejection passes through as an ordinary error.
+		if reddit.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
+}
+
+// redditChildIDs pulls the ad group + ad ids the create path stored in the persisted
+// CampaignResult blob. A missing/unparseable blob yields empty ids (only the campaign is
+// toggled) rather than an error — the service already blocks toggling a degraded campaign.
+func redditChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return "", ""
+	}
+	var blob struct {
+		AdGroupID string `json:"adGroupId"`
+		AdID      string `json:"adId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return "", ""
+	}
+	return blob.AdGroupID, blob.AdID
+}
+
+// unconfirmedToggleError wraps a toggle whose platform outcome is unknowable (the change may
+// have been applied). Callers detect it via the Unconfirmed() behavioral interface with
+// errors.As — no shared sentinel needed across the dispatch/service package boundary (mirrors
+// preCreateError / NoUpstreamCreate).
+type unconfirmedToggleError struct{ err error }
+
+func (e *unconfirmedToggleError) Error() string {
+	return "status change outcome is unconfirmed (it may have been applied): " + e.err.Error()
+}
+func (e *unconfirmedToggleError) Unwrap() error     { return e.err }
+func (e *unconfirmedToggleError) Unconfirmed() bool { return true }
+
+// redditRunStatus maps the service-level run state (active/paused) to the reddit client's
+// configured_status enum.
+func redditRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return reddit.StatusActive, nil
+	case model.CampaignRunPaused:
+		return reddit.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
 }
 
 // campaignFromReddit maps the client result to the persistence model. The

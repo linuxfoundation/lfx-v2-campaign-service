@@ -1487,6 +1487,219 @@ func DecodeUpdateCampaignResponse(decoder func(*http.Response) goahttp.Decoder, 
 	}
 }
 
+// BuildToggleCampaignStatusRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "toggle-campaign-status" endpoint
+func (c *Client) BuildToggleCampaignStatusRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.ToggleCampaignStatusPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "toggle-campaign-status", "*lfxv2campaignservicebriefs.ToggleCampaignStatusPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ToggleCampaignStatusLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("PATCH", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "toggle-campaign-status", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeToggleCampaignStatusRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-briefs toggle-campaign-status server.
+func EncodeToggleCampaignStatusRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.ToggleCampaignStatusPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "toggle-campaign-status", "*lfxv2campaignservicebriefs.ToggleCampaignStatusPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		if p.IfMatch != nil {
+			head := *p.IfMatch
+			req.Header.Set("If-Match", head)
+		}
+		body := NewToggleCampaignStatusRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+		}
+		return nil
+	}
+}
+
+// DecodeToggleCampaignStatusResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs toggle-campaign-status endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeToggleCampaignStatusResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
+//   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - error: internal error
+func DecodeToggleCampaignStatusResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ToggleCampaignStatusResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			var (
+				etag *string
+			)
+			etagRaw := resp.Header.Get("Etag")
+			if etagRaw != "" {
+				etag = &etagRaw
+			}
+			res := NewToggleCampaignStatusCampaignOK(&body, etag)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ToggleCampaignStatusBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			return nil, NewToggleCampaignStatusBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body ToggleCampaignStatusConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			return nil, NewToggleCampaignStatusConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ToggleCampaignStatusServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			return nil, NewToggleCampaignStatusServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ToggleCampaignStatusInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			return nil, NewToggleCampaignStatusInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ToggleCampaignStatusNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			return nil, NewToggleCampaignStatusNotFound(&body)
+		case http.StatusPreconditionFailed:
+			var (
+				body ToggleCampaignStatusPreconditionFailedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusPreconditionFailedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			return nil, NewToggleCampaignStatusPreconditionFailed(&body)
+		case http.StatusPreconditionRequired:
+			var (
+				body ToggleCampaignStatusPreconditionRequiredResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			err = ValidateToggleCampaignStatusPreconditionRequiredResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+			}
+			return nil, NewToggleCampaignStatusPreconditionRequired(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "toggle-campaign-status", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetJobRequest instantiates a HTTP request object with method and path
 // set to call the "lfx-v2-campaign-service-briefs" service "get-job" endpoint
 func (c *Client) BuildGetJobRequest(ctx context.Context, v any) (*http.Request, error) {

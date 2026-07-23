@@ -698,6 +698,24 @@ func createOutcomeAmbiguous(err error) bool {
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
 }
 
+// IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
+// UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied
+// upstream even though it errored (a transportError, a 5xx, or a 3xx on a mutating method).
+// A definite 4xx or a proven pre-send failure returns false (the change was NOT applied). It
+// exposes the same classifier the create paths use so callers can distinguish "the platform
+// may already reflect the change, verify before retry" from "definitely not applied".
+//
+// It also honors any error reporting Unconfirmed() bool via the behavioral interface — a
+// partialCascadeError (campaign PATCHed, a child PATCH then failed) is partially applied and
+// must be treated as unconfirmed even though its underlying child error might be a definite 4xx.
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
+
 // isMutatingMethod reports whether an HTTP method can create/modify a resource
 // (POST/PUT/PATCH/DELETE). Used to decide whether a 3xx response is a possible
 // (UNCONFIRMED) create vs a harmless GET redirect.
@@ -1574,6 +1592,123 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		RedditURL:    redditAdsManagerURL,
 		Steps:        steps,
 	}, nil
+}
+
+// Campaign run states for UpdateCampaignStatus. Reddit's Campaign object uses a
+// `configured_status` field (the advertiser-set state) distinct from the read-only
+// `effective_status` (which also reflects review/billing). Toggling ACTIVE↔PAUSED sets
+// configured_status; the same values the create path already sends ("PAUSED").
+const (
+	StatusActive = "ACTIVE"
+	StatusPaused = "PAUSED"
+)
+
+// UpdateCampaignStatus sets an existing campaign's configured_status to ACTIVE or PAUSED
+// via PATCH /ad_accounts/{accountID}/campaigns/{campaignID} (the same envelope shape the
+// create path uses: {"data": {"configured_status": ...}}).
+//
+// NOTE: this toggles the CAMPAIGN alone. Because CreateCampaign sets configured_status to
+// PAUSED on the campaign, ad group, AND ad, a full activate must also toggle the children —
+// use UpdateCampaignAndChildrenStatus for that. This narrower method is retained for callers
+// that only have a campaign id (and for the per-entity building block below).
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	return c.updateEntityStatus(ctx, "campaigns", campaignID, status)
+}
+
+// UpdateCampaignAndChildrenStatus sets configured_status on the campaign and, when their ids
+// are supplied, its child ad group and ad — the platform side of the campaign status toggle.
+// The DB row is updated by the service only AFTER this confirms. CreateCampaign PAUSES all
+// three entities, so toggling only the campaign to ACTIVE would leave the ad group/ad PAUSED
+// and the campaign would not serve; cascading keeps the run state consistent across the tree.
+//
+// Order on ACTIVATE is parent-first (campaign → ad group → ad) so an intermediate failure
+// never leaves a servable child under a paused parent; the reverse is harmless because a
+// PATCH is idempotent. An empty adGroupID/adID is skipped (a degraded/partial create that
+// stored no child id — already blocked from toggling by the service guard). Any per-entity
+// error stops the cascade and is returned, preserving the UNCONFIRMED vs rejected
+// classification so the service does not persist a run state the platform did not fully
+// apply.
+func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID, status string) error {
+	// Activating a campaign whose child ad group id is unknown cannot make the tree
+	// servable (the ad group stays PAUSED), so refuse rather than PATCH only the campaign
+	// and let the caller persist a misleading "active". Pausing is fine without children —
+	// pausing the parent already stops delivery.
+	if status == StatusActive && strings.TrimSpace(adGroupID) == "" {
+		return fmt.Errorf("reddit: cannot activate campaign %s: no ad group id is known, so the tree cannot be made servable", campaignID)
+	}
+	if err := c.updateEntityStatus(ctx, "campaigns", campaignID, status); err != nil {
+		return err
+	}
+	// The campaign PATCH already committed. A subsequent CHILD failure means the tree is
+	// PARTIALLY applied (parent changed, child not) — that is NOT "not modified", and a
+	// retry is safe because every PATCH is idempotent. Surface it as a partial-cascade
+	// error whose Unconfirmed() is true so the caller reports "verify/retry" and does not
+	// persist a run state the whole tree does not yet reflect.
+	if strings.TrimSpace(adGroupID) != "" {
+		if err := c.updateEntityStatus(ctx, "ad_groups", adGroupID, status); err != nil {
+			return &partialCascadeError{stage: "ad group", err: err}
+		}
+	}
+	if strings.TrimSpace(adID) != "" {
+		if err := c.updateEntityStatus(ctx, "ads", adID, status); err != nil {
+			return &partialCascadeError{stage: "ad", err: err}
+		}
+	}
+	return nil
+}
+
+// partialCascadeError marks a cascade that changed the campaign upstream but then failed on
+// a child entity: the run state is PARTIALLY applied. Its Unconfirmed() reports true so the
+// caller (via the shared IsOutcomeUnconfirmed classifier) treats it as "may be applied —
+// verify before retrying" rather than "not modified"; a retry re-runs the idempotent cascade.
+type partialCascadeError struct {
+	stage string
+	err   error
+}
+
+func (e *partialCascadeError) Error() string {
+	return "reddit: campaign status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+}
+func (e *partialCascadeError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *partialCascadeError) Unconfirmed() bool { return true }
+
+// updateEntityStatus PATCHes one entity's configured_status via
+// PATCH /ad_accounts/{accountID}/{entity}/{id} with the create path's envelope
+// ({"data": {"configured_status": ...}}). A PATCH is idempotent (setting PAUSED on an
+// already-paused entity is a no-op), so a 429 IS retried by request(). Both ids are
+// interpolated into the path, so the account id is validated with the same accountIDRe guard
+// the create path uses and the entity id is validated with the letters/digits/underscores
+// guard (rejecting '/', '?', '#' and any other path/query-altering character). status must
+// be one of the two constants above.
+func (c *Client) updateEntityStatus(ctx context.Context, entity, id, status string) error {
+	accountID := strings.TrimSpace(c.account.AccountID)
+	id = strings.TrimSpace(id)
+	if accountID == "" {
+		return fmt.Errorf("reddit: account id is required")
+	}
+	if !accountIDRe.MatchString(accountID) {
+		return fmt.Errorf("invalid reddit account ID %q: must contain only letters, digits, and underscores", accountID)
+	}
+	if id == "" {
+		return fmt.Errorf("reddit: %s id is required", entity)
+	}
+	// Validate with the SAME letters/digits/underscores guard as the account id (Reddit ids
+	// look like "t3_xxxx"). This categorically rejects any path-altering character — '/', but
+	// also '?' and '#', which request() would otherwise treat as a query/fragment separator
+	// and use to truncate or rewrite the path rather than escape.
+	if !accountIDRe.MatchString(id) {
+		return fmt.Errorf("invalid reddit %s ID %q: must contain only letters, digits, and underscores", entity, id)
+	}
+	if status != StatusActive && status != StatusPaused {
+		return fmt.Errorf("reddit: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
+	}
+	body := map[string]any{"data": map[string]any{"configured_status": status}}
+	if _, err := c.request(ctx, http.MethodPatch, "/ad_accounts/"+accountID+"/"+entity+"/"+id, body); err != nil {
+		return fmt.Errorf("reddit: update %s %s status to %s: %w", entity, id, status, err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

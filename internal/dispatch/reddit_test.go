@@ -343,3 +343,185 @@ func TestReddit_ConfigSnapshotRedactsPostURL(t *testing.T) {
 		t.Errorf("config snapshot should retain the sanitized post URL, got: %s", s)
 	}
 }
+
+// toggleCampaign builds a persisted *model.Campaign carrying the child ids in Result, as the
+// reddit create path stores them.
+func toggleCampaign(campaignID, adGroupID, adID string) *model.Campaign {
+	return &model.Campaign{
+		PlatformCampaignID: campaignID,
+		Result:             []byte(`{"adGroupId":"` + adGroupID + `","adId":"` + adID + `"}`),
+	}
+}
+
+// TestReddit_ToggleStatus_PatchesPlatform verifies the dispatcher resolves creds and
+// PATCHes configured_status through the reddit client — cascading to the campaign AND its
+// child ad group + ad (all three are PAUSED at creation, so a partial toggle would not serve).
+func TestReddit_ToggleStatus_PatchesPlatform(t *testing.T) {
+	type patch struct{ method, path, status string }
+	var got []patch
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Data struct {
+				ConfiguredStatus string `json:"configured_status"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = append(got, patch{r.Method, r.URL.Path, body.Data.ConfiguredStatus})
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	camp := toggleCampaign("t3_c", "t5_ag", "t6_ad")
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	// Cascade PATCHes campaign, ad group, then ad — parent-first — all to PAUSED.
+	want := []patch{
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_acct/campaigns/t3_c", "PAUSED"},
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_acct/ad_groups/t5_ag", "PAUSED"},
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_acct/ads/t6_ad", "PAUSED"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("issued %d PATCHes, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("PATCH[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+	// An unsupported run state is rejected before any call.
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, "RUNNING"); err == nil {
+		t.Error("expected an error for an unsupported run status")
+	}
+}
+
+// TestReddit_ToggleStatus_NoChildIDsPausesCampaignOnly verifies that PAUSING a campaign whose
+// persisted Result carries no child ids (a degraded create) PATCHes only the campaign —
+// pausing the parent already halts delivery, so no child id is needed.
+func TestReddit_ToggleStatus_NoChildIDsPausesCampaignOnly(t *testing.T) {
+	var count int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"t3_c"}}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	camp := &model.Campaign{PlatformCampaignID: "t3_c"} // no Result blob → no child ids
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus (pause): %v", err)
+	}
+	if count != 1 {
+		t.Errorf("issued %d PATCHes, want 1 (campaign only when no child ids)", count)
+	}
+}
+
+// TestReddit_ToggleStatus_ActivateWithoutChildIDsRejected verifies that ACTIVATING a campaign
+// with no known ad group id is refused before any PATCH — activating only the campaign would
+// leave the ad group/ad PAUSED and the tree unable to serve, so the caller must not persist
+// "active".
+func TestReddit_ToggleStatus_ActivateWithoutChildIDsRejected(t *testing.T) {
+	var count int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"t3_c"}}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	camp := &model.Campaign{PlatformCampaignID: "t3_c"} // no child ids
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error activating a campaign with no ad group id")
+	}
+	if count != 0 {
+		t.Errorf("issued %d PATCHes, want 0 (rejected before any PATCH)", count)
+	}
+}
+
+// TestReddit_ToggleStatus_PartialCascadeIsUnconfirmed verifies that when the campaign PATCH
+// succeeds but a child PATCH fails, the outcome is UNCONFIRMED (partially applied), not a
+// clean failure — the caller must verify/retry rather than report "not modified".
+func TestReddit_ToggleStatus_PartialCascadeIsUnconfirmed(t *testing.T) {
+	var n int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		// First PATCH (campaign) succeeds; the ad-group PATCH fails with a definite 400.
+		if strings.Contains(r.URL.Path, "/ad_groups/") {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, toggleCampaign("t3_c", "t5_ag", "t6_ad"), model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when a child PATCH fails after the campaign PATCH")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a partial cascade (campaign applied, child failed) must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestReddit_ToggleStatus_5xxIsUnconfirmed verifies a 5xx on the PATCH surfaces as an
+// error whose Unconfirmed() is true (the change may have applied upstream).
+func TestReddit_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on the PATCH
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, toggleCampaign("t3_c", "t5_ag", "t6_ad"), model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx toggle")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+	}
+}

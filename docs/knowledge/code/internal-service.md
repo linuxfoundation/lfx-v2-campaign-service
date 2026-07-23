@@ -54,4 +54,28 @@ and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).
 
+## Campaign status toggle
+
+`BriefService.ToggleCampaignStatus` (backing `PATCH .../campaigns/{id}/status`
+{active|paused}) pauses/resumes a campaign ON THE PLATFORM, then persists. Unlike
+`UpdateCampaign` (DB-only), the platform call happens FIRST via
+`Orchestrator.ToggleCampaignStatus` → the platform's `StatusToggler`; the DB row is written
+only after the platform confirms. Only a fully-created campaign (`created`, or one already `active`/`paused`) may be toggled
+(`model.CampaignStatusToggleable`); a `pending` ambiguous orphan or a `created_degraded`
+campaign is rejected 409 — toggling one would activate an incomplete campaign and/or
+overwrite its reconciliation marker with the run state (a non-empty `PlatformCampaignID`
+alone is not sufficient, since a partial/degraded campaign can carry an upstream id). A stale
+`If-Match` fails BEFORE the paid platform call;
+failures are classified (`ErrCampaignNotProvisioned` → 409 for a campaign with no upstream id
+yet, `ErrToggleUnsupported` → 400, an UNCONFIRMED outcome → 503 "verify before retrying", a
+definite platform failure → 503 "not modified") rather than all blamed on the platform. An
+UNCONFIRMED outcome is a transport/5xx/redirect error the PATCH may have applied — the client
+exposes it via `reddit.IsOutcomeUnconfirmed`, the dispatcher wraps it in an error whose
+`Unconfirmed()` reports true (same behavioral-interface pattern as `NoUpstreamCreate`), and
+the handler surfaces it without lying either way and without writing the row. The post-platform
+`ReplaceCampaign` runs on a `context.WithoutCancel` context BOUNDED by `persistResultTimeout`,
+so the row can't diverge from the platform if the request is cancelled after the PATCH commits
+and a stuck DB can't hang shutdown; a persist failure after the platform changed is logged as a
+divergence reconcile signal.
+
 See [internal/service](../../../internal/service).

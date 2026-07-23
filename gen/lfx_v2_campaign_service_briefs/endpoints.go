@@ -16,15 +16,16 @@ import (
 
 // Endpoints wraps the "lfx-v2-campaign-service-briefs" service endpoints.
 type Endpoints struct {
-	CreateBrief     goa.Endpoint
-	GetBrief        goa.Endpoint
-	UpdateBrief     goa.Endpoint
-	ApproveBrief    goa.Endpoint
-	DeleteBrief     goa.Endpoint
-	CreateCampaigns goa.Endpoint
-	GetCampaign     goa.Endpoint
-	UpdateCampaign  goa.Endpoint
-	GetJob          goa.Endpoint
+	CreateBrief          goa.Endpoint
+	GetBrief             goa.Endpoint
+	UpdateBrief          goa.Endpoint
+	ApproveBrief         goa.Endpoint
+	DeleteBrief          goa.Endpoint
+	CreateCampaigns      goa.Endpoint
+	GetCampaign          goa.Endpoint
+	UpdateCampaign       goa.Endpoint
+	ToggleCampaignStatus goa.Endpoint
+	GetJob               goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-briefs"
@@ -33,15 +34,16 @@ func NewEndpoints(s Service) *Endpoints {
 	// Casting service to Auther interface
 	a := s.(Auther)
 	return &Endpoints{
-		CreateBrief:     NewCreateBriefEndpoint(s, a.JWTAuth),
-		GetBrief:        NewGetBriefEndpoint(s, a.JWTAuth),
-		UpdateBrief:     NewUpdateBriefEndpoint(s, a.JWTAuth),
-		ApproveBrief:    NewApproveBriefEndpoint(s, a.JWTAuth),
-		DeleteBrief:     NewDeleteBriefEndpoint(s, a.JWTAuth),
-		CreateCampaigns: NewCreateCampaignsEndpoint(s, a.JWTAuth),
-		GetCampaign:     NewGetCampaignEndpoint(s, a.JWTAuth),
-		UpdateCampaign:  NewUpdateCampaignEndpoint(s, a.JWTAuth),
-		GetJob:          NewGetJobEndpoint(s, a.JWTAuth),
+		CreateBrief:          NewCreateBriefEndpoint(s, a.JWTAuth),
+		GetBrief:             NewGetBriefEndpoint(s, a.JWTAuth),
+		UpdateBrief:          NewUpdateBriefEndpoint(s, a.JWTAuth),
+		ApproveBrief:         NewApproveBriefEndpoint(s, a.JWTAuth),
+		DeleteBrief:          NewDeleteBriefEndpoint(s, a.JWTAuth),
+		CreateCampaigns:      NewCreateCampaignsEndpoint(s, a.JWTAuth),
+		GetCampaign:          NewGetCampaignEndpoint(s, a.JWTAuth),
+		UpdateCampaign:       NewUpdateCampaignEndpoint(s, a.JWTAuth),
+		ToggleCampaignStatus: NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
+		GetJob:               NewGetJobEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -56,6 +58,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.CreateCampaigns = m(e.CreateCampaigns)
 	e.GetCampaign = m(e.GetCampaign)
 	e.UpdateCampaign = m(e.UpdateCampaign)
+	e.ToggleCampaignStatus = m(e.ToggleCampaignStatus)
 	e.GetJob = m(e.GetJob)
 }
 
@@ -240,6 +243,29 @@ func NewUpdateCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.En
 			return nil, err
 		}
 		return s.UpdateCampaign(ctx, p)
+	}
+}
+
+// NewToggleCampaignStatusEndpoint returns an endpoint function that calls the
+// method "toggle-campaign-status" of service "lfx-v2-campaign-service-briefs".
+func NewToggleCampaignStatusEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ToggleCampaignStatusPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ToggleCampaignStatus(ctx, p)
 	}
 }
 

@@ -50,6 +50,10 @@ type Client struct {
 	// update-campaign endpoint.
 	UpdateCampaignDoer goahttp.Doer
 
+	// ToggleCampaignStatus Doer is the HTTP client used to make requests to the
+	// toggle-campaign-status endpoint.
+	ToggleCampaignStatusDoer goahttp.Doer
+
 	// GetJob Doer is the HTTP client used to make requests to the get-job endpoint.
 	GetJobDoer goahttp.Doer
 
@@ -74,20 +78,21 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
-		CreateBriefDoer:     doer,
-		GetBriefDoer:        doer,
-		UpdateBriefDoer:     doer,
-		ApproveBriefDoer:    doer,
-		DeleteBriefDoer:     doer,
-		CreateCampaignsDoer: doer,
-		GetCampaignDoer:     doer,
-		UpdateCampaignDoer:  doer,
-		GetJobDoer:          doer,
-		RestoreResponseBody: restoreBody,
-		scheme:              scheme,
-		host:                host,
-		decoder:             dec,
-		encoder:             enc,
+		CreateBriefDoer:          doer,
+		GetBriefDoer:             doer,
+		UpdateBriefDoer:          doer,
+		ApproveBriefDoer:         doer,
+		DeleteBriefDoer:          doer,
+		CreateCampaignsDoer:      doer,
+		GetCampaignDoer:          doer,
+		UpdateCampaignDoer:       doer,
+		ToggleCampaignStatusDoer: doer,
+		GetJobDoer:               doer,
+		RestoreResponseBody:      restoreBody,
+		scheme:                   scheme,
+		host:                     host,
+		decoder:                  dec,
+		encoder:                  enc,
 	}
 }
 
@@ -278,6 +283,30 @@ func (c *Client) UpdateCampaign() goa.Endpoint {
 		resp, err := c.UpdateCampaignDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "update-campaign", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ToggleCampaignStatus returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service toggle-campaign-status server.
+func (c *Client) ToggleCampaignStatus() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeToggleCampaignStatusRequest(c.encoder)
+		decodeResponse = DecodeToggleCampaignStatusResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildToggleCampaignStatusRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ToggleCampaignStatusDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
 		}
 		return decodeResponse(resp)
 	}

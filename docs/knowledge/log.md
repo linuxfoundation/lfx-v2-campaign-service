@@ -1,5 +1,31 @@
 # Log
 
+## 2026-07-23 (2)
+
+**Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
+CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
+would activate a campaign whose children stayed PAUSED — it would not serve. Added
+`reddit.UpdateCampaignAndChildrenStatus` (PATCHes campaign → ad group → ad, parent-first,
+skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
+`StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
+the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
+(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
+
+## 2026-07-23
+
+**Update** — Campaign status toggle (LFXV2-2806, PR #46). New
+`PATCH /projects/{p}/briefs/{b}/campaigns/{id}/status` {active|paused} that pauses/resumes a
+campaign ON THE AD PLATFORM then persists (previously `update-campaign` only wrote the DB row,
+so a "paused" status didn't actually pause the campaign). Reddit first. Adds
+`reddit.UpdateCampaignStatus` (PATCH `configured_status`), an optional `StatusToggler`
+dispatcher interface + `RedditDispatcher.ToggleStatus` (via a shared `resolveRedditClient`),
+`Orchestrator.ToggleCampaignStatus` (type-asserts the toggler), and
+`BriefService.ToggleCampaignStatus` (platform-first, DB-after-confirm on a WithoutCancel
+context, If-Match guarded, classified errors: 409 not-provisioned / 400 unsupported / 503
+platform-failure). `model.CampaignRunActive/Paused` constants. Meta + X/Twitter toggles are a
+follow-up. Review-hardened per dealako-sim + cursor + copilot (error classification, cancel
+safety, `?`/`#` path-guard, dedup).
+
 ## 2026-07-22
 
 **Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).

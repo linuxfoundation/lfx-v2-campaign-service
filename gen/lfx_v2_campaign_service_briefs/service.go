@@ -32,6 +32,11 @@ type Service interface {
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
 	// Replace a campaign (requires If-Match).
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
+	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
+	// the new status. Unlike update-campaign (which only writes the DB row), this
+	// dispatches the status change to the platform and updates the row only after
+	// the platform confirms.
+	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Poll campaign-creation job status.
 	GetJob(context.Context, *GetJobPayload) (res *JobPollResponse, err error)
 }
@@ -56,7 +61,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [9]string{"create-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "update-campaign", "get-job"}
+var MethodNames = [10]string{"create-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "update-campaign", "toggle-campaign-status", "get-job"}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -265,6 +270,23 @@ type PlatformResult struct {
 	CampaignID *string
 	// Failure reason (present when not ok)
 	Error *string
+}
+
+// ToggleCampaignStatusPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service toggle-campaign-status method.
+type ToggleCampaignStatusPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	// Desired run state
+	Status string
 }
 
 // UpdateBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
