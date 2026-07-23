@@ -1,5 +1,16 @@
 # Log
 
+## 2026-07-23 (5)
+
+**Update** — Meta status toggle now CASCADES like Reddit (LFXV2-2807, PR #47 review). Meta's
+CreateCampaign PAUSES the campaign, ad set, AND ads, so toggling only the campaign to ACTIVE
+would not serve. Added `meta.UpdateCampaignAndChildrenStatus`: POST status to the campaign,
+the persisted ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta stores the ad
+set id in CampaignResult but not the individual ad ids). Activate-without-ad-set-id is refused
+before any call; a child failure after the campaign POST is a `partialCascadeError`
+(Unconfirmed → 503-verify). `MetaDispatcher.ToggleStatus` reads the ad set id from the persisted
+`*model.Campaign`. LinkedIn stays a single-node PARTIAL_UPDATE.
+
 ## 2026-07-23 (4)
 
 **Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).

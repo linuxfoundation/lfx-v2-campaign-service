@@ -3709,6 +3709,63 @@ func TestUpdateCampaignStatus_PostsStatusToNode(t *testing.T) {
 	}
 }
 
+// TestUpdateCampaignAndChildrenStatus_CascadesToTree verifies the campaign, its ad set, and
+// each discovered ad are all POSTed to the new status (Meta PAUSES all three at creation).
+func TestUpdateCampaignAndChildrenStatus_CascadesToTree(t *testing.T) {
+	type req struct{ method, path, status string }
+	gotCh := make(chan req, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			gotCh <- req{r.Method, r.URL.Path, ""}
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"},{"id":"222"}]}`)
+			return
+		}
+		body := decodeBody(t, r)
+		status, _ := body["status"].(string)
+		gotCh <- req{r.Method, r.URL.Path, status}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	close(gotCh)
+	posts := map[string]string{}
+	sawAdsGet := false
+	for r := range gotCh {
+		if r.method == http.MethodGet {
+			sawAdsGet = strings.HasSuffix(r.path, "/999/ads")
+			continue
+		}
+		posts[r.path] = r.status
+	}
+	for _, p := range []string{"/23847290", "/999", "/111", "/222"} {
+		if posts[p] != StatusActive {
+			t.Errorf("POST %s status = %q, want ACTIVE", p, posts[p])
+		}
+	}
+	if !sawAdsGet {
+		t.Error("did not GET /999/ads to discover the ads")
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateNoAdSetRejected verifies activating with no ad
+// set id is refused before any request (the tree can't be made servable).
+func TestUpdateCampaignAndChildrenStatus_ActivateNoAdSetRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "", StatusActive); err == nil {
+		t.Fatal("expected an error activating a campaign with no ad set id")
+	}
+}
+
 func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("no API call should happen for invalid input: %s %s", r.Method, r.URL.Path)

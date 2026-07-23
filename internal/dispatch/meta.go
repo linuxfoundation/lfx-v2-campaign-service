@@ -190,13 +190,34 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// A status update targets the campaign node by id (POST /{campaignID}); it needs no
 	// account id or page id, so those are not required here (unlike Dispatch).
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
-	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, metaStatus); uerr != nil {
+	// Cascade to the ad set (and its ads) as well as the campaign: CreateCampaign PAUSES the
+	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
+	// The ad set id is read from the persisted CampaignResult (Meta stores it, but not the
+	// individual ad ids — the client discovers those via GET /{adSetID}/ads).
+	adSetID := metaAdSetID(campaign)
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus); uerr != nil {
 		if meta.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
 		return uerr
 	}
 	return nil
+}
+
+// metaAdSetID pulls the ad set id the create path stored in the persisted CampaignResult
+// blob. A missing/unparseable blob yields "" (the campaign is toggled alone — the service
+// already blocks toggling a degraded campaign).
+func metaAdSetID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		AdSetID string `json:"AdSetID"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	return blob.AdSetID
 }
 
 // metaRunStatus maps the service run state (active/paused) to Meta's status enum.
