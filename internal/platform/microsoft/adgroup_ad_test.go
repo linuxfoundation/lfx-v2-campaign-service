@@ -142,6 +142,56 @@ func TestCreateCampaign_ReusesExistingAdGroupAndAd(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_AdGroupBodyCarriesRequiredFields(t *testing.T) {
+	// AddAdGroups lists ReturnInheritedBidStrategyTypes as a required body element (reserved,
+	// but no optional note), so it must be present in the JSON even as false. Assert it is
+	// serialized (not omitted) alongside AdGroupType + Language.
+	var group createAdGroupsRequest
+	var rawBody string
+	api := &campaignsAPI{}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/AdGroups") {
+			b, _ := io.ReadAll(r.Body)
+			rawBody = string(b)
+			_ = json.Unmarshal(b, &group)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"AdGroupIds":[654],"PartialErrors":[]}`)
+			return
+		}
+		base(w, r)
+	})
+	if _, err := c.CreateCampaign(context.Background(), validInput()); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if !strings.Contains(rawBody, "ReturnInheritedBidStrategyTypes") {
+		t.Errorf("AddAdGroups body omits the required ReturnInheritedBidStrategyTypes field: %s", rawBody)
+	}
+	if group.AdGroups[0].AdGroupType != adGroupTypeSearchStandard || group.AdGroups[0].Language == "" {
+		t.Errorf("ad group missing AdGroupType/Language: %+v", group.AdGroups[0])
+	}
+}
+
+func TestComposeAdCopy_DoubleWidthUsesReducedLimit(t *testing.T) {
+	// A long CJK headline must be truncated to the 15-char double-width limit, not 30.
+	hs, _ := composeAdCopy(CampaignInput{EventName: strings.Repeat("字", 40), Project: "字"})
+	for _, h := range hs {
+		if hasDoubleWidth(h) && utf8.RuneCountInString(h) > maxAdHeadlineRunesWide {
+			t.Errorf("double-width headline %q kept %d runes, want <=%d", h, utf8.RuneCountInString(h), maxAdHeadlineRunesWide)
+		}
+	}
+	// hasDoubleWidth sanity: false for ASCII, true for CJK and emoji.
+	if hasDoubleWidth("Register Today") {
+		t.Error("ASCII must not be flagged double-width")
+	}
+	if !hasDoubleWidth("字") {
+		t.Error("CJK must be flagged double-width")
+	}
+	if !hasDoubleWidth("🎉") {
+		t.Error("emoji must count as double-width")
+	}
+}
+
 func TestCreateCampaign_AdsLookupSendsRequiredAdTypes(t *testing.T) {
 	// GetAdsByAdGroupId REQUIRES an AdTypes array (only ReturnAdditionalFields is optional);
 	// omitting it rejects the idempotency lookup before the ad create is reached. Assert the
@@ -368,6 +418,12 @@ func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
 		"over-long headline":    func(in *CampaignInput) { in.Headlines = []string{strings.Repeat("x", maxAdHeadlineRunes+1)} },
 		"over-long description": func(in *CampaignInput) { in.Descriptions = []string{strings.Repeat("x", maxAdDescriptionRunes+1)} },
 		"duplicate headline":    func(in *CampaignInput) { in.Headlines = []string{"Register", "register"} }, // case-insensitive dup
+		"newline headline":      func(in *CampaignInput) { in.Headlines = []string{"first\nsecond"} },
+		"wordless headline":     func(in *CampaignInput) { in.Headlines = []string{"!!!"} },
+		// A CJK headline over the reduced 15-char double-width limit (but under the 30 single-width one).
+		"over-long wide headline": func(in *CampaignInput) {
+			in.Headlines = []string{strings.Repeat("字", maxAdHeadlineRunesWide+1)}
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
