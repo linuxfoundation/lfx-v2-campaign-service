@@ -3829,6 +3829,47 @@ func TestUpdateCampaignStatus_PatchesConfiguredStatus(t *testing.T) {
 	}
 }
 
+// TestUpdateCampaignAndChildrenStatus_CascadesToTree verifies the toggle PATCHes the
+// campaign, its ad group, and its ad — parent-first — since all three are PAUSED at creation.
+func TestUpdateCampaignAndChildrenStatus_CascadesToTree(t *testing.T) {
+	type patch struct{ method, path, status string }
+	var got []patch
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Data struct {
+				ConfiguredStatus string `json:"configured_status"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = append(got, patch{r.Method, r.URL.Path, body.Data.ConfiguredStatus})
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", "t5_ag", "t6_ad", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	want := []patch{
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/campaigns/t3_camp", StatusActive},
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/ad_groups/t5_ag", StatusActive},
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/ads/t6_ad", StatusActive},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("issued %d PATCHes, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("PATCH[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
 // TestUpdateCampaignStatus_ValidatesInput rejects bad input BEFORE any API call.
 func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

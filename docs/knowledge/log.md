@@ -1,5 +1,16 @@
 # Log
 
+## 2026-07-23 (2)
+
+**Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
+CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
+would activate a campaign whose children stayed PAUSED — it would not serve. Added
+`reddit.UpdateCampaignAndChildrenStatus` (PATCHes campaign → ad group → ad, parent-first,
+skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
+`StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
+the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
+(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
+
 ## 2026-07-23
 
 **Update** — Campaign status toggle (LFXV2-2806, PR #46). New

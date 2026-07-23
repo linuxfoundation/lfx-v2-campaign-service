@@ -380,7 +380,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
 	// lie that the campaign is paused when the platform still has it running).
-	if terr := orch.ToggleCampaignStatus(ctx, p.ProjectID, existing.Platform, existing.PlatformCampaignID, p.Status); terr != nil {
+	if terr := orch.ToggleCampaignStatus(ctx, p.ProjectID, existing.Platform, existing, p.Status); terr != nil {
 		var unconfirmed interface{ Unconfirmed() bool }
 		switch {
 		case errors.Is(terr, ErrToggleUnsupported):

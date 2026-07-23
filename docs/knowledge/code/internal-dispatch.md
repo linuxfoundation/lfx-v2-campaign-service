@@ -97,12 +97,15 @@ Each adapter interprets its own credential + config shape:
 ## Status toggle (optional capability)
 
 `StatusToggler` is an OPTIONAL dispatcher interface (separate from `PlatformDispatcher`) —
-`ToggleStatus(ctx, projectID, platform, platformCampaignID, status)` — for pausing/resuming a
-live campaign on the platform (ACTIVE↔PAUSED). The orchestrator's `ToggleCampaignStatus`
-type-asserts it (returning `ErrToggleUnsupported` when a platform hasn't wired it), so it can
-be added platform-by-platform without touching every adapter. **reddit** implements it:
-`resolveRedditClient` (shared with `Dispatch`, so a create and a toggle accept exactly the
-same connections) builds the client, then `client.UpdateCampaignStatus` PATCHes
-`configured_status`. Meta/X/Twitter toggles follow.
+`ToggleStatus(ctx, projectID, platform, campaign *model.Campaign, status)` — for
+pausing/resuming a live campaign on the platform (ACTIVE↔PAUSED). It receives the full
+persisted `*model.Campaign` (not just the id) so an adapter can reach any child ids it stored
+at creation. The orchestrator's `ToggleCampaignStatus` type-asserts it (returning
+`ErrToggleUnsupported` when a platform hasn't wired it), so it can be added platform-by-platform
+without touching every adapter. **reddit** implements it: `resolveRedditClient` (shared with
+`Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
+then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
+its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
+PAUSES all three, so toggling only the campaign would not serve. Meta/X/Twitter toggles follow.
 
 See [internal/dispatch](../../../internal/dispatch).
