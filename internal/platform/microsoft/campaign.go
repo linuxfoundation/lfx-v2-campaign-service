@@ -22,10 +22,11 @@ import (
 // ---------------------------------------------------------------------------
 // Campaign creation (MS-2): find-or-create a PAUSED campaign
 //
-// The Microsoft Advertising REST hierarchy is Campaign -> AdGroup -> Ad. MS-2
-// creates the PAUSED campaign shell only (POST CampaignManagement/v13/Campaigns);
-// ad group + ad creation land in a later slice. Everything is created PAUSED so
-// nothing serves until a human enables it.
+// The Microsoft Advertising REST hierarchy is Campaign -> AdGroup -> Ad. CreateCampaign
+// find-or-creates the PAUSED campaign (POST CampaignManagement/v13/Campaigns) and then
+// completes the hierarchy under it — a PAUSED ad group and a PAUSED Responsive Search Ad
+// (see createAdGroupAndAd in adgroup_ad.go). Everything is created PAUSED so nothing serves
+// until a human enables it.
 //
 // Two Microsoft-specific transport facts drive the contract here:
 //
@@ -81,19 +82,16 @@ const (
 )
 
 // CampaignInput is the platform-agnostic request to create a Microsoft Advertising
-// campaign. Only the fields needed for a PAUSED search-campaign shell are consumed
-// today; targeting/ad groups/ads are added in a later slice. Mirrors the google-ads
-// CampaignInput so the orchestrator can build one input shape per platform.
+// campaign. CreateCampaign consumes these fields to build the full PAUSED hierarchy
+// (campaign + ad group + responsive search ad). Mirrors the google-ads CampaignInput so
+// the orchestrator can build one input shape per platform.
 type CampaignInput struct {
 	// EventName is the human-readable campaign subject, folded into the campaign name.
 	// Caller-supplied and otherwise unbounded, so it is sanitized and the composed name
 	// is length-capped before any create call.
 	EventName string
-	// EventSlug is the URL-safe event identifier, carried for struct parity with the
-	// sibling clients (which use it to build UTM click-through params on the ad's final
-	// URL). CreateCampaign builds only a PAUSED campaign shell today — no ads / final
-	// URLs — so this field is accepted but not yet consumed; a later slice (ad creation)
-	// will use it. Reserved now so the platform-agnostic input shape is stable.
+	// EventSlug is the URL-safe event identifier used to build the UTM click-through params
+	// appended to the created ad's final URL (utm_campaign), matching the sibling clients.
 	EventSlug string
 	// Project is folded into the composed name alongside EventName. It is the canonical
 	// attribution key the data pipeline parses out of the campaign name.

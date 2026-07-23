@@ -691,3 +691,63 @@ func TestAdCopyDedupeIsUnicodeCaseFold(t *testing.T) {
 		t.Fatalf("boundedUniqueCopy kept %d entries for a Unicode-case-fold duplicate, want 1: %q", len(got), got)
 	}
 }
+
+// TestCreateCampaign_AdGroupLookupMatchWithNoIDIsUnconfirmed: an ad group whose unique name
+// matches but whose Id is null must be UNCONFIRMED (verify before retry), not "absent" — else
+// the client POSTs /AdGroups and creates a duplicate.
+func TestCreateCampaign_AdGroupLookupMatchWithNoIDIsUnconfirmed(t *testing.T) {
+	in := validInput()
+	adGroupName := composeAdGroupName(in)
+	adGroupPostReached := false
+	api := &campaignsAPI{
+		adGroupGetBody: `{"AdGroups":[{"Id":null,"Name":` + jsonString(adGroupName) + `}]}`,
+	}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/AdGroups") {
+			adGroupPostReached = true
+		}
+		base(w, r)
+	})
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED error when the matching ad group has no usable id")
+	}
+	if adGroupPostReached {
+		t.Error("ad group create POST issued despite a name-matching ad group (would duplicate)")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a name-match with an unusable id must be UNCONFIRMED, got: %v", err)
+	}
+}
+
+// TestHasDoubleWidth_BMPEmoji: BMP emoji (❤️ ☀️ ✈️ — U+2600..27BF + the VS16 selector) must
+// be treated as double-width so the reduced copy cap applies, not just supplementary-plane
+// emoji (>= U+1F000).
+func TestHasDoubleWidth_BMPEmoji(t *testing.T) {
+	for _, s := range []string{"❤️", "☀", "✈️", "❤"} {
+		if !hasDoubleWidth(s) {
+			t.Errorf("hasDoubleWidth(%q) = false, want true (BMP emoji)", s)
+		}
+	}
+	if hasDoubleWidth("Register Today") {
+		t.Error("plain ASCII must not be flagged double-width")
+	}
+}
+
+// TestCheckAdCopyList_WhitespaceOnlyEntryRejected: a whitespace-only caller entry carries no
+// word and is rejected (per the CampaignInput contract), not silently dropped. A genuinely
+// empty "" is still skippable (composeAdCopy pads).
+func TestCheckAdCopyList_WhitespaceOnlyEntryRejected(t *testing.T) {
+	err := checkAdCopyList("headline", []string{"Register Today", "   "}, maxAdHeadlines, maxAdHeadlineRunes, maxAdHeadlineRunesWide)
+	if err == nil {
+		t.Fatal("a whitespace-only entry must be rejected")
+	}
+	if !strings.Contains(err.Error(), "word") {
+		t.Errorf("rejection should cite the missing word, got: %v", err)
+	}
+	// A genuinely empty string is fine (skipped, list padded elsewhere).
+	if err := checkAdCopyList("headline", []string{"Register Today", ""}, maxAdHeadlines, maxAdHeadlineRunes, maxAdHeadlineRunesWide); err != nil {
+		t.Errorf("an empty string entry must be skipped, not rejected: %v", err)
+	}
+}
