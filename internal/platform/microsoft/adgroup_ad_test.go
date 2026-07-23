@@ -584,3 +584,25 @@ func TestValidateAdURL(t *testing.T) {
 
 // numberID's full contract (valid/zero/negative/fractional/exponent/nil) is covered by
 // TestNumberID in campaign_test.go, alongside the numberID definition in campaign.go.
+
+// checkAdCopyList and boundedUniqueCopy dedupe case-insensitively via
+// strings.EqualFold, so Unicode case variants that share a fold collapse to one
+// entry. The Greek final sigma "ς" and medial sigma "σ" are the canonical case:
+// strings.ToLower keeps them distinct (a ToLower map key would treat them as two
+// entries), while EqualFold treats them as equal. Under the old ToLower keying a
+// case-insensitive duplicate would reach Microsoft, which then rejects the ad
+// after its parents were already created.
+func TestAdCopyDedupeIsUnicodeCaseFold(t *testing.T) {
+	// "finish task οδός" vs "finish task οδόσ": identical but for final vs medial
+	// sigma. EqualFold folds them together; ToLower does not.
+	dupes := []string{"finish task οδός", "finish task οδόσ"}
+
+	if err := checkAdCopyList("headline", dupes, maxAdHeadlines, maxAdHeadlineRunes, maxAdHeadlineRunesWide); err == nil {
+		t.Fatalf("checkAdCopyList accepted a Unicode-case-fold duplicate: %v", dupes)
+	}
+
+	got := boundedUniqueCopy(dupes, maxAdHeadlineRunes, maxAdHeadlineRunesWide, 1, maxAdHeadlines)
+	if len(got) != 1 {
+		t.Fatalf("boundedUniqueCopy kept %d entries for a Unicode-case-fold duplicate, want 1: %q", len(got), got)
+	}
+}

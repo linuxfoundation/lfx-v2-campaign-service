@@ -619,18 +619,20 @@ func hasWord(s string) bool {
 // PAUSED campaign behind a Microsoft rejection.
 func boundedUniqueCopy(candidates []string, singleLimit, wideLimit, minCount, maxCount int) []string {
 	out := make([]string, 0, maxCount)
-	seen := make(map[string]struct{}, maxCount)
 	add := func(s string) bool {
 		s = strings.TrimSpace(s)
 		s = truncateRunes(s, adCopyLimit(s, singleLimit, wideLimit))
 		if s == "" || !hasWord(s) {
 			return false
 		}
-		key := strings.ToLower(s)
-		if _, dup := seen[key]; dup {
-			return false
+		// EqualFold (not a ToLower map key) so Unicode case variants like Σ/ς
+		// are treated as duplicates; the list is capped at maxCount so the
+		// linear scan is bounded.
+		for _, kept := range out {
+			if strings.EqualFold(kept, s) {
+				return false
+			}
 		}
-		seen[key] = struct{}{}
 		out = append(out, s)
 		return len(out) >= maxCount
 	}
@@ -690,7 +692,7 @@ func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLim
 	if n := len(items); n > maxCount {
 		return fmt.Errorf("at most %d %ss are allowed, got %d", maxCount, kind, n)
 	}
-	seen := make(map[string]struct{}, len(items))
+	seen := make([]string, 0, len(items))
 	for i, raw := range items {
 		s := strings.TrimSpace(raw)
 		if s == "" {
@@ -705,11 +707,15 @@ func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLim
 		if limit := adCopyLimit(s, singleLimit, wideLimit); utf8.RuneCountInString(s) > limit {
 			return fmt.Errorf("%s %d exceeds %d characters", kind, i+1, limit)
 		}
-		key := strings.ToLower(s)
-		if _, dup := seen[key]; dup {
-			return fmt.Errorf("%s %d is a duplicate (case-insensitive): %q", kind, i+1, s)
+		// EqualFold (not a ToLower map key) so Unicode case variants like Σ/ς
+		// are caught as duplicates; the list is capped at maxCount so the
+		// linear scan is bounded.
+		for _, k := range seen {
+			if strings.EqualFold(k, s) {
+				return fmt.Errorf("%s %d is a duplicate (case-insensitive): %q", kind, i+1, s)
+			}
 		}
-		seen[key] = struct{}{}
+		seen = append(seen, s)
 	}
 	return nil
 }
