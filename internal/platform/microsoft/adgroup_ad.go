@@ -23,10 +23,12 @@ import (
 // mirroring the reddit/meta clients, whose CreateCampaign creates all three levels.
 // Everything stays PAUSED so nothing serves until a human enables it.
 //
-// The same two Microsoft transport facts from campaign.go apply at every level:
-// PartialErrors-on-200 (a per-entity failure is a 200 with a null id slot + a
-// PartialError, inspected via firstEntityID) and duplicate-names-allowed (so each
-// level is find-or-create by its deterministic name before a create).
+// The PartialErrors-on-200 transport fact from campaign.go applies at every level: a
+// per-entity failure is a 200 with a null id slot + a PartialError, inspected via
+// firstEntityID. Idempotency, though, differs by level: campaign and ad-group names are
+// UNIQUE (case-insensitive), so each is find-or-create by its deterministic name; an ad
+// has no stable name, so it is find-or-create by its destination (FinalUrls). All three
+// find-first lookups keep a SEQUENTIAL retry from stacking duplicates.
 //
 // Ad type: v13 does NOT support ADDING a TextAd/ExpandedTextAd (every TextAd field is
 // "Add: Not supported"; a standard text ad add fails with CampaignServiceAdTypeInvalid).
@@ -234,6 +236,14 @@ func (c *Client) createAdGroupAndAd(
 		return r
 	}
 
+	// If the context is ALREADY done before the ad-group step, abort cleanly BEFORE firing
+	// any ad-group lookup/create HTTP work — the campaign id is known and returned in a
+	// reconcilable partial (mirrors the pre-ad-step guard below), so a cancellation after the
+	// campaign create can't still go on to mutate ad-group state.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return adGroupPartial(), fmt.Errorf("microsoft-ads ad group step aborted (campaign %s created; context done before the ad-group step, no ad group created): %w", campaignID, ctxErr)
+	}
+
 	// Step 3: find-or-create the ad group under the campaign. The lookup is a read
 	// (idempotent), the create is a mutation (not retried on 429). A cancellation
 	// during the lookup is a clean abort (nothing new created), but the CAMPAIGN
@@ -386,6 +396,13 @@ func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string)
 // ads in an ad group, so this find-first is what keeps a retry from stacking duplicates),
 // returning it if present; otherwise it creates a PAUSED ResponsiveSearchAd with the given
 // headline/description assets.
+//
+// The find-first/create is idempotent across SEQUENTIAL retries only; it is not a
+// concurrency guard, so two simultaneous creates for the same (adGroupID, finalURL) could
+// both miss the lookup and both add an ad. That is not exposed here: like the sibling
+// platform clients, concurrent dispatch for one campaign brief is serialized upstream by
+// the orchestrator's claim contract (a single in-flight dispatch per campaign), so this
+// path is never entered concurrently for the same destination.
 func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID string, headlines, descriptions []string, finalURL string) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdByFinalURL(ctx, adGroupID, finalURL); ferr != nil {
 		return "", false, ferr
