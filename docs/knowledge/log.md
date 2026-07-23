@@ -1,5 +1,21 @@
 # Log
 
+## 2026-07-23
+
+**Update** — Microsoft Ads MS-2.5 v13-contract hardening (PR #45 review, copilot + cursor —
+VERIFIED against learn.microsoft.com). (1) RSA copy limits are WIDTH-AWARE: single-width
+30/90, double-width (CJK/Korean/Japanese/Chinese/emoji) 15/45 — validation AND truncation now
+detect double-width content and apply the reduced caps. (2) Each asset must contain ≥1 word
+and no newline (enforced up front). (3) The composed `FinalUrls` (registration URL + utm_*) is
+length-checked against Microsoft's 2,048-char limit up front (not just the raw URL). (4)
+`AddAdGroups` body carries the docs-required `ReturnInheritedBidStrategyTypes` (reserved; sent
+`false`). (5) Context handling: a BARE context.Canceled/DeadlineExceeded from a read lookup is
+a clean abort (nothing created), while a ctx-cancel wrapped in transportError (mid-flight
+create) stays UNCONFIRMED — classification reordered so createOutcomeAmbiguous wins first; and
+a ctx check runs before the ad step so a done context doesn't fire ad HTTP work. (6) Doc fixes:
+`CampaignResult.AdID`/`AlreadyExisted` and `CampaignInput.Headlines/Descriptions` comments
+corrected (RSA, all-three-level AlreadyExisted, width-aware limits).
+
 ## 2026-07-22
 
 **Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).

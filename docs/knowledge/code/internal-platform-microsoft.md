@@ -156,9 +156,12 @@ campaign + ad-group at the ad step) so an ambiguous failure leaves the tree reco
 **Ad type — Responsive Search Ad.** v13 does NOT support adding a `TextAd`/ExpandedTextAd
 (every `TextAd` field is "Add: Not supported"; a standard-text-ad add fails with
 `CampaignServiceAdTypeInvalid`). The currently-addable Search text ad is the
-`ResponsiveSearchAd`: **3–15 unique headline assets** (≤30 chars) and **2–4 unique
-description assets** (≤90 chars), each a `TextAsset` wrapped in an `AssetLink`, plus a
-required `FinalUrls`. Its ad group is created with `AdGroupType` "SearchStandard" (the
+`ResponsiveSearchAd`: **3–15 unique headline assets** and **2–4 unique description assets**,
+each a `TextAsset` wrapped in an `AssetLink`, plus a required `FinalUrls`. Asset length is
+WIDTH-AWARE: single-width copy allows 30 (headline) / 90 (description) characters, but copy
+containing double-width characters (CJK/Korean/Japanese/Chinese or emoji) is capped at 15 /
+45; each asset must also contain at least one word and no newline. The composed `FinalUrls`
+(registration URL + `utm_*`) is length-checked against Microsoft's 2,048-char limit up front. Its ad group is created with `AdGroupType` "SearchStandard" (the
 "SearchDynamic" type takes only dynamic search ads) and a `Language` (the MS-2 campaign sets
 no campaign-level languages, so the ad group must carry one). The AddAds body is polymorphic
 (an array of the base `Ad`), so the responsive search ad DOES send `Type: "ResponsiveSearch"`
@@ -166,9 +169,11 @@ as the wire discriminator that selects the derived subtype ("Add: Read-only" on 
 bars CHANGING the type, not omitting the discriminator — without it the create is rejected).
 `Ad.Status` defaults to *Active* on Add, so the ad sends `Status: Paused` explicitly
 (otherwise it would be eligible to serve once a human enables the campaign).
-`composeAdCopy` de-duplicates (case-insensitively), rune-truncates, and pads the caller's
-`Headlines`/`Descriptions` up to the required minimum with deterministic placeholders;
-`validateAdCopy` rejects an over-count or over-long caller entry up front.
+`composeAdCopy` de-duplicates (case-insensitively), width-aware-truncates, and pads the
+caller's `Headlines`/`Descriptions` up to the required minimum with deterministic
+placeholders; `validateAdCopy` rejects an over-count, over-long (width-aware), duplicate,
+word-less, or newline-containing caller entry up front. The AddAdGroups body also carries the
+docs-required `ReturnInheritedBidStrategyTypes` (reserved; sent as `false`).
 
 Ad-group idempotency is the (case-insensitively unique) ad-group name; ads have no stable
 name (and v13 ALLOWS duplicate responsive search ads in an ad group), so ad idempotency is

@@ -120,12 +120,15 @@ type CampaignInput struct {
 	// for attribution are appended from EventSlug/Project.
 	RegistrationURL string
 	// Headlines / Descriptions override the auto-composed responsive-search-ad copy. A
-	// Microsoft responsive search ad REQUIRES 3-15 unique headlines (<=30 chars each) and
-	// 2-4 unique descriptions (<=90 chars each). When a caller supplies fewer than the
+	// Microsoft responsive search ad REQUIRES 3-15 unique headlines and 2-4 unique
+	// descriptions. Character limits are WIDTH-DEPENDENT: single-width copy allows 30
+	// (headline) / 90 (description) characters, but copy containing DOUBLE-WIDTH characters
+	// (CJK, Korean, Japanese, Chinese, or emoji) is limited to 15 / 45. Each entry must also
+	// contain at least one word and no newline. When a caller supplies fewer than the
 	// minimum, deterministic placeholders derived from EventName/Project pad the lists up to
 	// the minimum (a safe PAUSED default a human edits before enabling); supplying more than
-	// the maximum, a duplicate, or an over-long entry is a clean up-front validation error.
-	// Leave both empty to auto-compose entirely.
+	// the maximum, a duplicate, an over-long, an empty-of-words, or a newline entry is a
+	// clean up-front validation error. Leave both empty to auto-compose entirely.
 	Headlines    []string
 	Descriptions []string
 }
@@ -143,11 +146,12 @@ type CampaignResult struct {
 	// id is known is reconcilable by name (scoped to the campaign).
 	AdGroupName string `json:"adGroupName,omitempty"`
 	AdGroupID   string `json:"adGroupId,omitempty"`
-	// AdID identifies the Text Ad created under the ad group.
+	// AdID identifies the Responsive Search Ad created under the ad group.
 	AdID string `json:"adId,omitempty"`
-	// AlreadyExisted is true when findCampaignByName matched a prior campaign and
-	// CreateCampaign returned it WITHOUT issuing a create — so the caller knows this
-	// run did not create anything new.
+	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
+	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
+	// create was issued at any level. If ANY level was created this run, it is false, even
+	// when the campaign itself was reused. So true means "the entire tree already existed".
 	AlreadyExisted  bool     `json:"alreadyExisted,omitempty"`
 	MicrosoftAdsURL string   `json:"microsoftAdsUrl"`
 	Steps           []string `json:"steps"`
@@ -267,6 +271,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// clean (nil, err) failure — nothing has been created yet.
 	if err := validateAdURL(in.RegistrationURL); err != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign requires a valid ad destination URL: %w", err)
+	}
+	// The ad's FinalUrls is the registration URL WITH the LFX utm_* params appended, and
+	// Microsoft caps FinalUrls at maxFinalURLRunes. Validate the fully COMPOSED URL length up
+	// front: a raw URL near the limit passes validateAdURL but the longer composed URL would
+	// be rejected only at AddAds — after the campaign/ad group exist, the exact orphaning the
+	// up-front checks prevent.
+	if n := utf8.RuneCountInString(buildAdFinalURL(in)); n > maxFinalURLRunes {
+		return nil, fmt.Errorf("microsoft-ads composed ad final URL is %d characters, exceeding the %d limit (shorten the registration URL)", n, maxFinalURLRunes)
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
 	// descriptions), so a bad copy input fails cleanly before the campaign is created rather

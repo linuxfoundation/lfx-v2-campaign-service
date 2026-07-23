@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -60,10 +61,21 @@ const (
 	maxAdGroupNameRunes = 256
 
 	// Responsive Search Ad asset limits (final characters, per the v13 ResponsiveSearchAd
-	// contract). A headline (TextAsset) is <=30 chars; a description <=90. Composed copy is
-	// bounded to these before the create so an over-limit asset is rejected up front.
-	maxAdHeadlineRunes    = 30
-	maxAdDescriptionRunes = 90
+	// contract). SINGLE-width copy: headline <=30, description <=90. DOUBLE-width copy (any
+	// CJK / Korean / Japanese / Chinese character or emoji) uses Microsoft's reduced limits:
+	// headline <=15, description <=45. adHeadlineLimit/adDescriptionLimit pick the right cap
+	// per string; a value is bounded to it before the create so an over-limit asset is
+	// rejected up front (the ad is PAUSED, so truncating a placeholder is acceptable).
+	maxAdHeadlineRunes        = 30
+	maxAdDescriptionRunes     = 90
+	maxAdHeadlineRunesWide    = 15
+	maxAdDescriptionRunesWide = 45
+
+	// maxFinalURLRunes bounds the ad's composed FinalUrls (the registration URL with the LFX
+	// utm_* params appended). Microsoft limits a Final URL to 2,048 characters including the
+	// protocol; validated on the COMPOSED url up front so a near-limit registration URL can't
+	// pass and then be rejected at AddAds after the campaign/ad group already exist.
+	maxFinalURLRunes = 2048
 
 	// Responsive Search Ad asset-count bounds (v13 "Add: Required"): 3-15 UNIQUE headlines
 	// and 2-4 UNIQUE descriptions. The composer emits counts inside these ranges; a shortfall
@@ -95,11 +107,14 @@ type msAdGroup struct {
 
 // createAdGroupsRequest is the POST /AdGroups body. The v13 AddAdGroups operation
 // REQUIRES CampaignId at the top level (a sibling to AdGroups) — the target campaign is
-// NOT in the URL. Response is an index-aligned id slice + PartialErrors (a null slot =
-// that entity failed).
+// NOT in the URL. ReturnInheritedBidStrategyTypes is also a body element the docs list as
+// required ("unless otherwise noted... all request elements are required"; it's marked
+// "reserved for future use" but carries no optional note), so it is sent as false. Response
+// is an index-aligned id slice + PartialErrors (a null slot = that entity failed).
 type createAdGroupsRequest struct {
-	CampaignId json.Number `json:"CampaignId"`
-	AdGroups   []msAdGroup `json:"AdGroups"`
+	CampaignId                      json.Number `json:"CampaignId"`
+	AdGroups                        []msAdGroup `json:"AdGroups"`
+	ReturnInheritedBidStrategyTypes bool        `json:"ReturnInheritedBidStrategyTypes"`
 }
 
 type createAdGroupsResponse struct {
@@ -217,16 +232,21 @@ func (c *Client) createAdGroupAndAd(
 	// already exists, so it is surfaced as a reconcilable partial rather than (nil,err).
 	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName)
 	if err != nil {
-		// createOutcomeAmbiguous covers transport/5xx/mutating-429; errNoID covers a
-		// malformed 2xx that returned no id (the ad group MAY have been created). Both are
-		// UNCONFIRMED: verify before retry so a duplicate isn't stacked.
-		if createOutcomeAmbiguous(err) || errors.Is(err, errNoID) {
+		// ORDER MATTERS. createOutcomeAmbiguous catches a transportError FIRST — a ctx-cancel
+		// mid-HTTP-Do is wrapped as a transportError (whose Unwrap exposes context.Canceled),
+		// and that create MAY have committed, so it must stay UNCONFIRMED. Only a BARE context
+		// error (from the read lookup's backoff/pre-send, not wrapped in transportError) is a
+		// clean abort where nothing was created. errNoID (malformed 2xx, no id) is UNCONFIRMED.
+		switch {
+		case createOutcomeAmbiguous(err) || errors.Is(err, errNoID):
 			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation UNCONFIRMED (campaign %s created; %q may exist — verify before retrying): %w", campaignID, adGroupName, err)
-		}
-		if errors.Is(err, errPartialFailure) {
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group step aborted (campaign %s created; context done during the lookup, no ad group created): %w", campaignID, err)
+		case errors.Is(err, errPartialFailure):
 			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation rejected (campaign %s created): %w", campaignID, err)
+		default:
+			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation failed (campaign %s created): %w", campaignID, err)
 		}
-		return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation failed (campaign %s created): %w", campaignID, err)
 	}
 	adGroupExisted := existed
 	if existed {
@@ -241,6 +261,13 @@ func (c *Client) createAdGroupAndAd(
 		return r
 	}
 
+	// If the context is ALREADY done after the ad-group step, abort cleanly BEFORE firing
+	// any ad lookup/create HTTP work — the campaign + ad group ids are known and returned in
+	// a reconcilable partial, and nothing new is attempted.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad step aborted (campaign %s + ad group %s created; context done before the ad step, no ad created): %w", campaignID, adGroupID, ctxErr)
+	}
+
 	// Step 4: create the PAUSED Responsive Search Ad under the ad group. v13 does not
 	// support adding text/expanded-text ads, so the ad is a responsive search ad (3-15
 	// headline assets + 2-4 description assets). Ads carry no stable human name, so
@@ -251,15 +278,19 @@ func (c *Client) createAdGroupAndAd(
 
 	adID, existed, err := c.findOrCreateResponsiveSearchAd(ctx, adGroupID, headlines, descriptions, finalURL)
 	if err != nil {
-		// Same classification as the ad group: errNoID (malformed 2xx, no id) joins the
-		// ambiguous set — the ad MAY have been created, so UNCONFIRMED not failed.
-		if createOutcomeAmbiguous(err) || errors.Is(err, errNoID) {
+		// Same ordered classification as the ad group (ambiguous transport/errNoID first, so a
+		// mid-flight ctx-cancel stays UNCONFIRMED; a bare context error from the lookup is a
+		// clean abort).
+		switch {
+		case createOutcomeAmbiguous(err) || errors.Is(err, errNoID):
 			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation UNCONFIRMED (campaign %s + ad group %s created; an ad may exist — verify before retrying): %w", campaignID, adGroupID, err)
-		}
-		if errors.Is(err, errPartialFailure) {
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad step aborted (campaign %s + ad group %s created; context done during the lookup, no ad created): %w", campaignID, adGroupID, err)
+		case errors.Is(err, errPartialFailure):
 			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation rejected (campaign %s + ad group %s created): %w", campaignID, adGroupID, err)
+		default:
+			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation failed (campaign %s + ad group %s created): %w", campaignID, adGroupID, err)
 		}
-		return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation failed (campaign %s + ad group %s created): %w", campaignID, adGroupID, err)
 	}
 	adExisted := existed
 	if existed {
@@ -512,20 +543,49 @@ func composeAdCopy(in CampaignInput) (headlines, descriptions []string) {
 		join(" ", "Join us for", event)+".",
 	)
 
-	headlines = boundedUniqueCopy(hCandidates, maxAdHeadlineRunes, minAdHeadlines, maxAdHeadlines)
-	descriptions = boundedUniqueCopy(dCandidates, maxAdDescriptionRunes, minAdDescriptions, maxAdDescriptions)
+	headlines = boundedUniqueCopy(hCandidates, maxAdHeadlineRunes, maxAdHeadlineRunesWide, minAdHeadlines, maxAdHeadlines)
+	descriptions = boundedUniqueCopy(dCandidates, maxAdDescriptionRunes, maxAdDescriptionRunesWide, minAdDescriptions, maxAdDescriptions)
 	return headlines, descriptions
 }
 
-// boundedUniqueCopy trims/truncates each candidate to maxRunes, keeps only non-empty,
-// case-insensitively-unique entries in order, caps the result at maxCount, and — if fewer
-// than minCount survive — pads with numbered "Learn More N" placeholders so the required
-// minimum is always met (the ad is PAUSED, so a placeholder is a safe default).
-func boundedUniqueCopy(candidates []string, maxRunes, minCount, maxCount int) []string {
+// hasDoubleWidth reports whether s contains any character Microsoft treats as double-width
+// (CJK / Korean / Japanese / Chinese ideographs, or an emoji), which halves the allowed
+// asset length. A conservative over-detection is harmless here (it only tightens the cap).
+func hasDoubleWidth(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 0x1100 && r <= 0x11FF, // Hangul Jamo
+			r >= 0x2E80 && r <= 0x9FFF, // CJK radicals … unified ideographs
+			r >= 0xAC00 && r <= 0xD7AF, // Hangul syllables
+			r >= 0xF900 && r <= 0xFAFF, // CJK compatibility ideographs
+			r >= 0xFF00 && r <= 0xFFEF, // full-width forms
+			r >= 0x1F000:               // emoji / supplementary symbol planes
+			return true
+		}
+	}
+	return false
+}
+
+// adCopyLimit returns the per-string rune limit: the reduced wide limit when s contains any
+// double-width character, else the single-width limit.
+func adCopyLimit(s string, single, wide int) int {
+	if hasDoubleWidth(s) {
+		return wide
+	}
+	return single
+}
+
+// boundedUniqueCopy trims each candidate, truncates it to its WIDTH-AWARE limit (single or
+// wide), keeps only non-empty, case-insensitively-unique entries in order, caps the result
+// at maxCount, and — if fewer than minCount survive — pads with numbered "Learn More N"
+// placeholders so the required minimum is always met (the ad is PAUSED, so a placeholder is
+// a safe default).
+func boundedUniqueCopy(candidates []string, singleLimit, wideLimit, minCount, maxCount int) []string {
 	out := make([]string, 0, maxCount)
 	seen := make(map[string]struct{}, maxCount)
 	add := func(s string) bool {
-		s = truncateRunes(strings.TrimSpace(s), maxRunes)
+		s = strings.TrimSpace(s)
+		s = truncateRunes(s, adCopyLimit(s, singleLimit, wideLimit))
 		if s == "" {
 			return false
 		}
@@ -573,22 +633,23 @@ func pfx(prefix, s string) string {
 }
 
 // validateAdCopy checks caller-supplied headline/description entries against the responsive
-// search ad limits BEFORE any create: each non-empty entry must be within its rune limit,
-// the caller must not exceed the maximum count, and the caller must not supply a
-// case-insensitive DUPLICATE (Microsoft requires unique assets, and the contract promises a
-// caller duplicate is rejected rather than silently dropped). Empty/short lists are fine —
-// composeAdCopy pads them to the minimum. A violation is a clean up-front (nil, err).
+// search ad limits BEFORE any create: count cap, per-entry WIDTH-AWARE rune cap (30/90, or
+// 15/45 for double-width copy), case-insensitive uniqueness, at least one word, and no
+// newline character (all Microsoft RSA content rules). Empty/short lists are fine —
+// composeAdCopy pads them to the minimum. A violation is a clean up-front (nil, err) so bad
+// caller copy never orphans a PAUSED campaign/ad group behind a create Microsoft rejects.
 func validateAdCopy(in CampaignInput) error {
-	if err := checkAdCopyList("headline", in.Headlines, maxAdHeadlines, maxAdHeadlineRunes); err != nil {
+	if err := checkAdCopyList("headline", in.Headlines, maxAdHeadlines, maxAdHeadlineRunes, maxAdHeadlineRunesWide); err != nil {
 		return err
 	}
-	return checkAdCopyList("description", in.Descriptions, maxAdDescriptions, maxAdDescriptionRunes)
+	return checkAdCopyList("description", in.Descriptions, maxAdDescriptions, maxAdDescriptionRunes, maxAdDescriptionRunesWide)
 }
 
-// checkAdCopyList validates one caller list (count cap, per-entry rune cap, case-insensitive
-// uniqueness among non-empty entries). Empty entries are ignored here (composeAdCopy skips
-// them); the uniqueness/length checks apply to the trimmed value the ad will actually carry.
-func checkAdCopyList(kind string, items []string, maxCount, maxRunes int) error {
+// checkAdCopyList validates one caller list. Empty entries are ignored (composeAdCopy skips
+// them); every non-empty entry must contain at least one word, no newline, be within its
+// width-aware rune cap, and be case-insensitively unique. Checks apply to the trimmed value
+// the ad will actually carry.
+func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLimit int) error {
 	if n := len(items); n > maxCount {
 		return fmt.Errorf("at most %d %ss are allowed, got %d", maxCount, kind, n)
 	}
@@ -598,8 +659,14 @@ func checkAdCopyList(kind string, items []string, maxCount, maxRunes int) error 
 		if s == "" {
 			continue
 		}
-		if utf8.RuneCountInString(s) > maxRunes {
-			return fmt.Errorf("%s %d exceeds %d characters", kind, i+1, maxRunes)
+		if strings.ContainsAny(raw, "\n\r") {
+			return fmt.Errorf("%s %d must not contain a newline", kind, i+1)
+		}
+		if !strings.ContainsFunc(s, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) {
+			return fmt.Errorf("%s %d must contain at least one word", kind, i+1)
+		}
+		if limit := adCopyLimit(s, singleLimit, wideLimit); utf8.RuneCountInString(s) > limit {
+			return fmt.Errorf("%s %d exceeds %d characters", kind, i+1, limit)
 		}
 		key := strings.ToLower(s)
 		if _, dup := seen[key]; dup {
