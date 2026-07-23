@@ -604,11 +604,13 @@ func isPreSendDialError(err error) bool {
 // A definite 4xx (X rejected it), or any pre-send failure (validation, request
 // build, a pre-connect dial error), means NOT applied → returns false.
 //
-// Mirrors the meta/reddit clients: a transportError is always ambiguous; an
-// *apiError is ambiguous on a 5xx regardless of method, and on a 3xx ONLY for a
-// mutating method (a GET redirect is not a create, so it stays non-ambiguous).
-// Gating the 3xx on the method keeps the helper's contract correct for any caller
-// and identical to the siblings.
+// A transportError is always ambiguous; an *apiError is ambiguous on a 5xx
+// regardless of method, on a 3xx ONLY for a mutating method (a GET redirect is not
+// a create, so it stays non-ambiguous), and on a 429 ONLY for a mutating method (an
+// exhausted mutating throttle may have committed). The 5xx + mutating-3xx handling
+// mirrors the meta/reddit clients, but the mutating-429 branch matches LINKEDIN —
+// reddit/meta treat an exhausted mutating 429 as a definite failure and have no such
+// case (worth revisiting whether they should adopt this safer classification).
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
 	if errors.As(err, &te) {
@@ -1058,16 +1060,6 @@ func validateEntityName(kind, name string) error {
 
 var spaceRe = regexp.MustCompile(`\s+`)
 
-// validateRegistrationURL ensures a user-supplied registration URL is an
-// absolute http/https URL with a real host, before any mutating call. In the
-// manual-tweet workflow (TweetID omitted) this URL is surfaced (sanitized, via
-// displayTwitterUtmURL) as the destination the operator attaches manually, and
-// url.Parse alone is
-// far too permissive: url.Parse("") succeeds (yielding a query-only
-// "?utm_source=..." string), relative URLs are accepted, and "https://:443/x"
-// parses with an empty Hostname(). Mirrors validateRegistrationURL in the
-// reddit/linkedin clients: TrimSpace, require IsAbs()+Hostname()!="", scheme
-// http/https.
 // redactURLForError reduces a URL to scheme+host+path for inclusion in an error
 // message, so a validation error (which the dispatcher wraps and the orchestrator may
 // persist) never carries the userinfo/query/fragment that can hold secrets. A value
@@ -1084,6 +1076,14 @@ func redactURLForError(raw string) string {
 	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 }
 
+// validateRegistrationURL ensures a user-supplied registration URL is an absolute
+// http/https URL with a real host, before any mutating call. In the manual-tweet
+// workflow (TweetID omitted) this URL is surfaced (sanitized, via displayTwitterUtmURL)
+// as the destination the operator attaches manually, and url.Parse alone is far too
+// permissive: url.Parse("") succeeds (yielding a query-only "?utm_source=..." string),
+// relative URLs are accepted, and "https://:443/x" parses with an empty Hostname().
+// Mirrors validateRegistrationURL in the reddit/linkedin clients: TrimSpace, require
+// IsAbs()+Hostname()!="", scheme http/https.
 func validateRegistrationURL(raw string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -1132,30 +1132,6 @@ func twitterUTMParams(in CampaignInput) map[string]string {
 		"utm_term":     spaceRe.ReplaceAllString(strings.ToLower(in.EventName), "-"),
 		"utm_content":  "promoted-tweet",
 	}
-}
-
-// buildTwitterUtmURL merges the generated utm_* params into the registration URL's
-// existing query, preserving the caller's original query/fragment. It is the canonical
-// full-URL builder (kept as the reference the sanitized displayTwitterUtmURL derives
-// from, and exercised by tests); it is NOT emitted to X or persisted directly — the
-// manual-tweet step uses the sanitized displayTwitterUtmURL, and the promoted-tweet
-// path's destination comes from the tweet itself.
-func buildTwitterUtmURL(in CampaignInput) string {
-	raw := strings.TrimSpace(in.RegistrationURL)
-	u, err := url.Parse(raw)
-	if err != nil {
-		// Unparseable URL: return it unchanged rather than corrupting it.
-		return raw
-	}
-	// Merge UTM params into the URL's existing query and re-render, so the query
-	// lands before any fragment (a naive string append would put it inside the
-	// fragment, e.g. https://x/reg#a?utm_...).
-	q := u.Query()
-	for k, v := range twitterUTMParams(in) {
-		q.Set(k, v)
-	}
-	u.RawQuery = q.Encode()
-	return u.String()
 }
 
 // displayTwitterUtmURL builds a click URL SAFE TO PERSIST in Steps / return to callers:
@@ -1357,7 +1333,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Validate the registration URL up front, before any mutating call. In the
 	// manual-tweet workflow (TweetID omitted) it is the only ad destination and is
-	// fed into buildTwitterUtmURL, which would otherwise accept an empty/relative/
+	// fed into displayTwitterUtmURL, which would otherwise accept an empty/relative/
 	// non-http value and emit a corrupt destination. Require a valid absolute
 	// http/https URL with a real host always, mirroring the reddit/linkedin clients.
 	if err := validateRegistrationURL(in.RegistrationURL); err != nil {

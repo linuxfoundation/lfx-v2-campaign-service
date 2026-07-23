@@ -421,45 +421,6 @@ func TestBuildTwitterCampaignName(t *testing.T) {
 	}
 }
 
-func TestBuildTwitterUtmURL(t *testing.T) {
-	got := buildTwitterUtmURL(CampaignInput{
-		EventName:       "Open Source Summit",
-		RegistrationURL: "https://events.lf.org/oss/",
-	})
-	if !strings.HasPrefix(got, "https://events.lf.org/oss/?") {
-		t.Errorf("bad base: %q", got)
-	}
-	for _, want := range []string{
-		"utm_source=twitter",
-		"utm_medium=paid-social",
-		"utm_campaign=open-source-summit",
-		"utm_term=open-source-summit",
-		"utm_content=promoted-tweet",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("utm url missing %q: %s", want, got)
-		}
-	}
-
-	// Existing query params are preserved (merged into the query).
-	got2 := buildTwitterUtmURL(CampaignInput{
-		EventName:       "Event",
-		RegistrationURL: "https://x.com/reg?ref=1",
-	})
-	if !strings.Contains(got2, "ref=1") || !strings.Contains(got2, "utm_source=twitter") {
-		t.Errorf("existing query param not preserved alongside utm: %s", got2)
-	}
-
-	// A URL fragment must stay at the END (query before #, not inside it).
-	got3 := buildTwitterUtmURL(CampaignInput{
-		EventName:       "Event",
-		RegistrationURL: "https://x.com/reg#details",
-	})
-	if !strings.HasSuffix(got3, "#details") || strings.Contains(got3, "#details?") {
-		t.Errorf("fragment not preserved at end: %s", got3)
-	}
-}
-
 // TestDisplayTwitterUtmURL verifies the SANITIZED display URL (persisted in Steps /
 // campaigns.result) drops secrets — userinfo, the caller's original query, and any
 // fragment — while keeping the generated utm_* params.
