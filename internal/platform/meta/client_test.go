@@ -3978,10 +3978,12 @@ func TestUpdateCampaignAndChildrenStatus_ActivateDefiniteChildFailureIsClean(t *
 // set with zero ads is refused before the campaign is flipped — a degraded broker campaign
 // (0 ads) cannot serve, so reporting success would be misleading.
 func TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected(t *testing.T) {
-	campaignFlipped := false
+	// Capture the campaign flip over a buffered channel (handler write happens-before the
+	// test read after close) so this is race-safe under `go test -race`.
+	flipCh := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/23847290" {
-			campaignFlipped = true
+			flipCh <- struct{}{}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
@@ -3995,7 +3997,8 @@ func TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected(t *testing.T) {
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err == nil {
 		t.Fatal("expected an error activating an ad set with zero ads")
 	}
-	if campaignFlipped {
+	close(flipCh)
+	if _, flipped := <-flipCh; flipped {
 		t.Error("campaign was flipped ACTIVE despite the ad set having no ads")
 	}
 }

@@ -1204,7 +1204,8 @@ func TestCreativeURN_RejectsMalformedSuffix(t *testing.T) {
 // TestUpdateCampaignAndCreativesStatus_ActivateZeroCreativesRejected verifies activating a
 // campaign with zero creatives is refused before the campaign flip (it can't serve).
 func TestUpdateCampaignAndCreativesStatus_ActivateZeroCreativesRejected(t *testing.T) {
-	campaignFlipped := false
+	// Capture the campaign flip over a buffered channel (race-safe under `go test -race`).
+	flipCh := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
 			w.Header().Set("Content-Type", "application/json")
@@ -1212,7 +1213,7 @@ func TestUpdateCampaignAndCreativesStatus_ActivateZeroCreativesRejected(t *testi
 			return
 		}
 		if strings.Contains(r.URL.Path, "/adCampaigns/") {
-			campaignFlipped = true
+			flipCh <- struct{}{}
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -1221,7 +1222,8 @@ func TestUpdateCampaignAndCreativesStatus_ActivateZeroCreativesRejected(t *testi
 	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err == nil {
 		t.Fatal("expected an error activating a campaign with zero creatives")
 	}
-	if campaignFlipped {
+	close(flipCh)
+	if _, flipped := <-flipCh; flipped {
 		t.Error("campaign was flipped ACTIVE despite having no creatives")
 	}
 }
