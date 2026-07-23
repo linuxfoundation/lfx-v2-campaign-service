@@ -381,13 +381,32 @@ func createOutcomeAmbiguous(err error) bool {
 	return false
 }
 
+// isDefiniteClientError reports whether err is a definite non-429 4xx apiError — LinkedIn
+// received and REJECTED the request (nothing ambiguous). Used to tolerate the expected 400
+// when pausing a creative that is in review.
+func isDefiniteClientError(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return ae.StatusCode >= 400 && ae.StatusCode < 500 && ae.StatusCode != http.StatusTooManyRequests
+}
+
 // IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
 // UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied by
 // LinkedIn even though it errored (a transport failure, a mutating 3xx/429/5xx). A definite
-// 4xx or a pre-send failure returns false. Exposes the same classifier the create paths use
-// so a toggle caller can distinguish "may already reflect the change" from "definitely not
-// applied". Mirrors reddit/meta.IsOutcomeUnconfirmed.
-func IsOutcomeUnconfirmed(err error) bool { return createOutcomeAmbiguous(err) }
+// 4xx or a pre-send failure returns false. It also honors any error reporting Unconfirmed()
+// bool — a partialCascadeError (campaign applied, a creative then failed) is partially applied
+// and must be treated as unconfirmed even if its underlying error is a definite 4xx. Exposes
+// the same classifier the create paths use so a toggle caller can distinguish "may already
+// reflect the change" from "definitely not applied". Mirrors reddit/meta.IsOutcomeUnconfirmed.
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
 
 // Campaign run states for UpdateCampaignStatus (LinkedIn's Campaign.status enum values).
 const (
@@ -432,6 +451,131 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	}
 	return nil
 }
+
+// UpdateCampaignAndCreativesStatus sets the campaign status AND cascades the equivalent
+// intendedStatus to every creative under the campaign — the platform side of the status
+// toggle. CreateCampaign leaves creatives DRAFT (and the campaign PAUSED), so activating only
+// the campaign would not serve: a DRAFT creative is "development incomplete" and never serves,
+// and per LinkedIn a creative's EFFECTIVE status is the stricter of its own intendedStatus and
+// the parent campaign status. So a full ACTIVATE must lift each creative DRAFT→ACTIVE too.
+//
+// The campaign is updated first (parent-first). Then creatives are DISCOVERED via the creatives
+// FINDER (LinkedIn persists only a creative COUNT, not ids) and each is PARTIAL_UPDATEd to the
+// matching intendedStatus. Two LinkedIn-specific rules are honored: (1) you CANNOT pause a
+// creative that is in review — LinkedIn returns 400 — so on a PAUSE a definite 4xx on a single
+// creative is tolerated (skipped) rather than failing the whole toggle; (2) any OTHER creative
+// failure after the campaign update is a partialCascadeError (Unconfirmed) so the caller
+// verifies rather than reporting "not modified"; a retry re-runs the idempotent cascade.
+func (c *Client) UpdateCampaignAndCreativesStatus(ctx context.Context, campaignID, status string) error {
+	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
+		return err
+	}
+	accountID, err := c.resolveAccountID("")
+	if err != nil {
+		return &partialCascadeError{stage: "account resolve", err: err}
+	}
+	creativeURNs, err := c.listCreativeURNs(ctx, accountID, campaignID)
+	if err != nil {
+		return &partialCascadeError{stage: "creative discovery", err: err}
+	}
+	creativeStatus := creativeIntendedStatus(status)
+	for _, urn := range creativeURNs {
+		path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, url.PathEscape(urn))
+		body := map[string]any{"patch": map[string]any{"$set": map[string]any{"intendedStatus": creativeStatus}}}
+		headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
+		if _, uerr := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); uerr != nil {
+			// You can't PAUSE an in-review creative (LinkedIn returns 400). On a pause, a
+			// DEFINITE 4xx on one creative is expected/benign — the campaign is already paused
+			// (the effective gate), so skip that creative rather than fail the whole toggle.
+			if creativeStatus == StatusPaused && isDefiniteClientError(uerr) {
+				continue
+			}
+			return &partialCascadeError{stage: "creative", err: uerr}
+		}
+	}
+	return nil
+}
+
+// creativeIntendedStatus maps a campaign run status to the creative intendedStatus value.
+// ACTIVE lifts a DRAFT creative so it can serve; PAUSED holds it.
+func creativeIntendedStatus(campaignStatus string) string {
+	if campaignStatus == StatusActive {
+		return StatusActive
+	}
+	return StatusPaused
+}
+
+// listCreativeURNs discovers the creative URNs under a campaign via the creatives FINDER
+// (GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})
+// with X-RestLi-Method: FINDER). It follows cursor pagination (bounded by maxListPages) and
+// returns each element's id (a sponsoredCreative URN). The campaign id is Rest.li-encoded
+// inside the List(...) so it can't break out of the literal.
+func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID string) ([]string, error) {
+	nestedPath := fmt.Sprintf("adAccounts/%s/creatives", accountID)
+	campaignURN := "urn:li:sponsoredCampaign:" + campaignID
+	var urns []string
+	pageToken := ""
+	seen := make(map[string]struct{})
+	for page := 0; page < maxListPages; page++ {
+		params := map[string]string{
+			"q":         "criteria",
+			"campaigns": "List(" + restliEncode(campaignURN) + ")",
+			"pageSize":  strconv.Itoa(1000),
+		}
+		if pageToken != "" {
+			params["pageToken"] = pageToken
+		}
+		headers := map[string]string{"X-Restli-Method": "FINDER"}
+		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params, headers)
+		if err != nil {
+			return nil, fmt.Errorf("find creatives for campaign %s: %w", campaignID, err)
+		}
+		if resp.Elements != nil {
+			for _, el := range *resp.Elements {
+				if urn := creativeURN(el); urn != "" {
+					urns = append(urns, urn)
+				}
+			}
+		}
+		next := resp.Metadata.NextPageToken
+		if next == "" {
+			return urns, nil
+		}
+		if _, dup := seen[next]; dup {
+			return urns, nil // stuck cursor — stop rather than loop
+		}
+		seen[next] = struct{}{}
+		pageToken = next
+	}
+	return urns, nil
+}
+
+// creativeURN returns the sponsoredCreative URN for a finder element, preferring an explicit
+// URN field and falling back to the id (which flexibleID renders as a URN string when the
+// server sent one). Returns "" if none is usable.
+func creativeURN(el responseElement) string {
+	for _, cand := range []string{el.URN, el.DURN, el.ID.String()} {
+		if s := strings.TrimSpace(cand); strings.HasPrefix(s, "urn:li:sponsoredCreative:") {
+			return s
+		}
+	}
+	return ""
+}
+
+// partialCascadeError marks a cascade that updated the campaign upstream but then failed on a
+// creative: the run state is PARTIALLY applied. Its Unconfirmed() reports true so
+// IsOutcomeUnconfirmed treats it as "may be applied — verify before retrying" rather than
+// "not modified"; a retry re-runs the idempotent cascade. Mirrors the reddit/meta clients.
+type partialCascadeError struct {
+	stage string
+	err   error
+}
+
+func (e *partialCascadeError) Error() string {
+	return "linkedin: campaign status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+}
+func (e *partialCascadeError) Unwrap() error     { return e.err }
+func (e *partialCascadeError) Unconfirmed() bool { return true }
 
 // doRequest performs one API call. It honors ctx, sets the OAuth2 bearer and
 // LinkedIn headers, applies the client timeout, and promotes x-restli-id into

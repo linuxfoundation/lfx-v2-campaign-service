@@ -887,6 +887,65 @@ func TestUpdateCampaignStatus_PartialUpdate(t *testing.T) {
 	}
 }
 
+// TestUpdateCampaignAndCreativesStatus_CascadesAndTolerates verifies the campaign is updated,
+// the creatives are discovered via the FINDER and each PARTIAL_UPDATEd to intendedStatus, and
+// (on a PAUSE) a definite 400 on an in-review creative is tolerated rather than failing the toggle.
+func TestUpdateCampaignAndCreativesStatus_CascadesAndTolerates(t *testing.T) {
+	type req struct{ method, path, restli, status string }
+	gotCh := make(chan req, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), ""}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"},{"id":"urn:li:sponsoredCreative:901"}],"metadata":{}}`)
+			return
+		}
+		var body struct {
+			Patch struct {
+				Set struct {
+					Status         string `json:"status"`
+					IntendedStatus string `json:"intendedStatus"`
+				} `json:"$set"`
+			} `json:"patch"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		st := body.Patch.Set.Status
+		if st == "" {
+			st = body.Patch.Set.IntendedStatus
+		}
+		// Creative 901 is "in review": a PAUSE on it returns 400 (LinkedIn's documented rule).
+		if strings.HasSuffix(r.URL.Path, "sponsoredCreative:901") && st == StatusPaused {
+			w.WriteHeader(http.StatusBadRequest)
+			gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), st}
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), st}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	// Pause: the in-review 400 on creative 901 is tolerated → overall success.
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus (pause) should tolerate an in-review 400: %v", err)
+	}
+	close(gotCh)
+	var campaign, finder, creatives int
+	for r := range gotCh {
+		switch {
+		case r.method == http.MethodGet:
+			finder++
+		case strings.Contains(r.path, "/adCampaigns/555"):
+			campaign++
+		case strings.Contains(r.path, "/creatives/"):
+			creatives++
+		}
+	}
+	if campaign != 1 || finder != 1 || creatives != 2 {
+		t.Errorf("requests: campaign=%d finder=%d creatives=%d, want 1/1/2", campaign, finder, creatives)
+	}
+}
+
 func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("no API call should happen for invalid input: %s %s", r.Method, r.URL.Path)
