@@ -3966,3 +3966,46 @@ func TestUpdateCampaignAndChildrenStatus_ActivateDefiniteChildFailureIsClean(t *
 		t.Errorf("a definite child failure before the campaign flip must NOT be Unconfirmed, got: %v", err)
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected verifies that ACTIVATING an ad
+// set with zero ads is refused before the campaign is flipped — a degraded broker campaign
+// (0 ads) cannot serve, so reporting success would be misleading.
+func TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected(t *testing.T) {
+	campaignFlipped := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/23847290" {
+			campaignFlipped = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			_, _ = io.WriteString(w, `{"data":[],"paging":{}}`) // zero ads
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err == nil {
+		t.Fatal("expected an error activating an ad set with zero ads")
+	}
+	if campaignFlipped {
+		t.Error("campaign was flipped ACTIVE despite the ad set having no ads")
+	}
+}
+
+// TestPartialCascadeError_MessageDoesNotAssertCampaignChanged verifies the reconciliation
+// message no longer hardcodes "campaign status changed" (untrue when a creative/ad fails
+// before the campaign flip on the activate path).
+func TestPartialCascadeError_MessageDoesNotAssertCampaignChanged(t *testing.T) {
+	e := &partialCascadeError{stage: "ad", err: errStub("boom")}
+	if strings.Contains(e.Error(), "campaign status changed") {
+		t.Errorf("message must not assert the campaign changed: %q", e.Error())
+	}
+	if !strings.Contains(e.Error(), "partially applied") {
+		t.Errorf("message should state the change is partially applied: %q", e.Error())
+	}
+}
+
+type errStub string
+
+func (e errStub) Error() string { return string(e) }
