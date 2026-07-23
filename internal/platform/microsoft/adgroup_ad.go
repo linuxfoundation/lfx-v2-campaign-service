@@ -387,9 +387,34 @@ func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name strin
 		return resp.AdGroupIds, resp.PartialErrors, nil
 	})
 	if err != nil {
+		// A DUPLICATE-ad-group rejection (a race lost between the find-first lookup and this
+		// create) means the group now EXISTS — reconcile by re-looking it up by name rather
+		// than surfacing a hard failure (mirrors the campaign duplicate-name handling). Ad
+		// group names are unique per campaign, so the re-lookup returns the winner's id.
+		if isDuplicateAdGroupPartial(resp.PartialErrors) {
+			if existingID, ferr := c.findAdGroupByName(ctx, campaignID, name); ferr == nil && existingID != "" {
+				return existingID, true, nil
+			}
+			// Re-lookup failed/empty: the group exists but we can't confirm its id → UNCONFIRMED.
+			return "", false, fmt.Errorf("ad group %q already exists but could not be re-resolved: %w", name, errNoID)
+		}
 		return "", false, err
 	}
 	return newID, false, nil
+}
+
+// errCodeDuplicateAdGroup is Microsoft's PartialError code when an ad-group name already
+// exists in the campaign — the string ErrorCode enum or the equivalent numeric Code 1214.
+const (
+	errCodeDuplicateAdGroup        = "CampaignServiceCannotCreateDuplicateAdGroup"
+	errCodeDuplicateAdGroupNumeric = "1214"
+)
+
+// isDuplicateAdGroupPartial reports whether a PartialErrors array carries the
+// duplicate-ad-group rejection under either the symbolic ErrorCode enum or the numeric 1214.
+func isDuplicateAdGroupPartial(items []msErrorItem) bool {
+	return partialErrorsHaveCode(items, errCodeDuplicateAdGroup) ||
+		partialErrorsHaveCode(items, errCodeDuplicateAdGroupNumeric)
 }
 
 // findAdGroupByName returns the id of the ad group whose Name matches name (case-
