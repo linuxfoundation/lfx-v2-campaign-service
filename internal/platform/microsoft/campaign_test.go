@@ -321,6 +321,55 @@ func TestCreateCampaign_DuplicateNamePartialErrorIsAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_DuplicateNameNumericCodeOnlyIsAlreadyExists(t *testing.T) {
+	// A BatchError may carry only the numeric Code 1115 (no symbolic ErrorCode enum). 1115
+	// IS CampaignServiceCannotCreateDuplicateCampaign, so it must still be recognized as
+	// already-exists, not a generic partial failure.
+	api := &campaignsAPI{
+		postBody: `{"CampaignIds":[null],"PartialErrors":[{"Code":1115}]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+	res, err := c.CreateCampaign(context.Background(), validInput())
+	if err == nil {
+		t.Fatal("expected a duplicate-name error")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatal("expected a name-only partial for reconciliation")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("numeric Code 1115 must be recognized as already-exists, got: %v", err)
+	}
+}
+
+func TestCreateCampaign_LookupMatchWithNoIDIsUnconfirmed(t *testing.T) {
+	// The name-lookup finds the campaign by its unique name but its Id is null. Treating
+	// that as absent would run CreateCampaigns and create a DUPLICATE. It must instead be
+	// UNCONFIRMED (verify before retrying), with no create issued.
+	in := validInput()
+	name := composeName(in)
+	postReached := false
+	api := &campaignsAPI{
+		getBody: `{"Campaigns":[{"Id":null,"Name":` + jsonString(name) + `}]}`,
+	}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Campaigns") {
+			postReached = true
+		}
+		base(w, r)
+	})
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED error when the matching campaign has no usable id")
+	}
+	if postReached {
+		t.Error("create POST issued despite a name-matching campaign (would duplicate)")
+	}
+	if !strings.Contains(err.Error(), "verify") && !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a name-match with an unusable id must be UNCONFIRMED, got: %v", err)
+	}
+}
+
 func TestCreateCampaign_Malformed200IsUnconfirmed(t *testing.T) {
 	// A 200 with no id and no PartialError is a malformed success: UNCONFIRMED.
 	api := &campaignsAPI{postBody: `{"CampaignIds":[]}`}
