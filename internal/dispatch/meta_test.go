@@ -419,16 +419,17 @@ func TestMeta_AmbiguousCreateRetainsClaim(t *testing.T) {
 // TestMeta_ToggleStatus_PostsStatus verifies the dispatcher resolves creds and POSTs the
 // status to the campaign node via the meta client.
 func TestMeta_ToggleStatus_PostsStatus(t *testing.T) {
-	var gotMethod, gotPath, gotStatus string
+	// Capture the request over a channel so the handler-goroutine writes happen-before the
+	// test-goroutine reads — race-safe under `go test -race`.
+	type req struct{ method, path, status string }
+	gotCh := make(chan req, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath = r.Method, r.URL.Path
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if s, ok := body["status"].(string); ok {
-			gotStatus = s
-		}
+		status, _ := body["status"].(string)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"success":true}`)
+		gotCh <- req{r.Method, r.URL.Path, status}
 	}))
 	defer srv.Close()
 	d := NewMetaDispatcher(
@@ -438,11 +439,12 @@ func TestMeta_ToggleStatus_PostsStatus(t *testing.T) {
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
-	if gotMethod != http.MethodPost || gotPath != "/23847290" {
-		t.Errorf("request = %s %s, want POST /23847290", gotMethod, gotPath)
+	got := <-gotCh
+	if got.method != http.MethodPost || got.path != "/23847290" {
+		t.Errorf("request = %s %s, want POST /23847290", got.method, got.path)
 	}
-	if gotStatus != "PAUSED" {
-		t.Errorf("status = %q, want PAUSED", gotStatus)
+	if got.status != "PAUSED" {
+		t.Errorf("status = %q, want PAUSED", got.status)
 	}
 	// An unsupported run state is rejected before any call.
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", "RUNNING"); err == nil {
