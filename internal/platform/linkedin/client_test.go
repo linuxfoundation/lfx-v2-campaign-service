@@ -1200,3 +1200,63 @@ func TestCreativeURN_RejectsMalformedSuffix(t *testing.T) {
 		t.Errorf("bare numeric id not canonicalized: got %q", got)
 	}
 }
+
+// TestUpdateCampaignAndCreativesStatus_ActivateZeroCreativesRejected verifies activating a
+// campaign with zero creatives is refused before the campaign flip (it can't serve).
+func TestUpdateCampaignAndCreativesStatus_ActivateZeroCreativesRejected(t *testing.T) {
+	campaignFlipped := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`) // zero creatives
+			return
+		}
+		if strings.Contains(r.URL.Path, "/adCampaigns/") {
+			campaignFlipped = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err == nil {
+		t.Fatal("expected an error activating a campaign with zero creatives")
+	}
+	if campaignFlipped {
+		t.Error("campaign was flipped ACTIVE despite having no creatives")
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_FinderSendsRequiredParams asserts the creatives FINDER
+// request carries q=criteria, the campaign filter (campaigns=List(...) with the campaign URN),
+// and the X-RestLi-Method: FINDER header — so a malformed finder can't silently discover
+// creatives outside the target campaign.
+func TestUpdateCampaignAndCreativesStatus_FinderSendsRequiredParams(t *testing.T) {
+	type finderReq struct{ query, restli string }
+	ch := make(chan finderReq, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			ch <- finderReq{r.URL.RawQuery, r.Header.Get("X-Restli-Method")}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	close(ch)
+	got := <-ch
+	if got.restli != "FINDER" {
+		t.Errorf("X-Restli-Method = %q, want FINDER", got.restli)
+	}
+	if !strings.Contains(got.query, "q=criteria") {
+		t.Errorf("finder query %q missing q=criteria", got.query)
+	}
+	// The campaign filter must scope to THIS campaign's URN (percent-encoded in the query).
+	if !strings.Contains(got.query, "campaigns=") || !strings.Contains(got.query, "555") {
+		t.Errorf("finder query %q missing campaigns=List(...campaign 555...) filter", got.query)
+	}
+}

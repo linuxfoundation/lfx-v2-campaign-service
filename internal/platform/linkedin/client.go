@@ -536,6 +536,13 @@ func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignI
 		}
 		return fmt.Errorf("linkedin: creative discovery for campaign %s: %w", campaignID, err)
 	}
+	// On ACTIVATE (mutatedBefore==false → the campaign hasn't been flipped yet), a campaign
+	// with ZERO creatives can never serve — refuse before the campaign flip rather than report
+	// success for a campaign that cannot deliver (mirrors the Meta zero-ads guard). PAUSE with
+	// zero creatives is fine (nothing to pause; the campaign gate stops delivery anyway).
+	if !mutatedBefore && status == StatusActive && len(creativeURNs) == 0 {
+		return fmt.Errorf("linkedin: cannot activate campaign %s: it has no creatives, so it cannot serve", campaignID)
+	}
 	creativeStatus := creativeIntendedStatus(status)
 	mutated := mutatedBefore
 	for _, urn := range creativeURNs {
