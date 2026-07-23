@@ -1,5 +1,18 @@
 # Log
 
+## 2026-07-23 (6)
+
+**Update** — LinkedIn status toggle now CASCADES to creatives (LFXV2-2807, PR #47).
+CreateCampaign leaves the campaign PAUSED and its creatives DRAFT, so activating only the
+campaign would not serve (a DRAFT creative never serves; a creative's effective status is
+gated by its campaign). `linkedin.UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the
+campaign status, DISCOVERS the creatives via the creatives FINDER
+(`GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})`,
+X-RestLi-Method: FINDER — LinkedIn persists only a creative count, not ids), and
+PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE a definite 400 on an in-review
+creative is tolerated (LinkedIn forbids pausing an in-review creative). Verified the finder +
+intendedStatus contracts on learn.microsoft.com.
+
 ## 2026-07-23 (5)
 
 **Update** — Meta status toggle now CASCADES like Reddit (LFXV2-2807, PR #47 review). Meta's

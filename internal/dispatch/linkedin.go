@@ -225,7 +225,11 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
 	}
 	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
-	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
+	// Cascade to the campaign's creatives too: CreateCampaign leaves them DRAFT, so
+	// activating only the campaign would not serve (a DRAFT creative never serves, and the
+	// creative's effective status is gated by the campaign). The client discovers the
+	// creatives (LinkedIn persists only a count) and lifts each DRAFT→ACTIVE (or holds PAUSED).
+	if uerr := client.UpdateCampaignAndCreativesStatus(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
 		if linkedin.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
