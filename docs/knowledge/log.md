@@ -1,18 +1,5 @@
 # Log
 
-## 2026-07-22
-
-**Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).
-`registerDispatchers` now wires `model.ProviderTwitterAds` →
-`dispatch.NewTwitterDispatcher`, so twitter campaigns dispatch upstream instead of
-recording "no dispatcher registered". The adapter resolves the OAuth1 4-tuple connection,
-maps the brief + `twitterConfig` (opaque-JSON: `budgetAmount` in ACCOUNT currency, flight
-dates, optional tweet id / destination URL) onto the client's `CreateCampaign`, and maps
-the result back to a `model.Campaign` — marking `created_degraded` when the promoted tweet
-is unconfirmed/absent or the campaign/line-item was reused. Client changes landing with
-it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
-classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
-with `redactURLForError` so a persisted validation error can't leak a secret.
 ## 2026-07-23
 
 **Update** — Campaign status toggle (LFXV2-2806, PR #46). New
@@ -27,6 +14,20 @@ context, If-Match guarded, classified errors: 409 not-provisioned / 400 unsuppor
 platform-failure). `model.CampaignRunActive/Paused` constants. Meta + X/Twitter toggles are a
 follow-up. Review-hardened per dealako-sim + cursor + copilot (error classification, cancel
 safety, `?`/`#` path-guard, dedup).
+
+## 2026-07-22
+
+**Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).
+`registerDispatchers` now wires `model.ProviderTwitterAds` →
+`dispatch.NewTwitterDispatcher`, so twitter campaigns dispatch upstream instead of
+recording "no dispatcher registered". The adapter resolves the OAuth1 4-tuple connection,
+maps the brief + `twitterConfig` (opaque-JSON: `budgetAmount` in ACCOUNT currency, flight
+dates, optional tweet id / destination URL) onto the client's `CreateCampaign`, and maps
+the result back to a `model.Campaign` — marking `created_degraded` when the promoted tweet
+is unconfirmed/absent or the campaign/line-item was reused. Client changes landing with
+it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
+classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
+with `redactURLForError` so a persisted validation error can't leak a secret.
 
 ## 2026-07-21
 
