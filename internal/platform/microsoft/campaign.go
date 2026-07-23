@@ -291,8 +291,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// but is rejected only at AddAds, orphaning the PAUSED campaign/ad group — so reject it up
 	// front too. Parse errors are ignored here: validateAdURL already rejected a malformed URL.
 	if u, perr := url.Parse(finalURL); perr == nil {
-		if n := utf8.RuneCountInString(u.Hostname()); n > maxDisplayDomainRunes {
-			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", u.Hostname(), n, maxDisplayDomainRunes)
+		host := u.Hostname()
+		limit := maxDisplayDomainRunes
+		if hasDoubleWidth(host) {
+			limit = maxDisplayDomainRunesWide
+		}
+		if n := utf8.RuneCountInString(host); n > limit {
+			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", host, n, limit)
 		}
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or

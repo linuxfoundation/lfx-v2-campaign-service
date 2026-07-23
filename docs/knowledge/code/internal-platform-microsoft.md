@@ -168,9 +168,11 @@ Each asset must also contain at least one word and no newline — this word chec
 to BOTH caller-supplied copy (`checkAdCopyList`) and auto-composed assets (`boundedUniqueCopy`
 drops any candidate lacking a word, so a punctuation-only `EventName` never reaches AddAds).
 The composed `FinalUrls` (registration URL + `utm_*`) is length-checked against Microsoft's
-2,048-char limit up front, and its host is checked against the 67-char display-domain limit
-(the RSA sets no `Path1`/`Path2`, so the whole display budget is the hostname; an over-long
-host passes the 2,048-char check but is rejected only at AddAds). Its ad group is created with `AdGroupType` "SearchStandard" (the
+2,048-char limit up front, and its host is checked against the display-domain limit (67
+normally; Microsoft reduces it to 33 "for languages with double-width characters", so a host
+containing any wide char — e.g. a CJK IDN — is conservatively held to 33, matching the copy
+caps). The RSA sets no `Path1`/`Path2`, so the whole display budget is the hostname; an
+over-long host passes the 2,048-char check but is rejected only at AddAds. Its ad group is created with `AdGroupType` "SearchStandard" (the
 "SearchDynamic" type takes only dynamic search ads) and a `Language` (the MS-2 campaign sets
 no campaign-level languages, so the ad group must carry one). The AddAds body is polymorphic
 (an array of the base `Ad`), so the responsive search ad DOES send `Type: "ResponsiveSearch"`
