@@ -87,6 +87,13 @@ const (
 	// FinalUrls length to keep a bad host from orphaning a PAUSED campaign.
 	maxDisplayDomainRunes = 67
 
+	// maxDisplayDomainRunesWide is the reduced display-URL cap "for languages with double-width
+	// characters" (33 vs 67), per the same v13 ResponsiveSearchAd Path1/Path2 element docs. As
+	// with the copy limits, v13 gives no per-character weighted formula, so a hostname
+	// containing ANY double-width character (e.g. a CJK IDN) is conservatively held to this
+	// reduced cap — never over-length, at worst rejecting a borderline wide host a little early.
+	maxDisplayDomainRunesWide = 33
+
 	// Responsive Search Ad asset-count bounds (v13 "Add: Required"): 3-15 UNIQUE headlines
 	// and 2-4 UNIQUE descriptions. The composer emits counts inside these ranges; a shortfall
 	// or over-count is a clean up-front validation error, not a rejected paid create.
@@ -203,6 +210,16 @@ type queryAdsRequest struct {
 	AdTypes   []string    `json:"AdTypes"`
 }
 
+// entityState renders "found" for a pre-existing entity matched by lookup or "created"
+// for one this run created, for accurate error/step text (so a retry against an existing
+// hierarchy does not falsely attribute the side effect to this run).
+func entityState(existed bool) string {
+	if existed {
+		return "found"
+	}
+	return "created"
+}
+
 // createAdGroupAndAd completes the hierarchy under an already-created/found campaign:
 // it find-or-creates a PAUSED ad group, then creates a PAUSED Text Ad under it. Each
 // step accumulates its ids into the result so an ambiguous failure at a later step
@@ -223,9 +240,15 @@ func (c *Client) createAdGroupAndAd(
 	// campaign or ad group. No re-validation here: the input hasn't changed, and repeating
 	// it would only risk the two checks drifting apart.
 
+	// campaignState renders the campaign's provenance for error text: "created" only when
+	// THIS run created it, else "found" (a pre-existing campaign matched by lookup on a
+	// retry). Using "created" unconditionally would falsely attribute the side effect to
+	// this run when the hierarchy was actually reused.
+	campaignState := entityState(alreadyExisted)
+
 	adGroupName := composeAdGroupName(in)
 	if err := validateEntityName("ad group", adGroupName, utf8.RuneCountInString(adGroupName), maxAdGroupNameRunes, "characters"); err != nil {
-		return campaignPartial(), fmt.Errorf("microsoft-ads ad group name invalid (campaign %s created): %w", campaignID, err)
+		return campaignPartial(), fmt.Errorf("microsoft-ads ad group name invalid (campaign %s %s): %w", campaignID, campaignState, err)
 	}
 
 	// adGroupPartial carries the campaign id/name + the ad-group name (and, once known,
@@ -241,7 +264,7 @@ func (c *Client) createAdGroupAndAd(
 	// reconcilable partial (mirrors the pre-ad-step guard below), so a cancellation after the
 	// campaign create can't still go on to mutate ad-group state.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return adGroupPartial(), fmt.Errorf("microsoft-ads ad group step aborted (campaign %s created; context done before the ad-group step, no ad group created): %w", campaignID, ctxErr)
+		return adGroupPartial(), fmt.Errorf("microsoft-ads ad group step aborted (campaign %s %s; context done before the ad-group step, no ad group created): %w", campaignID, campaignState, ctxErr)
 	}
 
 	// Step 3: find-or-create the ad group under the campaign. The lookup is a read
@@ -257,16 +280,20 @@ func (c *Client) createAdGroupAndAd(
 		// clean abort where nothing was created. errNoID (malformed 2xx, no id) is UNCONFIRMED.
 		switch {
 		case createOutcomeAmbiguous(err) || errors.Is(err, errNoID):
-			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation UNCONFIRMED (campaign %s created; %q may exist — verify before retrying): %w", campaignID, adGroupName, err)
+			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation UNCONFIRMED (campaign %s %s; %q may exist — verify before retrying): %w", campaignID, campaignState, adGroupName, err)
 		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group step aborted (campaign %s created; context done during the lookup, no ad group created): %w", campaignID, err)
+			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group step aborted (campaign %s %s; context done during the lookup, no ad group created): %w", campaignID, campaignState, err)
 		case errors.Is(err, errPartialFailure):
-			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation rejected (campaign %s created): %w", campaignID, err)
+			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation rejected (campaign %s %s): %w", campaignID, campaignState, err)
 		default:
-			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation failed (campaign %s created): %w", campaignID, err)
+			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation failed (campaign %s %s): %w", campaignID, campaignState, err)
 		}
 	}
 	adGroupExisted := existed
+	// hierState renders the "campaign <id> <state> + ad group <id> <state>" prefix for the
+	// ad-step error text, so "created" vs "found" is accurate per entity on a retry against
+	// an existing hierarchy.
+	hierState := fmt.Sprintf("campaign %s %s + ad group %s %s", campaignID, campaignState, adGroupID, entityState(adGroupExisted))
 	if existed {
 		*steps = append(*steps, fmt.Sprintf("Ad group already exists by name: %s (not re-created)", adGroupID))
 	} else {
@@ -283,7 +310,7 @@ func (c *Client) createAdGroupAndAd(
 	// any ad lookup/create HTTP work — the campaign + ad group ids are known and returned in
 	// a reconcilable partial, and nothing new is attempted.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad step aborted (campaign %s + ad group %s created; context done before the ad step, no ad created): %w", campaignID, adGroupID, ctxErr)
+		return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad step aborted (%s; context done before the ad step, no ad created): %w", hierState, ctxErr)
 	}
 
 	// Step 4: create the PAUSED Responsive Search Ad under the ad group. v13 does not
@@ -301,13 +328,13 @@ func (c *Client) createAdGroupAndAd(
 		// clean abort).
 		switch {
 		case createOutcomeAmbiguous(err) || errors.Is(err, errNoID):
-			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation UNCONFIRMED (campaign %s + ad group %s created; an ad may exist — verify before retrying): %w", campaignID, adGroupID, err)
+			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation UNCONFIRMED (%s; an ad may exist — verify before retrying): %w", hierState, err)
 		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad step aborted (campaign %s + ad group %s created; context done during the lookup, no ad created): %w", campaignID, adGroupID, err)
+			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad step aborted (%s; context done during the lookup, no ad created): %w", hierState, err)
 		case errors.Is(err, errPartialFailure):
-			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation rejected (campaign %s + ad group %s created): %w", campaignID, adGroupID, err)
+			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation rejected (%s): %w", hierState, err)
 		default:
-			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation failed (campaign %s + ad group %s created): %w", campaignID, adGroupID, err)
+			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation failed (%s): %w", hierState, err)
 		}
 	}
 	adExisted := existed

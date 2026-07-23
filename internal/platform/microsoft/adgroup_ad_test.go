@@ -389,6 +389,47 @@ func TestCreateCampaign_AdFailureCarriesCampaignAndAdGroup(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_ErrorTextSaysFoundForReusedCampaign(t *testing.T) {
+	// When the campaign was matched by lookup (not created this run), a later-step failure's
+	// error text must say "campaign <id> found", not "created" — otherwise a retry against an
+	// existing hierarchy falsely attributes the campaign side effect to this run.
+	in := validInput()
+	name := composeName(in)
+	api := &campaignsAPI{
+		getBody:         `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupStatus:   http.StatusInternalServerError,
+		adGroupPostBody: `{"Errors":[{"ErrorCode":"InternalError"}]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an error on a 500 ad-group create")
+	}
+	if !strings.Contains(err.Error(), "campaign 999 found") {
+		t.Errorf("error should say the campaign was FOUND (reused), got: %v", err)
+	}
+	if strings.Contains(err.Error(), "campaign 999 created") {
+		t.Errorf("error must not claim the pre-existing campaign was created this run: %v", err)
+	}
+}
+
+func TestCreateCampaign_DisplayDomainWideCapRejectsCJKHost(t *testing.T) {
+	// A CJK IDN host of 34–67 runes passes the 67-char single-width display cap but is
+	// rejected by the reduced 33-char double-width cap (conservative, matching the copy
+	// limits), so the ad cannot fail to display after its parents were created.
+	in := validInput()
+	// 40 CJK runes as the host — well over 33, under 67.
+	in.RegistrationURL = "https://" + strings.Repeat("字", 40) + ".example/register"
+	c := newAPIClient(t, (&campaignsAPI{}).handler(t))
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected a display-domain rejection for an oversized CJK host")
+	}
+	if !strings.Contains(err.Error(), "display domain") {
+		t.Errorf("expected a display-domain error, got: %v", err)
+	}
+}
+
 func TestCreateCampaign_AdNullPartialErrorIsUnconfirmed(t *testing.T) {
 	// The ad-group create succeeds (654); the ad create returns a 200 with a null id slot
 	// and only a null PartialErrors placeholder → malformed success. The ad MAY exist, so
