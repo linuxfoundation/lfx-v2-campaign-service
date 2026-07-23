@@ -163,11 +163,12 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 
 // ToggleStatus pauses or resumes an existing Meta campaign on the platform. It resolves the
 // connection (an inactive/undecryptable/incomplete connection is a clean error), builds the
-// client, and POSTs status to the campaign node. platformCampaignID is the upstream Meta
-// campaign id; status is model.CampaignRunActive or model.CampaignRunPaused. Returns nil only
-// when the platform confirms; an UNCONFIRMED outcome is wrapped so the caller reports
-// "verify before retry" (via the Unconfirmed() behavioral interface).
-func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+// client, and POSTs status to the campaign node. campaign is the persisted row; Meta is a
+// single-node update (no child cascade like Reddit), so only campaign.PlatformCampaignID is
+// used. status is model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when
+// the platform confirms; an UNCONFIRMED outcome is wrapped so the caller reports "verify
+// before retry" (via the Unconfirmed() behavioral interface).
+func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	metaStatus, err := metaRunStatus(status)
 	if err != nil {
 		return err
@@ -189,7 +190,7 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// A status update targets the campaign node by id (POST /{campaignID}); it needs no
 	// account id or page id, so those are not required here (unlike Dispatch).
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
-	if uerr := client.UpdateCampaignStatus(ctx, platformCampaignID, metaStatus); uerr != nil {
+	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, metaStatus); uerr != nil {
 		if meta.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}

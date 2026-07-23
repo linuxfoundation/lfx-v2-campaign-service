@@ -436,7 +436,7 @@ func TestMeta_ToggleStatus_PostsStatus(t *testing.T) {
 		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
 		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", model.CampaignRunPaused); err != nil {
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, &model.Campaign{PlatformCampaignID: "23847290"}, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
 	got := <-gotCh
@@ -447,7 +447,7 @@ func TestMeta_ToggleStatus_PostsStatus(t *testing.T) {
 		t.Errorf("status = %q, want PAUSED", got.status)
 	}
 	// An unsupported run state is rejected before any call.
-	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", "RUNNING"); err == nil {
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, &model.Campaign{PlatformCampaignID: "23847290"}, "RUNNING"); err == nil {
 		t.Error("expected an error for an unsupported run status")
 	}
 }
@@ -462,7 +462,7 @@ func TestMeta_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
 		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", model.CampaignRunActive)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, &model.Campaign{PlatformCampaignID: "23847290"}, model.CampaignRunActive)
 	if err == nil {
 		t.Fatal("expected an error on a 5xx toggle")
 	}
@@ -491,7 +491,7 @@ func TestMeta_ToggleStatus_NoPageIDNeeded(t *testing.T) {
 		fakeConnReader{conn: conn}, identityEncryptor{},
 		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, "23847290", model.CampaignRunPaused); err != nil {
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, &model.Campaign{PlatformCampaignID: "23847290"}, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus must work without a page_id: %v", err)
 	}
 }

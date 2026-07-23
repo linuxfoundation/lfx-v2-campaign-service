@@ -1,6 +1,6 @@
 # Log
 
-## 2026-07-23 (2)
+## 2026-07-23 (4)
 
 **Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
 CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
@@ -9,20 +9,11 @@ would activate a campaign whose children stayed PAUSED — it would not serve. A
 skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
 `StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
 the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
-(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
-## 2026-07-22
+(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context. A
+compile-time guard (`status_toggler_guard_test.go`) now asserts all three dispatchers satisfy
+`service.StatusToggler` so a future signature drift fails the build instead of silently
+disabling the toggle.
 
-**Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).
-`registerDispatchers` now wires `model.ProviderTwitterAds` →
-`dispatch.NewTwitterDispatcher`, so twitter campaigns dispatch upstream instead of
-recording "no dispatcher registered". The adapter resolves the OAuth1 4-tuple connection,
-maps the brief + `twitterConfig` (opaque-JSON: `budgetAmount` in ACCOUNT currency, flight
-dates, optional tweet id / destination URL) onto the client's `CreateCampaign`, and maps
-the result back to a `model.Campaign` — marking `created_degraded` when the promoted tweet
-is unconfirmed/absent or the campaign/line-item was reused. Client changes landing with
-it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
-classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
-with `redactURLForError` so a persisted validation error can't leak a secret.
 ## 2026-07-23 (3)
 
 **Update** — Campaign status toggle extended to LinkedIn (LFXV2-2807, on PR #47 with Meta).
