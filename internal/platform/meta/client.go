@@ -833,9 +833,12 @@ func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, 
 	// On ACTIVATE, a tree with ZERO ads can never serve — Meta creation treats per-variant ad
 	// failures as non-fatal, so a degraded broker campaign can legitimately have an active ad
 	// set but no ads. Flipping the campaign ACTIVE would report success for a campaign that
-	// cannot deliver. Refuse (nothing servable). PAUSE with zero ads is fine (nothing to pause).
+	// cannot deliver. Refuse. NOTE: the ad set was ALREADY POSTed ACTIVE above (mutatedBefore
+	// is now true), so this is a PARTIAL application — surface it Unconfirmed (verify/reconcile)
+	// rather than a plain "not modified" error, which would misreport the ad set as unchanged.
+	// PAUSE with zero ads is fine (nothing to pause) and never reaches here.
 	if activating && len(adIDs) == 0 {
-		return fmt.Errorf("meta: cannot activate ad set %s: it has no ads, so the campaign cannot serve", adSetID)
+		return &partialCascadeError{stage: "ad set activated but no ads to serve", err: fmt.Errorf("ad set %s has no ads, so the campaign cannot serve", adSetID)}
 	}
 	for _, adID := range adIDs {
 		if err := c.doRequest(ctx, http.MethodPost, "/"+adID, map[string]any{"status": status}, nil); err != nil {
