@@ -48,16 +48,22 @@ with bounded backoff.
 `UpdateCampaignAndCreativesStatus(ctx, campaignID, status)` pauses/resumes a campaign AND
 cascades to its creatives, because CreateCampaign leaves creatives DRAFT (and the campaign
 PAUSED) — activating only the campaign would not serve (a DRAFT creative never serves; a
-creative's EFFECTIVE status is gated by its campaign). It first PARTIAL_UPDATEs the campaign
-status (`POST /adAccounts/{acct}/adCampaigns/{id}`, header `X-Restli-Method: PARTIAL_UPDATE`,
-body `{"patch":{"$set":{"status": ACTIVE|PAUSED}}}`), then DISCOVERS the creatives via the
-creatives FINDER (`GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})`,
-`X-Restli-Method: FINDER` — LinkedIn persists only a creative count, not ids; a numeric finder
-id is reconstructed into a sponsoredCreative URN, a stuck/looping cursor or the page cap FAILS
-rather than truncates), and PARTIAL_UPDATEs each creative's `intendedStatus` (its URN key is
-percent-encoded, `urn%3Ali%3A…`). On a PAUSE a definite 400 on an in-review creative is
-tolerated (LinkedIn forbids pausing an in-review creative). A creative failure after the
-campaign update is a `partialCascadeError` (Unconfirmed). The narrower `UpdateCampaignStatus`
+creative's EFFECTIVE status is gated by its campaign). Ordering is STATUS-DEPENDENT so a
+partial cascade never leaves paid delivery running: on ACTIVATE the creatives are lifted FIRST
+(still gated by the paused campaign, so they can't serve yet) and the campaign is flipped
+ACTIVE LAST — a creative failure then leaves nothing serving; on PAUSE the campaign gate is
+flipped FIRST (delivery stops immediately) and the creatives paused after. Each PARTIAL_UPDATE
+is `POST /adAccounts/{acct}/{adCampaigns|creatives}/{id}` (header `X-Restli-Method:
+PARTIAL_UPDATE`, body `{"patch":{"$set":{"status"|"intendedStatus": …}}}`). Creatives are
+DISCOVERED via the creatives FINDER (`GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})`,
+`X-Restli-Method: FINDER` — LinkedIn persists only a creative count, not ids). Each finder id
+(URN or bare-numeric) is normalized to its trailing numeric id and the URN is REBUILT from it,
+so a malformed value (a suffix with `?`/`/`/percent-encoding/traversal) is rejected rather than
+altering the request path; the URN key is then percent-encoded (`urn%3Ali%3A…`). A stuck/looping
+cursor, the page cap, or an element with no usable id FAILS discovery rather than truncating.
+On a PAUSE a definite 400 on an in-review creative is tolerated (LinkedIn forbids pausing an
+in-review creative; the campaign gate already stopped it). Any other failure after a first
+successful mutation is a `partialCascadeError` (Unconfirmed). The narrower `UpdateCampaignStatus`
 (campaign only) is retained as the building block. The account id is resolved+validated from
 the runtime config (same as create); ids must be numeric. `IsOutcomeUnconfirmed(err)` exposes
 the shared ambiguity classifier (and honors the `Unconfirmed()` behavioral interface) so a

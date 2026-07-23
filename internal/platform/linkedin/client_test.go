@@ -1128,3 +1128,69 @@ func TestUpdateCampaignAndCreativesStatus_Non400OnPauseAborts(t *testing.T) {
 		t.Fatal("a 403 on a creative during a pause must abort, not be tolerated")
 	}
 }
+
+// TestUpdateCampaignAndCreativesStatus_ActivateOrdersCreativesBeforeCampaign verifies that on
+// ACTIVATE the creatives are lifted BEFORE the campaign is flipped ACTIVE — so a creative
+// failure can't leave paid delivery running (the campaign, still paused, gates everything).
+func TestUpdateCampaignAndCreativesStatus_ActivateOrdersCreativesBeforeCampaign(t *testing.T) {
+	orderCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.EscapedPath()
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives"):
+			orderCh <- "finder"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		case strings.Contains(p, "creatives/urn"):
+			orderCh <- "creative"
+		case strings.Contains(p, "adCampaigns/555"):
+			orderCh <- "campaign"
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	close(orderCh)
+	var seq []string
+	for s := range orderCh {
+		seq = append(seq, s)
+	}
+	// Expect: finder, creative(s)..., then campaign LAST.
+	if len(seq) < 2 || seq[len(seq)-1] != "campaign" {
+		t.Fatalf("campaign must be updated LAST on activate; sequence = %v", seq)
+	}
+	for _, s := range seq[:len(seq)-1] {
+		if s == "campaign" {
+			t.Errorf("campaign was updated before creatives on activate; sequence = %v", seq)
+		}
+	}
+}
+
+// TestCreativeURN_RejectsMalformedSuffix verifies a full-URN value with a path-altering or
+// non-numeric suffix is rejected (returns ""), so it can't reach encodeURNForPath and alter
+// the request URL.
+func TestCreativeURN_RejectsMalformedSuffix(t *testing.T) {
+	bad := []string{
+		"urn:li:sponsoredCreative:900?x=1",
+		"urn:li:sponsoredCreative:900/evil",
+		"urn:li:sponsoredCreative:../../secret",
+		"urn:li:sponsoredCreative:9%2f0",
+		"urn:li:sponsoredCreative:abc",
+	}
+	for _, s := range bad {
+		if got := creativeURN(responseElement{URN: s}); got != "" {
+			t.Errorf("creativeURN(%q) = %q, want \"\" (malformed suffix must be rejected)", s, got)
+		}
+	}
+	// A clean numeric id (URN or bare) is accepted and canonicalized.
+	if got := creativeURN(responseElement{URN: "urn:li:sponsoredCreative:900"}); got != "urn:li:sponsoredCreative:900" {
+		t.Errorf("clean URN rejected: got %q", got)
+	}
+	if got := creativeURN(responseElement{ID: flexibleID("900")}); got != "urn:li:sponsoredCreative:900" {
+		t.Errorf("bare numeric id not canonicalized: got %q", got)
+	}
+}

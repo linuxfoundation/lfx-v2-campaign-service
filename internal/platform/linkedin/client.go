@@ -460,21 +460,48 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // and per LinkedIn a creative's EFFECTIVE status is the stricter of its own intendedStatus and
 // the parent campaign status. So a full ACTIVATE must lift each creative DRAFT→ACTIVE too.
 //
-// The campaign is updated first (parent-first). Then creatives are DISCOVERED via the creatives
-// FINDER (LinkedIn persists only a creative COUNT, not ids) and each is PARTIAL_UPDATEd to the
-// matching intendedStatus. Two LinkedIn-specific rules are honored: (1) you CANNOT pause a
-// creative that is in review — LinkedIn returns 400 — so on a PAUSE a definite 4xx on a single
-// creative is tolerated (skipped) rather than failing the whole toggle; (2) any OTHER creative
-// failure after the campaign update is a partialCascadeError (Unconfirmed) so the caller
-// verifies rather than reporting "not modified"; a retry re-runs the idempotent cascade.
+// Ordering is status-dependent so a PARTIAL cascade never leaves paid delivery running
+// unattended — LinkedIn makes the CAMPAIGN status the effective gate over its creatives:
+//   - ACTIVATE: lift the CREATIVES first (they can't serve yet — the campaign is still
+//     PAUSED and gates them), THEN flip the campaign to ACTIVE last. If a creative update
+//     fails, the campaign is still paused, so NOTHING is serving — abort safely. (Doing the
+//     campaign first would let already-activated creatives serve while a later creative
+//     failure returns unconfirmed — paid delivery running with the DB unchanged.)
+//   - PAUSE: flip the CAMPAIGN first (delivery stops immediately at the gate), THEN pause the
+//     creatives. A creative that is in review can't be paused (LinkedIn 400) — tolerated,
+//     since the campaign gate already stopped it.
+//
+// Creatives are DISCOVERED via the creatives FINDER (LinkedIn persists only a creative COUNT,
+// not ids). Any non-tolerated failure after a first successful mutation is a
+// partialCascadeError (Unconfirmed) so the caller verifies rather than reporting "not
+// modified"; a retry re-runs the idempotent cascade.
 func (c *Client) UpdateCampaignAndCreativesStatus(ctx context.Context, campaignID, status string) error {
+	accountID, err := c.resolveAccountID("")
+	if err != nil {
+		return fmt.Errorf("linkedin: %w", err)
+	}
+	if status == StatusActive {
+		// Creatives first (still gated by the paused campaign), campaign last.
+		if err := c.updateCreativesStatus(ctx, accountID, campaignID, status); err != nil {
+			return err
+		}
+		if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
+			return &partialCascadeError{stage: "campaign activate", err: err}
+		}
+		return nil
+	}
+	// PAUSE: campaign gate first (stops delivery now), then creatives.
 	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
 		return err
 	}
-	accountID, err := c.resolveAccountID("")
-	if err != nil {
-		return &partialCascadeError{stage: "account resolve", err: err}
-	}
+	return c.updateCreativesStatus(ctx, accountID, campaignID, status)
+}
+
+// updateCreativesStatus discovers the campaign's creatives and PARTIAL_UPDATEs each one's
+// intendedStatus to match the run status. On a PAUSE, the specific 400 LinkedIn returns for an
+// in-review creative (which cannot be paused) is tolerated — the campaign gate has already
+// stopped delivery; every other failure is a partialCascadeError (Unconfirmed).
+func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignID, status string) error {
 	creativeURNs, err := c.listCreativeURNs(ctx, accountID, campaignID)
 	if err != nil {
 		return &partialCascadeError{stage: "creative discovery", err: err}
@@ -485,13 +512,8 @@ func (c *Client) UpdateCampaignAndCreativesStatus(ctx context.Context, campaignI
 		body := map[string]any{"patch": map[string]any{"$set": map[string]any{"intendedStatus": creativeStatus}}}
 		headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
 		if _, uerr := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); uerr != nil {
-			// You can't PAUSE an in-review creative — LinkedIn returns exactly a 400. On a
-			// PAUSE, tolerate ONLY that 400 (the campaign is already paused, the effective
-			// gate). A 401/403 auth failure, a 404 from a bad creative key, or any other status
-			// is a real failure and must abort the toggle (partialCascadeError), not be
-			// swallowed as if the creative were benignly in review.
 			if creativeStatus == StatusPaused && isBadRequest(uerr) {
-				continue
+				continue // in-review creative can't be paused; the campaign gate already stopped it
 			}
 			return &partialCascadeError{stage: "creative", err: uerr}
 		}
@@ -575,11 +597,13 @@ func encodeURNForPath(urn string) string {
 	return strings.ReplaceAll(urn, ":", "%3A")
 }
 
-// creativeURN returns the sponsoredCreative URN for a finder element, preferring an explicit
-// URN field and falling back to the id. The creatives FINDER can return the id in EITHER
-// form — a full URN string ("urn:li:sponsoredCreative:123") or a bare numeric long ("123")
-// via flexibleID — so a numeric id is reconstructed into its URN rather than dropped (which
-// would silently skip activating that creative). Returns "" if none is usable.
+// creativeURN returns a CANONICAL sponsoredCreative URN for a finder element. The FINDER can
+// return the id in EITHER form — a full URN string ("urn:li:sponsoredCreative:123") or a bare
+// numeric long ("123") via flexibleID. In BOTH cases the numeric trailing id is extracted and
+// validated (digits only) and the URN is rebuilt from it, so a malformed value (a suffix
+// containing '?', '/', percent-encoding, or path traversal) is REJECTED rather than flowing
+// into encodeURNForPath (which escapes only colons) and, via the broadened path allow-list,
+// altering the request URL. Returns "" if no usable numeric id can be extracted.
 func creativeURN(el responseElement) string {
 	const prefix = "urn:li:sponsoredCreative:"
 	for _, cand := range []string{el.URN, el.DURN, el.ID.String()} {
@@ -587,12 +611,12 @@ func creativeURN(el responseElement) string {
 		if s == "" {
 			continue
 		}
-		if strings.HasPrefix(s, prefix) {
-			return s
-		}
-		// A bare numeric id (the finder returned a JSON number) → reconstruct the URN.
-		if creativeNumericIDRE.MatchString(s) {
-			return prefix + s
+		// Normalize to the trailing id: strip the URN prefix if present, else use the value
+		// as-is (the bare-numeric form). Only a pure positive integer is accepted, so any
+		// path-altering or malformed suffix is rejected.
+		id := strings.TrimPrefix(s, prefix)
+		if creativeNumericIDRE.MatchString(id) {
+			return prefix + id
 		}
 	}
 	return ""
