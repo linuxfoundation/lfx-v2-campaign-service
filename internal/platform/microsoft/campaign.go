@@ -114,6 +114,16 @@ type CampaignInput struct {
 	// defaultTimeZone is used. A caller that knows the account's intended zone can pass a
 	// supported enum string.
 	TimeZone string
+	// RegistrationURL is the landing page the created Ad points to (its FinalUrls). It
+	// is REQUIRED to create the Ad: Microsoft rejects a Text Ad with no final URL.
+	// Validated (https/http only, no embedded userinfo) before any Ad create. UTM params
+	// for attribution are appended from EventSlug/Project.
+	RegistrationURL string
+	// Headline / Description override the auto-composed Ad copy. When empty, the Ad text
+	// is derived from EventName (a safe, PAUSED placeholder a human edits before
+	// enabling). Bounded to Microsoft's Text Ad limits before create.
+	Headline    string
+	Description string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -124,6 +134,13 @@ type CampaignResult struct {
 	AccountLabel string `json:"accountLabel,omitempty"`
 	CampaignName string `json:"campaignName"`
 	CampaignID   string `json:"campaignId"`
+	// AdGroupName / AdGroupID identify the ad group created (or found) under the
+	// campaign. AdGroupName is deterministic, so an ambiguous ad-group failure BEFORE an
+	// id is known is reconcilable by name (scoped to the campaign).
+	AdGroupName string `json:"adGroupName,omitempty"`
+	AdGroupID   string `json:"adGroupId,omitempty"`
+	// AdID identifies the Text Ad created under the ad group.
+	AdID string `json:"adId,omitempty"`
 	// AlreadyExisted is true when findCampaignByName matched a prior campaign and
 	// CreateCampaign returned it WITHOUT issuing a create — so the caller knows this
 	// run did not create anything new.
@@ -277,64 +294,72 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// prior attempt made. Report UNCONFIRMED so the caller reconciles by name.
 		return namePartial(), fmt.Errorf("microsoft-ads campaign lookup failed (cannot confirm %q is absent; verify in Microsoft Advertising before retrying): %w", campaignName, err)
 	}
+	var (
+		campaignID     string
+		alreadyExisted bool
+	)
 	if existingID != "" {
 		steps = append(steps, fmt.Sprintf("Campaign already exists by name: %s (not re-created)", existingID))
-		r := namePartial()
-		r.CampaignID = existingID
-		r.AlreadyExisted = true
-		r.Steps = steps
-		return r, nil
-	}
-
-	// Step 2: create the campaign (PAUSED). Non-idempotent — NOT retried on 429.
-	timeZone := in.TimeZone
-	if timeZone == "" {
-		timeZone = defaultTimeZone
-	}
-	req := createCampaignsRequest{
-		AccountId: json.Number(c.account.AccountID),
-		Campaigns: []msCampaign{{
-			Name:         campaignName,
-			CampaignType: campaignTypeSearch,
-			BudgetType:   budgetTypeDailyStandard,
-			DailyBudget:  in.Budget,
-			Status:       campaignStatusPaused,
-			TimeZone:     timeZone,
-		}},
-	}
-	respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
-	if err != nil {
-		switch {
-		case createOutcomeAmbiguous(err):
+		campaignID = existingID
+		alreadyExisted = true
+	} else {
+		// Step 2: create the campaign (PAUSED). Non-idempotent — NOT retried on 429.
+		timeZone := in.TimeZone
+		if timeZone == "" {
+			timeZone = defaultTimeZone
+		}
+		req := createCampaignsRequest{
+			AccountId: json.Number(c.account.AccountID),
+			Campaigns: []msCampaign{{
+				Name:         campaignName,
+				CampaignType: campaignTypeSearch,
+				BudgetType:   budgetTypeDailyStandard,
+				DailyBudget:  in.Budget,
+				Status:       campaignStatusPaused,
+				TimeZone:     timeZone,
+			}},
+		}
+		respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
+		if err != nil {
+			switch {
+			case createOutcomeAmbiguous(err):
+				return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
+			default:
+				return nil, fmt.Errorf("microsoft-ads campaign creation failed: %w", err)
+			}
+		}
+		campaignID, err = firstCampaignID(respBody)
+		if err != nil {
+			if isDuplicateCampaignNameErr(err) {
+				// A duplicate-name PartialError: a campaign with this name already exists
+				// (a prior attempt, or a race between the pre-check lookup and this create).
+				// Not created here, but NOT a clean failure — reconcile by name.
+				return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) — a prior attempt likely created it; verify in Microsoft Advertising before retrying: %w", campaignName, err)
+			}
+			if errors.Is(err, errPartialFailure) {
+				// A 200 with a null id slot + PartialErrors is a DEFINITE rejection: the
+				// campaign was not created. Clean failure, not UNCONFIRMED.
+				return nil, fmt.Errorf("microsoft-ads campaign creation rejected: %w", err)
+			}
+			// A 200 with no id and no PartialError is a malformed success: the campaign MAY
+			// have been created. UNCONFIRMED.
 			return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
-		default:
-			return nil, fmt.Errorf("microsoft-ads campaign creation failed: %w", err)
 		}
+		steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
 	}
 
-	campaignID, err := firstCampaignID(respBody)
-	if err != nil {
-		if isDuplicateCampaignNameErr(err) {
-			// A duplicate-name PartialError: a campaign with this name already exists
-			// (a prior attempt, or a race between the pre-check lookup and this create).
-			// Not created here, but NOT a clean failure — reconcile by name.
-			return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) — a prior attempt likely created it; verify in Microsoft Advertising before retrying: %w", campaignName, err)
-		}
-		if errors.Is(err, errPartialFailure) {
-			// A 200 with a null id slot + PartialErrors is a DEFINITE rejection: the
-			// campaign was not created. Clean failure, not UNCONFIRMED.
-			return nil, fmt.Errorf("microsoft-ads campaign creation rejected: %w", err)
-		}
-		// A 200 with no id and no PartialError is a malformed success: the campaign MAY
-		// have been created. UNCONFIRMED.
-		return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
+	// campaignPartial carries the campaign id + name (and accumulates ad-group/ad ids as
+	// they land) so an ambiguous ad-group/ad failure leaves the whole tree reconcilable.
+	campaignPartial := func() *CampaignResult {
+		r := namePartial()
+		r.CampaignID = campaignID
+		r.AlreadyExisted = alreadyExisted
+		return r
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
 
-	r := namePartial()
-	r.CampaignID = campaignID
-	r.Steps = steps
-	return r, nil
+	// Steps 3-4: complete the Campaign -> AdGroup -> Ad hierarchy (all PAUSED) so the
+	// result is a usable paused campaign rather than an empty shell.
+	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial)
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if

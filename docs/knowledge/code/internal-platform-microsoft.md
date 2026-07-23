@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token auth, request layer with 429 retry + BatchErrors classification (MS-1), and PAUSED find-or-create campaign creation (MS-2)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token auth, request layer with 429 retry + BatchErrors classification (MS-1), and PAUSED find-or-create Campaign->AdGroup->Ad creation (MS-2/MS-2.5)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -134,8 +134,33 @@ Event | Suffix`, `|`-and-control-char sanitized) is length-capped in CHARACTERS.
 `toMSDate` renders Microsoft's `{Month,Day,Year}` date object, reserved for the ad-group
 flight dates a later slice needs.
 
+## Ad group + ad creation (MS-2.5)
+
+`CreateCampaign` completes the full Campaign → AdGroup → Ad hierarchy (`adgroup_ad.go`),
+all PAUSED, so the result is a usable paused campaign rather than an empty shell —
+mirroring the reddit/meta clients. After the campaign is created (or found), it
+find-or-creates a PAUSED ad group then a PAUSED Text Ad. Every entity's create and read
+follows the same v13 REST shape as campaigns: **creates are `POST /<Entity>` with the
+PARENT ID in the body** (`POST /AdGroups` with `CampaignId`, `POST /Ads` with `AdGroupId`
+— NOT in the URL); **reads are `POST /<Entity>/QueryBy…`** (`AdGroups/QueryByCampaignId`,
+`Ads/QueryByAdGroupId`), not GETs. Each level uses the shared `firstEntityID` classifier
+(valid id → success; a real null-slot PartialError → `errPartialFailure`; else
+malformed-200 → UNCONFIRMED) and returns a partial carrying the ids known so far
+(campaign id at the ad-group step; campaign + ad-group at the ad step) so an ambiguous
+failure leaves the tree reconcilable.
+
+Ad-group idempotency is the (case-insensitively unique) ad-group name; ads have no stable
+name, so ad idempotency is keyed on the destination (`findTextAdByFinalURL` matches an
+existing ad whose `FinalUrls` contains the composed URL). The ad destination is validated
+before any ad-group create (`validateAdURL`: https/http, absolute, no userinfo, well-formed
+query; `redactAdURL` for errors). The ad's `FinalUrls` is the registration URL with LFX
+`utm_*` params SET (`buildAdFinalURL` preserves every other query param). Ad copy is
+caller-supplied (`Headline`/`Description`) or derived from the sanitized `EventName`,
+rune-bounded to Microsoft's Text Ad limits (Title 30, Text 90).
+
 ## Scope
 
 MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PAUSED
-find-or-create campaign creation (`campaign.go`). The orchestrator dispatcher (register
-`microsoft-ads`, use the stored `connection-microsoft-ads` credential) follows in MS-3.
+find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group + ad
+(`adgroup_ad.go`). The orchestrator dispatcher (register `microsoft-ads`, use the stored
+`connection-microsoft-ads` credential) follows in MS-3.

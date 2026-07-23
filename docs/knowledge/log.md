@@ -13,6 +13,18 @@ is unconfirmed/absent or the campaign/line-item was reused. Client changes landi
 it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
 classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
 with `redactURLForError` so a persisted validation error can't leak a secret.
+**Update** — Microsoft Ads MS-2.5 (ad group + ad) on the corrected v13 contract
+(`adgroup_ad.go`). `CreateCampaign` now completes Campaign → AdGroup → Ad (all PAUSED).
+Creates are `POST /AdGroups` (body `{CampaignId,AdGroups}`) and `POST /Ads` (body
+`{AdGroupId,Ads}`) — parent id in the BODY, not the URL; reads are `POST
+/AdGroups/QueryByCampaignId` and `POST /Ads/QueryByAdGroupId` (POST-with-body, not GET).
+Ad-group idempotency = case-insensitive name; ad idempotency = FinalUrl match. Shared
+`firstEntityID` classifier; reconcilable partials carry the ids known so far. Ad
+destination validated (https/http, no userinfo) before any ad-group create; `FinalUrls` =
+registration URL with LFX `utm_*` set; copy caller-supplied or derived from EventName,
+bounded to Title 30 / Text 90. Rebased onto the corrected MS-2 (AccountId body, POST
+QueryByAccountId lookup, case-insensitive-unique names, TimeZone sent).
+
 **Update** — Microsoft Ads MS-2 corrected to the real v13 REST contract (PR #44 review,
 copilot — VERIFIED against learn.microsoft.com). The initial MS-2 assumed a
 GET-CampaignsByAccountId lookup, no request-body AccountId, and duplicate-names-allowed —
