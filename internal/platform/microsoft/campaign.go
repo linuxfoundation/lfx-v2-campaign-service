@@ -115,15 +115,19 @@ type CampaignInput struct {
 	// supported enum string.
 	TimeZone string
 	// RegistrationURL is the landing page the created Ad points to (its FinalUrls). It
-	// is REQUIRED to create the Ad: Microsoft rejects a Text Ad with no final URL.
-	// Validated (https/http only, no embedded userinfo) before any Ad create. UTM params
+	// is REQUIRED to create the Ad: Microsoft rejects a responsive search ad with no final
+	// URL. Validated (https/http only, no embedded userinfo) before any create. UTM params
 	// for attribution are appended from EventSlug/Project.
 	RegistrationURL string
-	// Headline / Description override the auto-composed Ad copy. When empty, the Ad text
-	// is derived from EventName (a safe, PAUSED placeholder a human edits before
-	// enabling). Bounded to Microsoft's Text Ad limits before create.
-	Headline    string
-	Description string
+	// Headlines / Descriptions override the auto-composed responsive-search-ad copy. A
+	// Microsoft responsive search ad REQUIRES 3-15 unique headlines (<=30 chars each) and
+	// 2-4 unique descriptions (<=90 chars each). When a caller supplies fewer than the
+	// minimum, deterministic placeholders derived from EventName/Project pad the lists up to
+	// the minimum (a safe PAUSED default a human edits before enabling); supplying more than
+	// the maximum, a duplicate, or an over-long entry is a clean up-front validation error.
+	// Leave both empty to auto-compose entirely.
+	Headlines    []string
+	Descriptions []string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -263,6 +267,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// clean (nil, err) failure — nothing has been created yet.
 	if err := validateAdURL(in.RegistrationURL); err != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign requires a valid ad destination URL: %w", err)
+	}
+	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
+	// descriptions), so a bad copy input fails cleanly before the campaign is created rather
+	// than at the paid ad create. composeAdCopy pads short lists to the required minimum.
+	if err := validateAdCopy(in); err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err)
 	}
 
 	var steps []string

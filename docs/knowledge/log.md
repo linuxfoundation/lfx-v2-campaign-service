@@ -13,6 +13,21 @@ is unconfirmed/absent or the campaign/line-item was reused. Client changes landi
 it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
 classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
 with `redactURLForError` so a persisted validation error can't leak a secret.
+**Update** — Microsoft Ads MS-2.5 ad type corrected to Responsive Search Ad (PR #45
+review, copilot — VERIFIED against learn.microsoft.com). The initial MS-2.5 added a
+`TextAd`, but v13 does NOT support adding text/expanded-text ads (every `TextAd` field is
+"Add: Not supported"; a standard-text-ad add fails with `CampaignServiceAdTypeInvalid`) —
+the permissive test double masked a guaranteed runtime rejection. Switched the ad payload
+to `ResponsiveSearchAd`: 3–15 unique headline assets (≤30) + 2–4 unique description assets
+(≤90), each a `TextAsset` in an `AssetLink`, plus required `FinalUrls`. Ad group now sends
+`AdGroupType: SearchStandard` (required to host an RSA) and a `Language` (campaign sets
+none). `Ad.Status` defaults to Active on Add, so the ad sends `Status: Paused` explicitly.
+`Ad.Type` is Add:Read-only → not sent. `CampaignInput.Headline/Description` (singular)
+became `Headlines/Descriptions` (lists); `composeAdCopy` de-dups/truncates/pads to the
+minimum, `validateAdCopy` rejects over-count/over-long up front. Also: ad URL + copy now
+validated BEFORE the campaign create (not before the ad group) so a bad input never
+orphans a PAUSED campaign; `AlreadyExisted` is true only when all three levels pre-existed.
+
 **Update** — Microsoft Ads MS-2.5 (ad group + ad) on the corrected v13 contract
 (`adgroup_ad.go`). `CreateCampaign` now completes Campaign → AdGroup → Ad (all PAUSED).
 Creates are `POST /AdGroups` (body `{CampaignId,AdGroups}`) and `POST /Ads` (body

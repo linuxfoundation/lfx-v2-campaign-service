@@ -139,29 +139,44 @@ flight dates a later slice needs.
 `CreateCampaign` completes the full Campaign → AdGroup → Ad hierarchy (`adgroup_ad.go`),
 all PAUSED, so the result is a usable paused campaign rather than an empty shell —
 mirroring the reddit/meta clients. After the campaign is created (or found), it
-find-or-creates a PAUSED ad group then a PAUSED Text Ad. Every entity's create and read
-follows the same v13 REST shape as campaigns: **creates are `POST /<Entity>` with the
-PARENT ID in the body** (`POST /AdGroups` with `CampaignId`, `POST /Ads` with `AdGroupId`
-— NOT in the URL); **reads are `POST /<Entity>/QueryBy…`** (`AdGroups/QueryByCampaignId`,
-`Ads/QueryByAdGroupId`), not GETs. Each level uses the shared `firstEntityID` classifier
-(a positive-integer id via `numberID` → success; a null id slot with an ACTUAL
-PartialError, gated on `partialErrorsHaveAny` so a null-only placeholder slice does not
-count → `errPartialFailure`; else a malformed 200 → the `errNoID` sentinel). Both
-`errNoID` and the ambiguous-transport set are treated as UNCONFIRMED at the create call
+find-or-creates a PAUSED ad group then a PAUSED Responsive Search Ad. Every entity's create
+and read follows the same v13 REST shape as campaigns: **creates are `POST /<Entity>` with
+the PARENT ID in the body** (`POST /AdGroups` with `CampaignId`, `POST /Ads` with
+`AdGroupId` — NOT in the URL); **reads are `POST /<Entity>/QueryBy…`**
+(`AdGroups/QueryByCampaignId`, `Ads/QueryByAdGroupId`), not GETs. Each level uses the shared
+`firstEntityID` classifier (a positive-integer id via `numberID` → success; a null id slot
+with an ACTUAL PartialError, gated on `partialErrorsHaveAny` so a null-only placeholder
+slice does not count → `errPartialFailure`; else a malformed 200 → the `errNoID` sentinel).
+Both `errNoID` and the ambiguous-transport set are treated as UNCONFIRMED at the create call
 sites (the entity MAY have been created — the ad-group/ad create has no idempotency key,
 so a blind retry could duplicate); only a real PartialError is a clean rejection. Each
 step returns a partial carrying the ids known so far (campaign id at the ad-group step;
 campaign + ad-group at the ad step) so an ambiguous failure leaves the tree reconcilable.
 
+**Ad type — Responsive Search Ad.** v13 does NOT support adding a `TextAd`/ExpandedTextAd
+(every `TextAd` field is "Add: Not supported"; a standard-text-ad add fails with
+`CampaignServiceAdTypeInvalid`). The currently-addable Search text ad is the
+`ResponsiveSearchAd`: **3–15 unique headline assets** (≤30 chars) and **2–4 unique
+description assets** (≤90 chars), each a `TextAsset` wrapped in an `AssetLink`, plus a
+required `FinalUrls`. Its ad group is created with `AdGroupType` "SearchStandard" (the
+"SearchDynamic" type takes only dynamic search ads) and a `Language` (the MS-2 campaign sets
+no campaign-level languages, so the ad group must carry one). `Ad.Type` is "Add: Read-only"
+so it is NOT sent; `Ad.Status` defaults to *Active* on Add, so the ad sends `Status: Paused`
+explicitly (otherwise it would be eligible to serve once a human enables the campaign).
+`composeAdCopy` de-duplicates (case-insensitively), rune-truncates, and pads the caller's
+`Headlines`/`Descriptions` up to the required minimum with deterministic placeholders;
+`validateAdCopy` rejects an over-count or over-long caller entry up front.
+
 Ad-group idempotency is the (case-insensitively unique) ad-group name; ads have no stable
-name, so ad idempotency is keyed on the destination (`findTextAdByFinalURL` matches an
-existing ad whose `FinalUrls` contains the composed URL). The ad destination is validated
-UP FRONT in `CreateCampaign`, before the campaign create (`validateAdURL`: https/http,
-absolute, no userinfo, well-formed query; `redactAdURL` for errors), so a bad URL fails
-cleanly `(nil, err)` without orphaning a PAUSED campaign or ad group. The ad's `FinalUrls` is the registration URL with LFX
-`utm_*` params SET (`buildAdFinalURL` preserves every other query param). Ad copy is
-caller-supplied (`Headline`/`Description`) or derived from the sanitized `EventName`,
-rune-bounded to Microsoft's Text Ad limits (Title 30, Text 90).
+name (and v13 ALLOWS duplicate responsive search ads in an ad group), so ad idempotency is
+keyed on the destination (`findAdByFinalURL` matches an existing ad whose `FinalUrls`
+contains the composed URL). The ad destination and ad copy are validated UP FRONT in
+`CreateCampaign`, before the campaign create (`validateAdURL`: https/http, absolute, no
+userinfo, well-formed query; `redactAdURL` for errors; `validateAdCopy` for the copy), so a
+bad URL/copy fails cleanly `(nil, err)` without orphaning a PAUSED campaign or ad group. The
+ad's `FinalUrls` is the registration URL with LFX `utm_*` params SET (`buildAdFinalURL`
+preserves every other query param). `AlreadyExisted` is true only when the campaign, ad
+group, AND ad ALL pre-existed (this run created nothing); creating any level makes it false.
 
 ## Scope
 

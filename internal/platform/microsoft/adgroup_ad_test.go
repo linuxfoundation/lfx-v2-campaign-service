@@ -5,10 +5,12 @@ package microsoft
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // ---- full-tree happy path --------------------------------------------------
@@ -31,14 +33,32 @@ func TestCreateCampaign_CreatesFullHierarchyPaused(t *testing.T) {
 	if res.AdGroupName == "" || !strings.Contains(res.AdGroupName, "Ad Group") {
 		t.Errorf("AdGroupName = %q, want a composed 'LFX | Ad Group | ...' name", res.AdGroupName)
 	}
-	// Ad group is PAUSED.
+	// Ad group is PAUSED, SearchStandard (responsive-search-ad-capable), with a language.
 	if group.AdGroups[0].Status != adGroupStatusPaused {
 		t.Errorf("ad group Status = %q, want %q", group.AdGroups[0].Status, adGroupStatusPaused)
 	}
-	// Ad is a Text ad with the destination + UTM params, bounded copy.
+	if group.AdGroups[0].AdGroupType != adGroupTypeSearchStandard {
+		t.Errorf("ad group AdGroupType = %q, want %q", group.AdGroups[0].AdGroupType, adGroupTypeSearchStandard)
+	}
+	if group.AdGroups[0].Language == "" {
+		t.Error("ad group Language is empty; Add requires a language when the campaign sets none")
+	}
+	// Ad is a PAUSED responsive search ad: >=3 headline assets, >=2 description assets, the
+	// destination + UTM params, and NO Type field (Ad.Type is Add:Read-only).
 	got := ad.Ads[0]
-	if got.Type != adTypeText {
-		t.Errorf("ad Type = %q, want %q", got.Type, adTypeText)
+	if got.Status != adStatusPaused {
+		t.Errorf("ad Status = %q, want %q (Ad.Status defaults to Active on Add)", got.Status, adStatusPaused)
+	}
+	if len(got.Headlines) < minAdHeadlines || len(got.Headlines) > maxAdHeadlines {
+		t.Errorf("ad Headlines count = %d, want %d-%d", len(got.Headlines), minAdHeadlines, maxAdHeadlines)
+	}
+	if len(got.Descriptions) < minAdDescriptions || len(got.Descriptions) > maxAdDescriptions {
+		t.Errorf("ad Descriptions count = %d, want %d-%d", len(got.Descriptions), minAdDescriptions, maxAdDescriptions)
+	}
+	for _, h := range got.Headlines {
+		if h.Asset.Type != "TextAsset" || h.Asset.Text == "" {
+			t.Errorf("headline asset malformed: %+v", h)
+		}
 	}
 	if len(got.FinalUrls) != 1 {
 		t.Fatalf("ad FinalUrls = %v, want exactly one", got.FinalUrls)
@@ -51,9 +71,6 @@ func TestCreateCampaign_CreatesFullHierarchyPaused(t *testing.T) {
 	if q.Get("utm_source") != "microsoft" || q.Get("utm_medium") != "cpc" || q.Get("utm_campaign") != "kubecon" {
 		t.Errorf("FinalUrl UTM params wrong: %s", got.FinalUrls[0])
 	}
-	if got.Title == "" || got.Text == "" {
-		t.Errorf("ad copy empty: title=%q text=%q", got.Title, got.Text)
-	}
 }
 
 func TestCreateCampaign_HonorsExplicitAdCopy(t *testing.T) {
@@ -61,16 +78,23 @@ func TestCreateCampaign_HonorsExplicitAdCopy(t *testing.T) {
 	api := &campaignsAPI{adSeen: &ad}
 	c := newAPIClient(t, api.handler(t))
 	in := validInput()
-	in.Headline = "Register for KubeCon EU"
-	in.Description = "Join thousands of cloud native practitioners this spring."
+	// Two caller headlines (below the min of 3) + two descriptions. The caller values must
+	// appear first and in order; composeAdCopy pads the headlines up to the required minimum.
+	in.Headlines = []string{"Register for KubeCon EU", "KubeCon + CloudNativeCon"}
+	in.Descriptions = []string{"Join cloud native practitioners this spring.", "Sessions, keynotes, and more."}
 	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if ad.Ads[0].Title != in.Headline {
-		t.Errorf("ad Title = %q, want the caller headline", ad.Ads[0].Title)
+	hs := ad.Ads[0].Headlines
+	if len(hs) < minAdHeadlines {
+		t.Fatalf("headlines padded below minimum: %d", len(hs))
 	}
-	if ad.Ads[0].Text != in.Description {
-		t.Errorf("ad Text = %q, want the caller description", ad.Ads[0].Text)
+	if hs[0].Asset.Text != in.Headlines[0] || hs[1].Asset.Text != in.Headlines[1] {
+		t.Errorf("caller headlines not first/in-order: %q, %q", hs[0].Asset.Text, hs[1].Asset.Text)
+	}
+	ds := ad.Ads[0].Descriptions
+	if ds[0].Asset.Text != in.Descriptions[0] || ds[1].Asset.Text != in.Descriptions[1] {
+		t.Errorf("caller descriptions not first/in-order: %q, %q", ds[0].Asset.Text, ds[1].Asset.Text)
 	}
 }
 
@@ -159,6 +183,23 @@ func TestCreateCampaign_AdGroupNullPartialErrorIsUnconfirmed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Errorf("a null-only PartialErrors ad-group create must be UNCONFIRMED, not rejected: %v", err)
+	}
+}
+
+func TestCreateCampaign_AdGroupUnparseable200IsUnconfirmed(t *testing.T) {
+	// An unreadable 2xx ad-group create body (the create may have committed) is UNCONFIRMED,
+	// not a clean failure — a blind retry could stack a duplicate ad group.
+	api := &campaignsAPI{adGroupPostBody: `{not valid json`}
+	c := newAPIClient(t, api.handler(t))
+	res, err := c.CreateCampaign(context.Background(), validInput())
+	if err == nil {
+		t.Fatal("expected an error on an unparseable ad-group create body")
+	}
+	if res == nil || res.CampaignID != "321" {
+		t.Fatalf("expected a partial carrying campaign 321, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an unparseable 2xx ad-group create must be UNCONFIRMED, got: %v", err)
 	}
 }
 
@@ -261,17 +302,86 @@ func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
+	// Over-count or over-long caller ad copy fails UP FRONT (before any API call), a clean
+	// (nil, err) — the composed responsive search ad would otherwise be rejected by Microsoft.
+	cases := map[string]func(*CampaignInput){
+		"too many headlines":    func(in *CampaignInput) { in.Headlines = make([]string, maxAdHeadlines+1) },
+		"too many descriptions": func(in *CampaignInput) { in.Descriptions = make([]string, maxAdDescriptions+1) },
+		"over-long headline":    func(in *CampaignInput) { in.Headlines = []string{strings.Repeat("x", maxAdHeadlineRunes+1)} },
+		"over-long description": func(in *CampaignInput) { in.Descriptions = []string{strings.Repeat("x", maxAdDescriptionRunes+1)} },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			var reached bool
+			api := &campaignsAPI{}
+			base := api.handler(t)
+			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				base(w, r)
+			})
+			in := validInput()
+			mutate(&in)
+			if _, err := c.CreateCampaign(context.Background(), in); err == nil {
+				t.Fatalf("%s: expected an ad-copy validation error", name)
+			}
+			if reached {
+				t.Errorf("%s: no API call should be made — copy is invalid up front", name)
+			}
+		})
+	}
+}
+
 // ---- pure helpers ----------------------------------------------------------
 
-func TestComposeAdCopy_BoundsAndDefaults(t *testing.T) {
-	// Long event name → title truncated to the limit, default text derived.
-	in := CampaignInput{EventName: strings.Repeat("A", 100)}
-	title, text := composeAdCopy(in)
-	if len([]rune(title)) > maxAdTitleRunes {
-		t.Errorf("title not truncated: %d runes", len([]rune(title)))
+func TestComposeAdCopy_BoundsCountsAndUniqueness(t *testing.T) {
+	assertBounds := func(t *testing.T, hs, ds []string) {
+		t.Helper()
+		if len(hs) < minAdHeadlines || len(hs) > maxAdHeadlines {
+			t.Errorf("headline count = %d, want %d-%d", len(hs), minAdHeadlines, maxAdHeadlines)
+		}
+		if len(ds) < minAdDescriptions || len(ds) > maxAdDescriptions {
+			t.Errorf("description count = %d, want %d-%d", len(ds), minAdDescriptions, maxAdDescriptions)
+		}
+		assertUniqueBounded(t, hs, maxAdHeadlineRunes, "headline")
+		assertUniqueBounded(t, ds, maxAdDescriptionRunes, "description")
 	}
-	if len([]rune(text)) > maxAdTextRunes {
-		t.Errorf("text not truncated: %d runes", len([]rune(text)))
+
+	// Auto-compose from a long event name: still meets the min counts, each entry truncated,
+	// all unique. A long single event name must not collapse to fewer than the minimum.
+	hs, ds := composeAdCopy(CampaignInput{EventName: strings.Repeat("A", 100), Project: "CNCF"})
+	assertBounds(t, hs, ds)
+
+	// Empty input still pads to the minimum with placeholders.
+	hs, ds = composeAdCopy(CampaignInput{})
+	assertBounds(t, hs, ds)
+
+	// Over-max caller input is capped, and a truncated caller headline is bounded.
+	many := make([]string, 20)
+	for i := range many {
+		many[i] = fmt.Sprintf("Headline %d", i)
+	}
+	hs, _ = composeAdCopy(CampaignInput{Headlines: many, EventName: "KubeCon"})
+	if len(hs) != maxAdHeadlines {
+		t.Errorf("over-max headlines not capped: got %d, want %d", len(hs), maxAdHeadlines)
+	}
+}
+
+func assertUniqueBounded(t *testing.T, items []string, maxRunes int, kind string) {
+	t.Helper()
+	seen := map[string]struct{}{}
+	for _, s := range items {
+		if utf8.RuneCountInString(s) > maxRunes {
+			t.Errorf("%s over limit (%d runes): %q", kind, utf8.RuneCountInString(s), s)
+		}
+		if s == "" {
+			t.Errorf("%s is empty", kind)
+		}
+		key := strings.ToLower(s)
+		if _, dup := seen[key]; dup {
+			t.Errorf("%s duplicated (case-insensitive): %q", kind, s)
+		}
+		seen[key] = struct{}{}
 	}
 }
 

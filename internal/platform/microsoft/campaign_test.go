@@ -277,8 +277,44 @@ func TestCreateCampaign_ReturnsExistingByNameWithoutCreating(t *testing.T) {
 	if res.CampaignID != "999" {
 		t.Errorf("CampaignID = %q, want 999 (existing)", res.CampaignID)
 	}
+	// The campaign already existed, but this run still CREATED the ad group and ad (they
+	// were not pre-provided), so AlreadyExisted must be false: the run produced something
+	// new. AlreadyExisted is true ONLY when all three levels pre-existed
+	// (see TestCreateCampaign_AlreadyExistedWhenWholeTreePreexists).
+	if res.AlreadyExisted {
+		t.Error("AlreadyExisted = true, want false when the ad group/ad were created this run")
+	}
+}
+
+func TestCreateCampaign_AlreadyExistedWhenWholeTreePreexists(t *testing.T) {
+	in := validInput()
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+	// Every level is pre-provided by its lookup, so nothing is created this run.
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+	}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if r.Method == http.MethodPost &&
+			(strings.HasSuffix(p, "/Campaigns") || strings.HasSuffix(p, "/AdGroups") || strings.HasSuffix(p, "/Ads")) {
+			t.Errorf("create POST %s issued despite every level pre-existing", p)
+		}
+		base(w, r)
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
 	if !res.AlreadyExisted {
-		t.Error("AlreadyExisted = false, want true when returning an existing campaign")
+		t.Error("AlreadyExisted = false, want true when campaign, ad group, AND ad all pre-existed")
+	}
+	if res.CampaignID != "999" || res.AdGroupID != "111" || res.AdID != "222" {
+		t.Errorf("ids = %q/%q/%q, want the existing 999/111/222", res.CampaignID, res.AdGroupID, res.AdID)
 	}
 }
 
