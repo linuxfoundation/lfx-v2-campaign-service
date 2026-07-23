@@ -94,4 +94,15 @@ Each adapter interprets its own credential + config shape:
   exhausted mutating 429 as UNCONFIRMED; validates the destination URL (https/http, no
   embedded userinfo) up front.
 
+## Status toggle (optional capability)
+
+`StatusToggler` is an OPTIONAL dispatcher interface (separate from `PlatformDispatcher`) —
+`ToggleStatus(ctx, projectID, platform, platformCampaignID, status)` — for pausing/resuming a
+live campaign on the platform (ACTIVE↔PAUSED). The orchestrator's `ToggleCampaignStatus`
+type-asserts it (returning `ErrToggleUnsupported` when a platform hasn't wired it), so it can
+be added platform-by-platform without touching every adapter. **reddit** implements it:
+`resolveRedditClient` (shared with `Dispatch`, so a create and a toggle accept exactly the
+same connections) builds the client, then `client.UpdateCampaignStatus` PATCHes
+`configured_status`. Meta/X/Twitter toggles follow.
+
 See [internal/dispatch](../../../internal/dispatch).
