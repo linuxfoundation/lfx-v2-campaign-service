@@ -196,6 +196,60 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 // `created_degraded` (creative shortfall), `group_created` (group only), or
 // `unconfirmed` (neither id). requestedVariants is how many creatives the caller asked
 // for, used to detect a creative shortfall.
+// ToggleStatus pauses or resumes an existing LinkedIn campaign on the platform. It resolves
+// the connection (active + access token; a status update needs the account id but not the
+// org id, which is creation-only), builds the client, and issues the RestLi PARTIAL_UPDATE.
+// platformCampaignID is the numeric campaign id; status is model.CampaignRunActive/Paused. An
+// UNCONFIRMED outcome is wrapped so the caller reports "verify before retry".
+func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+	liStatus, err := linkedinRunStatus(status)
+	if err != nil {
+		return err
+	}
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	if res.status != model.StatusActive {
+		return fmt.Errorf("linkedin connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds linkedinCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return fmt.Errorf("decode linkedin credentials: %w", err)
+	}
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return fmt.Errorf("linkedin credentials are incomplete (need accessToken)")
+	}
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return fmt.Errorf("linkedin connection for project %s has no account id", projectID)
+	}
+	runtime := linkedin.RuntimeConfig{
+		DefaultAccountID: accountID,
+		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
+	}
+	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
+	if uerr := client.UpdateCampaignStatus(ctx, platformCampaignID, liStatus); uerr != nil {
+		if linkedin.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
+}
+
+// linkedinRunStatus maps the service run state (active/paused) to LinkedIn's status enum.
+func linkedinRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return linkedin.StatusActive, nil
+	case model.CampaignRunPaused:
+		return linkedin.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
+}
+
 func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, requestedVariants int, cfg linkedinConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,

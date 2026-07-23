@@ -712,7 +712,7 @@ func TestContextCancellation(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.doRequest(ctx, http.MethodGet, "adAccounts/1", nil, nil); err == nil {
+	if _, err := c.doRequest(ctx, http.MethodGet, "adAccounts/1", nil, nil, nil); err == nil {
 		t.Error("expected error from cancelled context")
 	}
 }
@@ -746,7 +746,7 @@ func TestDoRequestRetriesOn429(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
 		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
-	out, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil)
+	out, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("doRequest: %v", err)
 	}
@@ -776,7 +776,7 @@ func TestDoRequestExhaustsRetries(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
 		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
-	_, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil)
+	_, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil, nil)
 	if err == nil {
 		t.Fatalf("expected an error after exhausting retries")
 	}
@@ -844,7 +844,7 @@ func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	if _, err := c.doRequest(ctx, http.MethodGet, "adCampaigns/1", nil, nil); err == nil {
+	if _, err := c.doRequest(ctx, http.MethodGet, "adCampaigns/1", nil, nil, nil); err == nil {
 		t.Fatalf("expected a context error")
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {

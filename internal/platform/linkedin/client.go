@@ -381,10 +381,54 @@ func createOutcomeAmbiguous(err error) bool {
 	return false
 }
 
+// IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
+// UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied by
+// LinkedIn even though it errored (a transport failure, a mutating 3xx/429/5xx). A definite
+// 4xx or a pre-send failure returns false. Exposes the same classifier the create paths use
+// so a toggle caller can distinguish "may already reflect the change" from "definitely not
+// applied". Mirrors reddit/meta.IsOutcomeUnconfirmed.
+func IsOutcomeUnconfirmed(err error) bool { return createOutcomeAmbiguous(err) }
+
+// Campaign run states for UpdateCampaignStatus (LinkedIn's Campaign.status enum values).
+const (
+	StatusActive = "ACTIVE"
+	StatusPaused = "PAUSED"
+)
+
+// UpdateCampaignStatus sets an existing campaign's status to ACTIVE or PAUSED. LinkedIn's
+// Marketing API updates a campaign with a RestLi PARTIAL_UPDATE: POST
+// /adAccounts/{acct}/adCampaigns/{id} with header X-Restli-Method: PARTIAL_UPDATE and body
+// {"patch":{"$set":{"status": ...}}}. The account id is resolved+validated from the runtime
+// config (same as the create path); campaignID must be the numeric id (validated) so it can't
+// alter the request path.
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	campaignID = strings.TrimSpace(campaignID)
+	if campaignID == "" {
+		return fmt.Errorf("linkedin: campaign id is required")
+	}
+	if !accountIDRE.MatchString(campaignID) {
+		return fmt.Errorf("linkedin: invalid campaign id %q: must be numeric", campaignID)
+	}
+	if status != StatusActive && status != StatusPaused {
+		return fmt.Errorf("linkedin: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
+	}
+	accountID, err := c.resolveAccountID("")
+	if err != nil {
+		return fmt.Errorf("linkedin: %w", err)
+	}
+	path := fmt.Sprintf("adAccounts/%s/adCampaigns/%s", accountID, campaignID)
+	body := map[string]any{"patch": map[string]any{"$set": map[string]any{"status": status}}}
+	headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
+	if _, err := c.doRequest(ctx, http.MethodPost, path, body, nil, headers); err != nil {
+		return fmt.Errorf("linkedin: update campaign %s status to %s: %w", campaignID, status, err)
+	}
+	return nil
+}
+
 // doRequest performs one API call. It honors ctx, sets the OAuth2 bearer and
 // LinkedIn headers, applies the client timeout, and promotes x-restli-id into
 // the returned ID. Mirrors linkedInRequest().
-func (c *Client) doRequest(ctx context.Context, method, path string, body map[string]any, params map[string]string) (*linkedInResponse, error) {
+func (c *Client) doRequest(ctx context.Context, method, path string, body map[string]any, params, headers map[string]string) (*linkedInResponse, error) {
 	sanitized := strings.TrimPrefix(path, "/")
 	if !pathValidRE.MatchString(sanitized) || strings.Contains(sanitized, "..") {
 		return nil, fmt.Errorf("invalid LinkedIn API path: %q", sanitized)
@@ -453,6 +497,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		req.Header.Set("X-RestLi-Protocol-Version", "2.0.0")
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
+		}
+		// Optional per-call headers (e.g. X-Restli-Method: PARTIAL_UPDATE for a campaign
+		// status update). Set AFTER the defaults so a caller can override if ever needed.
+		for k, v := range headers {
+			req.Header.Set(k, v)
 		}
 
 		resp, err := c.httpClient.Do(req)
@@ -799,7 +848,7 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 		if pageToken != "" {
 			params["pageToken"] = pageToken
 		}
-		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params)
+		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params, nil)
 		if err != nil {
 			// ANY search error propagates — including a 404. A 404 on the search
 			// call does NOT prove the named resource is absent: it can equally mean
@@ -1058,7 +1107,7 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 		},
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, groupsPath, body, nil)
+	resp, err := c.doRequest(ctx, http.MethodPost, groupsPath, body, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1169,7 +1218,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		body[k] = v
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, campaignsPath, body, nil)
+	resp, err := c.doRequest(ctx, http.MethodPost, campaignsPath, body, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1245,7 +1294,7 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 		"adContext":      map[string]any{"dscAdAccount": accountURN(accountID)},
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "posts", body, nil)
+	resp, err := c.doRequest(ctx, http.MethodPost, "posts", body, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1298,7 +1347,7 @@ func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shar
 		body["name"] = adName
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, fmt.Sprintf("adAccounts/%s/creatives", accountID), body, nil)
+	resp, err := c.doRequest(ctx, http.MethodPost, fmt.Sprintf("adAccounts/%s/creatives", accountID), body, nil, nil)
 	if err != nil {
 		return "", err
 	}

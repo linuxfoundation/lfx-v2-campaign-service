@@ -417,3 +417,62 @@ func TestPartialOrphanStatusValues(t *testing.T) {
 		t.Errorf("campaignStatusUnconfirmed = %q; the service partialOrphanStatuses map expects %q — update both in lockstep", campaignStatusUnconfirmed, "unconfirmed")
 	}
 }
+
+// TestLinkedIn_ToggleStatus_PartialUpdate verifies the dispatcher resolves creds and issues
+// the RestLi PARTIAL_UPDATE to set the campaign status.
+func TestLinkedIn_ToggleStatus_PartialUpdate(t *testing.T) {
+	type req struct{ method, path, restli, status string }
+	gotCh := make(chan req, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Patch struct {
+				Set struct {
+					Status string `json:"status"`
+				} `json:"$set"`
+			} `json:"patch"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+		gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), body.Patch.Set.Status}
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, "555", model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	got := <-gotCh
+	if got.method != http.MethodPost || got.path != "/adAccounts/123456789/adCampaigns/555" {
+		t.Errorf("request = %s %s, want POST /adAccounts/123456789/adCampaigns/555", got.method, got.path)
+	}
+	if got.restli != "PARTIAL_UPDATE" {
+		t.Errorf("X-Restli-Method = %q, want PARTIAL_UPDATE", got.restli)
+	}
+	if got.status != "PAUSED" {
+		t.Errorf("status = %q, want PAUSED", got.status)
+	}
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, "555", "RUNNING"); err == nil {
+		t.Error("expected an error for an unsupported run status")
+	}
+}
+
+func TestLinkedIn_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, "555", model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx toggle")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
