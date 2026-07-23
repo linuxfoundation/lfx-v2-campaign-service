@@ -1593,8 +1593,8 @@ const (
 // A PATCH is idempotent (setting PAUSED on an already-paused campaign is a no-op), so a
 // 429 IS retried by request(). Both ids are interpolated into the path, so the account id
 // is validated with the same accountIDRe guard the create path uses and the campaign id is
-// validated non-empty and free of '/' to avoid path traversal. status must be one of the
-// two constants above.
+// validated with the letters/digits/underscores guard (rejecting '/', '?', '#' and any
+// other path/query-altering character). status must be one of the two constants above.
 func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
 	accountID := strings.TrimSpace(c.account.AccountID)
 	campaignID = strings.TrimSpace(campaignID)
@@ -1607,8 +1607,12 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	if campaignID == "" {
 		return fmt.Errorf("reddit: campaign id is required")
 	}
-	if strings.ContainsRune(campaignID, '/') {
-		return fmt.Errorf("reddit: campaign id must not contain '/'")
+	// Validate with the SAME letters/digits/underscores guard as the account id (Reddit ids
+	// look like "t3_xxxx"). This categorically rejects any path-altering character — '/', but
+	// also '?' and '#', which request() would otherwise treat as a query/fragment separator
+	// and use to truncate or rewrite the path rather than escape.
+	if !accountIDRe.MatchString(campaignID) {
+		return fmt.Errorf("invalid reddit campaign ID %q: must contain only letters, digits, and underscores", campaignID)
 	}
 	if status != StatusActive && status != StatusPaused {
 		return fmt.Errorf("reddit: status must be %q or %q, got %q", StatusActive, StatusPaused, status)

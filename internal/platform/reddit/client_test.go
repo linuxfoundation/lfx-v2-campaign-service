@@ -3842,6 +3842,8 @@ func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
 		"empty campaign id": {"", StatusPaused},
 		"bad status":        {"t3_camp", "RUNNING"},
 		"slash in id":       {"t3/../x", StatusActive},
+		"question in id":    {"t3_c?a=b", StatusPaused},
+		"hash in id":        {"t3_c#x", StatusActive},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

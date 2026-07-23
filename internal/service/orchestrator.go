@@ -158,9 +158,16 @@ type StatusToggler interface {
 	ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error
 }
 
-// ErrToggleUnsupported is returned when a campaign's platform has no status-toggle
-// capability wired yet.
-var ErrToggleUnsupported = errors.New("status toggle is not supported for this platform")
+// Status-toggle classification sentinels. These distinguish a client/state error (the
+// toggle never reached the ad platform) from a real platform-call failure, so the service
+// can return an accurate status + message instead of blaming the platform for everything.
+var (
+	// ErrToggleUnsupported: the campaign's platform has no status-toggle capability wired.
+	ErrToggleUnsupported = errors.New("status toggle is not supported for this platform")
+	// ErrCampaignNotProvisioned: the campaign row has no upstream platform id yet (it may
+	// not have finished creating, or the create was ambiguous/partial). Nothing to toggle.
+	ErrCampaignNotProvisioned = errors.New("campaign has no platform campaign id (it may not have finished creating)")
+)
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
 // BEFORE any upstream (paid) create call — e.g. input validation or config
@@ -835,16 +842,22 @@ func aggregateStatus(results []platformResult) model.JobStatus {
 // (the service) updates the persisted row only after this returns nil. platformCampaignID
 // is the campaign's stored upstream id; status is model.CampaignRunActive/Paused.
 func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+	// Pre-platform guards return classifiable sentinels: these NEVER contact the ad
+	// platform, so the caller must NOT report them as a platform failure.
 	if strings.TrimSpace(platformCampaignID) == "" {
-		return fmt.Errorf("cannot toggle status: campaign has no platform campaign id (it may not have finished creating)")
+		return ErrCampaignNotProvisioned
 	}
 	d, ok := o.dispatchers[platform]
 	if !ok {
-		return fmt.Errorf("no dispatcher registered for platform %s", platform)
+		// No dispatcher registered is, from the caller's view, the same as "toggle not
+		// supported for this platform" — neither reaches the platform.
+		return fmt.Errorf("%w: no dispatcher registered for platform %s", ErrToggleUnsupported, platform)
 	}
 	toggler, ok := d.(StatusToggler)
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrToggleUnsupported, platform)
 	}
+	// Any error from here is from the platform call itself (or the dispatcher's own
+	// pre-flight cred resolution) — surfaced as a platform failure by the caller.
 	return toggler.ToggleStatus(ctx, projectID, platform, platformCampaignID, status)
 }

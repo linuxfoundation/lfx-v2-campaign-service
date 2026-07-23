@@ -778,3 +778,28 @@ func TestBriefService_ToggleCampaignStatus_StaleIfMatchSkipsPlatform(t *testing.
 		t.Error("a stale If-Match must fail BEFORE the platform is called")
 	}
 }
+
+func TestBriefService_ToggleCampaignStatus_NotProvisionedIs409(t *testing.T) {
+	// A campaign with no upstream platform id (still creating / ambiguous create) must be a
+	// 409 client error, NOT a 503 "platform rejected" — the platform is never called.
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "", Status: "pending", Version: 1,
+	}
+	tog := &stubToggler{}
+	s, camps := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409) for an unprovisioned campaign, got %T: %v", err, err)
+	}
+	if tog.gotID != "" {
+		t.Error("the platform must NOT be called for an unprovisioned campaign")
+	}
+	if camps.replaced != nil {
+		t.Error("the row must not be modified for an unprovisioned campaign")
+	}
+}

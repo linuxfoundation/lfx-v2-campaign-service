@@ -372,14 +372,31 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
 	// lie that the campaign is paused when the platform still has it running).
 	if terr := orch.ToggleCampaignStatus(ctx, p.ProjectID, existing.Platform, existing.PlatformCampaignID, p.Status); terr != nil {
-		if errors.Is(terr, ErrToggleUnsupported) {
+		switch {
+		case errors.Is(terr, ErrToggleUnsupported):
+			// The platform (or its dispatcher) doesn't support toggling — a client error,
+			// the platform was never called.
 			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
+		case errors.Is(terr, ErrCampaignNotProvisioned):
+			// The campaign has no upstream id yet (still creating / ambiguous create) — a
+			// client/state error, NOT a platform rejection. A retry now would fail the same
+			// way, so this is a conflict, not a 503.
+			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully created yet (no platform campaign id); wait for creation to finish before toggling its status"}
+		default:
+			// A real platform-call failure (or the dispatcher's cred resolution failing):
+			// the ad platform could not be updated. 503 with an accurate message.
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status could not be changed on the ad platform; the campaign was not modified"}
 		}
-		return nil, &briefs.ConnServiceUnavailableError{Code: "502", Message: "the ad platform rejected the status change; the campaign was not modified"}
 	}
 
+	// The platform change ALREADY committed. The DB row MUST catch up even if the request
+	// context is now cancelled (client disconnect / shutdown) — otherwise the platform is
+	// paused while the row still says active, a silent divergence with no compensating
+	// rollback (the ad platform is the source of truth here). Persist on a cancel-detached
+	// context so the write completes; the read/guard above already ran on the live ctx.
 	existing.Status = p.Status
-	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version)
+	persistCtx := context.WithoutCancel(ctx)
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version)
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
