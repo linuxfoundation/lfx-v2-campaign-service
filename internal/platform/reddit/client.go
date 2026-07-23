@@ -1576,6 +1576,50 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}, nil
 }
 
+// Campaign run states for UpdateCampaignStatus. Reddit's Campaign object uses a
+// `configured_status` field (the advertiser-set state) distinct from the read-only
+// `effective_status` (which also reflects review/billing). Toggling ACTIVE↔PAUSED sets
+// configured_status; the same values the create path already sends ("PAUSED").
+const (
+	StatusActive = "ACTIVE"
+	StatusPaused = "PAUSED"
+)
+
+// UpdateCampaignStatus sets an existing campaign's configured_status to ACTIVE or PAUSED
+// via PATCH /ad_accounts/{accountID}/campaigns/{campaignID} (the same envelope shape the
+// create path uses: {"data": {"configured_status": ...}}). It is the platform side of the
+// campaign status toggle — the DB row is updated by the service only AFTER this confirms.
+//
+// A PATCH is idempotent (setting PAUSED on an already-paused campaign is a no-op), so a
+// 429 IS retried by request(). Both ids are interpolated into the path, so the account id
+// is validated with the same accountIDRe guard the create path uses and the campaign id is
+// validated non-empty and free of '/' to avoid path traversal. status must be one of the
+// two constants above.
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	accountID := strings.TrimSpace(c.account.AccountID)
+	campaignID = strings.TrimSpace(campaignID)
+	if accountID == "" {
+		return fmt.Errorf("reddit: account id is required")
+	}
+	if !accountIDRe.MatchString(accountID) {
+		return fmt.Errorf("invalid reddit account ID %q: must contain only letters, digits, and underscores", accountID)
+	}
+	if campaignID == "" {
+		return fmt.Errorf("reddit: campaign id is required")
+	}
+	if strings.ContainsRune(campaignID, '/') {
+		return fmt.Errorf("reddit: campaign id must not contain '/'")
+	}
+	if status != StatusActive && status != StatusPaused {
+		return fmt.Errorf("reddit: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
+	}
+	body := map[string]any{"data": map[string]any{"configured_status": status}}
+	if _, err := c.request(ctx, http.MethodPatch, "/ad_accounts/"+accountID+"/campaigns/"+campaignID, body); err != nil {
+		return fmt.Errorf("reddit: update campaign %s status to %s: %w", campaignID, status, err)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Helpers (mirror the TS pure functions)
 // ---------------------------------------------------------------------------

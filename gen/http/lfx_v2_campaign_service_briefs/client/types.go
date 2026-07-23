@@ -38,6 +38,14 @@ type UpdateCampaignRequestBody struct {
 	Campaign *CampaignUpdateInputRequestBody `form:"campaign" json:"campaign" xml:"campaign"`
 }
 
+// ToggleCampaignStatusRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP request body.
+type ToggleCampaignStatusRequestBody struct {
+	// Desired run state
+	Status string `form:"status" json:"status" xml:"status"`
+}
+
 // CreateBriefResponseBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "create-brief" endpoint HTTP response body.
 type CreateBriefResponseBody struct {
@@ -195,6 +203,28 @@ type GetCampaignResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body.
 type UpdateCampaignResponseBody struct {
+	// Campaign UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Parent brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Channel
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// ID returned by the ad platform
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Campaign name
+	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
+	// Campaign status
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Optimistic-concurrency version
+	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+}
+
+// ToggleCampaignStatusResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body.
+type ToggleCampaignStatusResponseBody struct {
 	// Campaign UUID
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// Owning project
@@ -686,6 +716,76 @@ type UpdateCampaignPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ToggleCampaignStatusBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "BadRequest" error.
+type ToggleCampaignStatusBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleCampaignStatusConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "Conflict" error.
+type ToggleCampaignStatusConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleCampaignStatusServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type ToggleCampaignStatusServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleCampaignStatusInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "InternalServerError" error.
+type ToggleCampaignStatusInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleCampaignStatusNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "NotFound" error.
+type ToggleCampaignStatusNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleCampaignStatusPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "PreconditionFailed" error.
+type ToggleCampaignStatusPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleCampaignStatusPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
+// HTTP response body for the "PreconditionRequired" error.
+type ToggleCampaignStatusPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetJobBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
 // body for the "BadRequest" error.
@@ -829,6 +929,16 @@ func NewUpdateCampaignRequestBody(p *lfxv2campaignservicebriefs.UpdateCampaignPa
 	body := &UpdateCampaignRequestBody{}
 	if p.Campaign != nil {
 		body.Campaign = marshalLfxv2campaignservicebriefsCampaignUpdateInputToCampaignUpdateInputRequestBody(p.Campaign)
+	}
+	return body
+}
+
+// NewToggleCampaignStatusRequestBody builds the HTTP request body from the
+// payload of the "toggle-campaign-status" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewToggleCampaignStatusRequestBody(p *lfxv2campaignservicebriefs.ToggleCampaignStatusPayload) *ToggleCampaignStatusRequestBody {
+	body := &ToggleCampaignStatusRequestBody{
+		Status: p.Status,
 	}
 	return body
 }
@@ -1501,6 +1611,105 @@ func NewUpdateCampaignPreconditionRequired(body *UpdateCampaignPreconditionRequi
 	return v
 }
 
+// NewToggleCampaignStatusCampaignOK builds a "lfx-v2-campaign-service-briefs"
+// service "toggle-campaign-status" endpoint result from a HTTP "OK" response.
+func NewToggleCampaignStatusCampaignOK(body *ToggleCampaignStatusResponseBody, etag *string) *lfxv2campaignservicebriefs.Campaign {
+	v := &lfxv2campaignservicebriefs.Campaign{
+		ID:                 *body.ID,
+		ProjectID:          *body.ProjectID,
+		BriefID:            *body.BriefID,
+		Platform:           *body.Platform,
+		PlatformCampaignID: body.PlatformCampaignID,
+		CampaignName:       *body.CampaignName,
+		Status:             *body.Status,
+		Version:            *body.Version,
+	}
+	v.Etag = etag
+
+	return v
+}
+
+// NewToggleCampaignStatusBadRequest builds a lfx-v2-campaign-service-briefs
+// service toggle-campaign-status endpoint BadRequest error.
+func NewToggleCampaignStatusBadRequest(body *ToggleCampaignStatusBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleCampaignStatusConflict builds a lfx-v2-campaign-service-briefs
+// service toggle-campaign-status endpoint Conflict error.
+func NewToggleCampaignStatusConflict(body *ToggleCampaignStatusConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleCampaignStatusServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service toggle-campaign-status endpoint
+// ServiceUnavailable error.
+func NewToggleCampaignStatusServiceUnavailable(body *ToggleCampaignStatusServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleCampaignStatusInternalServerError builds a
+// lfx-v2-campaign-service-briefs service toggle-campaign-status endpoint
+// InternalServerError error.
+func NewToggleCampaignStatusInternalServerError(body *ToggleCampaignStatusInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleCampaignStatusNotFound builds a lfx-v2-campaign-service-briefs
+// service toggle-campaign-status endpoint NotFound error.
+func NewToggleCampaignStatusNotFound(body *ToggleCampaignStatusNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleCampaignStatusPreconditionFailed builds a
+// lfx-v2-campaign-service-briefs service toggle-campaign-status endpoint
+// PreconditionFailed error.
+func NewToggleCampaignStatusPreconditionFailed(body *ToggleCampaignStatusPreconditionFailedResponseBody) *lfxv2campaignservicebriefs.PreconditionFailedError {
+	v := &lfxv2campaignservicebriefs.PreconditionFailedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleCampaignStatusPreconditionRequired builds a
+// lfx-v2-campaign-service-briefs service toggle-campaign-status endpoint
+// PreconditionRequired error.
+func NewToggleCampaignStatusPreconditionRequired(body *ToggleCampaignStatusPreconditionRequiredResponseBody) *lfxv2campaignservicebriefs.PreconditionRequiredError {
+	v := &lfxv2campaignservicebriefs.PreconditionRequiredError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetJobJobPollResponseOK builds a "lfx-v2-campaign-service-briefs" service
 // "get-job" endpoint result from a HTTP "OK" response.
 func NewGetJobJobPollResponseOK(body *GetJobResponseBody) *lfxv2campaignservicebriefs.JobPollResponse {
@@ -1764,6 +1973,33 @@ func ValidateGetCampaignResponseBody(body *GetCampaignResponseBody) (err error) 
 // ValidateUpdateCampaignResponseBody runs the validations defined on
 // Update-CampaignResponseBody
 func ValidateUpdateCampaignResponseBody(body *UpdateCampaignResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.CampaignName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_name", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Version == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusResponseBody runs the validations defined on
+// Toggle-Campaign-StatusResponseBody
+func ValidateToggleCampaignStatusResponseBody(body *ToggleCampaignStatusResponseBody) (err error) {
 	if body.ID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
@@ -2355,6 +2591,94 @@ func ValidateUpdateCampaignPreconditionFailedResponseBody(body *UpdateCampaignPr
 // ValidateUpdateCampaignPreconditionRequiredResponseBody runs the validations
 // defined on update-campaign_PreconditionRequired_response_body
 func ValidateUpdateCampaignPreconditionRequiredResponseBody(body *UpdateCampaignPreconditionRequiredResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusBadRequestResponseBody runs the validations
+// defined on toggle-campaign-status_BadRequest_response_body
+func ValidateToggleCampaignStatusBadRequestResponseBody(body *ToggleCampaignStatusBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusConflictResponseBody runs the validations
+// defined on toggle-campaign-status_Conflict_response_body
+func ValidateToggleCampaignStatusConflictResponseBody(body *ToggleCampaignStatusConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusServiceUnavailableResponseBody runs the
+// validations defined on
+// toggle-campaign-status_ServiceUnavailable_response_body
+func ValidateToggleCampaignStatusServiceUnavailableResponseBody(body *ToggleCampaignStatusServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusInternalServerErrorResponseBody runs the
+// validations defined on
+// toggle-campaign-status_InternalServerError_response_body
+func ValidateToggleCampaignStatusInternalServerErrorResponseBody(body *ToggleCampaignStatusInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusNotFoundResponseBody runs the validations
+// defined on toggle-campaign-status_NotFound_response_body
+func ValidateToggleCampaignStatusNotFoundResponseBody(body *ToggleCampaignStatusNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusPreconditionFailedResponseBody runs the
+// validations defined on
+// toggle-campaign-status_PreconditionFailed_response_body
+func ValidateToggleCampaignStatusPreconditionFailedResponseBody(body *ToggleCampaignStatusPreconditionFailedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleCampaignStatusPreconditionRequiredResponseBody runs the
+// validations defined on
+// toggle-campaign-status_PreconditionRequired_response_body
+func ValidateToggleCampaignStatusPreconditionRequiredResponseBody(body *ToggleCampaignStatusPreconditionRequiredResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
