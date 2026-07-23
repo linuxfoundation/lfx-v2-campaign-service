@@ -778,3 +778,44 @@ func TestCreateCampaign_AdGroupLookupUnparseableBodyIsUnconfirmed(t *testing.T) 
 		t.Errorf("an unparseable 2xx lookup must be UNCONFIRMED, got: %v", err)
 	}
 }
+
+// TestCreateCampaign_LookupServerErrorIsUnconfirmed proves the switch ORDERING in
+// createAdGroupAndAd: a 5xx on the ad-group or ad LOOKUP (not the create) is ambiguous —
+// createOutcomeAmbiguous catches the apiError FIRST, so it is UNCONFIRMED, not a definite
+// "creation failed". (Answers the reviewer concern that the context.Canceled case could
+// swallow a lookup 5xx: it cannot, because the ambiguous case is evaluated first.)
+func TestCreateCampaign_LookupServerErrorIsUnconfirmed(t *testing.T) {
+	cases := []struct{ name, failPath string }{
+		{"ad group lookup 5xx", "/AdGroups/QueryByCampaignId"},
+		{"ad lookup 5xx", "/Ads/QueryByAdGroupId"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+				p := r.URL.Path
+				switch {
+				case strings.HasSuffix(p, tc.failPath):
+					w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on the lookup
+				case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+					_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+				case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+					_, _ = io.WriteString(w, `{"AdGroups":[]}`)
+				case strings.HasSuffix(p, "/Campaigns"):
+					_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
+				case strings.HasSuffix(p, "/AdGroups"):
+					_, _ = io.WriteString(w, `{"AdGroupIds":[654],"PartialErrors":[]}`)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, p)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			})
+			_, err := c.CreateCampaign(context.Background(), validInput())
+			if err == nil {
+				t.Fatal("expected an error on a 5xx lookup")
+			}
+			if !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Errorf("a 5xx lookup must be UNCONFIRMED (ambiguous), got: %v", err)
+			}
+		})
+	}
+}
