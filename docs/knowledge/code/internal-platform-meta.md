@@ -116,7 +116,9 @@ truncating). Ordering is STATUS-DEPENDENT (Meta gates a child's serving by its p
 gated by the paused campaign, so not serving) and flips the campaign ACTIVE LAST, so a
 mid-cascade failure leaves NOTHING serving; PAUSE flips the campaign gate FIRST then the
 children. Ids are validated numeric up front (nothing applied on a bad id); activating with no
-ad set id is refused. A failure once an upstream change may have landed (the pause path, or an
+ad set id — or with an ad set that has ZERO ads (a degraded broker campaign, since Meta treats
+per-variant ad failures as non-fatal at creation) — is refused before the campaign flip, since
+such a tree cannot serve. A failure once an upstream change may have landed (the pause path, or an
 ambiguous 5xx/transport outcome) is a `partialCascadeError` (Unconfirmed); a DEFINITE (4xx)
 child failure on the activate path — before the campaign flip, nothing serving — is a clean
 failure. `StatusActive`/`StatusPaused` are the

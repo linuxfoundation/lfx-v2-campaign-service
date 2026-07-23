@@ -820,6 +820,14 @@ func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, 
 	if err != nil {
 		return classifyCascadeErr("ad discovery", err, mutatedBefore)
 	}
+	// On ACTIVATE (mutatedBefore==false, before the campaign flip), a tree with ZERO ads can
+	// never serve — Meta creation treats per-variant ad failures as non-fatal, so a degraded
+	// broker campaign can legitimately have an active ad set but no ads. Flipping the campaign
+	// ACTIVE here would report success for a campaign that cannot deliver. Refuse cleanly
+	// (nothing has been made servable yet). PAUSE with zero ads is fine (nothing to pause).
+	if !mutatedBefore && status == StatusActive && len(adIDs) == 0 {
+		return fmt.Errorf("meta: cannot activate ad set %s: it has no ads, so the campaign cannot serve", adSetID)
+	}
 	for _, adID := range adIDs {
 		if err := c.doRequest(ctx, http.MethodPost, "/"+adID, map[string]any{"status": status}, nil); err != nil {
 			return classifyCascadeErr("ad", err, mutatedBefore)
@@ -914,7 +922,10 @@ type partialCascadeError struct {
 }
 
 func (e *partialCascadeError) Error() string {
-	return "meta: campaign status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+	// Does NOT assert which entity changed: with the status-dependent ordering a partial
+	// cascade can occur before OR after the campaign flip. States only that the status change
+	// is partially applied / unconfirmed.
+	return "meta: status change partially applied (" + e.stage + " step failed; verify before retrying): " + e.err.Error()
 }
 func (e *partialCascadeError) Unwrap() error     { return e.err }
 func (e *partialCascadeError) Unconfirmed() bool { return true }

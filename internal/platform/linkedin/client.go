@@ -676,7 +676,11 @@ type partialCascadeError struct {
 }
 
 func (e *partialCascadeError) Error() string {
-	return "linkedin: campaign status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+	// Deliberately does NOT assert WHICH entity changed: with the status-dependent ordering a
+	// partial cascade can occur before OR after the campaign flip (e.g. a creative failure on
+	// the activate path happens before the campaign is touched). It states only that the
+	// status change is partially applied / unconfirmed, which is what a reconciler needs.
+	return "linkedin: status change partially applied (" + e.stage + " step failed; verify before retrying): " + e.err.Error()
 }
 func (e *partialCascadeError) Unwrap() error     { return e.err }
 func (e *partialCascadeError) Unconfirmed() bool { return true }
