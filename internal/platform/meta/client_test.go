@@ -3804,3 +3804,29 @@ func TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess(t *testing.T) {
 		t.Errorf("a 2xx status update with an oversized body must succeed (nothing to decode), got: %v", err)
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails verifies an unexpected paging
+// cursor (one that doesn't share the client base URL) fails the toggle rather than silently
+// truncating ad discovery — otherwise the service would persist ACTIVE while undiscovered ads
+// stay PAUSED.
+func TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			// A paging.next pointing at a DIFFERENT host — discovery can't safely continue.
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{"next":"https://other.example/next"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error when ad discovery cannot be completed")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("incomplete discovery after the campaign update must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
