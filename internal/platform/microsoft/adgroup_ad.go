@@ -77,6 +77,14 @@ const (
 	// pass and then be rejected at AddAds after the campaign/ad group already exist.
 	maxFinalURLRunes = 2048
 
+	// maxDisplayDomainRunes bounds the ad's DISPLAY domain, which Microsoft derives from the
+	// FinalUrls hostname. Microsoft caps the displayed URL (domain plus optional Path1/Path2)
+	// at 67 characters; the RSA build sets no Path1/Path2, so the whole budget is the hostname.
+	// A hostname longer than this passes the 2,048-char FinalUrls check but is rejected only at
+	// AddAds — after the campaign/ad group exist — so it is validated up front alongside the
+	// FinalUrls length to keep a bad host from orphaning a PAUSED campaign.
+	maxDisplayDomainRunes = 67
+
 	// Responsive Search Ad asset-count bounds (v13 "Add: Required"): 3-15 UNIQUE headlines
 	// and 2-4 UNIQUE descriptions. The composer emits counts inside these ranges; a shortfall
 	// or over-count is a clean up-front validation error, not a rejected paid create.
@@ -575,18 +583,30 @@ func adCopyLimit(s string, single, wide int) int {
 	return single
 }
 
+// hasWord reports whether s contains at least one letter or number — the Microsoft RSA
+// rule that every headline/description asset must carry an actual word (punctuation-only
+// content is rejected). Shared by checkAdCopyList (caller copy) and boundedUniqueCopy
+// (auto-composed copy) so both paths enforce the same rule.
+func hasWord(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsNumber(r)
+	})
+}
+
 // boundedUniqueCopy trims each candidate, truncates it to its WIDTH-AWARE limit (single or
-// wide), keeps only non-empty, case-insensitively-unique entries in order, caps the result
-// at maxCount, and — if fewer than minCount survive — pads with numbered "Learn More N"
-// placeholders so the required minimum is always met (the ad is PAUSED, so a placeholder is
-// a safe default).
+// wide), keeps only non-empty, word-bearing, case-insensitively-unique entries in order,
+// caps the result at maxCount, and — if fewer than minCount survive — pads with numbered
+// "Learn More N" placeholders so the required minimum is always met (the ad is PAUSED, so a
+// placeholder is a safe default). The word check mirrors checkAdCopyList so an auto-composed
+// asset (e.g. a sanitized EventName that is all punctuation) can't reach AddAds and orphan a
+// PAUSED campaign behind a Microsoft rejection.
 func boundedUniqueCopy(candidates []string, singleLimit, wideLimit, minCount, maxCount int) []string {
 	out := make([]string, 0, maxCount)
 	seen := make(map[string]struct{}, maxCount)
 	add := func(s string) bool {
 		s = strings.TrimSpace(s)
 		s = truncateRunes(s, adCopyLimit(s, singleLimit, wideLimit))
-		if s == "" {
+		if s == "" || !hasWord(s) {
 			return false
 		}
 		key := strings.ToLower(s)
@@ -662,7 +682,7 @@ func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLim
 		if strings.ContainsAny(raw, "\n\r") {
 			return fmt.Errorf("%s %d must not contain a newline", kind, i+1)
 		}
-		if !strings.ContainsFunc(s, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) {
+		if !hasWord(s) {
 			return fmt.Errorf("%s %d must contain at least one word", kind, i+1)
 		}
 		if limit := adCopyLimit(s, singleLimit, wideLimit); utf8.RuneCountInString(s) > limit {
