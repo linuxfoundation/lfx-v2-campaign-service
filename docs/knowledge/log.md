@@ -107,6 +107,68 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
+## 2026-07-23 (2)
+
+**Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
+CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
+would activate a campaign whose children stayed PAUSED — it would not serve. Added
+`reddit.UpdateCampaignAndChildrenStatus` (PATCHes campaign → ad group → ad, parent-first,
+skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
+`StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
+the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
+(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
+## 2026-07-22
+
+**Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).
+`registerDispatchers` now wires `model.ProviderTwitterAds` →
+`dispatch.NewTwitterDispatcher`, so twitter campaigns dispatch upstream instead of
+recording "no dispatcher registered". The adapter resolves the OAuth1 4-tuple connection,
+maps the brief + `twitterConfig` (opaque-JSON: `budgetAmount` in ACCOUNT currency, flight
+dates, optional tweet id / destination URL) onto the client's `CreateCampaign`, and maps
+the result back to a `model.Campaign` — marking `created_degraded` when the promoted tweet
+is unconfirmed/absent or the campaign/line-item was reused. Client changes landing with
+it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
+classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
+with `redactURLForError` so a persisted validation error can't leak a secret.
+## 2026-07-23 (2)
+
+**Update** — Campaign status toggle extended to Meta (LFXV2-2807, follow-up to the Reddit
+toggle #46). `meta.UpdateCampaignStatus` (POST /{campaignID} {"status": ACTIVE|PAUSED} — Meta
+updates a node by POSTing to its id) + `meta.IsOutcomeUnconfirmed` (exposes the shared
+ambiguity classifier) + `MetaDispatcher.ToggleStatus` (resolves creds, wraps an UNCONFIRMED
+outcome in unconfirmedToggleError). Reddit + Meta now implement StatusToggler. X/Twitter's
+toggle is deferred until the TwitterDispatcher lands on main (it's in the unmerged #39) —
+tracked in LFXV2-2807.
+
+## 2026-07-23
+
+**Update** — Campaign status toggle (LFXV2-2806, PR #46). New
+`PATCH /projects/{p}/briefs/{b}/campaigns/{id}/status` {active|paused} that pauses/resumes a
+campaign ON THE AD PLATFORM then persists (previously `update-campaign` only wrote the DB row,
+so a "paused" status didn't actually pause the campaign). Reddit first. Adds
+`reddit.UpdateCampaignStatus` (PATCH `configured_status`), an optional `StatusToggler`
+dispatcher interface + `RedditDispatcher.ToggleStatus` (via a shared `resolveRedditClient`),
+`Orchestrator.ToggleCampaignStatus` (type-asserts the toggler), and
+`BriefService.ToggleCampaignStatus` (platform-first, DB-after-confirm on a WithoutCancel
+context, If-Match guarded, classified errors: 409 not-provisioned / 400 unsupported / 503
+platform-failure). `model.CampaignRunActive/Paused` constants. Meta + X/Twitter toggles are a
+follow-up. Review-hardened per dealako-sim + cursor + copilot (error classification, cancel
+safety, `?`/`#` path-guard, dedup).
+
+## 2026-07-22
+
+**Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).
+`registerDispatchers` now wires `model.ProviderTwitterAds` →
+`dispatch.NewTwitterDispatcher`, so twitter campaigns dispatch upstream instead of
+recording "no dispatcher registered". The adapter resolves the OAuth1 4-tuple connection,
+maps the brief + `twitterConfig` (opaque-JSON: `budgetAmount` in ACCOUNT currency, flight
+dates, optional tweet id / destination URL) onto the client's `CreateCampaign`, and maps
+the result back to a `model.Campaign` — marking `created_degraded` when the promoted tweet
+is unconfirmed/absent or the campaign/line-item was reused. Client changes landing with
+it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
+classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
+with `redactURLForError` so a persisted validation error can't leak a secret.
+
 ## 2026-07-21
 
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review

@@ -3681,3 +3681,49 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateCampaignStatus_PostsStatusToNode(t *testing.T) {
+	var gotMethod, gotPath, gotStatus string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		body := decodeBody(t, r)
+		if s, ok := body["status"].(string); ok {
+			gotStatus = s
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+
+	if err := c.UpdateCampaignStatus(context.Background(), "23847290", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignStatus: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/23847290" {
+		t.Errorf("request = %s %s, want POST /23847290", gotMethod, gotPath)
+	}
+	if gotStatus != StatusPaused {
+		t.Errorf("status = %q, want %q", gotStatus, StatusPaused)
+	}
+}
+
+func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen for invalid input: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	cases := map[string]struct{ id, status string }{
+		"empty id":    {"", StatusPaused},
+		"non-numeric": {"camp_x", StatusActive},
+		"bad status":  {"123", "RUNNING"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := c.UpdateCampaignStatus(context.Background(), tc.id, tc.status); err == nil {
+				t.Errorf("%s: expected a validation error", name)
+			}
+		})
+	}
+}
