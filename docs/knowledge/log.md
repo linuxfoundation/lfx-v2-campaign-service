@@ -22,7 +22,8 @@ the persisted ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta s
 set id in CampaignResult but not the individual ad ids). Activate-without-ad-set-id is refused
 before any call; a child failure after the campaign POST is a `partialCascadeError`
 (Unconfirmed → 503-verify). `MetaDispatcher.ToggleStatus` reads the ad set id from the persisted
-`*model.Campaign`. LinkedIn stays a single-node PARTIAL_UPDATE.
+`*model.Campaign`. (LinkedIn was single-node at this point; a later entry above adds its
+creative cascade, so all three platforms now cascade.)
 
 ## 2026-07-23 (4)
 
@@ -33,7 +34,8 @@ would activate a campaign whose children stayed PAUSED — it would not serve. A
 skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
 `StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
 the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
-(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context. A
+(`adGroupId`/`adId`); at this point Meta/LinkedIn were single-node and ignored the extra
+context — later entries above extend the cascade to them too, so all three now use it. A
 compile-time guard (`status_toggler_guard_test.go`) now asserts all three dispatchers satisfy
 `service.StatusToggler` so a future signature drift fails the build instead of silently
 disabling the toggle.
