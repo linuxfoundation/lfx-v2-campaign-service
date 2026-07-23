@@ -372,6 +372,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
 	// lie that the campaign is paused when the platform still has it running).
 	if terr := orch.ToggleCampaignStatus(ctx, p.ProjectID, existing.Platform, existing.PlatformCampaignID, p.Status); terr != nil {
+		var unconfirmed interface{ Unconfirmed() bool }
 		switch {
 		case errors.Is(terr, ErrToggleUnsupported):
 			// The platform (or its dispatcher) doesn't support toggling — a client error,
@@ -382,9 +383,20 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// client/state error, NOT a platform rejection. A retry now would fail the same
 			// way, so this is a conflict, not a 503.
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully created yet (no platform campaign id); wait for creation to finish before toggling its status"}
+		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
+			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
+			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT
+			// blindly write the DB (it might not be) — surface it as UNCONFIRMED so the
+			// caller verifies before retrying (mirrors the creation path's contract), and log
+			// it as a reconcile signal. The row is left at its prior status.
+			slog.WarnContext(ctx, "campaign status toggle outcome is UNCONFIRMED (the platform may or may not reflect the change)",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+				"requested_status", p.Status, "error", terr)
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
 		default:
-			// A real platform-call failure (or the dispatcher's cred resolution failing):
-			// the ad platform could not be updated. 503 with an accurate message.
+			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution
+			// failing: the ad platform was not updated. 503 with an accurate message.
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status could not be changed on the ad platform; the campaign was not modified"}
 		}
 	}
@@ -393,11 +405,21 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// context is now cancelled (client disconnect / shutdown) — otherwise the platform is
 	// paused while the row still says active, a silent divergence with no compensating
 	// rollback (the ad platform is the source of truth here). Persist on a cancel-detached
-	// context so the write completes; the read/guard above already ran on the live ctx.
+	// context so the write completes; the read/guard above already ran on the live ctx. The
+	// detached write is BOUNDED by persistResultTimeout (mirrors the orchestrator's
+	// post-provider persists) so a stuck DB can't hang shutdown grace indefinitely.
 	existing.Status = p.Status
-	persistCtx := context.WithoutCancel(ctx)
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
+	defer cancel()
 	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version)
 	if uerr != nil {
+		// The platform WAS changed but the row write failed → platform and DB now diverge.
+		// Log it loudly as an operational reconcile signal (the run state on the platform is
+		// authoritative; a monitor/human reconciles the stale row) before surfacing the error.
+		slog.ErrorContext(ctx, "campaign status changed on the platform but the DB row write failed (platform/DB diverged)",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+			"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+			"new_status", p.Status, "error", uerr)
 		return nil, mapBriefErr(uerr)
 	}
 	return campaignResult(updated), nil

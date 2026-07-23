@@ -803,3 +803,36 @@ func TestBriefService_ToggleCampaignStatus_NotProvisionedIs409(t *testing.T) {
 		t.Error("the row must not be modified for an unprovisioned campaign")
 	}
 }
+
+// unconfirmedErr implements the Unconfirmed() behavioral interface the toggle handler
+// checks (mirrors the dispatch layer's unconfirmedToggleError).
+type unconfirmedErr struct{}
+
+func (unconfirmedErr) Error() string     { return "unconfirmed" }
+func (unconfirmedErr) Unconfirmed() bool { return true }
+
+func TestBriefService_ToggleCampaignStatus_UnconfirmedIsSurfaced(t *testing.T) {
+	// An UNCONFIRMED platform outcome (the PATCH may have applied) must be reported as
+	// unconfirmed (verify-before-retry), NOT as a flat "not modified", and must NOT write
+	// the DB row (it might already be right, or not).
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 1,
+	}
+	tog := &stubToggler{err: unconfirmedErr{}}
+	s, camps := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	su, ok := err.(*briefs.ConnServiceUnavailableError)
+	if !ok {
+		t.Fatalf("expected a 503 ConnServiceUnavailableError, got %T: %v", err, err)
+	}
+	if !strings.Contains(su.Message, "unconfirmed") {
+		t.Errorf("message = %q, want it to say the change is unconfirmed", su.Message)
+	}
+	if camps.replaced != nil {
+		t.Error("the row must NOT be written on an unconfirmed outcome")
+	}
+}
