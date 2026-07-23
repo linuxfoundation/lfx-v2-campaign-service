@@ -73,9 +73,10 @@ const (
 	minAdDescriptions = 2
 	maxAdDescriptions = 4
 
-	// adTypeResponsiveSearch is the ad type this client creates. It is NOT sent on the ad
-	// create (Ad.Type is Add:Read-only there), but IS sent as the required AdTypes filter on
-	// the Ads/QueryByAdGroupId idempotency lookup (that operation requires AdTypes).
+	// adTypeResponsiveSearch is the ad type this client creates. It is sent BOTH as the
+	// polymorphic "Type" discriminator in the AddAds body (so the service deserializes the
+	// entry as a ResponsiveSearchAd — "Add:Read-only" bars CHANGING the type, not the wire
+	// discriminator) AND as the required AdTypes filter on the Ads/QueryByAdGroupId lookup.
 	adTypeResponsiveSearch = "ResponsiveSearch"
 )
 
@@ -140,8 +141,15 @@ type msAssetLink struct {
 // support adding TextAd/ExpandedTextAd (Add: Not supported → CampaignServiceAdTypeInvalid);
 // the responsive search ad is the currently-addable Search text ad. Add:Required fields
 // are Headlines (3-15), Descriptions (2-4), and FinalUrls; Status is set PAUSED (its Add
-// default is Active). Ad.Type is Add:Read-only, so it is intentionally NOT sent.
+// default is Active).
+//
+// Type IS sent: the AddAds body is POLYMORPHIC (an array of the base Ad), and the REST JSON
+// uses a "Type" property as the DISCRIMINATOR that selects the derived subtype to
+// deserialize into (the AddAds REST example shows e.g. "Type":"AppInstall"). "Add:Read-only"
+// on Ad.Type means the value can't be CHANGED, not that the wire discriminator is omitted —
+// without it the service can't tell this is a ResponsiveSearchAd and rejects the create.
 type msResponsiveSearchAd struct {
+	Type         string        `json:"Type"`
 	Headlines    []msAssetLink `json:"Headlines"`
 	Descriptions []msAssetLink `json:"Descriptions"`
 	FinalUrls    []string      `json:"FinalUrls"`
@@ -348,6 +356,7 @@ func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID s
 	req := createAdsRequest{
 		AdGroupId: json.Number(adGroupID),
 		Ads: []msResponsiveSearchAd{{
+			Type:         adTypeResponsiveSearch,
 			Headlines:    textAssetLinks(headlines),
 			Descriptions: textAssetLinks(descriptions),
 			FinalUrls:    []string{finalURL},
@@ -565,24 +574,38 @@ func pfx(prefix, s string) string {
 
 // validateAdCopy checks caller-supplied headline/description entries against the responsive
 // search ad limits BEFORE any create: each non-empty entry must be within its rune limit,
-// and the caller must not exceed the maximum count. Empty/short lists are fine — composeAdCopy
-// pads them to the minimum. A violation is a clean up-front (nil, err), not a paid rejection.
+// the caller must not exceed the maximum count, and the caller must not supply a
+// case-insensitive DUPLICATE (Microsoft requires unique assets, and the contract promises a
+// caller duplicate is rejected rather than silently dropped). Empty/short lists are fine —
+// composeAdCopy pads them to the minimum. A violation is a clean up-front (nil, err).
 func validateAdCopy(in CampaignInput) error {
-	if n := len(in.Headlines); n > maxAdHeadlines {
-		return fmt.Errorf("at most %d headlines are allowed, got %d", maxAdHeadlines, n)
+	if err := checkAdCopyList("headline", in.Headlines, maxAdHeadlines, maxAdHeadlineRunes); err != nil {
+		return err
 	}
-	if n := len(in.Descriptions); n > maxAdDescriptions {
-		return fmt.Errorf("at most %d descriptions are allowed, got %d", maxAdDescriptions, n)
+	return checkAdCopyList("description", in.Descriptions, maxAdDescriptions, maxAdDescriptionRunes)
+}
+
+// checkAdCopyList validates one caller list (count cap, per-entry rune cap, case-insensitive
+// uniqueness among non-empty entries). Empty entries are ignored here (composeAdCopy skips
+// them); the uniqueness/length checks apply to the trimmed value the ad will actually carry.
+func checkAdCopyList(kind string, items []string, maxCount, maxRunes int) error {
+	if n := len(items); n > maxCount {
+		return fmt.Errorf("at most %d %ss are allowed, got %d", maxCount, kind, n)
 	}
-	for i, h := range in.Headlines {
-		if utf8.RuneCountInString(strings.TrimSpace(h)) > maxAdHeadlineRunes {
-			return fmt.Errorf("headline %d exceeds %d characters", i+1, maxAdHeadlineRunes)
+	seen := make(map[string]struct{}, len(items))
+	for i, raw := range items {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
 		}
-	}
-	for i, d := range in.Descriptions {
-		if utf8.RuneCountInString(strings.TrimSpace(d)) > maxAdDescriptionRunes {
-			return fmt.Errorf("description %d exceeds %d characters", i+1, maxAdDescriptionRunes)
+		if utf8.RuneCountInString(s) > maxRunes {
+			return fmt.Errorf("%s %d exceeds %d characters", kind, i+1, maxRunes)
 		}
+		key := strings.ToLower(s)
+		if _, dup := seen[key]; dup {
+			return fmt.Errorf("%s %d is a duplicate (case-insensitive): %q", kind, i+1, s)
+		}
+		seen[key] = struct{}{}
 	}
 	return nil
 }
