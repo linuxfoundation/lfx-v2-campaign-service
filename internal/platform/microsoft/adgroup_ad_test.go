@@ -751,3 +751,30 @@ func TestCheckAdCopyList_WhitespaceOnlyEntryRejected(t *testing.T) {
 		t.Errorf("an empty string entry must be skipped, not rejected: %v", err)
 	}
 }
+
+// TestCreateCampaign_AdGroupLookupUnparseableBodyIsUnconfirmed: a 2xx ad-group lookup whose
+// body fails to decode leaves it UNKNOWN whether the group exists, so it must be UNCONFIRMED
+// (verify before retry), not a definite "creation failed" that could invite a duplicate.
+func TestCreateCampaign_AdGroupLookupUnparseableBodyIsUnconfirmed(t *testing.T) {
+	adGroupPostReached := false
+	api := &campaignsAPI{
+		adGroupGetBody: `{"AdGroups": not-json`, // 2xx but unparseable
+	}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/AdGroups") {
+			adGroupPostReached = true
+		}
+		base(w, r)
+	})
+	_, err := c.CreateCampaign(context.Background(), validInput())
+	if err == nil {
+		t.Fatal("expected an error on an unparseable ad-group lookup body")
+	}
+	if adGroupPostReached {
+		t.Error("ad group create POST issued after an unparseable lookup (would risk a duplicate)")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an unparseable 2xx lookup must be UNCONFIRMED, got: %v", err)
+	}
+}

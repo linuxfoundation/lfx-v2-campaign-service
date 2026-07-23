@@ -406,7 +406,10 @@ func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string)
 	}
 	var resp queryAdGroupsResponse
 	if uErr := json.Unmarshal(body, &resp); uErr != nil {
-		return "", fmt.Errorf("decode AdGroups/QueryByCampaignId response: %w", uErr)
+		// A 2xx lookup whose body won't decode leaves it UNKNOWN whether a matching ad group
+		// exists, so a blind create could duplicate. Wrap errNoID so the caller classifies it
+		// UNCONFIRMED (verify before retry), not a definite "creation failed".
+		return "", fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", uErr, errNoID)
 	}
 	for _, g := range resp.AdGroups {
 		if !strings.EqualFold(g.Name, name) {
@@ -508,7 +511,10 @@ func (c *Client) findAdByFinalURL(ctx context.Context, adGroupID, finalURL strin
 	}
 	var resp queryAdsResponse
 	if uErr := json.Unmarshal(body, &resp); uErr != nil {
-		return "", fmt.Errorf("decode Ads/QueryByAdGroupId response: %w", uErr)
+		// A 2xx lookup whose body won't decode leaves it UNKNOWN whether a matching ad
+		// exists, so a blind create could duplicate. Wrap errNoID so the caller classifies it
+		// UNCONFIRMED (verify before retry), not a definite "creation failed".
+		return "", fmt.Errorf("decode Ads/QueryByAdGroupId response (%v): %w", uErr, errNoID)
 	}
 	for _, ad := range resp.Ads {
 		matchesDest := false
