@@ -415,12 +415,6 @@ const (
 	StatusPaused = "PAUSED"
 )
 
-// UpdateCampaignStatus sets an existing campaign's status to ACTIVE or PAUSED. LinkedIn's
-// Marketing API updates a campaign with a RestLi PARTIAL_UPDATE: POST
-// /adAccounts/{acct}/adCampaigns/{id} with header X-Restli-Method: PARTIAL_UPDATE and body
-// {"patch":{"$set":{"status": ...}}}. The account id is resolved+validated from the runtime
-// config (same as the create path); campaignID must be the numeric id (validated) so it can't
-// alter the request path.
 // validateToggleInput runs the shared status-toggle preflight — a missing/whitespace access
 // token (doRequest does not validate it and CreateCampaign's preflight is bypassed here), an
 // empty/non-numeric campaign id (so it can't alter the request path), and an unsupported
@@ -443,6 +437,12 @@ func (c *Client) validateToggleInput(campaignID, status string) (string, error) 
 	return campaignID, nil
 }
 
+// UpdateCampaignStatus sets an existing campaign's status to ACTIVE or PAUSED via LinkedIn's
+// RestLi PARTIAL_UPDATE: POST /adAccounts/{acct}/adCampaigns/{id} with header
+// X-Restli-Method: PARTIAL_UPDATE and body {"patch":{"$set":{"status": ...}}}. The account id
+// is resolved+validated from the runtime config; campaignID is validated numeric (via
+// validateToggleInput) so it can't alter the request path. This toggles the CAMPAIGN alone —
+// UpdateCampaignAndCreativesStatus is the full cascade used by the dispatcher.
 func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
 	campaignID, err := c.validateToggleInput(campaignID, status)
 	if err != nil {

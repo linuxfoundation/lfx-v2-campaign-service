@@ -1262,3 +1262,38 @@ func TestUpdateCampaignAndCreativesStatus_FinderSendsRequiredParams(t *testing.T
 		t.Errorf("finder query %q missing campaigns=List(...campaign 555...) filter", got.query)
 	}
 }
+
+// TestUpdateCampaignAndCreativesStatus_PauseUpdatesCampaignFirst proves the PAUSE-ordering
+// invariant: the campaign gate is flipped BEFORE creative discovery/updates, so delivery stops
+// immediately. A future reorder that paused creatives first would break this.
+func TestUpdateCampaignAndCreativesStatus_PauseUpdatesCampaignFirst(t *testing.T) {
+	orderCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.EscapedPath()
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives"):
+			orderCh <- "finder"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		case strings.Contains(p, "creatives/urn"):
+			orderCh <- "creative"
+		case strings.Contains(p, "adCampaigns/555"):
+			orderCh <- "campaign"
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus (pause): %v", err)
+	}
+	close(orderCh)
+	var seq []string
+	for s := range orderCh {
+		seq = append(seq, s)
+	}
+	if len(seq) == 0 || seq[0] != "campaign" {
+		t.Fatalf("campaign gate must be flipped FIRST on pause; sequence = %v", seq)
+	}
+}
