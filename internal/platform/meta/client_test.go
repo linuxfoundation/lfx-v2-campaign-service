@@ -3681,3 +3681,410 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateCampaignStatus_PostsStatusToNode(t *testing.T) {
+	// Capture the request over a channel (like bodyCapture) so the handler-goroutine writes
+	// happen-before the test-goroutine reads — race-safe under `go test -race`.
+	type req struct{ method, path, status string }
+	gotCh := make(chan req, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		status, _ := body["status"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+		gotCh <- req{r.Method, r.URL.Path, status}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+
+	if err := c.UpdateCampaignStatus(context.Background(), "23847290", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignStatus: %v", err)
+	}
+	got := <-gotCh
+	if got.method != http.MethodPost || got.path != "/23847290" {
+		t.Errorf("request = %s %s, want POST /23847290", got.method, got.path)
+	}
+	if got.status != StatusPaused {
+		t.Errorf("status = %q, want %q", got.status, StatusPaused)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_CascadesToTree verifies the campaign, its ad set, and
+// each discovered ad are all POSTed to the new status (Meta PAUSES all three at creation).
+func TestUpdateCampaignAndChildrenStatus_CascadesToTree(t *testing.T) {
+	type req struct{ method, path, status string }
+	gotCh := make(chan req, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			gotCh <- req{r.Method, r.URL.Path, ""}
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"},{"id":"222"}]}`)
+			return
+		}
+		body := decodeBody(t, r)
+		status, _ := body["status"].(string)
+		gotCh <- req{r.Method, r.URL.Path, status}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	close(gotCh)
+	posts := map[string]string{}
+	sawAdsGet := false
+	for r := range gotCh {
+		if r.method == http.MethodGet {
+			sawAdsGet = strings.HasSuffix(r.path, "/999/ads")
+			continue
+		}
+		posts[r.path] = r.status
+	}
+	for _, p := range []string{"/23847290", "/999", "/111", "/222"} {
+		if posts[p] != StatusActive {
+			t.Errorf("POST %s status = %q, want ACTIVE", p, posts[p])
+		}
+	}
+	if !sawAdsGet {
+		t.Error("did not GET /999/ads to discover the ads")
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateNoAdSetRejected verifies activating with no ad
+// set id is refused before any request (the tree can't be made servable).
+func TestUpdateCampaignAndChildrenStatus_ActivateNoAdSetRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "", StatusActive); err == nil {
+		t.Fatal("expected an error activating a campaign with no ad set id")
+	}
+}
+
+func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen for invalid input: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	cases := map[string]struct{ id, status string }{
+		"empty id":    {"", StatusPaused},
+		"non-numeric": {"camp_x", StatusActive},
+		"bad status":  {"123", "RUNNING"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := c.UpdateCampaignStatus(context.Background(), tc.id, tc.status); err == nil {
+				t.Errorf("%s: expected a validation error", name)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess verifies a status update (which decodes
+// no response) treats a 2xx with an unreadable/oversized body as SUCCESS, not an ambiguous
+// transportError — otherwise the toggle would be reported unconfirmed even though Meta
+// confirmed it.
+func TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Write far more than the response cap; UpdateCampaignStatus decodes no body.
+		_, _ = w.Write([]byte(`{"x":"` + strings.Repeat("A", maxResponseBody+100) + `"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "23847290", StatusPaused); err != nil {
+		t.Errorf("a 2xx status update with an oversized body must succeed (nothing to decode), got: %v", err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails verifies a `next` link present
+// with no advanceable `after` cursor fails the toggle rather than silently truncating ad
+// discovery — otherwise the service would persist ACTIVE while undiscovered ads stay PAUSED.
+func TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			// A `next` link but NO cursors.after → cannot advance safely → incomplete.
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{"next":"https://graph.example/next","cursors":{}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	// PAUSE: the campaign gate is flipped before ad discovery, so an incomplete discovery is a
+	// partial application (Unconfirmed). Either way, truncation must FAIL, not silently succeed.
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when ad discovery cannot be completed")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("incomplete discovery after the campaign was paused must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestListAdIDs_PagesViaCursorNotRawNextURL verifies paging advances via the opaque `after`
+// cursor (built into our own path) and never reuses Meta's raw paging.next URL — so a
+// credential in paging.next can't leak into the request path or a logged error. It also
+// asserts a second page's ads are collected.
+func TestUpdateCampaignAndChildrenStatus_PagesViaCursor(t *testing.T) {
+	// Capture the ad-discovery queries over a buffered channel so the handler-goroutine writes
+	// happen-before the test-goroutine reads (race-safe under `go test -race`).
+	queryCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			queryCh <- r.URL.RawQuery
+			if r.URL.Query().Get("after") == "" {
+				// Page 1: one ad + a next link whose URL carries a secret; cursor "CUR2".
+				_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{"next":"https://graph.example/x?access_token=SECRET&after=CUR2","cursors":{"after":"CUR2"}}}`)
+			} else {
+				// Page 2 (after=CUR2): one more ad, no next.
+				_, _ = io.WriteString(w, `{"data":[{"id":"222"}],"paging":{"cursors":{"after":"CUR2"}}}`)
+			}
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	close(queryCh)
+	var adGetPaths []string
+	for q := range queryCh {
+		adGetPaths = append(adGetPaths, q)
+	}
+	if len(adGetPaths) != 2 {
+		t.Fatalf("expected 2 ad-discovery GETs (paged), got %d: %v", len(adGetPaths), adGetPaths)
+	}
+	// The second page's query must carry after=CUR2 and NOT the raw next URL's secret.
+	if !strings.Contains(adGetPaths[1], "after=CUR2") {
+		t.Errorf("page 2 query = %q, want it built from the after cursor", adGetPaths[1])
+	}
+	for _, q := range adGetPaths {
+		if strings.Contains(q, "SECRET") || strings.Contains(q, "access_token") {
+			t.Errorf("ad-discovery query leaked a credential from paging.next: %q", q)
+		}
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_UnusableAdIDFails verifies a discovered ad with a
+// missing/non-numeric id FAILS the toggle (fail-closed) rather than being silently skipped
+// (which would persist ACTIVE while that ad stays PAUSED).
+func TestUpdateCampaignAndChildrenStatus_UnusableAdIDFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			_, _ = io.WriteString(w, `{"data":[{"id":"not-numeric"}],"paging":{}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	// PAUSE so the campaign gate mutates before ad discovery → a no-usable-id failure is a
+	// partial application (Unconfirmed). Either way it must FAIL, not skip the ad silently.
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when a discovered ad has no usable id")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a no-usable-id ad after the campaign was paused must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildrenBeforeCampaign verifies that on
+// ACTIVATE the ad set + ads are updated BEFORE the campaign is flipped ACTIVE (children stay
+// gated by the paused campaign until the final flip, so a partial failure serves nothing).
+func TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildrenBeforeCampaign(t *testing.T) {
+	orderCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			orderCh <- "ads-get"
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{}}`)
+			return
+		}
+		switch r.URL.Path {
+		case "/23847290":
+			orderCh <- "campaign"
+		case "/999":
+			orderCh <- "adset"
+		case "/111":
+			orderCh <- "ad"
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	close(orderCh)
+	var seq []string
+	for s := range orderCh {
+		seq = append(seq, s)
+	}
+	if len(seq) == 0 || seq[len(seq)-1] != "campaign" {
+		t.Fatalf("campaign must be flipped LAST on activate; sequence = %v", seq)
+	}
+	for _, s := range seq[:len(seq)-1] {
+		if s == "campaign" {
+			t.Errorf("campaign was updated before its children on activate; sequence = %v", seq)
+		}
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateDefiniteChildFailureIsClean verifies that on
+// ACTIVATE, a DEFINITE (4xx) failure on a child (before the campaign flip) is a clean error —
+// nothing is serving yet, so it must NOT be reported Unconfirmed.
+func TestUpdateCampaignAndChildrenStatus_ActivateDefiniteChildFailureIsClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/23847290" { // campaign flip must NOT happen if a child failed first
+			t.Errorf("campaign flipped despite a failed child on activate")
+		}
+		if r.URL.Path == "/999" { // ad set POST returns a definite 400
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error on a definite child failure")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a definite child failure before the campaign flip must NOT be Unconfirmed, got: %v", err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected verifies that ACTIVATING an ad
+// set with zero ads is refused before the campaign is flipped — a degraded broker campaign
+// (0 ads) cannot serve, so reporting success would be misleading.
+func TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected(t *testing.T) {
+	// Capture the campaign flip over a buffered channel (handler write happens-before the
+	// test read after close) so this is race-safe under `go test -race`.
+	flipCh := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/23847290" {
+			flipCh <- struct{}{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			_, _ = io.WriteString(w, `{"data":[],"paging":{}}`) // zero ads
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error activating an ad set with zero ads")
+	}
+	// The ad set was already POSTed ACTIVE before the zero-ads check, so this is a PARTIAL
+	// application — it must be Unconfirmed (verify/reconcile), not a plain "not modified".
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("zero-ads activate (ad set already flipped) must be Unconfirmed, got %T: %v", err, err)
+	}
+	close(flipCh)
+	if _, flipped := <-flipCh; flipped {
+		t.Error("campaign was flipped ACTIVE despite the ad set having no ads")
+	}
+}
+
+// TestPartialCascadeError_MessageDoesNotAssertCampaignChanged verifies the reconciliation
+// message no longer hardcodes "campaign status changed" (untrue when a creative/ad fails
+// before the campaign flip on the activate path).
+func TestPartialCascadeError_MessageDoesNotAssertCampaignChanged(t *testing.T) {
+	e := &partialCascadeError{stage: "ad", err: errStub("boom")}
+	if strings.Contains(e.Error(), "campaign status changed") {
+		t.Errorf("message must not assert the campaign changed: %q", e.Error())
+	}
+	if !strings.Contains(e.Error(), "partially applied") {
+		t.Errorf("message should state the change is partially applied: %q", e.Error())
+	}
+}
+
+type errStub string
+
+func (e errStub) Error() string { return string(e) }
+
+// TestUpdateCampaignAndChildrenStatus_ActivateAdSetMutatedThenDiscoveryFailsIsUnconfirmed:
+// on ACTIVATE the ad set is POSTed ACTIVE before ad discovery; if discovery then fails, the ad
+// set has ALREADY changed upstream, so the outcome must be Unconfirmed (not a clean failure).
+func TestUpdateCampaignAndChildrenStatus_ActivateAdSetMutatedThenDiscoveryFailsIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			w.WriteHeader(http.StatusForbidden) // definite 403 on discovery, AFTER the ad set POST
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`) // ad set POST succeeds
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error when discovery fails after the ad set was mutated")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("discovery failure after the ad set POST committed must be Unconfirmed, got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst proves the PAUSE-ordering
+// invariant: the campaign gate is flipped BEFORE the ad set/ads, so delivery stops immediately
+// even if a later child update fails. A future reorder that paused children first would break
+// this — the test would then see the ad set POST before the campaign POST.
+func TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst(t *testing.T) {
+	orderCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			orderCh <- "ads-get"
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{}}`)
+			return
+		}
+		switch r.URL.Path {
+		case "/23847290":
+			orderCh <- "campaign"
+		case "/999":
+			orderCh <- "adset"
+		case "/111":
+			orderCh <- "ad"
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus (pause): %v", err)
+	}
+	close(orderCh)
+	var seq []string
+	for s := range orderCh {
+		seq = append(seq, s)
+	}
+	if len(seq) == 0 || seq[0] != "campaign" {
+		t.Fatalf("campaign gate must be flipped FIRST on pause; sequence = %v", seq)
+	}
+}

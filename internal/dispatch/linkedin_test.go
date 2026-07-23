@@ -417,3 +417,181 @@ func TestPartialOrphanStatusValues(t *testing.T) {
 		t.Errorf("campaignStatusUnconfirmed = %q; the service partialOrphanStatuses map expects %q — update both in lockstep", campaignStatusUnconfirmed, "unconfirmed")
 	}
 }
+
+// linkedinToggleHandler routes the cascade's requests: the campaign PARTIAL_UPDATE, the
+// creatives FINDER (returns the given creative URNs), and each creative PARTIAL_UPDATE. It
+// records every request on a buffered channel (race-safe) and returns 200 for updates.
+func linkedinToggleHandler(t *testing.T, gotCh chan<- struct{ method, path, restli, status string }, creativeURNs ...string) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		restli := r.Header.Get("X-Restli-Method")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			gotCh <- struct{ method, path, restli, status string }{r.Method, r.URL.Path, restli, ""}
+			w.Header().Set("Content-Type", "application/json")
+			els := ""
+			for i, u := range creativeURNs {
+				if i > 0 {
+					els += ","
+				}
+				els += `{"id":"` + u + `"}`
+			}
+			_, _ = io.WriteString(w, `{"elements":[`+els+`],"metadata":{}}`)
+			return
+		}
+		var body struct {
+			Patch struct {
+				Set struct {
+					Status         string `json:"status"`
+					IntendedStatus string `json:"intendedStatus"`
+				} `json:"$set"`
+			} `json:"patch"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		status := body.Patch.Set.Status
+		if status == "" {
+			status = body.Patch.Set.IntendedStatus
+		}
+		w.WriteHeader(http.StatusOK)
+		gotCh <- struct{ method, path, restli, status string }{r.Method, r.URL.Path, restli, status}
+	}
+}
+
+// TestLinkedIn_ToggleStatus_CascadesToCreatives verifies the dispatcher issues the campaign
+// PARTIAL_UPDATE, discovers the creatives via the FINDER, and PARTIAL_UPDATEs each creative's
+// intendedStatus (creatives are DRAFT at creation, so activating only the campaign would not
+// serve).
+func TestLinkedIn_ToggleStatus_CascadesToCreatives(t *testing.T) {
+	type req = struct{ method, path, restli, status string }
+	gotCh := make(chan req, 8)
+	srv := httptest.NewServer(linkedinToggleHandler(t, gotCh, "urn:li:sponsoredCreative:900", "urn:li:sponsoredCreative:901"))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunActive); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	close(gotCh)
+	var campaignUpdated, finderCalled int
+	creativeUpdates := 0
+	for r := range gotCh {
+		switch {
+		case r.method == http.MethodGet:
+			finderCalled++
+		case strings.Contains(r.path, "/adCampaigns/555"):
+			campaignUpdated++
+			if r.restli != "PARTIAL_UPDATE" || r.status != "ACTIVE" {
+				t.Errorf("campaign update = restli %q status %q, want PARTIAL_UPDATE ACTIVE", r.restli, r.status)
+			}
+		case strings.Contains(r.path, "/creatives/"):
+			creativeUpdates++
+			if r.restli != "PARTIAL_UPDATE" || r.status != "ACTIVE" {
+				t.Errorf("creative update = restli %q status %q, want PARTIAL_UPDATE ACTIVE", r.restli, r.status)
+			}
+		}
+	}
+	if campaignUpdated != 1 {
+		t.Errorf("campaign updated %d times, want 1", campaignUpdated)
+	}
+	if finderCalled != 1 {
+		t.Errorf("creatives finder called %d times, want 1", finderCalled)
+	}
+	if creativeUpdates != 2 {
+		t.Errorf("creative updates = %d, want 2 (one per discovered creative)", creativeUpdates)
+	}
+}
+
+// TestLinkedIn_ToggleStatus_UnsupportedStatusRejected verifies an unsupported run state is
+// rejected before any call (no creative discovery needed).
+func TestLinkedIn_ToggleStatus_UnsupportedStatusRejected(t *testing.T) {
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, "RUNNING"); err == nil {
+		t.Error("expected an error for an unsupported run status")
+	}
+}
+
+// TestLinkedIn_ToggleStatus_5xxOnMutationIsUnconfirmed: on ACTIVATE the FINDER succeeds, then
+// the creative PARTIAL_UPDATE (a MUTATION) 5xxes — the change may have applied, so the outcome
+// is Unconfirmed.
+func TestLinkedIn_ToggleStatus_5xxOnMutationIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway) // the creative PARTIAL_UPDATE (a mutation) 5xxes
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx mutation")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx on a mutating step must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestLinkedIn_ToggleStatus_ActivateDiscoveryFailureIsClean: on ACTIVATE the FINDER (a READ)
+// runs BEFORE any mutation, so a FINDER failure means NOTHING was applied — a clean, definite
+// failure, NOT Unconfirmed (which would wrongly tell the caller a change may have landed).
+func TestLinkedIn_ToggleStatus_ActivateDiscoveryFailureIsClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.WriteHeader(http.StatusBadGateway) // FINDER read fails before any mutation
+			return
+		}
+		t.Errorf("no mutation should be issued after a failed discovery on activate: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error on a failed discovery")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a pre-mutation discovery failure must NOT be Unconfirmed (nothing applied), got: %v", err)
+	}
+}
+
+// TestLinkedIn_ToggleStatus_NoOrgIDNeeded proves a status update works with a connection
+// that has an access token + account id but NO org_id (Dispatch requires org_id; a toggle
+// must not) — locking in that contract against a future refactor.
+func TestLinkedIn_ToggleStatus_NoOrgIDNeeded(t *testing.T) {
+	conn := &model.Connection{
+		Provider:             model.ProviderLinkedInAds,
+		AccountID:            "123456789",
+		EncryptedCredentials: []byte(goodLinkedInCreds), // {"AccessToken":"tok"} — no org_id in ProviderConfig
+		Status:               model.StatusActive,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`) // no creatives to cascade
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus must work without an org_id: %v", err)
+	}
+}

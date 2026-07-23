@@ -415,3 +415,123 @@ func TestMeta_AmbiguousCreateRetainsClaim(t *testing.T) {
 		t.Error("an ambiguous create must retain the result blob for reconciliation")
 	}
 }
+
+// metaToggleCampaign builds a persisted *model.Campaign carrying the ad set id in Result, as
+// the meta create path stores it (CampaignResult.AdSetID, no json tag → field name).
+func metaToggleCampaign(campaignID, adSetID string) *model.Campaign {
+	return &model.Campaign{
+		PlatformCampaignID: campaignID,
+		Result:             []byte(`{"CampaignID":"` + campaignID + `","AdSetID":"` + adSetID + `"}`),
+	}
+}
+
+// TestMeta_ToggleStatus_CascadesToTree verifies the dispatcher POSTs the status to the
+// campaign, its ad set, AND each ad discovered under the ad set (all three are PAUSED at
+// creation, so a partial toggle would not serve).
+func TestMeta_ToggleStatus_CascadesToTree(t *testing.T) {
+	// Capture requests over a channel so handler writes happen-before test reads (race-safe).
+	type req struct{ method, path, status string }
+	gotCh := make(chan req, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			gotCh <- req{r.Method, r.URL.Path, ""}
+			_, _ = io.WriteString(w, `{"data":[{"id":"555"},{"id":"666"}]}`)
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		status, _ := body["status"].(string)
+		gotCh <- req{r.Method, r.URL.Path, status}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, metaToggleCampaign("23847290", "999"), model.CampaignRunActive); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	close(gotCh)
+	var seen []req
+	for r := range gotCh {
+		seen = append(seen, r)
+	}
+	// campaign POST, ad set POST, ads GET, then one POST per discovered ad (555, 666).
+	if len(seen) != 5 {
+		t.Fatalf("issued %d requests, want 5 (campaign, adset, ads GET, 2 ad POSTs): %+v", len(seen), seen)
+	}
+	wantPost := map[string]bool{"/23847290": false, "/999": false, "/555": false, "/666": false}
+	sawAdsGet := false
+	for _, r := range seen {
+		if r.method == http.MethodGet && strings.HasSuffix(r.path, "/999/ads") {
+			sawAdsGet = true
+			continue
+		}
+		if _, ok := wantPost[r.path]; !ok {
+			t.Errorf("unexpected request: %+v", r)
+			continue
+		}
+		if r.status != "ACTIVE" {
+			t.Errorf("POST %s status = %q, want ACTIVE", r.path, r.status)
+		}
+		wantPost[r.path] = true
+	}
+	if !sawAdsGet {
+		t.Error("did not issue GET /999/ads to discover the ads")
+	}
+	for p, hit := range wantPost {
+		if !hit {
+			t.Errorf("expected a POST to %s", p)
+		}
+	}
+	// An unsupported run state is rejected before any call.
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, metaToggleCampaign("23847290", "999"), "RUNNING"); err == nil {
+		t.Error("expected an error for an unsupported run status")
+	}
+}
+
+// TestMeta_ToggleStatus_5xxIsUnconfirmed verifies a 5xx surfaces as Unconfirmed().
+func TestMeta_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, metaToggleCampaign("23847290", "999"), model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx toggle")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestMeta_ToggleStatus_NoPageIDNeeded proves a status update works with a connection that
+// has an access token + account id but NO page_id (Dispatch requires page_id; a toggle must
+// not) — locking in that contract against a future refactor.
+func TestMeta_ToggleStatus_NoPageIDNeeded(t *testing.T) {
+	conn := &model.Connection{
+		Provider:             model.ProviderMetaAds,
+		AccountID:            "act_1",
+		EncryptedCredentials: []byte(goodMetaCreds), // {"AccessToken":"tok"} — no page_id in ProviderConfig
+		Status:               model.StatusActive,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, &model.Campaign{PlatformCampaignID: "23847290"}, model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus must work without a page_id: %v", err)
+	}
+}

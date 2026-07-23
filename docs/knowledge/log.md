@@ -1,6 +1,31 @@
 # Log
 
-## 2026-07-23 (2)
+## 2026-07-23 (6)
+
+**Update** — LinkedIn status toggle now CASCADES to creatives (LFXV2-2807, PR #47).
+CreateCampaign leaves the campaign PAUSED and its creatives DRAFT, so activating only the
+campaign would not serve (a DRAFT creative never serves; a creative's effective status is
+gated by its campaign). `linkedin.UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the
+campaign status, DISCOVERS the creatives via the creatives FINDER
+(`GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})`,
+X-RestLi-Method: FINDER — LinkedIn persists only a creative count, not ids), and
+PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE a definite 400 on an in-review
+creative is tolerated (LinkedIn forbids pausing an in-review creative). Verified the finder +
+intendedStatus contracts on learn.microsoft.com.
+
+## 2026-07-23 (5)
+
+**Update** — Meta status toggle now CASCADES like Reddit (LFXV2-2807, PR #47 review). Meta's
+CreateCampaign PAUSES the campaign, ad set, AND ads, so toggling only the campaign to ACTIVE
+would not serve. Added `meta.UpdateCampaignAndChildrenStatus`: POST status to the campaign,
+the persisted ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta stores the ad
+set id in CampaignResult but not the individual ad ids). Activate-without-ad-set-id is refused
+before any call; a child failure after the campaign POST is a `partialCascadeError`
+(Unconfirmed → 503-verify). `MetaDispatcher.ToggleStatus` reads the ad set id from the persisted
+`*model.Campaign`. (LinkedIn was single-node at this point; a later entry above adds its
+creative cascade, so all three platforms now cascade.)
+
+## 2026-07-23 (4)
 
 **Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
 CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
@@ -9,7 +34,33 @@ would activate a campaign whose children stayed PAUSED — it would not serve. A
 skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
 `StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
 the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
-(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
+(`adGroupId`/`adId`); at this point Meta/LinkedIn were single-node and ignored the extra
+context — later entries above extend the cascade to them too, so all three now use it. A
+compile-time guard (`status_toggler_guard_test.go`) now asserts all three dispatchers satisfy
+`service.StatusToggler` so a future signature drift fails the build instead of silently
+disabling the toggle.
+
+## 2026-07-23 (3)
+
+**Update** — Campaign status toggle extended to LinkedIn (LFXV2-2807, on PR #47 with Meta).
+`linkedin.UpdateCampaignStatus` uses LinkedIn's RestLi PARTIAL_UPDATE (POST
+/adAccounts/{acct}/adCampaigns/{id}, header X-Restli-Method: PARTIAL_UPDATE, body
+{"patch":{"$set":{"status": ACTIVE|PAUSED}}}) — VERIFIED against Microsoft Learn LinkedIn
+Marketing API docs. `doRequest` gained an optional per-call headers map to carry the
+X-Restli-Method header (5 existing call sites updated to pass nil). `linkedin.IsOutcomeUnconfirmed`
++ `LinkedInDispatcher.ToggleStatus`. Reddit, Meta, and LinkedIn now implement StatusToggler;
+X/Twitter + GoogleAds follow once their dispatchers land on main (#39/#41). Tests are race-safe
+(channel capture, per the #47 review).
+
+## 2026-07-23 (2)
+
+**Update** — Campaign status toggle extended to Meta (LFXV2-2807, follow-up to the Reddit
+toggle #46). `meta.UpdateCampaignStatus` (POST /{campaignID} {"status": ACTIVE|PAUSED} — Meta
+updates a node by POSTing to its id) + `meta.IsOutcomeUnconfirmed` (exposes the shared
+ambiguity classifier) + `MetaDispatcher.ToggleStatus` (resolves creds, wraps an UNCONFIRMED
+outcome in unconfirmedToggleError). Reddit + Meta now implement StatusToggler. X/Twitter's
+toggle is deferred until the TwitterDispatcher lands on main (it's in the unmerged #39) —
+tracked in LFXV2-2807.
 
 ## 2026-07-23
 

@@ -106,6 +106,20 @@ without touching every adapter. **reddit** implements it: `resolveRedditClient` 
 `Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
 then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
 its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
-PAUSES all three, so toggling only the campaign would not serve. Meta/X/Twitter toggles follow.
+PAUSES all three, so toggling only the campaign would not serve. **meta** implements it too and
+CASCADES: its create PAUSES the campaign, ad set, and ads, so `UpdateCampaignAndChildrenStatus`
+POSTs the status to the campaign, the persisted ad set id, and each ad DISCOVERED via
+`GET /{adSetID}/ads` (Meta persists the ad set id but not the individual ad ids). It needs only
+the access token, not the page id. **linkedin** implements it and also
+CASCADES: its create leaves the campaign PAUSED and its creatives DRAFT, so a full ACTIVATE
+must lift the creatives too (a DRAFT creative never serves, and a creative's EFFECTIVE status
+is gated by its campaign). `UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the campaign
+status, DISCOVERS the creatives via the creatives FINDER (LinkedIn persists only a creative
+count, not ids), and PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE, a definite
+400 on an in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) —
+the campaign is already the effective gate. An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`)
+is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
+package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). X/Twitter's toggle
+follows once its dispatcher lands on main.
 
 See [internal/dispatch](../../../internal/dispatch).

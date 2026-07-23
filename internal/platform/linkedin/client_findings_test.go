@@ -1462,7 +1462,7 @@ func TestDoRequest_POST429NotRetried(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
 		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
-	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"k": "v"}, nil)
+	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"k": "v"}, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error when a POST is 429'd, got nil")
 	}
@@ -1501,7 +1501,7 @@ func TestDoRequest_GET429StillRetried(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
 		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
-	out, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil)
+	out, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("doRequest GET: %v", err)
 	}
@@ -2015,7 +2015,7 @@ func TestDoRequest_SendsAuthAndVersionHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "tok-abc"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	_, _ = c.doRequest(context.Background(), http.MethodGet, "adAccounts/1", nil, nil)
+	_, _ = c.doRequest(context.Background(), http.MethodGet, "adAccounts/1", nil, nil, nil)
 	if gotAuth != "Bearer tok-abc" {
 		t.Errorf("Authorization = %q, want 'Bearer tok-abc'", gotAuth)
 	}
@@ -3223,7 +3223,7 @@ func TestDoRequest_RejectsOversizedResponse(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	_, err := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"})
+	_, err := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"}, nil)
 	if err == nil {
 		t.Fatal("expected an error for an oversized response body, got nil")
 	}
@@ -3261,7 +3261,7 @@ func TestDoRequest_PerAttemptTimeoutIndependentOfInjectedClient(t *testing.T) {
 	// context.Background() caller would leave the request unbounded.
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL("http://linkedin.test"),
 		WithHTTPClient(&http.Client{Transport: rt, Timeout: 0}), WithClock(fixedClock()))
-	if _, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil); err != nil {
+	if _, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil, nil); err != nil {
 		t.Fatalf("doRequest: %v", err)
 	}
 	if !sawDeadline {
@@ -3291,7 +3291,7 @@ func TestDoRequest_OversizedNon2xxPostIsAmbiguous(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 
 	// POST → ambiguous (may have committed).
-	_, postErr := c.doRequest(context.Background(), http.MethodPost, "adAccounts/1/adCampaignGroups", map[string]any{"a": "b"}, nil)
+	_, postErr := c.doRequest(context.Background(), http.MethodPost, "adAccounts/1/adCampaignGroups", map[string]any{"a": "b"}, nil, nil)
 	if postErr == nil {
 		t.Fatal("expected an error for an oversized 5xx POST response, got nil")
 	}
@@ -3300,7 +3300,7 @@ func TestDoRequest_OversizedNon2xxPostIsAmbiguous(t *testing.T) {
 	}
 
 	// GET → NOT ambiguous (a search that failed created nothing).
-	_, getErr := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"})
+	_, getErr := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"}, nil)
 	if getErr == nil {
 		t.Fatal("expected an error for an oversized 5xx GET response, got nil")
 	}
@@ -3338,7 +3338,7 @@ func TestDoRequest_MutatingRetrySuppressedStatusesAreAmbiguous(t *testing.T) {
 				WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
 
 			// POST → ambiguous (the create may have committed).
-			_, postErr := c.doRequest(context.Background(), http.MethodPost, "adAccounts/1/adCampaignGroups", map[string]any{"a": "b"}, nil)
+			_, postErr := c.doRequest(context.Background(), http.MethodPost, "adAccounts/1/adCampaignGroups", map[string]any{"a": "b"}, nil, nil)
 			if postErr == nil {
 				t.Fatalf("expected an error for a %s POST response, got nil", tc.name)
 			}
@@ -3347,7 +3347,7 @@ func TestDoRequest_MutatingRetrySuppressedStatusesAreAmbiguous(t *testing.T) {
 			}
 
 			// GET → NOT ambiguous (a search that got this status created nothing).
-			_, getErr := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"})
+			_, getErr := c.doRequest(context.Background(), http.MethodGet, "adAccounts/1/adCampaignGroups", nil, map[string]string{"q": "search"}, nil)
 			if getErr == nil {
 				t.Fatalf("expected an error for a %s GET response, got nil", tc.name)
 			}
@@ -3536,7 +3536,7 @@ func TestDoRequest_Oversized2xxPOSTIsAmbiguous(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"x": 1}, nil)
+	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"x": 1}, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for the oversized 2xx POST response, got nil")
 	}
@@ -3565,7 +3565,7 @@ func TestDoRequest_Oversized2xxGETNotAmbiguous(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	_, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns", nil, nil)
+	_, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns", nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for the oversized 2xx GET response, got nil")
 	}
@@ -3589,7 +3589,7 @@ func TestDoRequest_OversizedNon2xxIsPlainError(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"x": 1}, nil)
+	_, err := c.doRequest(context.Background(), http.MethodPost, "adCampaigns", map[string]any{"x": 1}, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for the oversized non-2xx response, got nil")
 	}

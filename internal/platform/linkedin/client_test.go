@@ -6,6 +6,7 @@ package linkedin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -712,7 +713,7 @@ func TestContextCancellation(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.doRequest(ctx, http.MethodGet, "adAccounts/1", nil, nil); err == nil {
+	if _, err := c.doRequest(ctx, http.MethodGet, "adAccounts/1", nil, nil, nil); err == nil {
 		t.Error("expected error from cancelled context")
 	}
 }
@@ -746,7 +747,7 @@ func TestDoRequestRetriesOn429(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
 		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
-	out, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil)
+	out, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("doRequest: %v", err)
 	}
@@ -776,7 +777,7 @@ func TestDoRequestExhaustsRetries(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(),
 		WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
-	_, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil)
+	_, err := c.doRequest(context.Background(), http.MethodGet, "adCampaigns/1", nil, nil, nil)
 	if err == nil {
 		t.Fatalf("expected an error after exhausting retries")
 	}
@@ -844,10 +845,455 @@ func TestDoRequestRetryHonorsContextCancel(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	if _, err := c.doRequest(ctx, http.MethodGet, "adCampaigns/1", nil, nil); err == nil {
+	if _, err := c.doRequest(ctx, http.MethodGet, "adCampaigns/1", nil, nil, nil); err == nil {
 		t.Fatalf("expected a context error")
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("doRequest blocked %v; should have aborted on cancel", elapsed)
+	}
+}
+
+func TestUpdateCampaignStatus_PartialUpdate(t *testing.T) {
+	// Capture the request over a channel (race-safe) to assert LinkedIn's RestLi
+	// PARTIAL_UPDATE shape: POST /adAccounts/{acct}/adCampaigns/{id},
+	// X-Restli-Method: PARTIAL_UPDATE, body {"patch":{"$set":{"status":...}}}.
+	type req struct{ method, path, restliMethod, status string }
+	gotCh := make(chan req, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Patch struct {
+				Set struct {
+					Status string `json:"status"`
+				} `json:"$set"`
+			} `json:"patch"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+		gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), body.Patch.Set.Status}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignStatus: %v", err)
+	}
+	got := <-gotCh
+	if got.method != http.MethodPost || got.path != "/adAccounts/123456789/adCampaigns/555" {
+		t.Errorf("request = %s %s, want POST /adAccounts/123456789/adCampaigns/555", got.method, got.path)
+	}
+	if got.restliMethod != "PARTIAL_UPDATE" {
+		t.Errorf("X-Restli-Method = %q, want PARTIAL_UPDATE", got.restliMethod)
+	}
+	if got.status != StatusPaused {
+		t.Errorf("patch.$set.status = %q, want %q", got.status, StatusPaused)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_CascadesAndTolerates verifies the campaign is updated,
+// the creatives are discovered via the FINDER and each PARTIAL_UPDATEd to intendedStatus, and
+// (on a PAUSE) a definite 400 on an in-review creative is tolerated rather than failing the toggle.
+func TestUpdateCampaignAndCreativesStatus_CascadesAndTolerates(t *testing.T) {
+	type req struct{ method, path, restli, status string }
+	gotCh := make(chan req, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), ""}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"},{"id":"urn:li:sponsoredCreative:901"}],"metadata":{}}`)
+			return
+		}
+		var body struct {
+			Patch struct {
+				Set struct {
+					Status         string `json:"status"`
+					IntendedStatus string `json:"intendedStatus"`
+				} `json:"$set"`
+			} `json:"patch"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		st := body.Patch.Set.Status
+		if st == "" {
+			st = body.Patch.Set.IntendedStatus
+		}
+		// Creative 901 is "in review": a PAUSE on it returns 400 (LinkedIn's documented rule).
+		if strings.HasSuffix(r.URL.Path, "sponsoredCreative:901") && st == StatusPaused {
+			w.WriteHeader(http.StatusBadRequest)
+			gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), st}
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), st}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	// Pause: the in-review 400 on creative 901 is tolerated → overall success.
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus (pause) should tolerate an in-review 400: %v", err)
+	}
+	close(gotCh)
+	var campaign, finder, creatives int
+	for r := range gotCh {
+		switch {
+		case r.method == http.MethodGet:
+			finder++
+		case strings.Contains(r.path, "/adCampaigns/555"):
+			campaign++
+		case strings.Contains(r.path, "/creatives/"):
+			creatives++
+		}
+	}
+	if campaign != 1 || finder != 1 || creatives != 2 {
+		t.Errorf("requests: campaign=%d finder=%d creatives=%d, want 1/1/2", campaign, finder, creatives)
+	}
+}
+
+func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen for invalid input: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	cases := map[string]struct{ id, status string }{
+		"empty id":    {"", StatusPaused},
+		"non-numeric": {"urn:li:x", StatusActive},
+		"bad status":  {"555", "DRAFT"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := c.UpdateCampaignStatus(context.Background(), tc.id, tc.status); err == nil {
+				t.Errorf("%s: expected a validation error", name)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess verifies a status update (which decodes
+// no body) treats a 2xx with an oversized/unreadable body as SUCCESS, not a false-unconfirmed
+// transportError.
+func TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"x":"` + strings.Repeat("A", maxResponseBytes+100) + `"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Errorf("a 2xx status update with an oversized body must succeed: %v", err)
+	}
+}
+
+func TestUpdateCampaignStatus_RejectsEmptyToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen with an empty token: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	for name, tok := range map[string]string{"empty": "", "whitespace": "   "} {
+		t.Run(name, func(t *testing.T) {
+			c := NewClient(Credentials{AccessToken: tok}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			if err := c.UpdateCampaignStatus(context.Background(), "555", StatusPaused); err == nil {
+				t.Errorf("%s token must be rejected before sending an invalid Bearer header", name)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_EncodesCreativeURNInPath verifies the creative update
+// path percent-encodes the URN's colons (LinkedIn's required single-entity key form) AND that
+// the encoded path passes the client's path validation (which allows %).
+func TestUpdateCampaignAndCreativesStatus_EncodesCreativeURNInPath(t *testing.T) {
+	// Capture the creative path over a buffered channel so the handler-goroutine write
+	// happens-before the test-goroutine read (race-safe under `go test -race`).
+	pathCh := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			pathCh <- r.URL.EscapedPath()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	close(pathCh)
+	creativePath := <-pathCh
+	if !strings.Contains(creativePath, "creatives/urn%3Ali%3AsponsoredCreative%3A900") {
+		t.Errorf("creative path = %q, want the %%3A-encoded URN key", creativePath)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_TruncatedDiscoveryFails verifies a stuck/looping finder
+// cursor fails the toggle (INCOMPLETE discovery) rather than silently succeeding — otherwise
+// the service would persist ACTIVE while undiscovered creatives stay DRAFT.
+func TestUpdateCampaignAndCreativesStatus_TruncatedDiscoveryFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			// Always return the SAME non-empty cursor → a stuck cursor.
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{"nextPageToken":"STUCK"}}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	// PAUSE: the campaign gate is flipped before discovery, so an incomplete discovery is a
+	// partial application (Unconfirmed). Either way, truncation must FAIL rather than silently
+	// succeed with a partial creative set.
+	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when creative discovery does not terminate")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("incomplete discovery after the campaign was paused must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_NumericCreativeIDReconstructed verifies a finder element
+// whose id is a bare NUMBER (flexibleID numeric form) is reconstructed into a sponsoredCreative
+// URN and updated — not silently dropped (which would leave that creative DRAFT).
+func TestUpdateCampaignAndCreativesStatus_NumericCreativeIDReconstructed(t *testing.T) {
+	pathCh := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":119962155}],"metadata":{}}`) // NUMERIC id
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			pathCh <- r.URL.EscapedPath()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	close(pathCh)
+	creativePath := <-pathCh
+	if !strings.Contains(creativePath, "creatives/urn%3Ali%3AsponsoredCreative%3A119962155") {
+		t.Errorf("numeric creative id was not reconstructed into a URN + updated; path = %q", creativePath)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_UnusableElementIDFails verifies a finder element with no
+// usable sponsoredCreative id FAILS the toggle (fail-closed) rather than being silently dropped
+// (which would persist ACTIVE while that creative stays DRAFT).
+func TestUpdateCampaignAndCreativesStatus_UnusableElementIDFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			// An element with an id that is neither a sponsoredCreative URN nor numeric.
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCampaign:5"}],"metadata":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	// Use PAUSE so the campaign gate is flipped BEFORE discovery — a discovery failure then is
+	// a partial application (Unconfirmed). (The activate path's pre-mutation discovery-failure
+	// is a clean failure, covered by TestLinkedIn_ToggleStatus_ActivateDiscoveryFailureIsClean.)
+	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when a finder element has no usable creative id")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a no-usable-id element after the campaign was paused must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_Non400OnPauseAborts verifies that on a PAUSE, only a 400
+// (in-review) is tolerated: a 403 (or other non-400 4xx) on a creative ABORTS the toggle.
+func TestUpdateCampaignAndCreativesStatus_Non400OnPauseAborts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			w.WriteHeader(http.StatusForbidden) // 403 on the creative — NOT the tolerated 400
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused); err == nil {
+		t.Fatal("a 403 on a creative during a pause must abort, not be tolerated")
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_ActivateOrdersCreativesBeforeCampaign verifies that on
+// ACTIVATE the creatives are lifted BEFORE the campaign is flipped ACTIVE — so a creative
+// failure can't leave paid delivery running (the campaign, still paused, gates everything).
+func TestUpdateCampaignAndCreativesStatus_ActivateOrdersCreativesBeforeCampaign(t *testing.T) {
+	orderCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.EscapedPath()
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives"):
+			orderCh <- "finder"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		case strings.Contains(p, "creatives/urn"):
+			orderCh <- "creative"
+		case strings.Contains(p, "adCampaigns/555"):
+			orderCh <- "campaign"
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	close(orderCh)
+	var seq []string
+	for s := range orderCh {
+		seq = append(seq, s)
+	}
+	// Expect: finder, creative(s)..., then campaign LAST.
+	if len(seq) < 2 || seq[len(seq)-1] != "campaign" {
+		t.Fatalf("campaign must be updated LAST on activate; sequence = %v", seq)
+	}
+	for _, s := range seq[:len(seq)-1] {
+		if s == "campaign" {
+			t.Errorf("campaign was updated before creatives on activate; sequence = %v", seq)
+		}
+	}
+}
+
+// TestCreativeURN_RejectsMalformedSuffix verifies a full-URN value with a path-altering or
+// non-numeric suffix is rejected (returns ""), so it can't reach encodeURNForPath and alter
+// the request URL.
+func TestCreativeURN_RejectsMalformedSuffix(t *testing.T) {
+	bad := []string{
+		"urn:li:sponsoredCreative:900?x=1",
+		"urn:li:sponsoredCreative:900/evil",
+		"urn:li:sponsoredCreative:../../secret",
+		"urn:li:sponsoredCreative:9%2f0",
+		"urn:li:sponsoredCreative:abc",
+	}
+	for _, s := range bad {
+		if got := creativeURN(responseElement{URN: s}); got != "" {
+			t.Errorf("creativeURN(%q) = %q, want \"\" (malformed suffix must be rejected)", s, got)
+		}
+	}
+	// A clean numeric id (URN or bare) is accepted and canonicalized.
+	if got := creativeURN(responseElement{URN: "urn:li:sponsoredCreative:900"}); got != "urn:li:sponsoredCreative:900" {
+		t.Errorf("clean URN rejected: got %q", got)
+	}
+	if got := creativeURN(responseElement{ID: flexibleID("900")}); got != "urn:li:sponsoredCreative:900" {
+		t.Errorf("bare numeric id not canonicalized: got %q", got)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_ActivateZeroCreativesRejected verifies activating a
+// campaign with zero creatives is refused before the campaign flip (it can't serve).
+func TestUpdateCampaignAndCreativesStatus_ActivateZeroCreativesRejected(t *testing.T) {
+	// Capture the campaign flip over a buffered channel (race-safe under `go test -race`).
+	flipCh := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`) // zero creatives
+			return
+		}
+		if strings.Contains(r.URL.Path, "/adCampaigns/") {
+			flipCh <- struct{}{}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err == nil {
+		t.Fatal("expected an error activating a campaign with zero creatives")
+	}
+	close(flipCh)
+	if _, flipped := <-flipCh; flipped {
+		t.Error("campaign was flipped ACTIVE despite having no creatives")
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_FinderSendsRequiredParams asserts the creatives FINDER
+// request carries q=criteria, the campaign filter (campaigns=List(...) with the campaign URN),
+// and the X-RestLi-Method: FINDER header — so a malformed finder can't silently discover
+// creatives outside the target campaign.
+func TestUpdateCampaignAndCreativesStatus_FinderSendsRequiredParams(t *testing.T) {
+	type finderReq struct{ query, restli string }
+	ch := make(chan finderReq, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			ch <- finderReq{r.URL.RawQuery, r.Header.Get("X-Restli-Method")}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	close(ch)
+	got := <-ch
+	if got.restli != "FINDER" {
+		t.Errorf("X-Restli-Method = %q, want FINDER", got.restli)
+	}
+	if !strings.Contains(got.query, "q=criteria") {
+		t.Errorf("finder query %q missing q=criteria", got.query)
+	}
+	// The campaign filter must scope to THIS campaign's URN (percent-encoded in the query).
+	if !strings.Contains(got.query, "campaigns=") || !strings.Contains(got.query, "555") {
+		t.Errorf("finder query %q missing campaigns=List(...campaign 555...) filter", got.query)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_PauseUpdatesCampaignFirst proves the PAUSE-ordering
+// invariant: the campaign gate is flipped BEFORE creative discovery/updates, so delivery stops
+// immediately. A future reorder that paused creatives first would break this.
+func TestUpdateCampaignAndCreativesStatus_PauseUpdatesCampaignFirst(t *testing.T) {
+	orderCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.EscapedPath()
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives"):
+			orderCh <- "finder"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		case strings.Contains(p, "creatives/urn"):
+			orderCh <- "creative"
+		case strings.Contains(p, "adCampaigns/555"):
+			orderCh <- "campaign"
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus (pause): %v", err)
+	}
+	close(orderCh)
+	var seq []string
+	for s := range orderCh {
+		seq = append(seq, s)
+	}
+	if len(seq) == 0 || seq[0] != "campaign" {
+		t.Fatalf("campaign gate must be flipped FIRST on pause; sequence = %v", seq)
 	}
 }
