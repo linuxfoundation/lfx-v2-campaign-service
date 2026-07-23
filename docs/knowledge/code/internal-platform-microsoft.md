@@ -160,8 +160,13 @@ campaign + ad-group at the ad step) so an ambiguous failure leaves the tree reco
 each a `TextAsset` wrapped in an `AssetLink`, plus a required `FinalUrls`. Asset length is
 WIDTH-AWARE: single-width copy allows 30 (headline) / 90 (description) characters, but copy
 containing double-width characters (CJK/Korean/Japanese/Chinese or emoji) is capped at 15 /
-45; each asset must also contain at least one word and no newline. The composed `FinalUrls`
-(registration URL + `utm_*`) is length-checked against Microsoft's 2,048-char limit up front. Its ad group is created with `AdGroupType` "SearchStandard" (the
+45; each asset must also contain at least one word and no newline — this word check applies
+to BOTH caller-supplied copy (`checkAdCopyList`) and auto-composed assets (`boundedUniqueCopy`
+drops any candidate lacking a word, so a punctuation-only `EventName` never reaches AddAds).
+The composed `FinalUrls` (registration URL + `utm_*`) is length-checked against Microsoft's
+2,048-char limit up front, and its host is checked against the 67-char display-domain limit
+(the RSA sets no `Path1`/`Path2`, so the whole display budget is the hostname; an over-long
+host passes the 2,048-char check but is rejected only at AddAds). Its ad group is created with `AdGroupType` "SearchStandard" (the
 "SearchDynamic" type takes only dynamic search ads) and a `Language` (the MS-2 campaign sets
 no campaign-level languages, so the ad group must carry one). The AddAds body is polymorphic
 (an array of the base `Ad`), so the responsive search ad DOES send `Type: "ResponsiveSearch"`

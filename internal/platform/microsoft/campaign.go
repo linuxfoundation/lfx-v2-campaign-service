@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -277,8 +278,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// front: a raw URL near the limit passes validateAdURL but the longer composed URL would
 	// be rejected only at AddAds — after the campaign/ad group exist, the exact orphaning the
 	// up-front checks prevent.
-	if n := utf8.RuneCountInString(buildAdFinalURL(in)); n > maxFinalURLRunes {
+	finalURL := buildAdFinalURL(in)
+	if n := utf8.RuneCountInString(finalURL); n > maxFinalURLRunes {
 		return nil, fmt.Errorf("microsoft-ads composed ad final URL is %d characters, exceeding the %d limit (shorten the registration URL)", n, maxFinalURLRunes)
+	}
+	// Microsoft also derives the ad's DISPLAY domain from the FinalUrls hostname and caps it
+	// at maxDisplayDomainRunes. A host longer than that passes the FinalUrls length check above
+	// but is rejected only at AddAds, orphaning the PAUSED campaign/ad group — so reject it up
+	// front too. Parse errors are ignored here: validateAdURL already rejected a malformed URL.
+	if u, perr := url.Parse(finalURL); perr == nil {
+		if n := utf8.RuneCountInString(u.Hostname()); n > maxDisplayDomainRunes {
+			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", u.Hostname(), n, maxDisplayDomainRunes)
+		}
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
 	// descriptions), so a bad copy input fails cleanly before the campaign is created rather

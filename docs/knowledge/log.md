@@ -2,6 +2,17 @@
 
 ## 2026-07-23
 
+**Update** — Microsoft Ads MS-2.5 PR #45 review follow-up (copilot + cursor). (1) The ≥1-word
+RSA asset rule now also covers AUTO-composed copy: `boundedUniqueCopy` drops any wordless
+candidate (shared `hasWord` helper), so a punctuation-only `EventName` — which survives
+`sanitizeNamePart` non-empty — can no longer become a headline that AddAds rejects after the
+PAUSED campaign/ad group exist. (2) Added an up-front DISPLAY-DOMAIN check: the composed
+`FinalUrls` host is validated against Microsoft's 67-char display-URL limit (RSA sets no
+`Path1`/`Path2`, so the host is the whole budget); an over-long host passed the 2,048-char
+check but was rejected only at AddAds. (3) Test fix: the userinfo `RejectsBadAdURL` fixture is
+built at runtime via `url.UserPassword` instead of a `user:pass@host` literal that tripped
+secretlint (mirrors the reddit client tests).
+
 **Update** — Microsoft Ads MS-2.5 v13-contract hardening (PR #45 review, copilot + cursor —
 VERIFIED against learn.microsoft.com). (1) RSA copy limits are WIDTH-AWARE: single-width
 30/90, double-width (CJK/Korean/Japanese/Chinese/emoji) 15/45 — validation AND truncation now

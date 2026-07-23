@@ -374,11 +374,20 @@ func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
 	// A bad destination URL is rejected UP FRONT, before the campaign create, so nothing
 	// is created: a clean (nil, err), NOT a partial. This avoids orphaning a PAUSED
 	// campaign (and ad group) behind a URL that was never going to work.
+	// The userinfo case is built at runtime via url.UserPassword rather than written as a
+	// "https://user:pass@host" literal, which would trip secretlint in CI (it flags any
+	// credential-shaped literal). Mirrors the reddit client tests' runtime userinfo fixtures.
+	userinfoURL := (&url.URL{
+		Scheme: "https",
+		User:   url.UserPassword("user", "pass"),
+		Host:   "events.example.org",
+		Path:   "/register",
+	}).String()
 	cases := map[string]string{
 		"empty":     "",
 		"no scheme": "events.example.org/register",
 		"ftp":       "ftp://events.example.org/register",
-		"userinfo":  "https://user:pass@events.example.org/register",
+		"userinfo":  userinfoURL,
 	}
 	for name, badURL := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -406,6 +415,34 @@ func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
 				t.Errorf("%s: error leaked userinfo: %v", name, err)
 			}
 		})
+	}
+}
+
+func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
+	// A registration URL whose HOST exceeds the 67-char display-domain limit passes the
+	// 2,048-char FinalUrls check but Microsoft rejects the display domain at AddAds. It must
+	// fail UP FRONT (nil, err, no API call) so a PAUSED campaign/ad group is never orphaned.
+	var reached bool
+	api := &campaignsAPI{}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		base(w, r)
+	})
+	in := validInput()
+	// A syntactically valid hostname of 68 chars (label + ".example.org"), over the 67 limit.
+	longHost := strings.Repeat("a", 68-len(".example.org")) + ".example.org"
+	in.RegistrationURL = "https://" + longHost + "/register"
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected a display-domain validation error")
+	}
+	if res != nil {
+		t.Errorf("an over-long display domain must fail cleanly (nil result), got %+v", res)
+	}
+	if reached {
+		t.Error("no API call should be made — the display domain is invalid up front")
 	}
 }
 
@@ -478,6 +515,24 @@ func TestComposeAdCopy_BoundsCountsAndUniqueness(t *testing.T) {
 	hs, _ = composeAdCopy(CampaignInput{Headlines: many, EventName: "KubeCon"})
 	if len(hs) != maxAdHeadlines {
 		t.Errorf("over-max headlines not capped: got %d, want %d", len(hs), maxAdHeadlines)
+	}
+}
+
+func TestComposeAdCopy_DropsWordlessAssets(t *testing.T) {
+	// A punctuation-only EventName ("!!!") survives sanitizeNamePart non-empty and would
+	// otherwise become a wordless headline candidate, which Microsoft rejects at AddAds. Every
+	// composed asset must carry a word; the deterministic fallbacks/padding fill the minimum.
+	hs, ds := composeAdCopy(CampaignInput{EventName: "!!!", Project: "CNCF"})
+	for _, s := range append(append([]string{}, hs...), ds...) {
+		if !hasWord(s) {
+			t.Errorf("composed a wordless asset: %q", s)
+		}
+	}
+	if len(hs) < minAdHeadlines {
+		t.Errorf("headline count = %d, want >= %d", len(hs), minAdHeadlines)
+	}
+	if len(ds) < minAdDescriptions {
+		t.Errorf("description count = %d, want >= %d", len(ds), minAdDescriptions)
 	}
 }
 
