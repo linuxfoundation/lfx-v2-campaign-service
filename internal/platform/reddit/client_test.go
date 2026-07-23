@@ -3791,3 +3791,63 @@ func TestCreateOutcomeAmbiguous3xxByMethod(t *testing.T) {
 		t.Error("createOutcomeAmbiguous(302 GET) = true, want false (a GET redirect is not a create)")
 	}
 }
+
+// TestUpdateCampaignStatus_PatchesConfiguredStatus verifies the toggle sends
+// PATCH /ad_accounts/{account}/campaigns/{id} with {"data":{"configured_status": ...}}.
+func TestUpdateCampaignStatus_PatchesConfiguredStatus(t *testing.T) {
+	var gotMethod, gotPath, gotStatus string
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		var body struct {
+			Data struct {
+				ConfiguredStatus string `json:"configured_status"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotStatus = body.Data.ConfiguredStatus
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"t3_camp"}}`))
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	if err := c.UpdateCampaignStatus(context.Background(), "t3_camp", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignStatus: %v", err)
+	}
+	if gotMethod != http.MethodPatch {
+		t.Errorf("method = %s, want PATCH", gotMethod)
+	}
+	if gotPath != "/api/v3/ad_accounts/t2_test/campaigns/t3_camp" {
+		t.Errorf("path = %s, want /api/v3/ad_accounts/t2_test/campaigns/t3_camp", gotPath)
+	}
+	if gotStatus != StatusPaused {
+		t.Errorf("configured_status = %q, want %q", gotStatus, StatusPaused)
+	}
+}
+
+// TestUpdateCampaignStatus_ValidatesInput rejects bad input BEFORE any API call.
+func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen for invalid input: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer apiSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithNowFunc(fixedRedditClock()))
+
+	cases := map[string]struct{ id, status string }{
+		"empty campaign id": {"", StatusPaused},
+		"bad status":        {"t3_camp", "RUNNING"},
+		"slash in id":       {"t3/../x", StatusActive},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := c.UpdateCampaignStatus(context.Background(), tc.id, tc.status); err == nil {
+				t.Errorf("%s: expected a validation error, got nil", name)
+			}
+		})
+	}
+}

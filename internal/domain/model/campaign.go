@@ -41,6 +41,16 @@ type Campaign struct {
 	UpdatedAt          time.Time
 }
 
+// Campaign run states settable via the status toggle (Campaign.Status is a plain string
+// that also carries create-time values like "created"/"created_degraded"). These are the
+// two states a caller can toggle a live campaign between; they match the design enum
+// ("active"/"paused") and are mapped to each platform's own status vocabulary by that
+// platform's dispatcher.
+const (
+	CampaignRunActive = "active"
+	CampaignRunPaused = "paused"
+)
+
 // JobStatus is the status vocabulary shared by campaign_jobs and the API's
 // JobCreateResponse/JobPollResponse.
 type JobStatus string

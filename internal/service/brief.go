@@ -341,6 +341,51 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	return campaignResult(updated), nil
 }
 
+// ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
+// status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
+// updated only after the platform confirms, so a persisted "paused" always reflects reality.
+func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.ToggleCampaignStatusPayload) (*briefs.Campaign, error) {
+	_, campaignRepo, _, orch, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	version, err := parseBriefIfMatch(p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	// The design enum restricts status to active/paused, but validate defensively so a
+	// direct (non-generated) caller can't push an unsupported value to a platform.
+	if p.Status != model.CampaignRunActive && p.Status != model.CampaignRunPaused {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "status must be 'active' or 'paused'"}
+	}
+
+	existing, gerr := campaignRepo.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	if gerr != nil {
+		return nil, mapBriefErr(gerr)
+	}
+	// Guard optimistic concurrency BEFORE the (side-effecting, paid) platform call, so a
+	// stale If-Match fails fast without touching the ad platform.
+	if existing.Version != version {
+		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "campaign has been modified; reload and retry"}
+	}
+
+	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
+	// lie that the campaign is paused when the platform still has it running).
+	if terr := orch.ToggleCampaignStatus(ctx, p.ProjectID, existing.Platform, existing.PlatformCampaignID, p.Status); terr != nil {
+		if errors.Is(terr, ErrToggleUnsupported) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
+		}
+		return nil, &briefs.ConnServiceUnavailableError{Code: "502", Message: "the ad platform rejected the status change; the campaign was not modified"}
+	}
+
+	existing.Status = p.Status
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version)
+	if uerr != nil {
+		return nil, mapBriefErr(uerr)
+	}
+	return campaignResult(updated), nil
+}
+
 func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*briefs.JobPollResponse, error) {
 	_, _, jobRepo, _, err := s.ready()
 	if err != nil {

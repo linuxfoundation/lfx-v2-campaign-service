@@ -343,3 +343,45 @@ func TestReddit_ConfigSnapshotRedactsPostURL(t *testing.T) {
 		t.Errorf("config snapshot should retain the sanitized post URL, got: %s", s)
 	}
 }
+
+// TestReddit_ToggleStatus_PatchesPlatform verifies the dispatcher resolves creds and
+// PATCHes configured_status through the reddit client.
+func TestReddit_ToggleStatus_PatchesPlatform(t *testing.T) {
+	var gotMethod, gotPath, gotStatus string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		var body struct {
+			Data struct {
+				ConfiguredStatus string `json:"configured_status"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotStatus = body.Data.ConfiguredStatus
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"t3_c"}}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, "t3_c", model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	if gotMethod != http.MethodPatch || gotPath != "/api/v3/ad_accounts/t2_acct/campaigns/t3_c" {
+		t.Errorf("request = %s %s, want PATCH /api/v3/ad_accounts/t2_acct/campaigns/t3_c", gotMethod, gotPath)
+	}
+	if gotStatus != "PAUSED" {
+		t.Errorf("configured_status = %q, want PAUSED", gotStatus)
+	}
+	// An unsupported run state is rejected before any call.
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, "t3_c", "RUNNING"); err == nil {
+		t.Error("expected an error for an unsupported run status")
+	}
+}

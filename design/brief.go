@@ -338,6 +338,32 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("toggle-campaign-status", func() {
+		Description("Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			ifMatchAttr()
+			Attribute("status", String, "Desired run state", func() { Enum("active", "paused") })
+			Required("project_id", "brief_id", "campaign_id", "status")
+		})
+		Result(Campaign)
+		commonBriefErrors(true)
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			PATCH("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/status")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses(true)
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
 	Method("get-job", func() {
 		Description("Poll campaign-creation job status.")
 		Payload(func() {

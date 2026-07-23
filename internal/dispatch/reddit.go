@@ -187,6 +187,54 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	return camp, nil
 }
 
+// ToggleStatus pauses or resumes an existing reddit campaign on the platform. It resolves
+// the connection (same pre-check as Dispatch: an inactive/undecryptable connection is a
+// clean error), builds the client, and PATCHes configured_status. platformCampaignID is the
+// upstream Reddit campaign id (from the stored row); status is model.CampaignRunActive or
+// model.CampaignRunPaused. Returns nil only when the platform confirms the change.
+func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	if res.status != model.StatusActive {
+		return fmt.Errorf("reddit connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds redditCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return fmt.Errorf("decode reddit credentials: %w", err)
+	}
+	if creds.ClientID == "" || creds.ClientSecret == "" || creds.RefreshToken == "" {
+		return fmt.Errorf("reddit credentials are incomplete (need clientId, clientSecret, refreshToken)")
+	}
+	if strings.TrimSpace(res.accountID) == "" {
+		return fmt.Errorf("reddit connection for project %s has no account id", projectID)
+	}
+	redditStatus, err := redditRunStatus(status)
+	if err != nil {
+		return err
+	}
+	client := reddit.NewClient(
+		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
+		reddit.AccountConfig{AccountID: res.accountID, Label: res.label},
+		d.opts...,
+	)
+	return client.UpdateCampaignStatus(ctx, platformCampaignID, redditStatus)
+}
+
+// redditRunStatus maps the service-level run state (active/paused) to the reddit client's
+// configured_status enum.
+func redditRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return reddit.StatusActive, nil
+	case model.CampaignRunPaused:
+		return reddit.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
+}
+
 // campaignFromReddit maps the client result to the persistence model. The
 // orchestrator fills project/brief/job/platform (and, for a retained ambiguous
 // orphan, status); this sets what only the dispatcher knows — upstream id, name, the

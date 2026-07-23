@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -144,6 +146,21 @@ type PlatformDispatcher interface {
 	// campaign row (platform_campaign_id, status, result populated).
 	Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error)
 }
+
+// StatusToggler is an OPTIONAL dispatcher capability: pause/resume an existing campaign on
+// the platform. Not every platform supports it (architecture line 271 lists Meta/Reddit/X),
+// so the orchestrator type-asserts for it rather than adding it to PlatformDispatcher —
+// a dispatcher that doesn't implement it yields a clean "not supported" error.
+type StatusToggler interface {
+	// ToggleStatus sets the platform campaign's run state. status is
+	// model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when the
+	// platform confirms the change.
+	ToggleStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error
+}
+
+// ErrToggleUnsupported is returned when a campaign's platform has no status-toggle
+// capability wired yet.
+var ErrToggleUnsupported = errors.New("status toggle is not supported for this platform")
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
 // BEFORE any upstream (paid) create call — e.g. input validation or config
@@ -810,4 +827,24 @@ func aggregateStatus(results []platformResult) model.JobStatus {
 	default:
 		return model.JobSucceeded
 	}
+}
+
+// ToggleCampaignStatus pauses or resumes an already-created campaign on its ad platform.
+// It looks up the campaign's dispatcher, requires that dispatcher to implement
+// StatusToggler (else ErrToggleUnsupported), and delegates the platform call. The caller
+// (the service) updates the persisted row only after this returns nil. platformCampaignID
+// is the campaign's stored upstream id; status is model.CampaignRunActive/Paused.
+func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID string, platform model.Provider, platformCampaignID, status string) error {
+	if strings.TrimSpace(platformCampaignID) == "" {
+		return fmt.Errorf("cannot toggle status: campaign has no platform campaign id (it may not have finished creating)")
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return fmt.Errorf("no dispatcher registered for platform %s", platform)
+	}
+	toggler, ok := d.(StatusToggler)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrToggleUnsupported, platform)
+	}
+	return toggler.ToggleStatus(ctx, projectID, platform, platformCampaignID, status)
 }
