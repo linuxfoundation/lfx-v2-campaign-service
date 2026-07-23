@@ -3683,15 +3683,16 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 }
 
 func TestUpdateCampaignStatus_PostsStatusToNode(t *testing.T) {
-	var gotMethod, gotPath, gotStatus string
+	// Capture the request over a channel (like bodyCapture) so the handler-goroutine writes
+	// happen-before the test-goroutine reads — race-safe under `go test -race`.
+	type req struct{ method, path, status string }
+	gotCh := make(chan req, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath = r.Method, r.URL.Path
 		body := decodeBody(t, r)
-		if s, ok := body["status"].(string); ok {
-			gotStatus = s
-		}
+		status, _ := body["status"].(string)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"success":true}`)
+		gotCh <- req{r.Method, r.URL.Path, status}
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
@@ -3699,11 +3700,12 @@ func TestUpdateCampaignStatus_PostsStatusToNode(t *testing.T) {
 	if err := c.UpdateCampaignStatus(context.Background(), "23847290", StatusPaused); err != nil {
 		t.Fatalf("UpdateCampaignStatus: %v", err)
 	}
-	if gotMethod != http.MethodPost || gotPath != "/23847290" {
-		t.Errorf("request = %s %s, want POST /23847290", gotMethod, gotPath)
+	got := <-gotCh
+	if got.method != http.MethodPost || got.path != "/23847290" {
+		t.Errorf("request = %s %s, want POST /23847290", got.method, got.path)
 	}
-	if gotStatus != StatusPaused {
-		t.Errorf("status = %q, want %q", gotStatus, StatusPaused)
+	if got.status != StatusPaused {
+		t.Errorf("status = %q, want %q", got.status, StatusPaused)
 	}
 }
 
