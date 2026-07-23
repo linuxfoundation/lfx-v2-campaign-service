@@ -1044,13 +1044,16 @@ func TestUpdateCampaignAndCreativesStatus_TruncatedDiscoveryFails(t *testing.T) 
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive)
+	// PAUSE: the campaign gate is flipped before discovery, so an incomplete discovery is a
+	// partial application (Unconfirmed). Either way, truncation must FAIL rather than silently
+	// succeed with a partial creative set.
+	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused)
 	if err == nil {
 		t.Fatal("expected an error when creative discovery does not terminate")
 	}
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
-		t.Errorf("incomplete discovery after the campaign update must be Unconfirmed(), got %T: %v", err, err)
+		t.Errorf("incomplete discovery after the campaign was paused must be Unconfirmed(), got %T: %v", err, err)
 	}
 }
 
@@ -1097,13 +1100,16 @@ func TestUpdateCampaignAndCreativesStatus_UnusableElementIDFails(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive)
+	// Use PAUSE so the campaign gate is flipped BEFORE discovery — a discovery failure then is
+	// a partial application (Unconfirmed). (The activate path's pre-mutation discovery-failure
+	// is a clean failure, covered by TestLinkedIn_ToggleStatus_ActivateDiscoveryFailureIsClean.)
+	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused)
 	if err == nil {
 		t.Fatal("expected an error when a finder element has no usable creative id")
 	}
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
-		t.Errorf("a no-usable-id element after the campaign update must be Unconfirmed(), got %T: %v", err, err)
+		t.Errorf("a no-usable-id element after the campaign was paused must be Unconfirmed(), got %T: %v", err, err)
 	}
 }
 

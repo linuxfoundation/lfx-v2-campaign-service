@@ -514,9 +514,17 @@ func TestLinkedIn_ToggleStatus_UnsupportedStatusRejected(t *testing.T) {
 	}
 }
 
-func TestLinkedIn_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadGateway) // the campaign PARTIAL_UPDATE 5xxes first
+// TestLinkedIn_ToggleStatus_5xxOnMutationIsUnconfirmed: on ACTIVATE the FINDER succeeds, then
+// the creative PARTIAL_UPDATE (a MUTATION) 5xxes — the change may have applied, so the outcome
+// is Unconfirmed.
+func TestLinkedIn_ToggleStatus_5xxOnMutationIsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway) // the creative PARTIAL_UPDATE (a mutation) 5xxes
 	}))
 	defer srv.Close()
 	d := NewLinkedInDispatcher(
@@ -525,11 +533,38 @@ func TestLinkedIn_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 	)
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunActive)
 	if err == nil {
-		t.Fatal("expected an error on a 5xx toggle")
+		t.Fatal("expected an error on a 5xx mutation")
 	}
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
-		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+		t.Errorf("a 5xx on a mutating step must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestLinkedIn_ToggleStatus_ActivateDiscoveryFailureIsClean: on ACTIVATE the FINDER (a READ)
+// runs BEFORE any mutation, so a FINDER failure means NOTHING was applied — a clean, definite
+// failure, NOT Unconfirmed (which would wrongly tell the caller a change may have landed).
+func TestLinkedIn_ToggleStatus_ActivateDiscoveryFailureIsClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.WriteHeader(http.StatusBadGateway) // FINDER read fails before any mutation
+			return
+		}
+		t.Errorf("no mutation should be issued after a failed discovery on activate: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error on a failed discovery")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a pre-mutation discovery failure must NOT be Unconfirmed (nothing applied), got: %v", err)
 	}
 }
 
