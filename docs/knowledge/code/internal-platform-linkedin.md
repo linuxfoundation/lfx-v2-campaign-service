@@ -45,12 +45,23 @@ with bounded backoff.
 
 ## Campaign status toggle
 
-`UpdateCampaignStatus(ctx, campaignID, status)` pauses/resumes an existing campaign via
-LinkedIn's RestLi PARTIAL_UPDATE: `POST /adAccounts/{acct}/adCampaigns/{id}` with header
-`X-Restli-Method: PARTIAL_UPDATE` and body `{"patch":{"$set":{"status": ACTIVE|PAUSED}}}`. The
-account id is resolved+validated from the runtime config (same as create); `campaignID` must
-be numeric. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classifier so a caller
-can tell a maybe-applied outcome from a definite rejection. `doRequest` gained an optional
-per-call headers map to carry the `X-Restli-Method` header.
+`UpdateCampaignAndCreativesStatus(ctx, campaignID, status)` pauses/resumes a campaign AND
+cascades to its creatives, because CreateCampaign leaves creatives DRAFT (and the campaign
+PAUSED) — activating only the campaign would not serve (a DRAFT creative never serves; a
+creative's EFFECTIVE status is gated by its campaign). It first PARTIAL_UPDATEs the campaign
+status (`POST /adAccounts/{acct}/adCampaigns/{id}`, header `X-Restli-Method: PARTIAL_UPDATE`,
+body `{"patch":{"$set":{"status": ACTIVE|PAUSED}}}`), then DISCOVERS the creatives via the
+creatives FINDER (`GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})`,
+`X-Restli-Method: FINDER` — LinkedIn persists only a creative count, not ids; a numeric finder
+id is reconstructed into a sponsoredCreative URN, a stuck/looping cursor or the page cap FAILS
+rather than truncates), and PARTIAL_UPDATEs each creative's `intendedStatus` (its URN key is
+percent-encoded, `urn%3Ali%3A…`). On a PAUSE a definite 400 on an in-review creative is
+tolerated (LinkedIn forbids pausing an in-review creative). A creative failure after the
+campaign update is a `partialCascadeError` (Unconfirmed). The narrower `UpdateCampaignStatus`
+(campaign only) is retained as the building block. The account id is resolved+validated from
+the runtime config (same as create); ids must be numeric. `IsOutcomeUnconfirmed(err)` exposes
+the shared ambiguity classifier (and honors the `Unconfirmed()` behavioral interface) so a
+caller can tell a maybe-applied outcome (including a partial cascade) from a definite rejection.
+`doRequest` gained an optional per-call headers map to carry the `X-Restli-Method` header.
 
 See [internal/platform/linkedin](../../../internal/platform/linkedin).

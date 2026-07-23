@@ -191,12 +191,14 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 }
 
 // ToggleStatus pauses or resumes an existing LinkedIn campaign on the platform. It resolves
-// the connection (active + access token; a status update needs the account id but not the
-// org id, which is creation-only), builds the client, and issues the RestLi PARTIAL_UPDATE.
-// campaign is the persisted row; LinkedIn is a single-node update (no child cascade like
-// Reddit), so only campaign.PlatformCampaignID (the numeric campaign id) is used. status is
-// model.CampaignRunActive/Paused. An UNCONFIRMED outcome is wrapped so the caller reports
-// "verify before retry".
+// the connection (active + access token; the toggle needs the account id but not the org id,
+// which is creation-only), builds the client, and CASCADES via UpdateCampaignAndCreativesStatus:
+// a RestLi PARTIAL_UPDATE of the campaign status, then discovery of the campaign's creatives
+// (LinkedIn persists only a creative count, not ids) and a PARTIAL_UPDATE of each creative's
+// intendedStatus — because creatives are created DRAFT, so activating only the campaign would
+// not serve. campaign is the persisted row; only campaign.PlatformCampaignID (the numeric
+// campaign id) is used. status is model.CampaignRunActive/Paused. An UNCONFIRMED outcome
+// (including a partial cascade) is wrapped so the caller reports "verify before retry".
 func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	liStatus, err := linkedinRunStatus(status)
 	if err != nil {

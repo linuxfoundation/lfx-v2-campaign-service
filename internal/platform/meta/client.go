@@ -774,15 +774,18 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if status == StatusActive && strings.TrimSpace(adSetID) == "" {
 		return fmt.Errorf("meta: cannot activate campaign %s: no ad set id is known, so the tree cannot be made servable", campaignID)
 	}
+	// Validate the ad set id BEFORE the campaign POST (pre-flight): a malformed persisted id
+	// is a definite, retry-won't-help failure, so fail cleanly with NOTHING applied rather
+	// than committing the campaign change and then reporting an ambiguous partial activation.
+	adSetID = strings.TrimSpace(adSetID)
+	if adSetID != "" && !numericIDRE.MatchString(adSetID) {
+		return fmt.Errorf("meta: invalid ad set id %q: must be numeric", adSetID)
+	}
 	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
 		return err
 	}
-	adSetID = strings.TrimSpace(adSetID)
 	if adSetID == "" {
 		return nil
-	}
-	if !numericIDRE.MatchString(adSetID) {
-		return &partialCascadeError{stage: "ad set", err: fmt.Errorf("invalid ad set id %q: must be numeric", adSetID)}
 	}
 	// The campaign POST already committed; a child failure past this point is a PARTIAL
 	// application, surfaced as partialCascadeError (Unconfirmed).
@@ -807,13 +810,26 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 // returned (a non-numeric id is skipped defensively — it can't be a valid node to PATCH).
 func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error) {
 	var ids []string
-	path := "/" + adSetID + "/ads?fields=id&limit=" + strconv.Itoa(adDiscoveryPageSize)
+	after := ""
+	seen := make(map[string]struct{})
 	for page := 0; page < adDiscoveryMaxPages; page++ {
+		// Build the request path OURSELVES from the cursor. Do NOT reuse Meta's absolute
+		// paging.next URL: it carries the access_token (and appsecret_proof) as query params,
+		// which would then be sent in the URL and copied into apiError/transportError — and the
+		// toggle service logs those errors. Passing only the opaque `after` cursor keeps the
+		// credential out of any persisted/logged path.
+		path := "/" + adSetID + "/ads?fields=id&limit=" + strconv.Itoa(adDiscoveryPageSize)
+		if after != "" {
+			path += "&after=" + url.QueryEscape(after)
+		}
 		var resp struct {
 			Data []struct {
 				ID string `json:"id"`
 			} `json:"data"`
 			Paging struct {
+				Cursors struct {
+					After string `json:"after"`
+				} `json:"cursors"`
 				Next string `json:"next"`
 			} `json:"paging"`
 		}
@@ -825,21 +841,22 @@ func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error
 				ids = append(ids, id)
 			}
 		}
+		// No `next` link means this was the last page; an empty `after` cursor with a `next`
+		// link present is malformed (can't advance) → treat as incomplete.
 		if resp.Paging.Next == "" {
 			return ids, nil // fully enumerated
 		}
-		// paging.next is an ABSOLUTE Graph URL; doRequest prefixes baseURL, so pass only the
-		// part after the host by trimming the base. If it doesn't share the base (unexpected),
-		// discovery is INCOMPLETE — fail rather than silently truncate (which would let the
-		// cascade report success and persist ACTIVE while undiscovered ads stay PAUSED).
-		next, ok := strings.CutPrefix(resp.Paging.Next, c.baseURL)
-		if !ok {
-			return nil, fmt.Errorf("ad discovery for ad set %s returned an unexpected paging cursor; cannot guarantee all ads were enumerated", adSetID)
+		after = strings.TrimSpace(resp.Paging.Cursors.After)
+		if after == "" {
+			return nil, fmt.Errorf("ad discovery for ad set %s has more pages but no cursor; cannot guarantee all ads were enumerated", adSetID)
 		}
-		path = next
+		if _, dup := seen[after]; dup {
+			return nil, fmt.Errorf("ad discovery for ad set %s did not terminate (repeated paging cursor)", adSetID)
+		}
+		seen[after] = struct{}{}
 	}
-	// Reached the page cap with a non-empty cursor still pending: discovery is INCOMPLETE, so
-	// fail rather than silently truncate.
+	// Reached the page cap with a cursor still pending: discovery is INCOMPLETE, so fail
+	// rather than silently truncate.
 	return nil, fmt.Errorf("ad discovery for ad set %s exceeded %d pages; too many ads to enumerate", adSetID, adDiscoveryMaxPages)
 }
 

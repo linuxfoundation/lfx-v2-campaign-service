@@ -3805,16 +3805,15 @@ func TestUpdateCampaignStatus_2xxOversizedBodyIsSuccess(t *testing.T) {
 	}
 }
 
-// TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails verifies an unexpected paging
-// cursor (one that doesn't share the client base URL) fails the toggle rather than silently
-// truncating ad discovery — otherwise the service would persist ACTIVE while undiscovered ads
-// stay PAUSED.
+// TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails verifies a `next` link present
+// with no advanceable `after` cursor fails the toggle rather than silently truncating ad
+// discovery — otherwise the service would persist ACTIVE while undiscovered ads stay PAUSED.
 func TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
-			// A paging.next pointing at a DIFFERENT host — discovery can't safely continue.
-			_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{"next":"https://other.example/next"}}`)
+			// A `next` link but NO cursors.after → cannot advance safely → incomplete.
+			_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{"next":"https://graph.example/next","cursors":{}}}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"success":true}`)
@@ -3828,5 +3827,45 @@ func TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails(t *testing.T) {
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
 		t.Errorf("incomplete discovery after the campaign update must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestListAdIDs_PagesViaCursorNotRawNextURL verifies paging advances via the opaque `after`
+// cursor (built into our own path) and never reuses Meta's raw paging.next URL — so a
+// credential in paging.next can't leak into the request path or a logged error. It also
+// asserts a second page's ads are collected.
+func TestUpdateCampaignAndChildrenStatus_PagesViaCursor(t *testing.T) {
+	var adGetPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			adGetPaths = append(adGetPaths, r.URL.RawQuery)
+			if r.URL.Query().Get("after") == "" {
+				// Page 1: one ad + a next link whose URL carries a secret; cursor "CUR2".
+				_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{"next":"https://graph.example/x?access_token=SECRET&after=CUR2","cursors":{"after":"CUR2"}}}`)
+			} else {
+				// Page 2 (after=CUR2): one more ad, no next.
+				_, _ = io.WriteString(w, `{"data":[{"id":"222"}],"paging":{"cursors":{"after":"CUR2"}}}`)
+			}
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	if len(adGetPaths) != 2 {
+		t.Fatalf("expected 2 ad-discovery GETs (paged), got %d: %v", len(adGetPaths), adGetPaths)
+	}
+	// The second page's query must carry after=CUR2 and NOT the raw next URL's secret.
+	if !strings.Contains(adGetPaths[1], "after=CUR2") {
+		t.Errorf("page 2 query = %q, want it built from the after cursor", adGetPaths[1])
+	}
+	for _, q := range adGetPaths {
+		if strings.Contains(q, "SECRET") || strings.Contains(q, "access_token") {
+			t.Errorf("ad-discovery query leaked a credential from paging.next: %q", q)
+		}
 	}
 }
