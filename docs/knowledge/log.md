@@ -374,6 +374,45 @@ service. Wired into the container (no-db / 503-boot / live / cold-start-retry pa
 and mounted in the server (`buildMux` + a route-mount test asserting
 `GET …/audiences` resolves non-404 + a nil-endpoints fail-loud case). Service-layer
 tests cover create/defaults/If-Match(428/412/success)/404/late-binding. Full gate green.
+**Update** — Made `page_id` + `account_id` REQUIRED and format-VALIDATED in
+`MetaAdsConnectionConfig` (design/connection.go, PR #38 review, consolidated over three
+rounds): an active Meta connection with an unusable id would always fail dispatch (the
+Meta client rejects any `account_id` not matching `act_<digits>` and any non-numeric
+`page_id` before a mutating call), so beyond `Required` we validate `page_id` with a
+digits-only `Pattern` and `account_id` with `Pattern(^act_[0-9]+$)` — `Required`/
+`MinLength(1)` alone would let `{"page_id":""}` or `account_id:"foo"` through. This
+surfaces the error as a 4xx at connection creation instead of a silent runtime failure.
+Added table-driven API-level tests exercising the GENERATED request-body validators
+(missing/empty/non-numeric page_id and non-`act_` account_id rejected on both create and
+update; valid numeric ids pass) — in a NON-generated package `internal/apivalidation`
+that imports the exported validators, NOT under `gen/` (DO-NOT-EDIT boundary). Also fixed
+a vacuous placement assertion in the meta dispatch happy-path test: it used lowercase
+`facebook`/`instagram` JSON keys, but `meta.Placement` has no json tags so those were
+silently ignored and the client applied its both-feeds default — switched to the correct
+`FacebookFeed`/`InstagramFeed` keys and now assert instagram is ABSENT from targeting
+(proving the `InstagramFeed:false` override is honored). Gave `CampaignCreateInput.
+platforms` a deterministic UNIQUE `Example` ([reddit-ads, meta-ads] — two providers with
+a registered dispatcher on this branch, so a consumer copying it doesn't hit "no
+dispatcher registered") — Goa's auto-example otherwise repeated the first enum value
+(duplicate `reddit-ads`), which the handler rejects. Regenerated the Goa API, dropped the now-non-pointer `cfg.PageID` deref in the
+connection service, updated internal-dispatch.md, and strengthened the meta happy-path
+dispatch test to assert the full mapping contract (objective→OUTCOME_SALES, lifetime
+budget in minor units, geo countries, pixel + page promoted objects, per-variant
+creative/ad fan-out).
+
+**Update** — Added the linkedin and meta PlatformDispatcher adapters to
+`internal/dispatch` (LFXV2-2638 / 2640), following the reddit template from the
+Creation entry below. Each reuses the shared `credsSource` (Get → Decrypt) and does
+its own per-platform interpretation: linkedin unmarshals a single OAuth2 accessToken +
+builds RuntimeConfig from the connection's AccountID + numeric `org_id`; meta uses an
+accessToken + AccountID (`act_...`) + `page_id`, budget in the account's currency (no
+FX). Both are registered in `container.registerDispatchers` (fast path + cold-start
+retry) alongside reddit — three of the paid providers. The twitter adapter (OAuth1
+4-tuple, LFXV2-2642) is planned on a later branch and not yet registered. Each has
+pre-create/NoUpstreamCreate tests + a happy-path through the real client against an
+httptest server. Google Ads follows once its client (PR #33) lands; email/HubSpot is
+LFXV2-2777.
+
 **Creation** — Added `internal/dispatch` — the per-platform PlatformDispatcher
 adapters that wire the orchestrator to the ad-platform clients (LFXV2-2639, Reddit
 first). Until now the orchestrator's `dispatchers` map was empty, so campaign creation

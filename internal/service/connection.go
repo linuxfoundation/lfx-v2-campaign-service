@@ -219,7 +219,7 @@ func (s *ConnectionService) CreateMetaAds(ctx context.Context, p *conn.CreateMet
 		Label:     strVal(cfg.Label),
 		AccountID: cfg.AccountID,
 		ProviderConfig: map[string]string{
-			"page_id": strVal(cfg.PageID),
+			"page_id": cfg.PageID, // required by the design
 			"app_id":  strVal(cfg.AppID),
 		},
 		CreatedBy: actorFromCtx(ctx),
@@ -247,7 +247,7 @@ func (s *ConnectionService) UpdateMetaAds(ctx context.Context, p *conn.UpdateMet
 		Label:     strVal(cfg.Label),
 		AccountID: cfg.AccountID,
 		ProviderConfig: map[string]string{
-			"page_id": strVal(cfg.PageID),
+			"page_id": cfg.PageID, // required by the design
 			"app_id":  strVal(cfg.AppID),
 		},
 		UpdatedBy: actorFromCtx(ctx),

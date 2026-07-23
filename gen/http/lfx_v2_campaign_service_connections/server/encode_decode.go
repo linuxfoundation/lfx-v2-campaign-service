@@ -5060,7 +5060,7 @@ func unmarshalMetaAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnection
 	res := &lfxv2campaignserviceconnections.MetaAdsConnectionConfig{
 		Label:     v.Label,
 		AccountID: *v.AccountID,
-		PageID:    v.PageID,
+		PageID:    *v.PageID,
 		AppID:     v.AppID,
 	}
 

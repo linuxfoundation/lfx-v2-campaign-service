@@ -271,9 +271,94 @@ driveFolderUrl?: string
 platforms?: CampaignPlatform[]
 linkedInConfig?: object         — LinkedIn-specific params
 redditConfig?: object           — Reddit-specific params
-metaConfig?: object             — Meta-specific params
+metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params
 ```
+
+#### MetaConfig (the `metaConfig` object)
+
+Meta (Facebook/Instagram) per-platform config. **Budget is in the ad ACCOUNT's currency**, not USD — the service does no FX conversion.
+
+```
+budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…).
+                                  Must be POSITIVE and round to at least one minor unit; a budget
+                                  that fails this is rejected by the client during dispatch (a
+                                  pre-create job failure, since CreateCampaigns is async).
+lifetimeBudget?: boolean        — true → lifetime budget over the flight; false/absent → daily budget
+startDate: string               — YYYY-MM-DD. Must NOT be before today (UTC).
+endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate. (Both date rules are
+                                  enforced by the client during dispatch — a violation fails the
+                                  platform job pre-create, not a synchronous 4xx.)
+objective?: string              — awareness | traffic | engagement | leads | conversions.
+                                  Omitted or blank → defaults to `traffic`.
+                                  NOTE: `leads` is INTERIM — it runs a website-traffic campaign
+                                  (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration
+                                  URL); it does NOT create an on-Facebook instant lead form. Full
+                                  LEAD_GENERATION parity is deferred (LFXV2-2665).
+geoTargets?: string[]           — ISO country codes, e.g. ['US', 'JP']. Optional: omitted or an
+                                  empty list defaults to ['US']. Supplied entries are uppercased,
+                                  trimmed, and filtered to valid ISO-2 codes; if entries were
+                                  supplied but NONE survive validation the request is REJECTED
+                                  (it does not silently fall back to US). The client also DROPS
+                                  Meta-ineligible countries: comprehensively sanctioned ones (IR,
+                                  CU, KP, RU, …) are removed by validation, and regulated markets
+                                  (SG, TW, KR) are filtered out during dispatch with a note — so a
+                                  request naming only ineligible/regulated countries is rejected,
+                                  and a mixed list proceeds with just the eligible entries.
+pixelId?: string                — Meta pixel id. REQUIRED (non-empty, NUMERIC) for the
+                                  `conversions` objective — it becomes the promoted-object pixel; a
+                                  missing or non-numeric pixelId fails the dispatch job pre-create.
+                                  Ignored by the other objectives.
+currencyOffset?: number         — Account minor-unit scale (1 for zero-decimal currencies like JPY,
+                                  100 for most). Must be a NON-NEGATIVE INTEGER: it is decoded as an
+                                  int64, so a fractional value fails config decoding and a negative
+                                  value is rejected as malformed. 0/omitted → derived by the client.
+                                  This is a FALLBACK, not an unconditional override:
+                                  the client's preflight derives the offset from the account's ISO
+                                  currency and that is AUTHORITATIVE — a supplied value is used only
+                                  when the currency can't be determined, and a supplied value that
+                                  CONFLICTS with a recognized account currency is REJECTED by the
+                                  client during dispatch rather than trusted. Since CreateCampaigns
+                                  is async (a 202 is returned first), that rejection fails the
+                                  platform job BEFORE any mutating Meta call — a pre-create dispatch
+                                  failure, not a synchronous 4xx on the campaign request. Omit it
+                                  unless the account currency is unrecognized.
+placements?: object             — Which feeds to run on; ALL keys optional booleans. Keys are the
+                                  Go field NAMES (no lowercase json aliases): FacebookFeed,
+                                  InstagramFeed, Stories, Reels, AudienceNetwork, MessengerInbox.
+                                  Omitted → the client's default (both feeds enabled).
+                                  At least ONE supported placement must remain enabled after your
+                                  overrides — e.g. `{FacebookFeed:false, InstagramFeed:false}` with
+                                  nothing else enabled is REJECTED (the dispatch job fails pre-create).
+                                  NOTE: `MessengerInbox: true` is REJECTED — Meta removed the
+                                  Messenger Inbox placement (Nov 2025), so the client fails the
+                                  dispatch job pre-create if it is enabled. Leave it false/omitted.
+variants: AdVariant[]           — One ad per variant; at least one is required.
+```
+
+`AdVariant` (an entry in `variants`):
+
+```
+primaryText: string             — Required; non-empty; at most 125 runes
+headline: string                — Required; non-empty; at most 40 runes
+description?: string             — At most 30 runes
+```
+
+Copy limits are enforced by the client before any upstream call, so a variant that
+exceeds them fails the platform job pre-create (async — not a synchronous 4xx). The
+composed ad-creative NAME (`<eventName> - Variant N`) is also capped at 255 runes and
+rejected pre-create, so keep `eventName` well short of that so the suffix fits.
+
+Connection prerequisites (from the Meta connection, not this config): a valid `account_id`
+(`act_<digits>`) and a numeric `page_id` — both REQUIRED, format-validated, and length-bounded
+(`MaxLength 64`) at connection creation (a missing/malformed/over-long value is a 4xx there, not
+a runtime dispatch failure).
+
+Destination URL: the ad points at the brief's registration URL. The Meta client validates it
+before any upstream create — it must be an absolute **HTTPS** URL with a real hostname, carry NO
+embedded userinfo/credentials, and have a cleanly parseable query. A URL that violates these
+fails the dispatch job pre-create (the brief endpoint accepts any string; this is enforced at
+dispatch, not at brief creation).
 
 ### JobCreateResponse (returned immediately from `POST .../campaigns`)
 

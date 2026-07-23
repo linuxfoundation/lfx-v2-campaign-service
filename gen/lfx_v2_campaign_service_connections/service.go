@@ -531,7 +531,7 @@ type MetaAdsConnectionConfig struct {
 	// Meta ad account ID
 	AccountID string
 	// Facebook page ID
-	PageID *string
+	PageID string
 	// Meta app ID
 	AppID *string
 }
