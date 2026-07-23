@@ -368,6 +368,15 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	if existing.Version != version {
 		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "campaign has been modified; reload and retry"}
 	}
+	// Only a fully-created campaign (or one already in a run state) may be toggled. A
+	// "pending" ambiguous orphan or a "created_degraded" campaign (a sub-step still needs
+	// reconciliation) must NOT be toggled: doing so would activate an incomplete campaign
+	// and/or OVERWRITE the reconciliation status with the run state, erasing the signal. A
+	// non-empty PlatformCampaignID alone is not enough — a degraded/partial campaign can
+	// carry an upstream id. Reject with 409 (the state must be reconciled first).
+	if !model.CampaignStatusToggleable(existing.Status) {
+		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not in a toggleable state (it is still provisioning or needs reconciliation); resolve its status before toggling"}
+	}
 
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
 	// lie that the campaign is paused when the platform still has it running).

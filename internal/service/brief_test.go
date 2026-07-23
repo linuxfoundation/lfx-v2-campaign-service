@@ -836,3 +836,52 @@ func TestBriefService_ToggleCampaignStatus_UnconfirmedIsSurfaced(t *testing.T) {
 		t.Error("the row must NOT be written on an unconfirmed outcome")
 	}
 }
+
+func TestBriefService_ToggleCampaignStatus_DegradedNotToggleable(t *testing.T) {
+	// A created_degraded campaign WITH a real upstream id must NOT be toggled: toggling
+	// would activate an incomplete campaign and overwrite the reconciliation marker. It is
+	// a 409, the platform is never called, and the row is untouched.
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreatedDegraded, Version: 1,
+	}
+	tog := &stubToggler{}
+	s, camps := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a 409 ConflictError for a degraded campaign, got %T: %v", err, err)
+	}
+	if tog.gotID != "" {
+		t.Error("the platform must NOT be called for a non-toggleable (degraded) campaign")
+	}
+	if camps.replaced != nil {
+		t.Error("the row (and its degraded reconciliation marker) must NOT be overwritten")
+	}
+}
+
+func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing.T) {
+	// A pending ambiguous orphan can carry a non-empty upstream id (campaign POST succeeded,
+	// a later step failed). The toggle must reject it (409), not activate the incomplete
+	// campaign — the empty-id check alone would miss this.
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusPending, Version: 1,
+	}
+	tog := &stubToggler{}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunActive,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a 409 for a pending campaign with an id, got %T: %v", err, err)
+	}
+	if tog.gotID != "" {
+		t.Error("the platform must NOT be called for a pending campaign")
+	}
+}
