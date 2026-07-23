@@ -3837,11 +3837,13 @@ func TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails(t *testing.T) {
 // credential in paging.next can't leak into the request path or a logged error. It also
 // asserts a second page's ads are collected.
 func TestUpdateCampaignAndChildrenStatus_PagesViaCursor(t *testing.T) {
-	var adGetPaths []string
+	// Capture the ad-discovery queries over a buffered channel so the handler-goroutine writes
+	// happen-before the test-goroutine reads (race-safe under `go test -race`).
+	queryCh := make(chan string, 8)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
-			adGetPaths = append(adGetPaths, r.URL.RawQuery)
+			queryCh <- r.URL.RawQuery
 			if r.URL.Query().Get("after") == "" {
 				// Page 1: one ad + a next link whose URL carries a secret; cursor "CUR2".
 				_, _ = io.WriteString(w, `{"data":[{"id":"111"}],"paging":{"next":"https://graph.example/x?access_token=SECRET&after=CUR2","cursors":{"after":"CUR2"}}}`)
@@ -3857,6 +3859,11 @@ func TestUpdateCampaignAndChildrenStatus_PagesViaCursor(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive); err != nil {
 		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	close(queryCh)
+	var adGetPaths []string
+	for q := range queryCh {
+		adGetPaths = append(adGetPaths, q)
 	}
 	if len(adGetPaths) != 2 {
 		t.Fatalf("expected 2 ad-discovery GETs (paged), got %d: %v", len(adGetPaths), adGetPaths)
