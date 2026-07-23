@@ -550,10 +550,17 @@ var accountIDRE = regexp.MustCompile(`^[0-9]+$`)
 // campaign step. 32 runes is enough to identify the offending value.
 func clipID(s string) string {
 	const max = 32
-	if utf8.RuneCountInString(s) <= max {
-		return s
+	// Find the byte offset after the first `max` runes WITHOUT materializing the whole
+	// string as a []rune (a hostile multi-KiB id would otherwise allocate ~4× its length
+	// just to be truncated). Ranging over a string decodes runes in place.
+	n := 0
+	for i := range s {
+		if n == max {
+			return s[:i] + "…"
+		}
+		n++
 	}
-	return string([]rune(s)[:max]) + "…"
+	return s // fewer than max runes
 }
 
 // validateAccountIDs rejects an AccountID (and, when set, CustomerID) that isn't a
