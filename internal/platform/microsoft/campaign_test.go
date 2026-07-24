@@ -14,70 +14,102 @@ import (
 	"time"
 )
 
-// validInput is a well-formed CampaignInput the create tests can start from.
+// validInput is a well-formed CampaignInput the create tests can start from. It carries
+// a RegistrationURL because CreateCampaign completes the full Campaign->AdGroup->Ad
+// hierarchy and the ad requires a destination.
 func validInput() CampaignInput {
 	return CampaignInput{
-		EventName:  "KubeCon",
-		EventSlug:  "kubecon",
-		Project:    "CNCF",
-		Budget:     50,
-		NameSuffix: "brief-1",
+		EventName:       "KubeCon",
+		EventSlug:       "kubecon",
+		Project:         "CNCF",
+		Budget:          50,
+		NameSuffix:      "brief-1",
+		RegistrationURL: "https://events.example.org/register",
 	}
 }
 
-// campaignsAPI dispatches the two paths CreateCampaign touches: the POST
-// Campaigns/QueryByAccountId find-by-name lookup and the POST Campaigns create.
-// getBody/postBody/postStatus let each test script the two independently. postSeen /
-// querySeen capture the decoded create / lookup bodies.
+// campaignsAPI dispatches every route CreateCampaign touches across the full hierarchy.
+// ALL routes are POST (v13 REST reads are POST /<Entity>/QueryBy…; creates are POST
+// /<Entity>). Lookup routes are checked BEFORE the bare create routes. *Seen fields
+// capture the decoded request bodies; *Body / *Status script each step.
 type campaignsAPI struct {
-	getBody    string
-	postBody   string
+	// Campaign (MS-2).
+	getBody    string // QueryByAccountId response
+	postBody   string // create response
 	postStatus int
 	postSeen   *createCampaignsRequest
 	querySeen  *queryCampaignsRequest
+	// AdGroup (MS-2.5).
+	adGroupGetBody  string
+	adGroupPostBody string
+	adGroupStatus   int
+	adGroupSeen     *createAdGroupsRequest
+	// Ad (MS-2.5).
+	adGetBody  string
+	adPostBody string
+	adStatus   int
+	adSeen     *createAdsRequest
 }
 
 func (h *campaignsAPI) handler(t *testing.T) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		p := r.URL.Path
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected non-POST request %s %s", r.Method, p)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		switch {
-		// The lookup is a POST to .../Campaigns/QueryByAccountId — check it BEFORE the
-		// plain create route (both are POST).
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Campaigns/QueryByAccountId"):
-			if h.querySeen != nil {
-				var req queryCampaignsRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Errorf("decode query body: %v", err)
-				}
-				*h.querySeen = req
-			}
-			body := h.getBody
-			if body == "" {
-				body = `{"Campaigns":[]}`
-			}
-			_, _ = io.WriteString(w, body)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Campaigns"):
-			if h.postSeen != nil {
-				var req createCampaignsRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Errorf("decode create body: %v", err)
-				}
-				*h.postSeen = req
-			}
-			if h.postStatus != 0 {
-				w.WriteHeader(h.postStatus)
-			}
-			body := h.postBody
-			if body == "" {
-				body = `{"CampaignIds":[321],"PartialErrors":[]}`
-			}
-			_, _ = io.WriteString(w, body)
+		// ---- reads (QueryBy…) — check BEFORE the bare create routes ----
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			decodeTo(t, r, h.querySeen)
+			writeOr(w, h.getBody, `{"Campaigns":[]}`)
+		case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+			writeOr(w, h.adGroupGetBody, `{"AdGroups":[]}`)
+		case strings.HasSuffix(p, "/Ads/QueryByAdGroupId"):
+			writeOr(w, h.adGetBody, `{"Ads":[]}`)
+		// ---- creates ----
+		case strings.HasSuffix(p, "/Campaigns"):
+			decodeTo(t, r, h.postSeen)
+			writeStatusOr(w, h.postStatus, h.postBody, `{"CampaignIds":[321],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/AdGroups"):
+			decodeTo(t, r, h.adGroupSeen)
+			writeStatusOr(w, h.adGroupStatus, h.adGroupPostBody, `{"AdGroupIds":[654],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/Ads"):
+			decodeTo(t, r, h.adSeen)
+			writeStatusOr(w, h.adStatus, h.adPostBody, `{"AdIds":[987],"PartialErrors":[]}`)
 		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			t.Errorf("unexpected request %s %s", r.Method, p)
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}
+}
+
+// decodeTo decodes the request body into *dst when dst is non-nil.
+func decodeTo[T any](t *testing.T, r *http.Request, dst *T) {
+	t.Helper()
+	if dst == nil {
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		t.Errorf("decode request body for %s: %v", r.URL.Path, err)
+	}
+}
+
+func writeOr(w http.ResponseWriter, body, dflt string) {
+	if body == "" {
+		body = dflt
+	}
+	_, _ = io.WriteString(w, body)
+}
+
+func writeStatusOr(w http.ResponseWriter, status int, body, dflt string) {
+	if status != 0 {
+		w.WriteHeader(status)
+	}
+	writeOr(w, body, dflt)
 }
 
 // ---- validation ------------------------------------------------------------
@@ -245,8 +277,44 @@ func TestCreateCampaign_ReturnsExistingByNameWithoutCreating(t *testing.T) {
 	if res.CampaignID != "999" {
 		t.Errorf("CampaignID = %q, want 999 (existing)", res.CampaignID)
 	}
+	// The campaign already existed, but this run still CREATED the ad group and ad (they
+	// were not pre-provided), so AlreadyExisted must be false: the run produced something
+	// new. AlreadyExisted is true ONLY when all three levels pre-existed
+	// (see TestCreateCampaign_AlreadyExistedWhenWholeTreePreexists).
+	if res.AlreadyExisted {
+		t.Error("AlreadyExisted = true, want false when the ad group/ad were created this run")
+	}
+}
+
+func TestCreateCampaign_AlreadyExistedWhenWholeTreePreexists(t *testing.T) {
+	in := validInput()
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+	// Every level is pre-provided by its lookup, so nothing is created this run.
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+	}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if r.Method == http.MethodPost &&
+			(strings.HasSuffix(p, "/Campaigns") || strings.HasSuffix(p, "/AdGroups") || strings.HasSuffix(p, "/Ads")) {
+			t.Errorf("create POST %s issued despite every level pre-existing", p)
+		}
+		base(w, r)
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
 	if !res.AlreadyExisted {
-		t.Error("AlreadyExisted = false, want true when returning an existing campaign")
+		t.Error("AlreadyExisted = false, want true when campaign, ad group, AND ad all pre-existed")
+	}
+	if res.CampaignID != "999" || res.AdGroupID != "111" || res.AdID != "222" {
+		t.Errorf("ids = %q/%q/%q, want the existing 999/111/222", res.CampaignID, res.AdGroupID, res.AdID)
 	}
 }
 

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token auth, request layer with 429 retry + BatchErrors classification (MS-1), and PAUSED find-or-create campaign creation (MS-2)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token auth, request layer with 429 retry + BatchErrors classification (MS-1), and PAUSED find-or-create Campaign->AdGroup->Ad creation (MS-2/MS-2.5)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -134,8 +134,75 @@ Event | Suffix`, `|`-and-control-char sanitized) is length-capped in CHARACTERS.
 `toMSDate` renders Microsoft's `{Month,Day,Year}` date object, reserved for the ad-group
 flight dates a later slice needs.
 
+## Ad group + ad creation (MS-2.5)
+
+`CreateCampaign` completes the full Campaign → AdGroup → Ad hierarchy (`adgroup_ad.go`),
+all PAUSED, so the result is a usable paused campaign rather than an empty shell —
+mirroring the reddit/meta clients. After the campaign is created (or found), it
+find-or-creates a PAUSED ad group then a PAUSED Responsive Search Ad. Every entity's create
+and read follows the same v13 REST shape as campaigns: **creates are `POST /<Entity>` with
+the PARENT ID in the body** (`POST /AdGroups` with `CampaignId`, `POST /Ads` with
+`AdGroupId` — NOT in the URL); **reads are `POST /<Entity>/QueryBy…`**
+(`AdGroups/QueryByCampaignId`, `Ads/QueryByAdGroupId`), not GETs. Each level uses the shared
+`firstEntityID` classifier (a positive-integer id via `numberID` → success; a null id slot
+with an ACTUAL PartialError, gated on `partialErrorsHaveAny` so a null-only placeholder
+slice does not count → `errPartialFailure`; else a malformed 200 → the `errNoID` sentinel).
+Both `errNoID` and the ambiguous-transport set are treated as UNCONFIRMED at the create call
+sites (the entity MAY have been created — the ad-group/ad create has no idempotency key,
+so a blind retry could duplicate); only a real PartialError is a clean rejection. Each
+step returns a partial carrying the ids known so far (campaign id at the ad-group step;
+campaign + ad-group at the ad step) so an ambiguous failure leaves the tree reconcilable.
+
+**Ad type — Responsive Search Ad.** v13 does NOT support adding a `TextAd`/ExpandedTextAd
+(every `TextAd` field is "Add: Not supported"; a standard-text-ad add fails with
+`CampaignServiceAdTypeInvalid`). The currently-addable Search text ad is the
+`ResponsiveSearchAd`: **3–15 unique headline assets** and **2–4 unique description assets**,
+each a `TextAsset` wrapped in an `AssetLink`, plus a required `FinalUrls`. Asset length is
+WIDTH-AWARE: normal copy allows 30 (headline) / 90 (description) final characters; Microsoft
+documents a reduced 15 / 45 cap "for languages with double-width characters"
+(CJK/Korean/Japanese/Chinese or emoji). v13 publishes no per-character weighted formula, so
+the client conservatively applies the reduced 15 / 45 cap whenever ANY double-width character
+is present — never emitting an over-length asset (which would fail the ad after its parents
+were created), at the cost of truncating mixed copy slightly short of the theoretical maximum.
+Each asset must also contain at least one word and no newline — this word check applies
+to BOTH caller-supplied copy (`checkAdCopyList`) and auto-composed assets (`boundedUniqueCopy`
+drops any candidate lacking a word, so a punctuation-only `EventName` never reaches AddAds).
+The composed `FinalUrls` (registration URL + `utm_*`) is length-checked against Microsoft's
+2,048-char limit up front, and its host is checked against the display-domain limit (67
+normally; Microsoft reduces it to 33 "for languages with double-width characters", so a host
+containing any wide char — e.g. a CJK IDN — is conservatively held to 33, matching the copy
+caps). The RSA sets no `Path1`/`Path2`, so the whole display budget is the hostname; an
+over-long host passes the 2,048-char check but is rejected only at AddAds. Its ad group is created with `AdGroupType` "SearchStandard" (the
+"SearchDynamic" type takes only dynamic search ads) and a `Language` (the MS-2 campaign sets
+no campaign-level languages, so the ad group must carry one). The AddAds body is polymorphic
+(an array of the base `Ad`), so the responsive search ad DOES send `Type: "ResponsiveSearch"`
+as the wire discriminator that selects the derived subtype ("Add: Read-only" on `Ad.Type`
+bars CHANGING the type, not omitting the discriminator — without it the create is rejected).
+`Ad.Status` defaults to *Active* on Add, so the ad sends `Status: Paused` explicitly
+(otherwise it would be eligible to serve once a human enables the campaign).
+`composeAdCopy` de-duplicates (case-insensitively), width-aware-truncates, and pads the
+caller's `Headlines`/`Descriptions` up to the required minimum with deterministic
+placeholders; `validateAdCopy` rejects an over-count, over-long (width-aware), duplicate,
+word-less, or newline-containing caller entry up front. The AddAdGroups body also carries the
+docs-required `ReturnInheritedBidStrategyTypes` (reserved; sent as `false`).
+
+Ad-group idempotency is the (case-insensitively unique) ad-group name; ads have no stable
+name (and v13 ALLOWS duplicate responsive search ads in an ad group), so ad idempotency is
+keyed on the destination (`findAdByFinalURL` matches an existing ad whose `FinalUrls`
+contains the composed URL). NOTE: `GetAdsByAdGroupId` (`Ads/QueryByAdGroupId`) marks
+`AdTypes` REQUIRED (unlike `AdGroups/QueryByCampaignId`, which needs only `CampaignId`), so
+the ad lookup sends `AdTypes: ["ResponsiveSearch"]` or the lookup is rejected before the
+create is reached. The ad destination and ad copy are validated UP FRONT in
+`CreateCampaign`, before the campaign create (`validateAdURL`: https/http, absolute, no
+userinfo, well-formed query; `redactAdURL` for errors; `validateAdCopy` for the copy), so a
+bad URL/copy fails cleanly `(nil, err)` without orphaning a PAUSED campaign or ad group. The
+ad's `FinalUrls` is the registration URL with LFX `utm_*` params SET (`buildAdFinalURL`
+preserves every other query param). `AlreadyExisted` is true only when the campaign, ad
+group, AND ad ALL pre-existed (this run created nothing); creating any level makes it false.
+
 ## Scope
 
 MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PAUSED
-find-or-create campaign creation (`campaign.go`). The orchestrator dispatcher (register
-`microsoft-ads`, use the stored `connection-microsoft-ads` credential) follows in MS-3.
+find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group + ad
+(`adgroup_ad.go`). The orchestrator dispatcher (register `microsoft-ads`, use the stored
+`connection-microsoft-ads` credential) follows in MS-3.

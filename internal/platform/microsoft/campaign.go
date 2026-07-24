@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,10 +22,11 @@ import (
 // ---------------------------------------------------------------------------
 // Campaign creation (MS-2): find-or-create a PAUSED campaign
 //
-// The Microsoft Advertising REST hierarchy is Campaign -> AdGroup -> Ad. MS-2
-// creates the PAUSED campaign shell only (POST CampaignManagement/v13/Campaigns);
-// ad group + ad creation land in a later slice. Everything is created PAUSED so
-// nothing serves until a human enables it.
+// The Microsoft Advertising REST hierarchy is Campaign -> AdGroup -> Ad. CreateCampaign
+// find-or-creates the PAUSED campaign (POST CampaignManagement/v13/Campaigns) and then
+// completes the hierarchy under it — a PAUSED ad group and a PAUSED Responsive Search Ad
+// (see createAdGroupAndAd in adgroup_ad.go). Everything is created PAUSED so nothing serves
+// until a human enables it.
 //
 // Two Microsoft-specific transport facts drive the contract here:
 //
@@ -80,19 +82,16 @@ const (
 )
 
 // CampaignInput is the platform-agnostic request to create a Microsoft Advertising
-// campaign. Only the fields needed for a PAUSED search-campaign shell are consumed
-// today; targeting/ad groups/ads are added in a later slice. Mirrors the google-ads
-// CampaignInput so the orchestrator can build one input shape per platform.
+// campaign. CreateCampaign consumes these fields to build the full PAUSED hierarchy
+// (campaign + ad group + responsive search ad). Mirrors the google-ads CampaignInput so
+// the orchestrator can build one input shape per platform.
 type CampaignInput struct {
 	// EventName is the human-readable campaign subject, folded into the campaign name.
 	// Caller-supplied and otherwise unbounded, so it is sanitized and the composed name
 	// is length-capped before any create call.
 	EventName string
-	// EventSlug is the URL-safe event identifier, carried for struct parity with the
-	// sibling clients (which use it to build UTM click-through params on the ad's final
-	// URL). CreateCampaign builds only a PAUSED campaign shell today — no ads / final
-	// URLs — so this field is accepted but not yet consumed; a later slice (ad creation)
-	// will use it. Reserved now so the platform-agnostic input shape is stable.
+	// EventSlug is the URL-safe event identifier used to build the UTM click-through params
+	// appended to the created ad's final URL (utm_campaign), matching the sibling clients.
 	EventSlug string
 	// Project is folded into the composed name alongside EventName. It is the canonical
 	// attribution key the data pipeline parses out of the campaign name.
@@ -114,6 +113,27 @@ type CampaignInput struct {
 	// defaultTimeZone is used. A caller that knows the account's intended zone can pass a
 	// supported enum string.
 	TimeZone string
+	// RegistrationURL is the landing page the created Ad points to (its FinalUrls). It
+	// is REQUIRED to create the Ad: Microsoft rejects a responsive search ad with no final
+	// URL. Validated (https/http only, no embedded userinfo) before any create. UTM params
+	// for attribution are appended from EventSlug/Project.
+	RegistrationURL string
+	// Headlines / Descriptions override the auto-composed responsive-search-ad copy. A
+	// Microsoft responsive search ad REQUIRES 3-15 unique headlines and 2-4 unique
+	// descriptions. Character limits are WIDTH-DEPENDENT: normal copy allows 30 (headline) /
+	// 90 (description) final characters; Microsoft documents a reduced 15 / 45 cap "for
+	// languages with double-width characters" (CJK, Korean, Japanese, Chinese, or emoji).
+	// v13 publishes no per-character weighted formula, so this client conservatively applies
+	// the reduced 15 / 45 cap whenever ANY double-width character is present — it never emits
+	// an over-length asset (which would fail the ad after its parents were created), at the
+	// cost of truncating mixed copy a little short of the theoretical maximum. Each entry must also
+	// contain at least one word and no newline. When a caller supplies fewer than the
+	// minimum, deterministic placeholders derived from EventName/Project pad the lists up to
+	// the minimum (a safe PAUSED default a human edits before enabling); supplying more than
+	// the maximum, a duplicate, an over-long, an empty-of-words, or a newline entry is a
+	// clean up-front validation error. Leave both empty to auto-compose entirely.
+	Headlines    []string
+	Descriptions []string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -124,9 +144,17 @@ type CampaignResult struct {
 	AccountLabel string `json:"accountLabel,omitempty"`
 	CampaignName string `json:"campaignName"`
 	CampaignID   string `json:"campaignId"`
-	// AlreadyExisted is true when findCampaignByName matched a prior campaign and
-	// CreateCampaign returned it WITHOUT issuing a create — so the caller knows this
-	// run did not create anything new.
+	// AdGroupName / AdGroupID identify the ad group created (or found) under the
+	// campaign. AdGroupName is deterministic, so an ambiguous ad-group failure BEFORE an
+	// id is known is reconcilable by name (scoped to the campaign).
+	AdGroupName string `json:"adGroupName,omitempty"`
+	AdGroupID   string `json:"adGroupId,omitempty"`
+	// AdID identifies the Responsive Search Ad created under the ad group.
+	AdID string `json:"adId,omitempty"`
+	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
+	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
+	// create was issued at any level. If ANY level was created this run, it is false, even
+	// when the campaign itself was reused. So true means "the entire tree already existed".
 	AlreadyExisted  bool     `json:"alreadyExisted,omitempty"`
 	MicrosoftAdsURL string   `json:"microsoftAdsUrl"`
 	Steps           []string `json:"steps"`
@@ -239,6 +267,44 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 
+	// Validate the ad destination URL up front, BEFORE the campaign is created. It becomes
+	// the Ad's FinalUrls in a later step; deferring the check until then would let a bad
+	// URL fail only AFTER a PAUSED campaign (and possibly ad group) already exists,
+	// orphaning them. This is pure input validation with no side effects, so a bad URL is a
+	// clean (nil, err) failure — nothing has been created yet.
+	if err := validateAdURL(in.RegistrationURL); err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign requires a valid ad destination URL: %w", err)
+	}
+	// The ad's FinalUrls is the registration URL WITH the LFX utm_* params appended, and
+	// Microsoft caps FinalUrls at maxFinalURLRunes. Validate the fully COMPOSED URL length up
+	// front: a raw URL near the limit passes validateAdURL but the longer composed URL would
+	// be rejected only at AddAds — after the campaign/ad group exist, the exact orphaning the
+	// up-front checks prevent.
+	finalURL := buildAdFinalURL(in)
+	if n := utf8.RuneCountInString(finalURL); n > maxFinalURLRunes {
+		return nil, fmt.Errorf("microsoft-ads composed ad final URL is %d characters, exceeding the %d limit (shorten the registration URL)", n, maxFinalURLRunes)
+	}
+	// Microsoft also derives the ad's DISPLAY domain from the FinalUrls hostname and caps it
+	// at maxDisplayDomainRunes. A host longer than that passes the FinalUrls length check above
+	// but is rejected only at AddAds, orphaning the PAUSED campaign/ad group — so reject it up
+	// front too. Parse errors are ignored here: validateAdURL already rejected a malformed URL.
+	if u, perr := url.Parse(finalURL); perr == nil {
+		host := u.Hostname()
+		limit := maxDisplayDomainRunes
+		if hasDoubleWidth(host) {
+			limit = maxDisplayDomainRunesWide
+		}
+		if n := utf8.RuneCountInString(host); n > limit {
+			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", host, n, limit)
+		}
+	}
+	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
+	// descriptions), so a bad copy input fails cleanly before the campaign is created rather
+	// than at the paid ad create. composeAdCopy pads short lists to the required minimum.
+	if err := validateAdCopy(in); err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err)
+	}
+
 	var steps []string
 	microsoftAdsURL := "https://ads.microsoft.com/campaign/vnext/campaigns?aid=" + c.account.AccountID
 
@@ -277,64 +343,75 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// prior attempt made. Report UNCONFIRMED so the caller reconciles by name.
 		return namePartial(), fmt.Errorf("microsoft-ads campaign lookup failed (cannot confirm %q is absent; verify in Microsoft Advertising before retrying): %w", campaignName, err)
 	}
+	var (
+		campaignID     string
+		alreadyExisted bool
+	)
 	if existingID != "" {
 		steps = append(steps, fmt.Sprintf("Campaign already exists by name: %s (not re-created)", existingID))
-		r := namePartial()
-		r.CampaignID = existingID
-		r.AlreadyExisted = true
-		r.Steps = steps
-		return r, nil
-	}
-
-	// Step 2: create the campaign (PAUSED). Non-idempotent — NOT retried on 429.
-	timeZone := in.TimeZone
-	if timeZone == "" {
-		timeZone = defaultTimeZone
-	}
-	req := createCampaignsRequest{
-		AccountId: json.Number(c.account.AccountID),
-		Campaigns: []msCampaign{{
-			Name:         campaignName,
-			CampaignType: campaignTypeSearch,
-			BudgetType:   budgetTypeDailyStandard,
-			DailyBudget:  in.Budget,
-			Status:       campaignStatusPaused,
-			TimeZone:     timeZone,
-		}},
-	}
-	respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
-	if err != nil {
-		switch {
-		case createOutcomeAmbiguous(err):
+		campaignID = existingID
+		alreadyExisted = true
+	} else {
+		// Step 2: create the campaign (PAUSED). Non-idempotent — NOT retried on 429.
+		timeZone := in.TimeZone
+		if timeZone == "" {
+			timeZone = defaultTimeZone
+		}
+		req := createCampaignsRequest{
+			AccountId: json.Number(c.account.AccountID),
+			Campaigns: []msCampaign{{
+				Name:         campaignName,
+				CampaignType: campaignTypeSearch,
+				BudgetType:   budgetTypeDailyStandard,
+				DailyBudget:  in.Budget,
+				Status:       campaignStatusPaused,
+				TimeZone:     timeZone,
+			}},
+		}
+		respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
+		if err != nil {
+			switch {
+			case createOutcomeAmbiguous(err):
+				return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
+			default:
+				return nil, fmt.Errorf("microsoft-ads campaign creation failed: %w", err)
+			}
+		}
+		campaignID, err = firstCampaignID(respBody)
+		if err != nil {
+			if isDuplicateCampaignNameErr(err) {
+				// A duplicate-name PartialError: a campaign with this name already exists
+				// (a prior attempt, or a race between the pre-check lookup and this create).
+				// Not created here, but NOT a clean failure — reconcile by name.
+				return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) — a prior attempt likely created it; verify in Microsoft Advertising before retrying: %w", campaignName, err)
+			}
+			if errors.Is(err, errPartialFailure) {
+				// A 200 with a null id slot + PartialErrors is a DEFINITE rejection: the
+				// campaign was not created. Clean failure, not UNCONFIRMED.
+				return nil, fmt.Errorf("microsoft-ads campaign creation rejected: %w", err)
+			}
+			// A 200 with no id and no PartialError is a malformed success: the campaign MAY
+			// have been created. UNCONFIRMED.
 			return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
-		default:
-			return nil, fmt.Errorf("microsoft-ads campaign creation failed: %w", err)
 		}
+		steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
 	}
 
-	campaignID, err := firstCampaignID(respBody)
-	if err != nil {
-		if isDuplicateCampaignNameErr(err) {
-			// A duplicate-name PartialError: a campaign with this name already exists
-			// (a prior attempt, or a race between the pre-check lookup and this create).
-			// Not created here, but NOT a clean failure — reconcile by name.
-			return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) — a prior attempt likely created it; verify in Microsoft Advertising before retrying: %w", campaignName, err)
-		}
-		if errors.Is(err, errPartialFailure) {
-			// A 200 with a null id slot + PartialErrors is a DEFINITE rejection: the
-			// campaign was not created. Clean failure, not UNCONFIRMED.
-			return nil, fmt.Errorf("microsoft-ads campaign creation rejected: %w", err)
-		}
-		// A 200 with no id and no PartialError is a malformed success: the campaign MAY
-		// have been created. UNCONFIRMED.
-		return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
+	// campaignPartial carries the campaign id + name (and accumulates ad-group/ad ids as
+	// they land) so an ambiguous ad-group/ad failure leaves the whole tree reconcilable.
+	// It deliberately does NOT set AlreadyExisted: a partial is returned on a failed or
+	// UNCONFIRMED ad-group/ad step, where this run may have created (or attempted) a lower
+	// level even though the campaign was reused — so "created nothing" is not true. Only the
+	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
+	campaignPartial := func() *CampaignResult {
+		r := namePartial()
+		r.CampaignID = campaignID
+		return r
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
 
-	r := namePartial()
-	r.CampaignID = campaignID
-	r.Steps = steps
-	return r, nil
+	// Steps 3-4: complete the Campaign -> AdGroup -> Ad hierarchy (all PAUSED) so the
+	// result is a usable paused campaign rather than an empty shell.
+	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial)
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
