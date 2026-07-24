@@ -88,11 +88,10 @@ const (
 	// response cannot exhaust memory. Mirrors the sibling clients.
 	maxResponseBytes = 8 << 20 // 8 MiB
 
-	// maxErrorBodyChars caps the length (in runes) of an untrusted string embedded in
-	// an error message — currently a redacted destination URL (see redactAdURL) — so a
-	// pathologically long value can't bloat a persisted campaign step. It is NOT an
-	// error-body snapshot: a non-2xx body is never retained (only its parsed error
-	// codes are; see apiError).
+	// maxErrorBodyChars caps the length (in runes) of an untrusted string embedded in an
+	// error message (applied via truncate) so a pathologically long value can't bloat a
+	// persisted campaign step. It is NOT an error-body snapshot: a non-2xx body is never
+	// retained (only its parsed error codes are; see apiError).
 	maxErrorBodyChars = 400
 
 	// maxErrorCodeScanBytes bounds the prefix of a non-2xx body that parseErrorCodes
