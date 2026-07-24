@@ -35,12 +35,14 @@ import (
 //     still be a definite rejection, and the body must be inspected, not just the
 //     status. This is the inverse of the google-ads :mutate model (non-2xx on error).
 //
-//   - Duplicate names are allowed. Microsoft does NOT reject a duplicate campaign
-//     name (there is no DUPLICATE_NAME error to key idempotency off, unlike Google).
-//     To keep retries at-most-once, CreateCampaign FIRST looks the campaign up by its
-//     deterministic name (findCampaignByName) and returns the existing one instead of
-//     creating a second. The lookup is a read (idempotent, retried on 429); the create
-//     is a mutation (not retried on 429).
+//   - Duplicate names are REJECTED. Microsoft rejects a create whose campaign name already
+//     exists in the account (CampaignServiceCannotCreateDuplicateCampaign / numeric Code 1115).
+//     That rejection is what makes a deterministic name a reliable idempotency key: to keep
+//     retries at-most-once, CreateCampaign FIRST looks the campaign up by its deterministic
+//     name (findCampaignByName) and returns the existing one instead of hitting the duplicate
+//     rejection on a re-create; a create that DOES lose the race to the duplicate rejection is
+//     reconciled as already-exists (see isDuplicateCampaignPartial), not a clean failure. The
+//     lookup is a read (idempotent, retried on 429); the create is a mutation (not retried on 429).
 // ---------------------------------------------------------------------------
 
 const (
@@ -180,7 +182,12 @@ type queryCampaignsRequest struct {
 // queryCampaignsResponse is the (subset of the) QueryByAccountId response used by
 // findCampaignByName to look a campaign up by its deterministic name.
 type queryCampaignsResponse struct {
-	Campaigns []struct {
+	// Campaigns is a POINTER slice so an OMITTED or null "Campaigns" field (which decodes to a
+	// nil pointer) is distinguishable from a present-but-empty list ([]). A missing field means
+	// the lookup result is unreadable — we can't confirm the campaign is absent — so it must NOT
+	// be treated as "absent" (which would let the paid create run and risk a duplicate); only a
+	// PRESENT empty list proves absence. See findCampaignByName.
+	Campaigns *[]struct {
 		Id   *json.Number `json:"Id"`
 		Name string       `json:"Name"`
 	} `json:"Campaigns"`
@@ -347,11 +354,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // retry reuses it rather than hitting the duplicate-name rejection. composeName
 // produces a deterministic name, so this can't return an unrelated campaign.
 //
-// QueryByAccountId returns the FULL set of campaigns of the requested type for the
-// account in one response (not cursor-paged), so the single-shot read can't miss an
-// existing campaign to a pagination boundary. The 8 MiB response cap (maxResponseBytes)
-// is the only bound; an account with an implausibly large campaign count would fail the
-// read and be reported UNCONFIRMED rather than silently skipping the match.
+// SCOPE: the lookup is filtered to Search campaigns (campaignTypeSearch) — the only type this
+// client creates — which optimizes the common same-type retry. Microsoft's name uniqueness is
+// ACCOUNT-WIDE (across types), so a same-named campaign of a DIFFERENT type is not found here;
+// that rare cross-type collision is not silently created, though — the subsequent create hits
+// the account-wide duplicate rejection (code 1115), which CreateCampaign reconciles as
+// already-exists. So the Search-scoped find-first is a fast path, and the create-time 1115
+// handling is the correctness backstop for the cross-type case.
+//
+// QueryByAccountId returns the FULL set of campaigns of the requested type for the account in
+// one response (not cursor-paged), so the single-shot read can't miss an existing Search
+// campaign to a pagination boundary. The 8 MiB response cap (maxResponseBytes) is the only
+// bound; an account with an implausibly large campaign count would fail the read and be
+// reported UNCONFIRMED rather than silently skipping the match.
 func (c *Client) findCampaignByName(ctx context.Context, name string) (string, error) {
 	req := queryCampaignsRequest{
 		AccountId:    json.Number(c.account.AccountID),
@@ -365,7 +380,14 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 	if uErr := json.Unmarshal(body, &resp); uErr != nil {
 		return "", fmt.Errorf("decode QueryByAccountId response: %w", uErr)
 	}
-	for _, cp := range resp.Campaigns {
+	// A 2xx whose body OMITS or nulls the Campaigns field is unreadable — we can't confirm the
+	// campaign is absent, so treat it as UNCONFIRMED (verify before create) rather than "absent"
+	// (which would let the paid create run and risk a duplicate). A PRESENT empty list is a
+	// genuine "no campaigns" and falls through to return "" (safe to create).
+	if resp.Campaigns == nil {
+		return "", fmt.Errorf("QueryByAccountId response omitted the Campaigns field; cannot confirm %q is absent", name)
+	}
+	for _, cp := range *resp.Campaigns {
 		if !strings.EqualFold(cp.Name, name) {
 			continue
 		}
@@ -551,8 +573,9 @@ func toMSDate(t time.Time) msDate {
 // composeName builds a deterministic campaign name from the input. The NameSuffix
 // (when supplied) makes it unique+stable per logical campaign so a retry composes the
 // SAME name and findCampaignByName returns the existing campaign rather than
-// double-creating (Microsoft permits duplicate names, so a stable name is the ONLY
-// idempotency key available). Mirrors the google-ads composer.
+// double-creating. A stable name is a reliable idempotency key precisely BECAUSE Microsoft
+// rejects a duplicate campaign name (code 1115) — the find-first avoids that rejection on a
+// retry. Mirrors the google-ads composer.
 func composeName(in CampaignInput) string {
 	parts := []string{"LFX", "Search Campaign"}
 	if p := sanitizeNamePart(in.Project); p != "" {

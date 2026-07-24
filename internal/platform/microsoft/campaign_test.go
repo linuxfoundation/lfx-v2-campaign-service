@@ -539,3 +539,51 @@ func TestNumberID(t *testing.T) {
 		t.Error("numberID(nil) must be empty")
 	}
 }
+
+// TestCreateCampaign_OmittedCampaignsFieldIsUnconfirmed: a 2xx lookup body that OMITS the
+// Campaigns field (nil pointer, not an empty list) can't confirm the campaign is absent, so it
+// must be UNCONFIRMED (no create issued) — not treated as "absent" (which would run the paid
+// create and risk a duplicate). A PRESENT empty list, by contrast, is a real "absent".
+func TestCreateCampaign_OmittedCampaignsFieldIsUnconfirmed(t *testing.T) {
+	postReached := false
+	api := &campaignsAPI{getBody: `{}`} // no Campaigns field
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Campaigns") {
+			postReached = true
+		}
+		base(w, r)
+	})
+	res, err := c.CreateCampaign(context.Background(), validInput())
+	if err == nil {
+		t.Fatal("expected UNCONFIRMED when the lookup omits the Campaigns field")
+	}
+	if postReached {
+		t.Error("create POST issued despite an unconfirmable lookup (would risk a duplicate)")
+	}
+	if !strings.Contains(err.Error(), "verify") && !strings.Contains(err.Error(), "cannot confirm") {
+		t.Errorf("an omitted-Campaigns lookup must be UNCONFIRMED, got: %v", err)
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Error("expected a name-only partial for reconciliation")
+	}
+}
+
+// TestCreateCampaign_CallerTimeZonePassThrough: a caller-supplied in.TimeZone (non-empty) must
+// reach the create body verbatim, not be overridden by defaultTimeZone.
+func TestCreateCampaign_CallerTimeZonePassThrough(t *testing.T) {
+	var seen createCampaignsRequest
+	api := &campaignsAPI{postSeen: &seen}
+	c := newAPIClient(t, api.handler(t))
+	in := validInput()
+	in.TimeZone = "PacificTimeUSCanadaTijuana2" // a distinct, non-default sentinel
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if len(seen.Campaigns) != 1 {
+		t.Fatalf("sent %d campaigns, want 1", len(seen.Campaigns))
+	}
+	if got := seen.Campaigns[0].TimeZone; got != in.TimeZone {
+		t.Errorf("TimeZone = %q, want the caller-supplied %q (not the default)", got, in.TimeZone)
+	}
+}
