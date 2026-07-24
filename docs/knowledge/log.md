@@ -1,5 +1,16 @@
 # Log
 
+## 2026-07-24
+
+**Update** — Review-hardened the Microsoft campaign contract (PR #44, copilot):
+the clean-abort classification in `CreateCampaign` now gates on `ctx.Err()` (the
+CALLER's context), not `errors.Is(err, context.DeadlineExceeded)` — the client
+wraps each attempt in its own `context.WithTimeout`, so a per-attempt timeout with
+a live caller context is a FAILED lookup (UNCONFIRMED), not a clean abort. Also, a
+duplicate-name self-heal whose reconciliation re-lookup errors now surfaces that
+cause. Aligned the `internal-platform-microsoft` concept + the older log entry to
+the corrected `ctx.Err()` distinction and the duplicate-name-REJECTED contract.
+
 ## 2026-07-22
 
 **Update** — Registered the twitter (X) PlatformDispatcher (LFXV2-2642, PR #39).
@@ -38,16 +49,20 @@ PAUSED Search campaign. Two Microsoft quirks vs google-ads shape the contract:
 (1) PartialErrors-on-200 — the create returns HTTP 200 with `{"CampaignIds":[id-or-null],
 "PartialErrors":[...]}`, so `firstCampaignID` inspects the body and distinguishes a
 definite rejection (null id + PartialError → clean failure) from a malformed 200 (no id,
-no error → UNCONFIRMED). (2) Duplicate names ALLOWED — no DUPLICATE_NAME error, so
-idempotency is a `findCampaignByName` GET before the create (a stable `NameSuffix` is the
-key); `CampaignsByAccountId` returns the full set (no pagination). Budget is `DailyBudget`,
-a plain decimal in account currency (NO micros, unlike google-ads). Review-hardened
-(PR #44, cursor + copilot): (a) a `context.Canceled`/`DeadlineExceeded` from the lookup is
-a clean `(nil, err)` abort, not an UNCONFIRMED reconcile-partial (the lookup creates
-nothing); (b) `TimeZone` is now sent — Microsoft REQUIRES `Campaign.TimeZone` on create
-(NOT inherited from the account), defaulting to `PacificTimeUSCanadaTijuana` when the
-caller doesn't supply one. `toMSDate({Month,Day,Year})` is reserved for the ad-group
-flight dates a later slice needs.
+no error → UNCONFIRMED). (2) Duplicate names REJECTED — Microsoft rejects a create whose
+campaign name already exists (code 1115), which is what makes the deterministic name a
+reliable idempotency key: `findCampaignByName` runs before the create, and a create that
+loses the race to the 1115 self-heals by re-looking the winner up (mirroring the ad-group
+1214 path); `CampaignsByAccountId` returns the full set (no pagination). Budget is
+`DailyBudget`, a plain decimal in account currency (NO micros, unlike google-ads).
+Review-hardened (PR #44, cursor + copilot): (a) a lookup failure is a clean `(nil, err)`
+abort ONLY when the CALLER's context is done — the gate is `ctx.Err() != nil`, NOT
+`errors.Is(err, DeadlineExceeded)`, because the client's per-attempt `context.WithTimeout`
+can surface `DeadlineExceeded` while the caller context is still live (that case is an
+UNCONFIRMED lookup failure, not a clean abort); (b) `TimeZone` is now sent — Microsoft
+REQUIRES `Campaign.TimeZone` on create (NOT inherited from the account), defaulting to
+`PacificTimeUSCanadaTijuana` when the caller doesn't supply one. `toMSDate({Month,Day,Year})`
+is reserved for the ad-group flight dates a later slice needs.
 
 **Update** — Added `internal/platform/microsoft`, the Microsoft Advertising (Bing Ads)
 Campaign Management REST v13 client (MS-1 scaffold, PR #43; LFXV2-2804). Speaks REST
