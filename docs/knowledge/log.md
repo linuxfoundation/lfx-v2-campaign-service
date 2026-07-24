@@ -9,10 +9,12 @@ recording "no dispatcher registered". The adapter resolves the OAuth2-app + deve
 connection (clientId/secret/refreshToken/developerToken, plus AccountID = customer id and
 an optional `login_customer_id` MCC from ProviderConfig), maps the brief + `googleAdsConfig`
 (`budget` in ACCOUNT currency, no FX) onto the client's `CreateCampaign`, and maps the
-result back to a `model.Campaign`. Uses `NameSuffix = brief.ID` for deterministic,
-at-most-once-retry budget/campaign names. Release decision keys on `result == nil` alone so
-an ambiguous/duplicate-name create (a non-nil name-only result) retains the claim and the
-possibly-orphaned budget stays reconcilable by `CampaignBudgetName`.
+result back to a `model.Campaign` (persisting budget/type/config via `applyCampaignConfig`).
+Uses `NameSuffix = brief.ID` for deterministic, at-most-once-retry budget/campaign names.
+Release decision keys on `result == nil` alone so an ambiguous/duplicate-name create (a
+non-nil name-only result) retains the claim; the possibly-orphaned budget is reconcilable by
+`CampaignBudgetName` PRE-attachment, but by `CampaignBudgetID` once the campaign attaches (a
+non-shared budget's name then synchronizes to the campaign name) — the partial carries both.
 
 ## 2026-07-22
 
