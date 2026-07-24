@@ -13,6 +13,42 @@ is unconfirmed/absent or the campaign/line-item was reused. Client changes landi
 it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
 classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
 with `redactURLForError` so a persisted validation error can't leak a secret.
+**Update** — Microsoft Ads MS-2 corrected to the real v13 REST contract (PR #44 review,
+copilot — VERIFIED against learn.microsoft.com). The initial MS-2 assumed a
+GET-CampaignsByAccountId lookup, no request-body AccountId, and duplicate-names-allowed —
+all wrong. Fixed: (1) the create body now carries the REQUIRED top-level `AccountId`
+(AddCampaigns rejects every create without it); (2) the lookup POSTs
+`Campaigns/QueryByAccountId` with `{AccountId,CampaignType}` in the body (the v13
+GetCampaignsByAccountId REST op is POST-with-body, not GET); (3) campaign names are
+CASE-INSENSITIVELY UNIQUE within the account, so findCampaignByName matches
+case-insensitively and a duplicate-name PartialError
+(`CampaignServiceCannotCreateDuplicateCampaign`) is surfaced as already-exists
+(`isDuplicateCampaignNameErr`), not a clean failure; (4) `Campaign.TimeZone` is SENT
+(defaulted) — the v13 Campaign object marks it deprecated but ALSO "Add: Required", so a
+missing value would fail every create; (5) a null-only `PartialErrors` array is treated as
+UNCONFIRMED, not a definite rejection, via `partialErrorsHaveAny` (v13's `PartialErrors` is a
+SPARSE BatchError list — a failed item only, carrying an Index — so this is defensive handling
+of a malformed null-padded body; the gate keys on an actual error code, not slice length). Tests rewritten to the real routes (assert AccountId in both
+bodies, case-insensitive match, dup-name + null-PartialError handling, TimeZone present).
+Client-side `parseErrorCodes` also now visits the v13 `BatchErrors` fault array (MS-1).
+
+**Update** — Microsoft Ads campaign creation (MS-2, PR #44; LFXV2-2804).
+`CreateCampaign` (in `internal/platform/microsoft/campaign.go`) find-or-creates a
+PAUSED Search campaign. Two Microsoft quirks vs google-ads shape the contract:
+(1) PartialErrors-on-200 — the create returns HTTP 200 with `{"CampaignIds":[id-or-null],
+"PartialErrors":[...]}`, so `firstCampaignID` inspects the body and distinguishes a
+definite rejection (null id + PartialError → clean failure) from a malformed 200 (no id,
+no error → UNCONFIRMED). (2) Duplicate names ALLOWED — no DUPLICATE_NAME error, so
+idempotency is a `findCampaignByName` GET before the create (a stable `NameSuffix` is the
+key); `CampaignsByAccountId` returns the full set (no pagination). Budget is `DailyBudget`,
+a plain decimal in account currency (NO micros, unlike google-ads). Review-hardened
+(PR #44, cursor + copilot): (a) a `context.Canceled`/`DeadlineExceeded` from the lookup is
+a clean `(nil, err)` abort, not an UNCONFIRMED reconcile-partial (the lookup creates
+nothing); (b) `TimeZone` is now sent — Microsoft REQUIRES `Campaign.TimeZone` on create
+(NOT inherited from the account), defaulting to `PacificTimeUSCanadaTijuana` when the
+caller doesn't supply one. `toMSDate({Month,Day,Year})` is reserved for the ad-group
+flight dates a later slice needs.
+
 **Update** — Added `internal/platform/microsoft`, the Microsoft Advertising (Bing Ads)
 Campaign Management REST v13 client (MS-1 scaffold, PR #43; LFXV2-2804). Speaks REST
 directly (not SOAP), mirroring the googleads client: OAuth2 refresh-token exchange vs

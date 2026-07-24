@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client scaffold: OAuth2 refresh-token auth, the request layer with 429 retry, and error classification (MS-1). Campaign creation lands in MS-2."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token auth, request layer with 429 retry + BatchErrors classification (MS-1), and PAUSED find-or-create campaign creation (MS-2)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -84,8 +84,58 @@ duplicate/field error on one item of a batch mutate lands there, not in
 `OperationErrors`. Codes are length/count bounded; the raw body is never surfaced by
 `apiError.Error()`.
 
+## Campaign creation (MS-2)
+
+`CreateCampaign` (in `campaign.go`) find-or-creates a PAUSED Search campaign. Two
+Microsoft facts drive a contract that differs from the google-ads `:mutate` model:
+
+**PartialErrors on 200.** `POST CampaignManagement/v13/Campaigns` returns HTTP 200 with
+`{"CampaignIds":[<id-or-null>], "PartialErrors":[...]}` — a per-entity failure is a 200
+with a null id slot + a PartialError, NOT a non-2xx status. `firstCampaignID` inspects
+the body and distinguishes a DEFINITE rejection (null id + PartialError →
+`errPartialFailure`, a clean failure, surfacing only the machine-readable codes) from a
+MALFORMED 200 (no id, no PartialError → the campaign may exist → UNCONFIRMED).
+
+**Names are case-insensitively UNIQUE.** Microsoft enforces that `Campaign.Name` is
+unique among the account's active/paused campaigns, using a case-insensitive comparison
+(a duplicate create is rejected with `CampaignServiceCannotCreateDuplicateCampaign`).
+That uniqueness IS the idempotency key. `CreateCampaign` FIRST looks the deterministic
+name up (`findCampaignByName` — a READ, idempotent, retried on 429) and returns the
+existing campaign (`AlreadyExisted=true`) without creating a second; a stable `NameSuffix`
+makes that reliable. The lookup POSTs `Campaigns/QueryByAccountId` with the account id +
+campaign type in the body (the v13 `GetCampaignsByAccountId` REST operation is a
+POST-with-body, NOT a GET), and matches case-insensitively to mirror the service's own
+comparison. If the create still loses a race and returns the duplicate-name PartialError,
+`isDuplicateCampaignNameErr` surfaces it as already-exists (reconcile by name), not a
+clean failure. `QueryByAccountId` returns the FULL campaign set for the type in one
+response (not paged), so the single-shot lookup can't miss a match; the 8 MiB read cap is
+the bound.
+
+Ambiguity classification mirrors the sibling clients: an ambiguous transport/5xx/
+mutating-429 create is UNCONFIRMED with a name-only partial for reconcile-by-name; a
+definite 4xx (or a definite PartialError) is a clean failure. A `context.Canceled`/
+`DeadlineExceeded` from the lookup is a clean `(nil, err)` abort (the lookup creates
+nothing and the create never runs) — NOT a reconcile-partial. An already-done context
+before any request is likewise a clean abort.
+
+The `AddCampaigns` operation REQUIRES a top-level `AccountId` in the request body (a
+sibling to `Campaigns`, not only the `CustomerAccountId` header) — omitting it rejects
+every create with `CampaignServiceInvalidAccountId`, so `createCampaignsRequest` carries
+it. `Campaign.TimeZone` is SENT (defaulting to `defaultTimeZone` when the caller supplies
+none): the v13 Campaign object marks the field deprecated but ALSO "Add: Required", a
+genuine contradiction in Microsoft's docs — since a missing required field fails every
+create while a redundant deprecated field is harmless, the client sends it.
+
+**Budget** is `DailyBudget` — a plain decimal in the account currency, with NO micros
+conversion (Google Ads uses micros; Microsoft does not). Input is validated up front:
+budget finite (NaN/Inf rejected) and > 0 and <= `maxBudget`; BOTH Project and EventName
+non-empty (on the SANITIZED value); the composed name (`LFX | Search Campaign | Project |
+Event | Suffix`, `|`-and-control-char sanitized) is length-capped in CHARACTERS.
+`toMSDate` renders Microsoft's `{Month,Day,Year}` date object, reserved for the ad-group
+flight dates a later slice needs.
+
 ## Scope
 
 MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PAUSED
-campaign creation (`campaign.go`). The orchestrator dispatcher (register
+find-or-create campaign creation (`campaign.go`). The orchestrator dispatcher (register
 `microsoft-ads`, use the stored `connection-microsoft-ads` credential) follows in MS-3.
