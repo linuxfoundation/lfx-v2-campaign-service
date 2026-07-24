@@ -52,11 +52,18 @@ const (
 	// ads. Sent explicitly so the ad-group/ad-type pairing can't drift on a default change.
 	adGroupTypeSearchStandard = "SearchStandard"
 
-	// adGroupLanguage is the AdGroup.Language sent on create. Language is "Optional if the
-	// campaign has one or more languages set, and otherwise required for most campaign
-	// types". The MS-2 campaign create sets no campaign-level Languages, so the ad group
-	// must carry one or AddAdGroups is rejected. English is the safe default for a PAUSED
-	// broker shell; a human can retarget before enabling.
+	// adGroupLanguage is the AdGroup.Language sent on create. Per v13, Language is the
+	// TARGETING language — "the language of your customers", i.e. which searchers see the
+	// ad — and is INDEPENDENT of the character set of the ad copy: it does NOT have to match
+	// the headline/description text (this client may carry CJK copy under any targeting
+	// language). Language is "Optional if the campaign has one or more languages set, and
+	// otherwise required for most campaign types"; the MS-2 campaign create sets no
+	// campaign-level Languages, so the ad group MUST carry one or AddAdGroups is rejected.
+	// A Search ad group's Language must be a specific supported language string ("All" is
+	// only valid for the CAMPAIGN Languages element on Audience/DSA campaigns, NOT a Search
+	// ad group), so a concrete value is required. English is a valid, always-available
+	// default for this PAUSED broker shell; because the campaign is PAUSED, a human sets the
+	// correct customer-facing targeting language (e.g. TraditionalChinese) before enabling.
 	adGroupLanguage = "English"
 
 	// maxAdGroupNameRunes bounds the composed ad-group name. Microsoft limits
@@ -893,9 +900,11 @@ func buildAdFinalURL(in CampaignInput) string {
 //     with sorted keys via url.Values.Encode — the same normal form buildAdFinalURL uses).
 //
 // It deliberately does NOT touch the path (paths are case-sensitive and a trailing slash
-// can be significant), so it only ever collapses differences that carry no meaning. If the
-// URL cannot be parsed, the trimmed original is returned so an unparseable value still
-// compares byte-for-byte rather than silently matching everything.
+// can be significant) NOR the #fragment: Microsoft preserves the fragment in a stored
+// FinalUrls value, so two URLs differing only in fragment are DIFFERENT destinations and
+// must not collapse to the same idempotency key. It only ever folds differences that carry
+// no meaning. If the URL cannot be parsed, the trimmed original is returned so an
+// unparseable value still compares byte-for-byte rather than silently matching everything.
 func canonicalFinalURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -904,13 +913,18 @@ func canonicalFinalURL(raw string) string {
 	u.Scheme = strings.ToLower(u.Scheme)
 	host := strings.ToLower(u.Hostname())
 	if port := u.Port(); port != "" && !isDefaultPort(u.Scheme, port) {
+		// net.JoinHostPort re-adds the [] around an IPv6 literal when a port is present.
 		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		// An IPv6 literal with NO port: Hostname() stripped the brackets, so re-add them.
+		// Without this the reassembled URL host is malformed (e.g. ::1 instead of [::1]).
+		host = "[" + host + "]"
 	}
 	u.Host = host
 	// Re-decode then re-encode the query into url.Values' normal form (sorted keys,
-	// canonical escaping) so param order and %-escape casing don't affect the key.
+	// canonical escaping) so param order and %-escape casing don't affect the key. The
+	// #fragment is left intact (see the doc above) — it is part of the destination.
 	u.RawQuery = u.Query().Encode()
-	u.Fragment = ""
 	return u.String()
 }
 

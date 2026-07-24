@@ -144,6 +144,55 @@ func TestCreateCampaign_ReusesExistingAdGroupAndAd(t *testing.T) {
 	}
 }
 
+// TestCanonicalFinalURL checks the idempotency-key normalization: it must fold away
+// representation-only differences (scheme/host case, default port, query order/escaping)
+// while PRESERVING semantically significant parts — the path, and crucially the #fragment
+// (Microsoft keeps fragments in FinalUrls) — and must keep an IPv6 host bracketed.
+func TestCanonicalFinalURL(t *testing.T) {
+	// equivalence groups: every URL in a group must canonicalize to the SAME key.
+	equivalent := [][]string{
+		{ // scheme/host case + default port + param order all fold away
+			"https://events.example.org/register?a=1&b=2",
+			"HTTPS://Events.Example.ORG/register?b=2&a=1",
+			"https://events.example.org:443/register?a=1&b=2",
+		},
+		{ // http default port :80 folds away
+			"http://x.example/p?z=1",
+			"http://x.example:80/p?z=1",
+		},
+		{ // IPv6 host stays bracketed and equal with/without the default port
+			"https://[2001:db8::1]/p?q=1",
+			"https://[2001:db8::1]:443/p?q=1",
+		},
+	}
+	for i, group := range equivalent {
+		want := canonicalFinalURL(group[0])
+		for _, u := range group[1:] {
+			if got := canonicalFinalURL(u); got != want {
+				t.Errorf("group %d: canonicalFinalURL(%q)=%q, want %q (should be equivalent)", i, u, got, want)
+			}
+		}
+	}
+
+	// distinct: these must NOT collapse — the #fragment and the path are significant.
+	distinct := [][2]string{
+		{"https://x.example/p#a", "https://x.example/p#b"}, // different fragment
+		{"https://x.example/p#a", "https://x.example/p"},   // fragment vs none
+		{"https://x.example/p", "https://x.example/P"},     // path case
+		{"https://x.example/p", "https://x.example/p/"},    // trailing slash
+	}
+	for _, pair := range distinct {
+		if canonicalFinalURL(pair[0]) == canonicalFinalURL(pair[1]) {
+			t.Errorf("canonicalFinalURL collapsed distinct URLs %q and %q", pair[0], pair[1])
+		}
+	}
+
+	// An IPv6 host must remain bracketed in the canonical output (else the host is malformed).
+	if got := canonicalFinalURL("https://[2001:db8::1]/p"); !strings.Contains(got, "[2001:db8::1]") {
+		t.Errorf("canonicalFinalURL dropped IPv6 brackets: %q", got)
+	}
+}
+
 // TestCreateCampaign_ReusesAdWhenFinalURLReEncoded proves ad idempotency survives a
 // representation-only difference in the read-back FinalUrls: Microsoft may return the same
 // destination with re-ordered query params, an upper-cased host, or a redundant default port.
