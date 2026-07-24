@@ -271,13 +271,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// rejection on the create.
 	existingID, err := c.findCampaignByName(ctx, campaignName)
 	if err != nil {
-		// A context cancellation/deadline is a clean ABORT: the lookup is a read that
+		// A CALLER context cancellation/deadline is a clean ABORT: the lookup is a read that
 		// creates nothing, and the create step below never runs, so nothing exists to
-		// reconcile. Return (nil, err) — matching the pre-send guard above — rather than
-		// a reconcile-partial that would tell the caller to "verify before retrying"
-		// after a plain cancel.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("microsoft-ads campaign creation aborted during name lookup (context done; nothing created): %w", err)
+		// reconcile. Return (nil, err) — matching the pre-send guard above — rather than a
+		// reconcile-partial that would tell the caller to "verify before retrying" after a
+		// plain cancel.
+		//
+		// Gate on ctx.Err() (the CALLER's context), NOT errors.Is(err, DeadlineExceeded): the
+		// client wraps each attempt in its own context.WithTimeout (client.go), so a
+		// per-attempt timeout surfaces DeadlineExceeded even while the caller's ctx is still
+		// live. That is a FAILED lookup, not a caller abort — it must fall through to the
+		// UNCONFIRMED branch (we can't confirm the campaign is absent), never be reported as
+		// "nothing created".
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("microsoft-ads campaign creation aborted during name lookup (caller context done; nothing created): %w", err)
 		}
 		// Any OTHER lookup failure: we have NOT created anything, but we also can't
 		// confirm the campaign is absent — a blind create might duplicate a campaign a
@@ -328,7 +335,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// name is unique, so the re-lookup finds the winner. This mirrors the ad-group path
 			// (findOrCreateAdGroup on a 1214), so a duplicate race resolves to a usable id
 			// instead of forcing the caller to reconcile by name.
-			if existingID, ferr := c.findCampaignByName(ctx, campaignName); ferr == nil && existingID != "" {
+			existingID, ferr := c.findCampaignByName(ctx, campaignName)
+			if ferr == nil && existingID != "" {
 				steps = append(steps, fmt.Sprintf("Campaign already exists by name (duplicate-name race reconciled): %s", existingID))
 				r := namePartial()
 				r.CampaignID = existingID
@@ -338,7 +346,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 			// Re-lookup failed or returned no id: the campaign exists but we can't confirm its
 			// id, so surface UNCONFIRMED (verify before retry) rather than a clean failure.
-			return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) but could not be re-resolved; verify in Microsoft Advertising before retrying: %w", campaignName, err)
+			// Surface the RE-LOOKUP cause (ferr) when it errored — the original duplicate error
+			// only says "a duplicate exists", it hides WHY the reconciliation couldn't resolve
+			// the id (a 500, an auth failure, a timeout). When the re-lookup succeeded but found
+			// no id, ferr is nil and the duplicate error is the only meaningful cause.
+			if ferr != nil {
+				return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) but the reconciliation lookup failed (%v); verify in Microsoft Advertising before retrying: %w", campaignName, ferr, err)
+			}
+			return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) but could not be re-resolved (reconciliation lookup returned no id); verify in Microsoft Advertising before retrying: %w", campaignName, err)
 		}
 		if errors.Is(err, errPartialFailure) {
 			// A 200 with a null id slot + PartialErrors is a DEFINITE rejection: the

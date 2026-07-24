@@ -430,6 +430,45 @@ func TestCreateCampaign_NullPartialErrorIsUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_DuplicateRaceReLookupErrorSurfacesCause: when the duplicate-name
+// self-heal re-lookup itself FAILS (a 500, not merely "no id"), the returned error must
+// surface that reconciliation-lookup cause — not silently wrap only the original duplicate
+// error, which would hide whether the id couldn't be resolved because of a 500, an auth
+// failure, or a timeout.
+func TestCreateCampaign_DuplicateRaceReLookupErrorSurfacesCause(t *testing.T) {
+	in := validInput()
+	lookups := 0
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			lookups++
+			if lookups == 1 {
+				_, _ = io.WriteString(w, `{"Campaigns":[]}`) // pre-check: absent → create runs
+			} else {
+				// re-lookup after the 1115 FAILS with a 500 (the reconciliation can't resolve).
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `{"Errors":[{"ErrorCode":"InternalError"}]}`)
+			}
+		case strings.HasSuffix(p, "/Campaigns"):
+			// The create loses the duplicate race → 1115 duplicate-name PartialError.
+			_, _ = io.WriteString(w, `{"CampaignIds":[null],"PartialErrors":[{"Code":1115}]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, p)
+		}
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED error when the reconciliation lookup fails")
+	}
+	if res == nil || res.CampaignID != "" {
+		t.Fatalf("expected a name-only partial with no id, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "reconciliation lookup failed") {
+		t.Errorf("error must surface the re-lookup cause, got: %v", err)
+	}
+}
+
 // ---- ambiguous transport / 5xx on create -----------------------------------
 
 func TestCreateCampaign_ServerErrorOnCreateIsUnconfirmed(t *testing.T) {
