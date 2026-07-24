@@ -346,6 +346,20 @@ func (e *transportError) Error() string {
 
 func (e *transportError) Unwrap() error { return e.err }
 
+// tokenTransportError wraps a Do error from the OAuth2 token exchange. That request's BODY
+// carries the client_id/client_secret/refresh_token, and because WithHTTPClient accepts a
+// custom RoundTripper, a returned Do error can be caller-controlled and echo the request body.
+// Wrapping it with %w would then expose those secrets through the returned/persisted error.
+// So Error() renders only the URL-free, text-free safeCause vocabulary, while Unwrap preserves
+// the original cause so callers can still errors.Is it (e.g. context.Canceled). Mirrors
+// transportError's discipline for the mutation path.
+type tokenTransportError struct{ err error }
+
+func (e *tokenTransportError) Error() string {
+	return "microsoft-ads token refresh: " + safeCause(e.err)
+}
+func (e *tokenTransportError) Unwrap() error { return e.err }
+
 // safeCause renders a URL-free description of a round-trip error. Peeling a
 // *url.Error (whose %v embeds the request URL) is not sufficient on its own: because
 // WithHTTPClient accepts a custom http.RoundTripper, the INNER error text is
@@ -488,9 +502,12 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		// A token-endpoint failure ran no mutation; surface it plainly (the caller
-		// aborts before any create). Do NOT wrap as transportError.
-		return "", fmt.Errorf("microsoft-ads token refresh: %w", err)
+		// A token-endpoint failure ran no mutation (the caller aborts before any create).
+		// The request BODY carried client_secret + refresh_token, so a %w-wrapped Do error
+		// from a custom RoundTripper could leak them into a persisted error — wrap in
+		// tokenTransportError, whose Error() renders only safeCause while Unwrap preserves the
+		// cause for errors.Is.
+		return "", &tokenTransportError{err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 

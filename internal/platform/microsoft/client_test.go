@@ -165,6 +165,33 @@ func TestAccessToken_ErrorDoesNotLeakSecrets(t *testing.T) {
 	}
 }
 
+// TestAccessToken_TransportErrorDoesNotLeakSecrets: a custom RoundTripper (allowed via
+// WithHTTPClient) can return a Do error whose text echoes the request BODY — which carries
+// client_secret + refresh_token. Wrapping that with %w would leak them into the returned/
+// persisted error. Assert the surfaced error text carries NO secret, while Unwrap still
+// exposes the cause (errors.Is on a sentinel).
+func TestAccessToken_TransportErrorDoesNotLeakSecrets(t *testing.T) {
+	leak := errors.New("dial tcp: post body client_secret=LEAK-csecret refresh_token=LEAK-rtok")
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL("http://token.invalid/oauth"),
+		WithClock(fixedClock()),
+		WithHTTPClient(&http.Client{Transport: rtFunc(func(_ *http.Request) (*http.Response, error) {
+			return nil, leak
+		})}),
+	)
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("expected a token transport error")
+	}
+	if strings.Contains(err.Error(), "LEAK") || strings.Contains(err.Error(), "csecret") || strings.Contains(err.Error(), "rtok") {
+		t.Errorf("token transport error must not echo the RoundTripper's error text/secrets, got: %v", err)
+	}
+	// Unwrap must still preserve the cause so callers can errors.Is it.
+	if !errors.Is(err, leak) {
+		t.Errorf("token transport error must Unwrap to the original cause (for errors.Is), got: %v", err)
+	}
+}
+
 func TestAccessToken_CancelledContextReturnsPromptly(t *testing.T) {
 	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
 	ctx, cancel := context.WithCancel(context.Background())
