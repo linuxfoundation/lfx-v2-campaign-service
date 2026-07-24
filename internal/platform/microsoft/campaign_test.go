@@ -408,10 +408,11 @@ func TestCreateCampaign_MalformedCampaignIDIsUnconfirmed(t *testing.T) {
 }
 
 func TestCreateCampaign_NullPartialErrorIsUnconfirmed(t *testing.T) {
-	// PartialErrors is position-aligned and can contain null placeholders. A
-	// {"CampaignIds":[null],"PartialErrors":[null]} body has a non-empty PartialErrors
-	// slice but NO actual error — it must stay UNCONFIRMED (the campaign may exist), not
-	// be mis-reported as a definite rejection.
+	// v13's PartialErrors is a SPARSE BatchError list (a failed item only, carrying an Index),
+	// so a real single-item failure never produces a null-only entry. This defensively covers a
+	// MALFORMED body that null-pads anyway: {"CampaignIds":[null],"PartialErrors":[null]} has a
+	// non-empty slice but NO actual error, so it must stay UNCONFIRMED (the campaign may exist),
+	// not be mis-reported as a definite rejection.
 	api := &campaignsAPI{postBody: `{"CampaignIds":[null],"PartialErrors":[null]}`}
 	c := newAPIClient(t, api.handler(t))
 	res, err := c.CreateCampaign(context.Background(), validInput())
