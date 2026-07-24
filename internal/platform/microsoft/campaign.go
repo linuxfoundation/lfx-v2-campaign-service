@@ -421,11 +421,14 @@ func isDuplicateCampaignNameErr(err error) bool { return errors.Is(err, errDupli
 //   - CampaignIds is empty/null with no actual PartialError (malformed success —
 //     UNCONFIRMED).
 //
-// PartialErrors is position-aligned like CampaignIds, so it can contain `null`
-// placeholders that unmarshal to zero-value items. A non-empty slice is therefore NOT
-// proof of a real error — the gate is partialErrorsHaveAny (at least one item carrying
-// a code), so a {"CampaignIds":[null],"PartialErrors":[null]} body stays UNCONFIRMED
-// rather than being mis-reported as a definite rejection.
+// Per the v13 AddCampaigns contract, PartialErrors is a SPARSE list of BatchError objects —
+// it holds a BatchError only for a FAILED item (each carrying an Index into the request), and
+// omits successes rather than null-padding them. This client sends a SINGLE campaign per call,
+// so a real failure yields exactly one BatchError and a success yields an empty PartialErrors.
+// The gate is therefore partialErrorsHaveAny (at least one item carrying an actual code), NOT
+// slice length — this also defensively tolerates a malformed body that DID null-pad
+// (e.g. {"CampaignIds":[null],"PartialErrors":[null]}): a null-only item carries no code, so it
+// stays UNCONFIRMED rather than being mis-reported as a definite rejection.
 //
 // The caller distinguishes the definite-rejection case via errors.Is(err,
 // errPartialFailure) and the already-exists case via isDuplicateCampaignNameErr.

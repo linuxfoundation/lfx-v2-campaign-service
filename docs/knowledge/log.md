@@ -25,9 +25,10 @@ case-insensitively and a duplicate-name PartialError
 (`CampaignServiceCannotCreateDuplicateCampaign`) is surfaced as already-exists
 (`isDuplicateCampaignNameErr`), not a clean failure; (4) `Campaign.TimeZone` is SENT
 (defaulted) — the v13 Campaign object marks it deprecated but ALSO "Add: Required", so a
-missing value would fail every create; (5) a null-only `PartialErrors` array (position-
-aligned placeholders) is now treated as UNCONFIRMED, not a definite rejection, via
-`partialErrorsHaveAny`. Tests rewritten to the real routes (assert AccountId in both
+missing value would fail every create; (5) a null-only `PartialErrors` array is treated as
+UNCONFIRMED, not a definite rejection, via `partialErrorsHaveAny` (v13's `PartialErrors` is a
+SPARSE BatchError list — a failed item only, carrying an Index — so this is defensive handling
+of a malformed null-padded body; the gate keys on an actual error code, not slice length). Tests rewritten to the real routes (assert AccountId in both
 bodies, case-insensitive match, dup-name + null-PartialError handling, TimeZone present).
 Client-side `parseErrorCodes` also now visits the v13 `BatchErrors` fault array (MS-1).
 
