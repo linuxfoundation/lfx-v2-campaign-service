@@ -587,3 +587,41 @@ func TestCreateCampaign_CallerTimeZonePassThrough(t *testing.T) {
 		t.Errorf("TimeZone = %q, want the caller-supplied %q (not the default)", got, in.TimeZone)
 	}
 }
+
+// TestCreateCampaign_DuplicateNameRaceSelfHeals: a duplicate-name PartialError on the create
+// (a race lost between the pre-check lookup and the create) is SELF-HEALED by re-looking the
+// campaign up by name and returning it as already-exists with the winner's id — mirroring the
+// ad-group 1214 path — rather than forcing the caller to reconcile by name.
+func TestCreateCampaign_DuplicateNameRaceSelfHeals(t *testing.T) {
+	in := validInput()
+	name := composeName(in)
+	lookups := 0
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			lookups++
+			if lookups == 1 {
+				_, _ = io.WriteString(w, `{"Campaigns":[]}`) // pre-check: absent → create runs
+			} else {
+				// re-lookup after the 1115: the winner exists.
+				_, _ = io.WriteString(w, `{"Campaigns":[{"Id":999,"Name":`+jsonString(name)+`}]}`)
+			}
+		case strings.HasSuffix(p, "/Campaigns"):
+			// The create loses the duplicate race → 1115 duplicate-name PartialError.
+			_, _ = io.WriteString(w, `{"CampaignIds":[null],"PartialErrors":[{"Code":1115}]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, p)
+		}
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("a duplicate-name race should self-heal to the existing campaign, got: %v", err)
+	}
+	if res.CampaignID != "999" {
+		t.Errorf("CampaignID = %q, want the reconciled 999", res.CampaignID)
+	}
+	if !res.AlreadyExisted {
+		t.Error("AlreadyExisted = false, want true on a reconciled duplicate race")
+	}
+}

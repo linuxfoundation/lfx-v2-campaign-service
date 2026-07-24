@@ -322,10 +322,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	campaignID, err := firstCampaignID(respBody)
 	if err != nil {
 		if isDuplicateCampaignNameErr(err) {
-			// A duplicate-name PartialError: a campaign with this name already exists
-			// (a prior attempt, or a race between the pre-check lookup and this create).
-			// Not created here, but NOT a clean failure — reconcile by name.
-			return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) — a prior attempt likely created it; verify in Microsoft Advertising before retrying: %w", campaignName, err)
+			// A duplicate-name PartialError: a campaign with this name already exists (a prior
+			// attempt, or a race between the pre-check lookup and this create). SELF-HEAL by
+			// re-looking it up by name and returning it as already-exists — the deterministic
+			// name is unique, so the re-lookup finds the winner. This mirrors the ad-group path
+			// (findOrCreateAdGroup on a 1214), so a duplicate race resolves to a usable id
+			// instead of forcing the caller to reconcile by name.
+			if existingID, ferr := c.findCampaignByName(ctx, campaignName); ferr == nil && existingID != "" {
+				steps = append(steps, fmt.Sprintf("Campaign already exists by name (duplicate-name race reconciled): %s", existingID))
+				r := namePartial()
+				r.CampaignID = existingID
+				r.AlreadyExisted = true
+				r.Steps = steps
+				return r, nil
+			}
+			// Re-lookup failed or returned no id: the campaign exists but we can't confirm its
+			// id, so surface UNCONFIRMED (verify before retry) rather than a clean failure.
+			return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) but could not be re-resolved; verify in Microsoft Advertising before retrying: %w", campaignName, err)
 		}
 		if errors.Is(err, errPartialFailure) {
 			// A 200 with a null id slot + PartialErrors is a DEFINITE rejection: the
