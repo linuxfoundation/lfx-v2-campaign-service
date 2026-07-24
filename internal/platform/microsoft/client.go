@@ -94,14 +94,6 @@ const (
 	// retained (only its parsed error codes are; see apiError).
 	maxErrorBodyChars = 400
 
-	// maxErrorCodeScanBytes bounds the prefix of a non-2xx body that parseErrorCodes
-	// decodes. The body is already read-capped at maxResponseBytes (8 MiB), but a hostile
-	// 8 MiB error body full of tiny items would still be fully materialized by
-	// json.Unmarshal (each json.RawMessage copies its bytes) just to extract a handful of
-	// error codes. Real Microsoft error envelopes are a few KiB at most, so scanning only
-	// the first 64 KiB bounds that amplification with no effect on genuine responses.
-	maxErrorCodeScanBytes = 64 << 10 // 64 KiB
-
 	// retryMax is the number of times an HTTP 429 (rate-limited) IDEMPOTENT
 	// request is retried before giving up. Mirrors the sibling clients.
 	retryMax = 3
@@ -929,44 +921,79 @@ type msErrorItem struct {
 
 // parseErrorCodes extracts Microsoft's machine-readable error codes (string
 // ErrorCode enums, e.g. "CampaignServiceEditorialError", or a stringified numeric
-// Code) from a non-2xx body. Over-long values and codes beyond the cap are dropped.
-// Returns nil on a malformed/absent body. Mirrors the google-ads parseErrorCodes.
+// Code) from a non-2xx body. Over-long values are dropped and collection STOPS after
+// maxRetainedErrorCodes. Returns nil on a malformed/absent body.
+//
+// It uses a STREAMING token scan (not a whole-body Unmarshal) so a large but valid batch
+// fault — which can legitimately carry many BatchErrors — is not discarded: the scanner walks
+// the JSON tokens and stops as soon as it has enough codes, bounding work regardless of body
+// size WITHOUT truncating the body (a byte-slice would corrupt a >64 KiB envelope's JSON and
+// fail the parse, losing even a top-level code that appeared in the first bytes). Any "Code"
+// or "ErrorCode" object member, at any nesting depth, contributes its value.
 func parseErrorCodes(body []byte) []string {
 	if len(body) == 0 {
 		return nil
 	}
-	// Bound the amount decoded: extracting a handful of error codes never needs more than
-	// a few KiB, so a hostile large body can't force a full materialization. A truncated
-	// body simply fails to unmarshal (→ nil), which is the same clean "no codes" outcome
-	// as a malformed body.
-	if len(body) > maxErrorCodeScanBytes {
-		body = body[:maxErrorCodeScanBytes]
-	}
-	var env msErrorEnvelope
-	if err := json.Unmarshal(body, &env); err != nil {
-		return nil
-	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
 	var codes []string
-	add := func(raw json.RawMessage) bool {
-		v := codeString(raw)
-		if v == "" || len(v) > maxErrorCodeLen {
-			return true // skip, keep going
-		}
-		codes = append(codes, v)
-		return len(codes) < maxRetainedErrorCodes
-	}
-	if !add(env.ErrorCode) || !add(env.Code) {
-		return codes
-	}
-	for _, group := range [][]msErrorItem{env.Errors, env.OperationErrors, env.BatchErrors, env.PartialErrors} {
-		for _, it := range group {
-			if !add(it.ErrorCode) || !add(it.Code) {
-				return codes
+	// pendingKey is the last object key seen; when the next token is that key's scalar value
+	// and the key is Code/ErrorCode, capture it.
+	var pendingKey string
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			if err == io.EOF {
+				break
 			}
+			// Malformed JSON: return whatever valid codes were collected before the fault
+			// (never nil-out a partial result — the leading, well-formed codes are still
+			// useful for classification), matching the "best-effort extract" contract.
+			return codes
 		}
+		if s, ok := tok.(string); ok {
+			// A string token is EITHER an object key or a string value. json.Decoder gives no
+			// direct key/value flag, so track the last key and, on the value token, decide.
+			if pendingKey == "" {
+				// Treat this string as a potential key; the loop below overwrites it when the
+				// next token is its value. But a string VALUE for a Code/ErrorCode key must be
+				// captured — handled by the pendingKey branch, so here just record the key.
+				pendingKey = s
+				continue
+			}
+			// This string is the VALUE for pendingKey.
+			if isErrorCodeKey(pendingKey) {
+				if v := s; v != "" && len(v) <= maxErrorCodeLen {
+					codes = append(codes, v)
+					if len(codes) >= maxRetainedErrorCodes {
+						return codes
+					}
+				}
+			}
+			pendingKey = ""
+			continue
+		}
+		if num, ok := tok.(json.Number); ok {
+			// A numeric VALUE for a Code key (Microsoft's numeric Code form).
+			if isErrorCodeKey(pendingKey) {
+				if v := num.String(); v != "" && len(v) <= maxErrorCodeLen {
+					codes = append(codes, v)
+					if len(codes) >= maxRetainedErrorCodes {
+						return codes
+					}
+				}
+			}
+			pendingKey = ""
+			continue
+		}
+		// Any other token (delims { } [ ], bool, null) ends a pending key's value slot.
+		pendingKey = ""
 	}
 	return codes
 }
+
+// isErrorCodeKey reports whether an object key names a Microsoft error code field.
+func isErrorCodeKey(key string) bool { return key == "Code" || key == "ErrorCode" }
 
 // codeString normalizes a Code/ErrorCode raw value to a string, accepting either a
 // JSON string ("SomeErrorCode") or a JSON number (509) — Microsoft uses both.

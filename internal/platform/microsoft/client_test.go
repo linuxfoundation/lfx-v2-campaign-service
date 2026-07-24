@@ -416,6 +416,28 @@ func TestParseErrorCodes(t *testing.T) {
 	if parseErrorCodes(nil) != nil || parseErrorCodes([]byte(`{bad`)) != nil {
 		t.Error("malformed/empty bodies must parse to nil")
 	}
+
+	// A LARGE but valid envelope (well over 64 KiB) whose codes appear early must still be
+	// classified — the streaming scan stops after enough codes without truncating the body.
+	// (A byte-slice at 64 KiB would corrupt the JSON and fail the whole parse, losing even a
+	// leading code — the regression this guards against.)
+	var big strings.Builder
+	big.WriteString(`{"ErrorCode":"CampaignServiceCannotCreateDuplicateCampaign","BatchErrors":[`)
+	for i := 0; i < 5000; i++ { // ~64 chars each → ~320 KiB
+		if i > 0 {
+			big.WriteString(",")
+		}
+		big.WriteString(`{"ErrorCode":"CampaignServiceEditorialError","Message":"xxxxxxxxxxxx"}`)
+	}
+	big.WriteString(`]}`)
+	if got := parseErrorCodes([]byte(big.String())); len(got) == 0 || got[0] != "CampaignServiceCannotCreateDuplicateCampaign" {
+		t.Errorf("a >64 KiB valid envelope must still yield its leading code, got %d codes: %v", len(got), got[:min(len(got), 3)])
+	}
+
+	// Collection is bounded — a huge fault never returns an unbounded slice.
+	if got := parseErrorCodes([]byte(big.String())); len(got) > maxRetainedErrorCodes {
+		t.Errorf("collected %d codes, want <= the %d cap", len(got), maxRetainedErrorCodes)
+	}
 }
 
 func TestValidateAccountIDs(t *testing.T) {
