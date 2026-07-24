@@ -75,8 +75,8 @@ report "no dispatcher registered" (logged as a startup warning via
 `logMissingDispatchers`); adapters land incrementally per platform.
 
 Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**,
-**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642). Google Ads follows once its client
-(PR #33) merges; the email (HubSpot) dispatcher is LFXV2-2777.
+**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **googleads** (LFXV2-2643). The
+email (HubSpot) dispatcher is LFXV2-2777; Microsoft Ads is LFXV2-2804.
 
 Each adapter interprets its own credential + config shape:
 - **reddit** — OAuth2 (clientId/secret/refreshToken); AccountID from the connection.
@@ -93,5 +93,13 @@ Each adapter interprets its own credential + config shape:
   currency (no FX). Surfaces a `Reused` reuse/config-drift flag and classifies an
   exhausted mutating 429 as UNCONFIRMED; validates the destination URL (https/http, no
   embedded userinfo) up front.
-
-See [internal/dispatch](../../../internal/dispatch).
+- **googleads** — OAuth2 application (clientId/secret + refreshToken) PLUS a Google Ads
+  API developer token; AccountConfig from AccountID (the customer id) + an OPTIONAL
+  `login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
+  Budget (`googleAdsConfig.budget`) is in the ACCOUNT's currency (no FX). The client
+  today creates a PAUSED search-campaign shell (budget → campaign); its two-step
+  hierarchy means a PRE-attachment (budget-stage) orphan is reconciled by its deterministic
+  `CampaignBudgetName`, but once the campaign attaches a non-shared budget's name synchronizes
+  to the campaign name, so a campaign-stage partial reconciles the budget by `CampaignBudgetID`
+  instead (the partial carries both). Either way the dispatcher returns a non-nil result
+  (retaining the claim) on an ambiguous/duplicate-name create rather than releasing on an empty id.

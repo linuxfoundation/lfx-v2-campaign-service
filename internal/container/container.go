@@ -256,6 +256,7 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor) ma
 		model.ProviderLinkedInAds: dispatch.NewLinkedInDispatcher(repo, enc),
 		model.ProviderMetaAds:     dispatch.NewMetaDispatcher(repo, enc),
 		model.ProviderTwitterAds:  dispatch.NewTwitterDispatcher(repo, enc),
+		model.ProviderGoogleAds:   dispatch.NewGoogleAdsDispatcher(repo, enc),
 	}
 }
 
