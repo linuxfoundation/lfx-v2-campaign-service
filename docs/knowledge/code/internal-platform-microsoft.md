@@ -113,10 +113,13 @@ the bound.
 
 Ambiguity classification mirrors the sibling clients: an ambiguous transport/5xx/
 mutating-429 create is UNCONFIRMED with a name-only partial for reconcile-by-name; a
-definite 4xx (or a definite PartialError) is a clean failure. A `context.Canceled`/
-`DeadlineExceeded` from the lookup is a clean `(nil, err)` abort (the lookup creates
-nothing and the create never runs) — NOT a reconcile-partial. An already-done context
-before any request is likewise a clean abort.
+definite 4xx (or a definite PartialError) is a clean failure. A lookup failure is a clean
+`(nil, err)` abort ONLY when the CALLER's context is done — the gate is `ctx.Err() != nil`,
+not `errors.Is(err, context.DeadlineExceeded)`. Because the client wraps each attempt in
+its own `context.WithTimeout`, a per-attempt `DeadlineExceeded` can surface while the
+caller's context is still live; that is a FAILED lookup (we can't confirm the campaign is
+absent) and must be UNCONFIRMED with a name-only partial, NOT a clean "nothing created"
+abort. An already-done context before any request is a clean abort.
 
 The `AddCampaigns` operation REQUIRES a top-level `AccountId` in the request body (a
 sibling to `Campaigns`, not only the `CustomerAccountId` header) — omitting it rejects
