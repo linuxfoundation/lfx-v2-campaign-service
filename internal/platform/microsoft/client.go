@@ -921,79 +921,44 @@ type msErrorItem struct {
 
 // parseErrorCodes extracts Microsoft's machine-readable error codes (string
 // ErrorCode enums, e.g. "CampaignServiceEditorialError", or a stringified numeric
-// Code) from a non-2xx body. Over-long values are dropped and collection STOPS after
-// maxRetainedErrorCodes. Returns nil on a malformed/absent body.
+// Code) from a non-2xx body. Over-long values and codes beyond maxRetainedErrorCodes are
+// dropped. Returns nil on a malformed/absent body.
 //
-// It uses a STREAMING token scan (not a whole-body Unmarshal) so a large but valid batch
-// fault — which can legitimately carry many BatchErrors — is not discarded: the scanner walks
-// the JSON tokens and stops as soon as it has enough codes, bounding work regardless of body
-// size WITHOUT truncating the body (a byte-slice would corrupt a >64 KiB envelope's JSON and
-// fail the parse, losing even a top-level code that appeared in the first bytes). Any "Code"
-// or "ErrorCode" object member, at any nesting depth, contributes its value.
+// It decodes via a STREAMING json.Decoder (not a byte-sliced Unmarshal) so a large but valid
+// batch fault — which can legitimately carry many BatchErrors — is parsed intact: an earlier
+// version sliced the body at a byte cap before Unmarshal, which corrupted any larger envelope's
+// JSON and failed the whole parse, discarding even a top-level code in the first bytes. The
+// Decoder reads the full top-level object without truncation; collection is then bounded by
+// maxRetainedErrorCodes (an outsized item count can never return an unbounded slice).
 func parseErrorCodes(body []byte) []string {
 	if len(body) == 0 {
 		return nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber()
+	var env msErrorEnvelope
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&env); err != nil {
+		return nil
+	}
 	var codes []string
-	// pendingKey is the last object key seen; when the next token is that key's scalar value
-	// and the key is Code/ErrorCode, capture it.
-	var pendingKey string
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			// Malformed JSON: return whatever valid codes were collected before the fault
-			// (never nil-out a partial result — the leading, well-formed codes are still
-			// useful for classification), matching the "best-effort extract" contract.
-			return codes
+	add := func(raw json.RawMessage) bool {
+		v := codeString(raw)
+		if v == "" || len(v) > maxErrorCodeLen {
+			return true // skip, keep going
 		}
-		if s, ok := tok.(string); ok {
-			// A string token is EITHER an object key or a string value. json.Decoder gives no
-			// direct key/value flag, so track the last key and, on the value token, decide.
-			if pendingKey == "" {
-				// Treat this string as a potential key; the loop below overwrites it when the
-				// next token is its value. But a string VALUE for a Code/ErrorCode key must be
-				// captured — handled by the pendingKey branch, so here just record the key.
-				pendingKey = s
-				continue
+		codes = append(codes, v)
+		return len(codes) < maxRetainedErrorCodes
+	}
+	if !add(env.ErrorCode) || !add(env.Code) {
+		return codes
+	}
+	for _, group := range [][]msErrorItem{env.Errors, env.OperationErrors, env.BatchErrors, env.PartialErrors} {
+		for _, it := range group {
+			if !add(it.ErrorCode) || !add(it.Code) {
+				return codes
 			}
-			// This string is the VALUE for pendingKey.
-			if isErrorCodeKey(pendingKey) {
-				if v := s; v != "" && len(v) <= maxErrorCodeLen {
-					codes = append(codes, v)
-					if len(codes) >= maxRetainedErrorCodes {
-						return codes
-					}
-				}
-			}
-			pendingKey = ""
-			continue
 		}
-		if num, ok := tok.(json.Number); ok {
-			// A numeric VALUE for a Code key (Microsoft's numeric Code form).
-			if isErrorCodeKey(pendingKey) {
-				if v := num.String(); v != "" && len(v) <= maxErrorCodeLen {
-					codes = append(codes, v)
-					if len(codes) >= maxRetainedErrorCodes {
-						return codes
-					}
-				}
-			}
-			pendingKey = ""
-			continue
-		}
-		// Any other token (delims { } [ ], bool, null) ends a pending key's value slot.
-		pendingKey = ""
 	}
 	return codes
 }
-
-// isErrorCodeKey reports whether an object key names a Microsoft error code field.
-func isErrorCodeKey(key string) bool { return key == "Code" || key == "ErrorCode" }
 
 // codeString normalizes a Code/ErrorCode raw value to a string, accepting either a
 // JSON string ("SomeErrorCode") or a JSON number (509) — Microsoft uses both.
