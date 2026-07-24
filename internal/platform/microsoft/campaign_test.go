@@ -520,12 +520,19 @@ func TestNumberID(t *testing.T) {
 		}
 	}
 	// Malformed numbers must be rejected (→ "" → treated as UNCONFIRMED/no-id), not
-	// accepted as a bogus id: zero, negative, fractional, and exponent forms.
-	for _, bad := range []string{"0", "-1", "1.5", "1e3", "0.0", "+5", "abc", ""} {
+	// accepted as a bogus id: zero, negative, fractional, exponent, and — since Microsoft ids
+	// are signed 64-bit — a digits-only value that OVERFLOWS int64 (the first out-of-range
+	// value 9223372036854775808 = math.MaxInt64+1, plus a 20-digit overflow), which the
+	// digits-only regex alone would wrongly pass.
+	for _, bad := range []string{"0", "-1", "1.5", "1e3", "0.0", "+5", "abc", "", "9223372036854775808", "99999999999999999999"} {
 		n := json.Number(bad)
 		if got := numberID(&n); got != "" {
 			t.Errorf("numberID(%q) = %q, want empty (malformed id must be rejected)", bad, got)
 		}
+	}
+	// The largest VALID signed-64-bit id must still be accepted (boundary).
+	if maxN := json.Number("9223372036854775807"); numberID(&maxN) != "9223372036854775807" {
+		t.Error("numberID must accept math.MaxInt64 (the largest valid id)")
 	}
 	if numberID(nil) != "" {
 		t.Error("numberID(nil) must be empty")

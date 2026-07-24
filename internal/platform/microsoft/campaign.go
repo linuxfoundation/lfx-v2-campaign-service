@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -482,6 +483,12 @@ func numberID(n *json.Number) string {
 	}
 	id := strings.TrimSpace(n.String())
 	if !idRE.MatchString(id) {
+		return ""
+	}
+	// Microsoft resource ids are signed 64-bit. A digits-only value that OVERFLOWS int64
+	// can't be a real id, so reject it (→ "" → UNCONFIRMED/no-id) rather than accept a bogus
+	// id the regex alone would pass. ParseInt enforces the range in base 10.
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
 		return ""
 	}
 	return id
