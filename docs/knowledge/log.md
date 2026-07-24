@@ -13,6 +13,23 @@ is unconfirmed/absent or the campaign/line-item was reused. Client changes landi
 it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
 classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
 with `redactURLForError` so a persisted validation error can't leak a secret.
+**Update** — Added `internal/platform/microsoft`, the Microsoft Advertising (Bing Ads)
+Campaign Management REST v13 client (MS-1 scaffold, PR #43; LFXV2-2804). Speaks REST
+directly (not SOAP), mirroring the googleads client: OAuth2 refresh-token exchange vs
+the Microsoft identity platform (scope `msads.manage offline_access`) + `DeveloperToken`
+/`CustomerAccountId`/`CustomerId` headers, single-flight token cache, and the pre-send /
+ambiguous / definite error-classification contract. Review-hardened (PR #43, cursor +
+copilot): (1) status-aware read/oversize errors — a 2xx read failure is an ambiguous
+`transportError`, a known non-2xx keeps its status as `apiError` (was a plain
+`fmt.Errorf` that `createOutcomeAmbiguous` read as non-ambiguous, inviting a duplicate
+create); (2) `transportError` cause UNEXPORTED + rendered via `safeCause` so a
+`*url.Error` URL can't leak into a persisted step; (3) per-attempt
+`context.WithTimeout(msAdsRequestTimeout)` so a `WithHTTPClient{Timeout:0}` can't hang;
+(4) token fetched INSIDE the retry loop (a long 429 backoff could otherwise 401 the
+resume); (5) over-cap `Retry-After` compared in seconds before the Duration multiply
+(overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
+(6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
+one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
 
 ## 2026-07-21
 
