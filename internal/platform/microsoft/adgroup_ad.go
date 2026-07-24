@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -146,9 +147,13 @@ type queryAdGroupsRequest struct {
 	CampaignId json.Number `json:"CampaignId"`
 }
 
-// queryAdGroupsResponse is the (subset of the) QueryByCampaignId response.
+// queryAdGroupsResponse is the (subset of the) QueryByCampaignId response. AdGroups is a
+// POINTER slice so an OMITTED or null "AdGroups" field (nil pointer) is distinguishable from
+// a present-but-empty list (non-nil, len 0). A missing field means the response never
+// confirmed the ad group is absent, so findAdGroupByName fails closed (UNCONFIRMED) rather
+// than treating nil as "no ad group" and creating a duplicate. Mirrors queryCampaignsResponse.
 type queryAdGroupsResponse struct {
-	AdGroups []struct {
+	AdGroups *[]struct {
 		Id   *json.Number `json:"Id"`
 		Name string       `json:"Name"`
 	} `json:"AdGroups"`
@@ -436,7 +441,13 @@ func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string)
 		// UNCONFIRMED (verify before retry), not a definite "creation failed".
 		return "", fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", uErr, errNoID)
 	}
-	for _, g := range resp.AdGroups {
+	if resp.AdGroups == nil {
+		// The response OMITTED the AdGroups field entirely: we cannot confirm the ad group is
+		// absent, and a blind create could duplicate. Fail closed as UNCONFIRMED rather than
+		// treating a missing field as "no ad group".
+		return "", fmt.Errorf("AdGroups/QueryByCampaignId response omitted the AdGroups field; cannot confirm ad group %q is absent: %w", name, errNoID)
+	}
+	for _, g := range *resp.AdGroups {
 		if !strings.EqualFold(g.Name, name) {
 			continue
 		}
@@ -509,9 +520,13 @@ func textAssetLinks(texts []string) []msAssetLink {
 }
 
 // queryAdsResponse is the (subset of the) Ads/QueryByAdGroupId response used to match an
-// existing ad by its destination for idempotency.
+// existing ad by its destination for idempotency. Ads is a POINTER slice so an OMITTED or
+// null "Ads" field (nil pointer) is distinguishable from a present-but-empty list. This
+// matters MOST for ads: v13 permits duplicate responsive search ads and there is NO
+// create-time duplicate reconcile, so treating a missing field as "no ad" would stack a
+// duplicate ad on retry. A nil field makes findAdByFinalURL fail closed (UNCONFIRMED).
 type queryAdsResponse struct {
-	Ads []struct {
+	Ads *[]struct {
 		Id        *json.Number `json:"Id"`
 		FinalUrls []string     `json:"FinalUrls"`
 	} `json:"Ads"`
@@ -541,10 +556,23 @@ func (c *Client) findAdByFinalURL(ctx context.Context, adGroupID, finalURL strin
 		// UNCONFIRMED (verify before retry), not a definite "creation failed".
 		return "", fmt.Errorf("decode Ads/QueryByAdGroupId response (%v): %w", uErr, errNoID)
 	}
-	for _, ad := range resp.Ads {
+	if resp.Ads == nil {
+		// The response OMITTED the Ads field entirely: we cannot confirm the ad is absent.
+		// Because v13 permits duplicate RSAs and there is no create-time reconcile, treating a
+		// missing field as "no ad" would stack a duplicate on retry. Fail closed as UNCONFIRMED.
+		return "", fmt.Errorf("Ads/QueryByAdGroupId response omitted the Ads field; cannot confirm the ad for %q is absent: %w", redactAdURL(finalURL), errNoID)
+	}
+	wantKey := canonicalFinalURL(finalURL)
+	for _, ad := range *resp.Ads {
 		matchesDest := false
 		for _, u := range ad.FinalUrls {
-			if u == finalURL {
+			// Compare on a canonical form, not byte-for-byte: buildAdFinalURL emits
+			// url.Values.Encode() (sorted, percent-encoded) but Microsoft may re-encode the
+			// stored FinalUrls on read-back (reorder params, re-case the %-escape hex, drop a
+			// default port, lower-case the host). A byte-exact compare would then miss and — v13
+			// permits duplicate RSAs and this is the idempotency key — a retry would stack a
+			// duplicate ad. canonicalFinalURL folds those representation-only differences away.
+			if u == finalURL || canonicalFinalURL(u) == wantKey {
 				matchesDest = true
 				break
 			}
@@ -779,6 +807,13 @@ func validateAdCopy(in CampaignInput) error {
 // it fails the hasWord check below rather than being silently dropped. Every other non-empty
 // entry must contain at least one word, no newline, be within its width-aware rune cap, and
 // be case-insensitively unique. Checks apply to the trimmed value the ad will actually carry.
+//
+// The over-length REJECTION below (rather than a silent truncate) is also what keeps two
+// distinct caller entries from colliding only after truncation: a caller entry that survives
+// this check is already within its width cap, so boundedUniqueCopy never truncates it and
+// thus never collapses two distinct caller values into one placeholder-padded slot. Only the
+// auto-composed fallback candidates (which are not caller copy and ARE allowed to truncate)
+// can be dropped by that dedup, which is by design — they exist to pad to the minimum.
 func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLimit int) error {
 	if n := len(items); n > maxCount {
 		return fmt.Errorf("at most %d %ss are allowed, got %d", maxCount, kind, n)
@@ -846,6 +881,50 @@ func buildAdFinalURL(in CampaignInput) string {
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// canonicalFinalURL reduces a final URL to a representation-independent key so two URLs
+// that differ ONLY in encoding compare equal. It is the idempotency key comparator for
+// findAdByFinalURL: buildAdFinalURL emits one canonical spelling, but Microsoft may hand
+// back a differently-but-equivalently encoded FinalUrls value. Folds away:
+//   - scheme + host case (schemes/hosts are case-insensitive),
+//   - a redundant default port (:80 for http, :443 for https),
+//   - query-parameter ordering and percent-escape spelling (re-decoded, then re-encoded
+//     with sorted keys via url.Values.Encode — the same normal form buildAdFinalURL uses).
+//
+// It deliberately does NOT touch the path (paths are case-sensitive and a trailing slash
+// can be significant), so it only ever collapses differences that carry no meaning. If the
+// URL cannot be parsed, the trimmed original is returned so an unparseable value still
+// compares byte-for-byte rather than silently matching everything.
+func canonicalFinalURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return strings.TrimSpace(raw)
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	if port := u.Port(); port != "" && !isDefaultPort(u.Scheme, port) {
+		host = net.JoinHostPort(host, port)
+	}
+	u.Host = host
+	// Re-decode then re-encode the query into url.Values' normal form (sorted keys,
+	// canonical escaping) so param order and %-escape casing don't affect the key.
+	u.RawQuery = u.Query().Encode()
+	u.Fragment = ""
+	return u.String()
+}
+
+// isDefaultPort reports whether port is the scheme's default (and thus omittable without
+// changing the destination): 80 for http, 443 for https.
+func isDefaultPort(scheme, port string) bool {
+	switch scheme {
+	case "http":
+		return port == "80"
+	case "https":
+		return port == "443"
+	default:
+		return false
+	}
 }
 
 // validateAdURL rejects an empty/malformed ad destination BEFORE any mutating call.

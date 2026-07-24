@@ -144,6 +144,54 @@ func TestCreateCampaign_ReusesExistingAdGroupAndAd(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_ReusesAdWhenFinalURLReEncoded proves ad idempotency survives a
+// representation-only difference in the read-back FinalUrls: Microsoft may return the same
+// destination with re-ordered query params, an upper-cased host, or a redundant default port.
+// A byte-exact compare would miss and stack a duplicate RSA (v13 permits duplicates); the
+// canonical-form compare in findAdByFinalURL must still recognize it as the same ad.
+func TestCreateCampaign_ReusesAdWhenFinalURLReEncoded(t *testing.T) {
+	in := validInput()
+	adGroupName := composeAdGroupName(in)
+	canonical := buildAdFinalURL(in)
+
+	// Re-encode the canonical URL the way Microsoft plausibly could on read-back, WITHOUT
+	// changing the destination: parse it, upper-case the host, add the redundant :443 default
+	// port, and re-emit the query (url.Values.Encode re-sorts + re-escapes). The result is a
+	// different byte string for the SAME destination.
+	pu, perr := url.Parse(canonical)
+	if perr != nil {
+		t.Fatalf("parse canonical final URL: %v", perr)
+	}
+	pu.Host = strings.ToUpper(pu.Hostname()) + ":443"
+	reEncoded := pu.String()
+	if reEncoded == canonical {
+		t.Fatalf("test setup: re-encoded URL %q must differ byte-for-byte from canonical %q", reEncoded, canonical)
+	}
+
+	api := &campaignsAPI{
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(reEncoded) + `]}]}`,
+	}
+	adPostReached := false
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Ads") {
+			adPostReached = true
+		}
+		base(w, r)
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if adPostReached {
+		t.Error("ad create POST issued despite an existing ad whose re-encoded destination is equivalent")
+	}
+	if res.AdID != "222" {
+		t.Errorf("AdID=%q, want the existing 222 matched via canonical URL compare", res.AdID)
+	}
+}
+
 func TestCreateCampaign_AdLookupMatchWithNoIDIsUnconfirmed(t *testing.T) {
 	// The ad lookup finds an ad whose destination MATCHES the target but whose Id is null.
 	// The ad almost certainly exists, so treating it as absent and POSTing /Ads would stack
@@ -179,6 +227,67 @@ func TestCreateCampaign_AdLookupMatchWithNoIDIsUnconfirmed(t *testing.T) {
 	}
 	if res.AdID != "" {
 		t.Errorf("AdID = %q, want empty on an unconfirmed ad step", res.AdID)
+	}
+}
+
+// TestCreateCampaign_OmittedAdGroupsFieldIsUnconfirmed: a lookup response that OMITS the
+// AdGroups field (nil pointer slice, not an empty list) must NOT be read as "no ad group".
+// Treating it as absent would POST /AdGroups and could duplicate; the step must be
+// UNCONFIRMED and issue no ad-group create.
+func TestCreateCampaign_OmittedAdGroupsFieldIsUnconfirmed(t *testing.T) {
+	in := validInput()
+	api := &campaignsAPI{adGroupGetBody: `{}`} // AdGroups field omitted entirely
+	adGroupPostReached := false
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/AdGroups") {
+			adGroupPostReached = true
+		}
+		base(w, r)
+	})
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED error when the AdGroups field is omitted")
+	}
+	if adGroupPostReached {
+		t.Error("ad group create POST issued despite an omitted AdGroups field (would risk a duplicate)")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an omitted AdGroups field must be UNCONFIRMED, got: %v", err)
+	}
+}
+
+// TestCreateCampaign_OmittedAdsFieldIsUnconfirmed: with the ad group present, a lookup
+// response that OMITS the Ads field must NOT be read as "no ad". v13 permits duplicate RSAs
+// with no create-time reconcile, so treating a missing field as absent would stack a
+// duplicate ad on retry. The ad step must be UNCONFIRMED and issue no ad create.
+func TestCreateCampaign_OmittedAdsFieldIsUnconfirmed(t *testing.T) {
+	in := validInput()
+	adGroupName := composeAdGroupName(in)
+	api := &campaignsAPI{
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{}`, // Ads field omitted entirely
+	}
+	adPostReached := false
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Ads") {
+			adPostReached = true
+		}
+		base(w, r)
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED error when the Ads field is omitted")
+	}
+	if adPostReached {
+		t.Error("ad create POST issued despite an omitted Ads field (would risk a duplicate RSA)")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an omitted Ads field must be UNCONFIRMED, got: %v", err)
+	}
+	if res == nil || res.AdGroupID != "111" {
+		t.Fatalf("expected a partial carrying the existing ad group 111, got %+v", res)
 	}
 }
 
