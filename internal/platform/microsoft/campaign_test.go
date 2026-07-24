@@ -786,6 +786,8 @@ func TestCreateCampaign_CallerTimeZonePassThrough(t *testing.T) {
 func TestCreateCampaign_DuplicateNameRaceSelfHeals(t *testing.T) {
 	in := validInput()
 	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
 	lookups := 0
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
@@ -801,6 +803,13 @@ func TestCreateCampaign_DuplicateNameRaceSelfHeals(t *testing.T) {
 		case strings.HasSuffix(p, "/Campaigns"):
 			// The create loses the duplicate race → 1115 duplicate-name PartialError.
 			_, _ = io.WriteString(w, `{"CampaignIds":[null],"PartialErrors":[{"Code":1115}]}`)
+		// After the campaign self-heals to the winner (999), the hierarchy continues under
+		// it. Return a pre-existing ad group and ad so the WHOLE tree pre-exists — then a
+		// clean self-heal yields AlreadyExisted=true (nothing was created this run).
+		case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+			_, _ = io.WriteString(w, `{"AdGroups":[{"Id":111,"Name":`+jsonString(adGroupName)+`}]}`)
+		case strings.HasSuffix(p, "/Ads/QueryByAdGroupId"):
+			_, _ = io.WriteString(w, `{"Ads":[{"Id":222,"FinalUrls":[`+jsonString(finalURL)+`]}]}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, p)
 		}
@@ -812,7 +821,12 @@ func TestCreateCampaign_DuplicateNameRaceSelfHeals(t *testing.T) {
 	if res.CampaignID != "999" {
 		t.Errorf("CampaignID = %q, want the reconciled 999", res.CampaignID)
 	}
+	// The re-lookup ran (the 1115 forced a second QueryByAccountId).
+	if lookups != 2 {
+		t.Errorf("campaign lookups = %d, want 2 (pre-check + post-1115 re-resolve)", lookups)
+	}
+	// Campaign self-healed and the ad group + ad both pre-existed → nothing created this run.
 	if !res.AlreadyExisted {
-		t.Error("AlreadyExisted = false, want true on a reconciled duplicate race")
+		t.Error("AlreadyExisted = false, want true when the reconciled campaign + ad group + ad all pre-existed")
 	}
 }
