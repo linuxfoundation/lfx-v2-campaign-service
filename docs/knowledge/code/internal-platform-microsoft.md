@@ -100,9 +100,11 @@ MALFORMED 200 (no id, no PartialError → the campaign may exist → UNCONFIRMED
 unique among the account's active/paused campaigns, using a case-insensitive comparison
 (a duplicate create is rejected with `CampaignServiceCannotCreateDuplicateCampaign`).
 That uniqueness IS the idempotency key. `CreateCampaign` FIRST looks the deterministic
-name up (`findCampaignByName` — a READ, idempotent, retried on 429) and returns the
-existing campaign (`AlreadyExisted=true`) without creating a second; a stable `NameSuffix`
-makes that reliable. The lookup POSTs `Campaigns/QueryByAccountId` with the account id +
+name up (`findCampaignByName` — a READ, idempotent, retried on 429) and REUSES the existing
+campaign instead of creating a second; a stable `NameSuffix` makes that reliable. Reusing
+the campaign does NOT return early — creation continues through the ad group and ad under
+it (see MS-2.5 below), so the final `AlreadyExisted` reflects whether the WHOLE tree
+(campaign, ad group, AND ad) pre-existed, not just the campaign. The lookup POSTs `Campaigns/QueryByAccountId` with the account id +
 campaign type in the body (the v13 `GetCampaignsByAccountId` REST operation is a
 POST-with-body, NOT a GET), and matches case-insensitively to mirror the service's own
 comparison. If the create still loses a race and returns the duplicate-name PartialError,

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -317,18 +318,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if n := utf8.RuneCountInString(finalURL); n > maxFinalURLRunes {
 		return nil, fmt.Errorf("microsoft-ads composed ad final URL is %d characters, exceeding the %d limit (shorten the registration URL)", n, maxFinalURLRunes)
 	}
-	// Microsoft also derives the ad's DISPLAY domain from the FinalUrls hostname and caps it
-	// at maxDisplayDomainRunes. A host longer than that passes the FinalUrls length check above
+	// Microsoft also derives the ad's DISPLAY domain from the FinalUrls host and caps it at
+	// maxDisplayDomainRunes. A host longer than that passes the FinalUrls length check above
 	// but is rejected only at AddAds, orphaning the PAUSED campaign/ad group — so reject it up
-	// front too. Parse errors are ignored here: validateAdURL already rejected a malformed URL.
+	// front too. Count the full host AUTHORITY (hostname + a non-default port), not just
+	// Hostname(): Hostname() drops the port, so a hostname just under the cap plus e.g. :8443
+	// could slip past here and be rejected at AddAds. A redundant default port (:80/:443) is
+	// stripped so it never counts against an otherwise-valid host. Parse errors are ignored:
+	// validateAdURL already rejected a malformed URL (and its embedded userinfo).
 	if u, perr := url.Parse(finalURL); perr == nil {
-		host := u.Hostname()
+		authority := u.Hostname()
+		if port := u.Port(); port != "" && !isDefaultPort(u.Scheme, port) {
+			authority = net.JoinHostPort(u.Hostname(), port)
+		}
 		limit := maxDisplayDomainRunes
-		if hasDoubleWidth(host) {
+		if hasDoubleWidth(authority) {
 			limit = maxDisplayDomainRunesWide
 		}
-		if n := utf8.RuneCountInString(host); n > limit {
-			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", host, n, limit)
+		if n := utf8.RuneCountInString(authority); n > limit {
+			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", authority, n, limit)
 		}
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or

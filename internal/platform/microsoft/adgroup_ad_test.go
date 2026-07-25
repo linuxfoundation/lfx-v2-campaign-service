@@ -713,6 +713,51 @@ func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_DisplayDomainCountsNonDefaultPort: a hostname UNDER the 67-char cap
+// that a non-default port pushes OVER must be rejected up front — the display-domain check
+// counts the full host authority (hostname + non-default port), not just Hostname(), so the
+// rejection happens here rather than at AddAds (which would orphan the PAUSED parents). A
+// redundant default port (:443) must NOT count and must still pass.
+func TestCreateCampaign_DisplayDomainCountsNonDefaultPort(t *testing.T) {
+	// A 63-char host (under 67) that becomes 68 with ":8443" (63 + 1 + 4).
+	host := strings.Repeat("a", 63-len(".example.org")) + ".example.org"
+	if len(host) != 63 {
+		t.Fatalf("test setup: host is %d chars, want 63", len(host))
+	}
+
+	t.Run("non-default port pushes over the cap -> rejected up front", func(t *testing.T) {
+		var reached bool
+		api := &campaignsAPI{}
+		base := api.handler(t)
+		c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+			reached = true
+			base(w, r)
+		})
+		in := validInput()
+		in.RegistrationURL = "https://" + host + ":8443/register"
+		res, err := c.CreateCampaign(context.Background(), in)
+		if err == nil || !strings.Contains(err.Error(), "display domain") {
+			t.Fatalf("expected a display-domain rejection counting the :8443 port, got: %v", err)
+		}
+		if res != nil {
+			t.Errorf("must fail cleanly (nil result), got %+v", res)
+		}
+		if reached {
+			t.Error("no API call should be made — the authority is over the cap up front")
+		}
+	})
+
+	t.Run("redundant default port does NOT count -> passes", func(t *testing.T) {
+		api := &campaignsAPI{}
+		c := newAPIClient(t, api.handler(t))
+		in := validInput()
+		in.RegistrationURL = "https://" + host + ":443/register" // :443 stripped, host is 63 <= 67
+		if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+			t.Fatalf("a default :443 port must not count against the display domain, got: %v", err)
+		}
+	})
+}
+
 func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
 	// Over-count or over-long caller ad copy fails UP FRONT (before any API call), a clean
 	// (nil, err) — the composed responsive search ad would otherwise be rejected by Microsoft.
