@@ -215,6 +215,31 @@ func TestCanonicalFinalURL(t *testing.T) {
 	}
 }
 
+// TestRedactAdURL: redactAdURL drops query/fragment/userinfo (secret-safe) AND bounds the
+// result so an unbounded caller-controlled URL can't produce a megabyte-scale persisted
+// error — on BOTH the successful-parse branch and the fallback.
+func TestRedactAdURL(t *testing.T) {
+	// Secrets dropped on a normal URL.
+	got := redactAdURL("https://user:pass@events.example.org/register?token=SECRET#frag")
+	if strings.Contains(got, "SECRET") || strings.Contains(got, "pass") || strings.Contains(got, "#frag") {
+		t.Errorf("redactAdURL leaked a secret/fragment: %q", got)
+	}
+	if !strings.Contains(got, "events.example.org/register") {
+		t.Errorf("redactAdURL dropped the safe scheme/host/path: %q", got)
+	}
+
+	// Bounded: a huge but VALID (parseable) URL — exercises the successful-parse branch.
+	hugePath := "https://x.example/" + strings.Repeat("a", 100_000)
+	if n := len(redactAdURL(hugePath)); n > maxErrorBodyChars {
+		t.Errorf("redactAdURL(valid huge URL) = %d chars, want <= %d", n, maxErrorBodyChars)
+	}
+	// Bounded: a huge UNPARSEABLE value — exercises the fallback branch.
+	hugeRaw := strings.Repeat("z", 100_000)
+	if n := len(redactAdURL(hugeRaw)); n > maxErrorBodyChars {
+		t.Errorf("redactAdURL(huge raw) = %d chars, want <= %d", n, maxErrorBodyChars)
+	}
+}
+
 // TestCreateCampaign_ReusesAdWhenFinalURLReEncoded proves ad idempotency survives a
 // representation-only difference in the read-back FinalUrls: Microsoft may return the same
 // destination with re-ordered query params, an upper-cased host, or a redundant default port.

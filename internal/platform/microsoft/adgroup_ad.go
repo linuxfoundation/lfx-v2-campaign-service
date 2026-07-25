@@ -999,7 +999,9 @@ func upperHex(c byte) byte {
 // isDefaultPort reports whether port is the scheme's default (and thus omittable without
 // changing the destination): 80 for http, 443 for https.
 func isDefaultPort(scheme, port string) bool {
-	switch scheme {
+	// Scheme names are case-insensitive (RFC 3986); lower-case so an HTTPS://…:443 URL is
+	// recognized as a default port by every caller, not only the ones that pre-lower-case.
+	switch strings.ToLower(scheme) {
 	case "http":
 		return port == "80"
 	case "https":
@@ -1038,7 +1040,9 @@ func validateAdURL(raw string) error {
 	case "http", "https":
 		return nil
 	default:
-		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", redactAdURL(raw), u.Scheme)
+		// Bound the echoed scheme: it comes from the unbounded caller URL and this error can
+		// be persisted, so a megabyte-scale scheme would otherwise produce a megabyte error.
+		return fmt.Errorf("registration URL %q must use an http or https scheme, got %q", redactAdURL(raw), truncate(u.Scheme, maxErrorBodyChars))
 	}
 }
 
@@ -1048,7 +1052,10 @@ func redactAdURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if u, err := url.Parse(trimmed); err == nil && u.IsAbs() && u.Host != "" {
 		redacted := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
-		return redacted.String()
+		// Bound the result: dropping the query/fragment/userinfo still leaves an unbounded
+		// caller-controlled scheme/host/path, and this string can be persisted in an error.
+		// The fallback path below already caps via truncate; apply the same cap here.
+		return truncate(redacted.String(), maxErrorBodyChars)
 	}
 	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
 		trimmed = trimmed[:i]
