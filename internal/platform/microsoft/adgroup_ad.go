@@ -404,11 +404,18 @@ func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name strin
 		// than surfacing a hard failure (mirrors the campaign duplicate-name handling). Ad
 		// group names are unique per campaign, so the re-lookup returns the winner's id.
 		if isDuplicateAdGroupPartial(resp.PartialErrors) {
-			if existingID, ferr := c.findAdGroupByName(ctx, campaignID, name); ferr == nil && existingID != "" {
+			existingID, ferr := c.findAdGroupByName(ctx, campaignID, name)
+			if ferr == nil && existingID != "" {
 				return existingID, true, nil
 			}
 			// Re-lookup failed/empty: the group exists but we can't confirm its id → UNCONFIRMED.
-			return "", false, fmt.Errorf("ad group %q already exists but could not be re-resolved: %w", name, errNoID)
+			// Surface the RE-LOOKUP cause (ferr) when it errored so operators can see WHY the id
+			// couldn't be resolved (a 5xx, an auth failure, a timeout) — mirroring the
+			// campaign-level self-heal. When the re-lookup succeeded but found no id, ferr is nil.
+			if ferr != nil {
+				return "", false, fmt.Errorf("ad group %q already exists but the reconciliation lookup failed (%v): %w", name, ferr, errNoID)
+			}
+			return "", false, fmt.Errorf("ad group %q already exists but could not be re-resolved (reconciliation lookup returned no id): %w", name, errNoID)
 		}
 		return "", false, err
 	}

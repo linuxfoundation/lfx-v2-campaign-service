@@ -1022,6 +1022,51 @@ func TestCreateCampaign_DuplicateAdGroupReconciledAsExisting(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_DuplicateAdGroupReLookupErrorSurfacesCause: when the 1214 reconcile
+// re-lookup itself FAILS (a 500, not just "no id"), the error must surface that cause —
+// mirroring the campaign-level self-heal — rather than wrapping only errNoID.
+func TestCreateCampaign_DuplicateAdGroupReLookupErrorSurfacesCause(t *testing.T) {
+	in := validInput()
+	firstLookup := true
+	adGroupPostCount := 0
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+		case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+			if firstLookup {
+				firstLookup = false
+				_, _ = io.WriteString(w, `{"AdGroups":[]}`) // absent → create runs
+			} else {
+				// re-lookup after the 1214 FAILS with a 500.
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `{"Errors":[{"ErrorCode":"InternalError"}]}`)
+			}
+		case strings.HasSuffix(p, "/Campaigns"):
+			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/AdGroups"):
+			adGroupPostCount++
+			_, _ = io.WriteString(w, `{"AdGroupIds":[null],"PartialErrors":[{"Code":1214}]}`) // 1214
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, p)
+		}
+	})
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an UNCONFIRMED error when the ad-group reconcile lookup fails")
+	}
+	if !strings.Contains(err.Error(), "reconciliation lookup failed") {
+		t.Errorf("error must surface the ad-group re-lookup cause, got: %v", err)
+	}
+	if adGroupPostCount != 1 {
+		t.Errorf("ad group create POSTed %d times, want exactly 1 (no duplicate on a failed reconcile)", adGroupPostCount)
+	}
+	if res == nil || res.CampaignID != "321" {
+		t.Fatalf("expected a partial carrying campaign 321, got %+v", res)
+	}
+}
+
 // TestCreateCampaign_CreateBodiesCarryV13Contract asserts the central v13 body fields the
 // creates depend on: the ad group carries AdGroupType/Language/Status and the campaign-scoped
 // CampaignId; the ad carries the Type discriminator + PAUSED status + a FinalUrls.
