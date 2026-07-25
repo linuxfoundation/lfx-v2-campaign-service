@@ -164,6 +164,10 @@ func TestCanonicalFinalURL(t *testing.T) {
 			"https://[2001:db8::1]/p?q=1",
 			"https://[2001:db8::1]:443/p?q=1",
 		},
+		{ // path percent-escape hex CASE folds (%2f == %2F) without decoding
+			"https://x.example/a%2fb",
+			"https://x.example/a%2Fb",
+		},
 	}
 	for i, group := range equivalent {
 		want := canonicalFinalURL(group[0])
@@ -176,10 +180,11 @@ func TestCanonicalFinalURL(t *testing.T) {
 
 	// distinct: these must NOT collapse — the #fragment and the path are significant.
 	distinct := [][2]string{
-		{"https://x.example/p#a", "https://x.example/p#b"}, // different fragment
-		{"https://x.example/p#a", "https://x.example/p"},   // fragment vs none
-		{"https://x.example/p", "https://x.example/P"},     // path case
-		{"https://x.example/p", "https://x.example/p/"},    // trailing slash
+		{"https://x.example/p#a", "https://x.example/p#b"},   // different fragment
+		{"https://x.example/p#a", "https://x.example/p"},     // fragment vs none
+		{"https://x.example/p", "https://x.example/P"},       // path case
+		{"https://x.example/p", "https://x.example/p/"},      // trailing slash
+		{"https://x.example/a%2Fb", "https://x.example/a/b"}, // escaped slash NOT decoded to a literal one
 	}
 	for _, pair := range distinct {
 		if canonicalFinalURL(pair[0]) == canonicalFinalURL(pair[1]) {

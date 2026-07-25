@@ -906,12 +906,15 @@ func buildAdFinalURL(in CampaignInput) string {
 //   - query-parameter ordering and percent-escape spelling (re-decoded, then re-encoded
 //     with sorted keys via url.Values.Encode — the same normal form buildAdFinalURL uses).
 //
-// It deliberately does NOT touch the path (paths are case-sensitive and a trailing slash
-// can be significant) NOR the #fragment: Microsoft preserves the fragment in a stored
-// FinalUrls value, so two URLs differing only in fragment are DIFFERENT destinations and
-// must not collapse to the same idempotency key. It only ever folds differences that carry
-// no meaning. If the URL cannot be parsed, the trimmed original is returned so an
-// unparseable value still compares byte-for-byte rather than silently matching everything.
+// It deliberately does NOT change the path's meaning (paths are case-sensitive and a
+// trailing slash can be significant) NOR the #fragment: Microsoft preserves the fragment in
+// a stored FinalUrls value, so two URLs differing only in fragment are DIFFERENT
+// destinations and must not collapse to the same idempotency key. The one path change it
+// DOES make is folding the CASE of percent-escape hex digits (`%2f` -> `%2F`) — a
+// representation-only difference per RFC 3986 that carries no meaning — WITHOUT decoding the
+// escapes (so `%2F` never becomes `/`, which would change the path). It only ever folds
+// differences that carry no meaning. If the URL cannot be parsed, the trimmed original is
+// returned so an unparseable value still compares byte-for-byte rather than matching all.
 func canonicalFinalURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -928,11 +931,46 @@ func canonicalFinalURL(raw string) string {
 		host = "[" + host + "]"
 	}
 	u.Host = host
+	// Upper-case the hex digits of any percent-escape in the path WITHOUT decoding it, so
+	// `/a%2fb` and `/a%2Fb` produce the same key while `%2F` (an escaped slash) stays
+	// distinct from a literal `/`. Set RawPath so u.String() emits this exact spelling.
+	escaped := u.EscapedPath()
+	u.RawPath = upperPercentEscapes(escaped)
 	// Re-decode then re-encode the query into url.Values' normal form (sorted keys,
 	// canonical escaping) so param order and %-escape casing don't affect the key. The
 	// #fragment is left intact (see the doc above) — it is part of the destination.
 	u.RawQuery = u.Query().Encode()
 	return u.String()
+}
+
+// upperPercentEscapes upper-cases the two hex digits following each '%' in s, leaving every
+// other byte (including the escaped octet's meaning) unchanged. `%2f` -> `%2F`. A malformed
+// escape (fewer than two following hex digits) is left as-is. This normalizes escape SPELLING
+// only — it never decodes, so it can't change a path's meaning.
+func upperPercentEscapes(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	b := []byte(s)
+	for i := 0; i+2 < len(b); i++ {
+		if b[i] == '%' && isHexDigit(b[i+1]) && isHexDigit(b[i+2]) {
+			b[i+1] = upperHex(b[i+1])
+			b[i+2] = upperHex(b[i+2])
+			i += 2
+		}
+	}
+	return string(b)
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func upperHex(c byte) byte {
+	if c >= 'a' && c <= 'f' {
+		return c - ('a' - 'A')
+	}
+	return c
 }
 
 // isDefaultPort reports whether port is the scheme's default (and thus omittable without
