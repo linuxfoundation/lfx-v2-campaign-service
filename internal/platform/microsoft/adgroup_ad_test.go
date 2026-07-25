@@ -756,6 +756,17 @@ func TestCreateCampaign_DisplayDomainCountsNonDefaultPort(t *testing.T) {
 			t.Fatalf("a default :443 port must not count against the display domain, got: %v", err)
 		}
 	})
+
+	t.Run("uppercase scheme with default port still passes (case-insensitive)", func(t *testing.T) {
+		api := &campaignsAPI{}
+		c := newAPIClient(t, api.handler(t))
+		in := validInput()
+		// HTTPS (uppercase) + :443 must still recognize :443 as the default and NOT count it.
+		in.RegistrationURL = "HTTPS://" + host + ":443/register"
+		if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+			t.Fatalf("an uppercase-scheme default :443 port must not count against the display domain, got: %v", err)
+		}
+	})
 }
 
 func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {

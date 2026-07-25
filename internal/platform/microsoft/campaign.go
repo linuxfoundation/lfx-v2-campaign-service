@@ -328,7 +328,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// validateAdURL already rejected a malformed URL (and its embedded userinfo).
 	if u, perr := url.Parse(finalURL); perr == nil {
 		authority := u.Hostname()
-		if port := u.Port(); port != "" && !isDefaultPort(u.Scheme, port) {
+		// Lower-case the scheme before the default-port test: validateAdURL accepts any scheme
+		// casing and buildAdFinalURL preserves it, so a valid HTTPS://…:443 would otherwise
+		// miss the case-sensitive "https" match and wrongly count :443 against the host length.
+		if port := u.Port(); port != "" && !isDefaultPort(strings.ToLower(u.Scheme), port) {
 			authority = net.JoinHostPort(u.Hostname(), port)
 		}
 		limit := maxDisplayDomainRunes
