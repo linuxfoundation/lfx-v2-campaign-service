@@ -177,6 +177,14 @@ func TestCanonicalFinalURL(t *testing.T) {
 			"https://例え.example/p",
 			"https://xn--r8jz45g.example/p",
 		},
+		{ // an empty path == "/" (same HTTP request target) with a query present
+			"https://example.org?a=1",
+			"https://example.org/?a=1",
+		},
+		{ // empty path == "/" with no query
+			"https://example.org",
+			"https://example.org/",
+		},
 	}
 	for i, group := range equivalent {
 		want := canonicalFinalURL(group[0])

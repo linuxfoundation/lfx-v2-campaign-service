@@ -945,6 +945,15 @@ func canonicalFinalURL(raw string) string {
 		host = "[" + host + "]"
 	}
 	u.Host = host
+	// Normalize an EMPTY path to "/" for an http(s) URL with a host: `https://h?q` and
+	// `https://h/?q` resolve to the same request target, and Microsoft may return either
+	// spelling. Without this they'd key differently and a retry could miss the existing ad.
+	// Only applies when there's a host (so an opaque/relative URL isn't rewritten) and the
+	// path is genuinely empty (a non-empty path, including a bare "/", is left as-is).
+	if u.Host != "" && u.EscapedPath() == "" && (u.Scheme == "http" || u.Scheme == "https") {
+		u.Path = "/"
+		u.RawPath = ""
+	}
 	// Upper-case the hex digits of any percent-escape in the path WITHOUT decoding it, so
 	// `/a%2fb` and `/a%2Fb` produce the same key while `%2F` (an escaped slash) stays
 	// distinct from a literal `/`. Set RawPath so u.String() emits this exact spelling.
