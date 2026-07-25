@@ -168,6 +168,15 @@ func TestCanonicalFinalURL(t *testing.T) {
 			"https://x.example/a%2fb",
 			"https://x.example/a%2Fb",
 		},
+		{ // an IDN and its punycode A-label are the SAME DNS name → same key
+			"https://café.example/p",
+			"https://xn--caf-dma.example/p",
+			"https://Café.Example/p", // + host case
+		},
+		{ // a CJK host and its A-label
+			"https://例え.example/p",
+			"https://xn--r8jz45g.example/p",
+		},
 	}
 	for i, group := range equivalent {
 		want := canonicalFinalURL(group[0])

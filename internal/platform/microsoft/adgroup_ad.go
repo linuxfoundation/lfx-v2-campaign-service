@@ -14,6 +14,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // ---------------------------------------------------------------------------
@@ -922,10 +924,22 @@ func canonicalFinalURL(raw string) string {
 	}
 	u.Scheme = strings.ToLower(u.Scheme)
 	host := strings.ToLower(u.Hostname())
+	isIPv6 := strings.Contains(host, ":")
+	if !isIPv6 {
+		// Fold an internationalized domain name to its ASCII (punycode) A-label, so a Unicode
+		// host and its `xn--` form — the SAME DNS name — canonicalize equal. This client
+		// accepts Unicode/CJK hosts, and Microsoft may store or return the destination in
+		// punycode; a lowercase-only host would then miss and stack a duplicate ad. A plain
+		// IPv4 address or an already-ASCII host passes through unchanged; if IDNA conversion
+		// fails (a malformed label), keep the lowercased host rather than dropping the URL.
+		if ascii, ierr := idna.Lookup.ToASCII(host); ierr == nil && ascii != "" {
+			host = ascii
+		}
+	}
 	if port := u.Port(); port != "" && !isDefaultPort(u.Scheme, port) {
 		// net.JoinHostPort re-adds the [] around an IPv6 literal when a port is present.
 		host = net.JoinHostPort(host, port)
-	} else if strings.Contains(host, ":") {
+	} else if isIPv6 {
 		// An IPv6 literal with NO port: Hostname() stripped the brackets, so re-add them.
 		// Without this the reassembled URL host is malformed (e.g. ::1 instead of [::1]).
 		host = "[" + host + "]"
