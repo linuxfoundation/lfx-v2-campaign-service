@@ -127,8 +127,11 @@ Run these on the changed code, scaled to the size of the change:
   rows and is the exact-match key the dispatch path joins on, so a change to how
   it is validated or normalised on any route changes which records are reachable
   — say so rather than treating it as a validation tweak. The uniqueness the
-  schema enforces on it is narrower than "one row per provider, ever"; read the
-  documented schema for the constraint as it stands.
+  schema enforces on it is narrower than "one row per provider, ever": read the
+  migration that creates the constraint, which is the DDL that actually runs.
+  The schema doc and the migrations do not currently agree on this, so treat the
+  migration as the answer and the disagreement as a doc-drift finding in its own
+  right — a pointer into a stale doc is how a reviewer ends up confidently wrong.
 - **Startup and shutdown are load-bearing.** The service supports a database
   cold start: it boots serving the contract's typed 503, retries in the
   background, and late-binds live backends without a pod restart; a migration
