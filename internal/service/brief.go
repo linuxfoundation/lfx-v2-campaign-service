@@ -390,11 +390,13 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		case errors.Is(terr, ErrCampaignNotProvisioned):
 			// The campaign is not fully provisioned for this toggle — either it has no upstream
 			// platform id yet (still creating / ambiguous create), OR (on ACTIVATE) it lacks the
-			// child ad group/ad needed to serve (e.g. a create that produced no ad). A
-			// client/state error, NOT a platform rejection: a retry now would fail the same way,
-			// so this is a 409, not a 503. The message avoids "wait" (a campaign missing a child
-			// never gains one by waiting) and points at the actual remedy.
-			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned for activation — it has no platform campaign id yet, or it lacks the ad group/ad needed to serve; finish or recreate the campaign before toggling its status"}
+			// child entities needed to serve. The specific missing entity is platform-dependent
+			// (Reddit: an ad group/ad; Meta: an ad set; LinkedIn: creatives), so the message stays
+			// platform-NEUTRAL rather than naming one provider's shape for all. A client/state
+			// error, NOT a platform rejection: a retry now would fail the same way, so this is a
+			// 409, not a 503. It avoids "wait" (a campaign missing a child never gains one by
+			// waiting) and points at the actual remedy.
+			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned for activation — it has no platform campaign id yet, or it lacks the child entities needed to serve (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
 		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
 			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
 			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT
