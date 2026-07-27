@@ -119,7 +119,8 @@ count, not ids), and PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUS
 400 on an in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) —
 the campaign is already the effective gate. An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`)
 is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
-package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). X/Twitter's toggle
-follows once its dispatcher lands on main.
+package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). The X/Twitter and
+Google Ads DISPATCHERS already exist (creation); adding the status-TOGGLE capability to them is
+remaining follow-up work.
 
 See [internal/dispatch](../../../internal/dispatch).
