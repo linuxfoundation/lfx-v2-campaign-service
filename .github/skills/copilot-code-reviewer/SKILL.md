@@ -91,12 +91,12 @@ Three sources, each authoritative for its own domain:
 
 1. **Understand the intent.** From the PR title, body, commits, and the diff:
    what is this change trying to accomplish, and why? Work that out first, then
-   test the claim against the code. A diff that does more than its description
-   (an extra endpoint, a widened path match, a new dependency added in passing,
-   a loosened validation) deserves a finding even when each piece is
-   individually fine, because unreviewed intent is how scope creeps. If the
-   stated intent and the diff disagree, or you cannot work out what the change
-   is for, that is a finding.
+   read the code against it. New surface the change carries — an extra endpoint,
+   a migration, a new provider package, a widened path match, a dependency added
+   in passing — is judged on whether it is necessary, owned, and safe (step 2),
+   not on whether the description mentioned it. Descriptions are routinely
+   shorter than their diffs, so an omission is not a finding. A change whose
+   purpose you cannot work out at all is.
 2. **Place the change.** In this service's architecture and in the platform:
    - Does it respect the layering above, or does it reach past it — a repository
      imported into the domain package, platform-client detail leaking into the
