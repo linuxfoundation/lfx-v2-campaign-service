@@ -198,4 +198,15 @@ func TestGoogleAds_AmbiguousCreateRetainsClaim(t *testing.T) {
 	if camp == nil {
 		t.Fatal("an ambiguous create must return a non-nil campaign for orphan recording")
 	}
+	// The orphan is only PERSISTABLE because Result carries the reconcile-by-name payload:
+	// the orchestrator records an id-less partial ONLY when Result is non-empty. Assert it is
+	// populated and carries the orphaned budget's reconcile key, so dropping the marshal (or
+	// the budget mapping) would fail here instead of silently losing reconciliation data.
+	if len(camp.Result) == 0 {
+		t.Fatal("ambiguous-partial Result must be non-empty (it is the sole reconcile-by-name carrier)")
+	}
+	if !strings.Contains(string(camp.Result), "campaignBudgetId") && !strings.Contains(string(camp.Result), "CampaignBudgetId") &&
+		!strings.Contains(string(camp.Result), "111") {
+		t.Errorf("Result must carry the orphaned budget's reconcile key (id/name), got: %s", camp.Result)
+	}
 }

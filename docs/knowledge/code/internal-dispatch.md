@@ -98,6 +98,8 @@ Each adapter interprets its own credential + config shape:
   `login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
   Budget (`googleAdsConfig.budget`) is in the ACCOUNT's currency (no FX). The client
   today creates a PAUSED search-campaign shell (budget → campaign); its two-step
-  hierarchy means an orphaned budget is reconciled by its own deterministic
-  `CampaignBudgetName`, so the dispatcher returns a non-nil name-only result (retaining
-  the claim) on an ambiguous/duplicate-name create rather than releasing on an empty id.
+  hierarchy means a PRE-attachment (budget-stage) orphan is reconciled by its deterministic
+  `CampaignBudgetName`, but once the campaign attaches a non-shared budget's name synchronizes
+  to the campaign name, so a campaign-stage partial reconciles the budget by `CampaignBudgetID`
+  instead (the partial carries both). Either way the dispatcher returns a non-nil result
+  (retaining the claim) on an ambiguous/duplicate-name create rather than releasing on an empty id.

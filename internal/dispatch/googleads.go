@@ -122,8 +122,11 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// whose ids may be empty but which still means "may exist"). So the release decision
 	// keys on result==nil ALONE — not on an empty id, which would wrongly release the
 	// claim on an ambiguous partial and risk a duplicate on retry. Note GA's two-step
-	// hierarchy (budget → campaign): an orphaned budget is reconciled by its OWN
-	// deterministic name (CampaignBudgetName), preserved in the Result blob.
+	// hierarchy (budget → campaign): a PRE-attachment (budget-stage) orphan is reconciled by
+	// its deterministic CampaignBudgetName; but once the campaign attaches, a non-shared
+	// budget's name SYNCHRONIZES to the campaign name, so a campaign-stage partial reconciles
+	// the budget by CampaignBudgetID instead (see the client's campaignNamePartial contract).
+	// Both keys are preserved in the Result blob.
 	//   - (nil, err)      → pre-create; notCreated releases the claim.
 	//   - (result, err)   → may exist; return the (possibly id-less) campaign + error so
 	//                       the orchestrator retains the claim and records the orphan.
