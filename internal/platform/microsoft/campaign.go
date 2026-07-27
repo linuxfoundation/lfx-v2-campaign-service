@@ -4,6 +4,7 @@
 package microsoft
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -169,9 +170,46 @@ type createCampaignsRequest struct {
 // index-aligned with the request Campaigns; a slot is null when that entity failed,
 // and the reason is in PartialErrors. Ids are int64 in the wire form; captured as
 // json.Number so a null slot is distinguishable from a zero id.
+//
+// Both arrays are BOUNDED slice types so a malformed up-to-8-MiB response packed with
+// null/empty entries can't expand into millions of elements + tens of MB of allocations per
+// create (an OOM risk under concurrency): only the first few entries are retained, which is
+// all this single-campaign create ever needs (it reads CampaignIds[0] and whether ANY
+// PartialError is present). Mirrors boundedErrorItems / the parseErrorCodes decode.
 type createCampaignsResponse struct {
-	CampaignIds   []*json.Number `json:"CampaignIds"`
-	PartialErrors []msErrorItem  `json:"PartialErrors"`
+	CampaignIds   boundedNumberIDs  `json:"CampaignIds"`
+	PartialErrors boundedErrorItems `json:"PartialErrors"`
+}
+
+// boundedNumberIDs is a []*json.Number that, during UnmarshalJSON, streams the whole JSON
+// array (so it never truncates a large valid body) but RETAINS only the first
+// maxDecodedErrorItems elements — later elements are decoded into a scratch and dropped. A
+// create sends ONE campaign, so only the first id is ever meaningful; this bounds memory to
+// O(1) in the response size regardless of a malformed null-padded body.
+type boundedNumberIDs []*json.Number
+
+func (b *boundedNumberIDs) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok == nil { // JSON null
+		return nil
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return fmt.Errorf("expected a JSON array for campaign ids")
+	}
+	for dec.More() {
+		var n *json.Number
+		if err := dec.Decode(&n); err != nil {
+			return err
+		}
+		if len(*b) < maxDecodedErrorItems {
+			*b = append(*b, n)
+		}
+	}
+	return nil
 }
 
 // queryCampaignsRequest is the POST /Campaigns/QueryByAccountId body used by
