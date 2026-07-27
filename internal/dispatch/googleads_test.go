@@ -89,6 +89,40 @@ func TestGoogleAds_BadConfigIsPreCreate(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_ClientPreCreateRejectionReleasesClaim exercises the `result == nil` RELEASE
+// branch of the dispatcher — the other pre-create cases fail during connection/config/brief
+// handling BEFORE CreateCampaign is called, so they never reach it. Here the connection is
+// active and the config is syntactically valid and passes the dispatcher's own checks, so the
+// flow reaches the real GA client, which then rejects it BEFORE any upstream mutate because
+// the budget rounds to 0 micros (campaign.go: "budget must be > 0"), returning (nil, err). The
+// adapter must map that to a NoUpstreamCreate error so the orchestrator RELEASES the claim —
+// otherwise a safe-to-retry job would stay claimed forever.
+func TestGoogleAds_ClientPreCreateRejectionReleasesClaim(t *testing.T) {
+	// A server that fails any request, proving the rejection happens BEFORE the client's
+	// first upstream mutate (no request should reach here).
+	opts := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("client must reject the zero-budget config before any upstream mutate")
+			w.WriteHeader(http.StatusInternalServerError)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("no campaign mutate should be reached on a pre-create rejection")
+			w.WriteHeader(http.StatusInternalServerError)
+		},
+	)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	// Valid envelope + connection, but budget 0 → the client rejects it pre-create.
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":0}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if camp != nil {
+		t.Errorf("a pre-create rejection must return a nil campaign, got %+v", camp)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a client pre-create rejection must be NoUpstreamCreate (release the claim), got %T: %v", err, err)
+	}
+}
+
 // ---- happy path through an httptest google ads API ------------------------
 
 func TestGoogleAds_DispatchSuccessMapsResult(t *testing.T) {
