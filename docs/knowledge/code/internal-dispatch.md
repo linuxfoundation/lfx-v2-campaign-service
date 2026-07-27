@@ -75,7 +75,7 @@ report "no dispatcher registered" (logged as a startup warning via
 `logMissingDispatchers`); adapters land incrementally per platform.
 
 Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**,
-**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **googleads** (LFXV2-2643). The
+**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **googleads** (LFXV2-2636). The
 email (HubSpot) dispatcher is LFXV2-2777; Microsoft Ads is LFXV2-2804.
 
 Each adapter interprets its own credential + config shape:

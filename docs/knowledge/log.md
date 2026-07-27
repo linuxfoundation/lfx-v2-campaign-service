@@ -40,6 +40,7 @@ a ctx check runs before the ad step so a done context doesn't fire ad HTTP work.
 `CampaignResult.AdID`/`AlreadyExisted` and `CampaignInput.Headlines/Descriptions` comments
 corrected (RSA, all-three-level AlreadyExisted, width-aware limits).
 **Update** — Registered the Google Ads PlatformDispatcher (LFXV2-2643, PR #41).
+**Update** — Registered the Google Ads PlatformDispatcher (LFXV2-2636, PR #41).
 `registerDispatchers` now wires `model.ProviderGoogleAds` →
 `dispatch.NewGoogleAdsDispatcher`, so Google Ads campaigns dispatch upstream instead of
 recording "no dispatcher registered". The adapter resolves the OAuth2-app + developer-token

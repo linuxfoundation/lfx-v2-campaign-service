@@ -168,5 +168,6 @@ retry collide on `DUPLICATE_NAME`) rather than relying on name reuse.
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
-creation (`:mutate`). Metrics/keywords/audience reads, keyword actions, and the
-orchestrator dispatcher follow in GA-3..GA-5.
+creation (`:mutate`). The orchestrator dispatcher (registering `google-ads` so
+briefs dispatch upstream) is wired in `internal/dispatch/googleads.go` (LFXV2-2636).
+Metrics/keywords/audience reads and keyword actions follow in later GA slices.
