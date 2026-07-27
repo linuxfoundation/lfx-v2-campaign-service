@@ -586,6 +586,12 @@ func creativeIntendedStatus(campaignStatus string) string {
 	return StatusPaused
 }
 
+// maxCreativesPageSize is the LinkedIn Creatives finder's maximum (and default) pageSize.
+// The docs cap it at 100 ("The max allowed pageSize is 100"), and a campaign holds at most
+// 100 creatives, so 100 fetches every creative in a single page in the common case while a
+// larger value would be rejected with a 4xx.
+const maxCreativesPageSize = 100
+
 // listCreativeURNs discovers the creative URNs under a campaign via the creatives FINDER
 // (GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})
 // with X-RestLi-Method: FINDER). It follows cursor pagination (bounded by maxListPages) and
@@ -601,7 +607,11 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 		params := map[string]string{
 			"q":         "criteria",
 			"campaigns": "List(" + restliEncode(campaignURN) + ")",
-			"pageSize":  strconv.Itoa(1000),
+			// The Creatives finder caps pageSize at 100 (LinkedIn docs: "The max allowed
+			// pageSize is 100", and a campaign holds at most 100 creatives). Sending a
+			// larger value (e.g. 1000) makes discovery fail with a 4xx, which would abort
+			// BOTH status cascades. We request the max (100) and follow pageToken.
+			"pageSize": strconv.Itoa(maxCreativesPageSize),
 		}
 		if pageToken != "" {
 			params["pageToken"] = pageToken

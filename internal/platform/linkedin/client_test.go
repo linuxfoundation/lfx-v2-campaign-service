@@ -1029,6 +1029,31 @@ func TestUpdateCampaignAndCreativesStatus_EncodesCreativeURNInPath(t *testing.T)
 	}
 }
 
+// TestListCreatives_RequestsMaxPageSize100 verifies the creatives finder sends pageSize=100 —
+// LinkedIn caps it at 100 ("The max allowed pageSize is 100"), and a larger value (e.g. 1000)
+// is rejected with a 4xx that would abort the status cascade before any creative is enumerated.
+func TestListCreatives_RequestsMaxPageSize100(t *testing.T) {
+	qCh := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			qCh <- r.URL.Query().Get("pageSize")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndCreativesStatus: %v", err)
+	}
+	close(qCh)
+	if ps := <-qCh; ps != "100" {
+		t.Errorf("creatives finder pageSize = %q, want 100 (LinkedIn's documented max)", ps)
+	}
+}
+
 // TestUpdateCampaignAndCreativesStatus_TruncatedDiscoveryFails verifies a stuck/looping finder
 // cursor fails the toggle (INCOMPLETE discovery) rather than silently succeeding — otherwise
 // the service would persist ACTIVE while undiscovered creatives stay DRAFT.

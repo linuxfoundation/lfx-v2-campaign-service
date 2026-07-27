@@ -924,8 +924,11 @@ func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error
 	return nil, fmt.Errorf("ad discovery for ad set %s exceeded %d pages; too many ads to enumerate", adSetID, adDiscoveryMaxPages)
 }
 
-// partialCascadeError marks a cascade that changed the campaign upstream but then failed on a
-// child entity: the run state is PARTIALLY applied. Its Unconfirmed() reports true so
+// partialCascadeError marks a status cascade that applied to SOME of the campaign/ad set/ads
+// but then failed on another entity: the run state is PARTIALLY applied. Because the cascade
+// order is status-dependent (on ACTIVATE the ad set/ads are flipped BEFORE the campaign; on
+// PAUSE the campaign first), a partial error does NOT imply the campaign itself changed — only
+// that the tree is not uniformly at the requested status. Its Unconfirmed() reports true so
 // IsOutcomeUnconfirmed treats it as "may be applied — verify before retrying" rather than
 // "not modified"; a retry re-runs the idempotent cascade. Mirrors the reddit client.
 type partialCascadeError struct {
