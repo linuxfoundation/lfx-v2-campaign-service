@@ -14,8 +14,9 @@ description: >
 
 # Campaign Service Code Review
 
-The `/copilot-code-reviewer` skill owns the reviewer's scope and signal
-discipline; this skill owns the line-level method. Read enough surrounding code
+Reviewer scope and the signal bar are owned by the `copilot-code-reviewer`
+skill (`.github/skills/copilot-code-reviewer/SKILL.md`); this skill assumes
+those and covers only the line-level method. Read enough surrounding code
 to judge each hunk in its real context — for a handler change, the design
 method, the generated interface it satisfies, and the repository call beneath
 it; for a dispatch change, the orchestrator contract above and the platform
@@ -145,12 +146,14 @@ Run these on the changed code, scaled to the size of the change:
   a request context is in hand, so the request ID the middleware attaches lands
   on the line. Ad-hoc printing, an unstructured message where fields belong, or
   a log line that carries a credential, a key, or a DSN is a finding.
-- **Knowledge-base upkeep.** When a PR changes architecture, a Kubernetes
-  manifest, or a package's responsibility, the repo expects a matching update
-  under `docs/knowledge/`, its index entry, and a dated entry in the change log
-  — and expects the bundle to be validated rather than regenerated, because the
-  generator overwrites hand-edited concept files. Note a missing update; do not
-  ask for a regeneration.
+- **Knowledge-base upkeep.** The agent guide asks a merged change — an
+  architectural change, a manifest edit, a bug fix — to leave the knowledge
+  bundle current: the relevant concept file under `docs/knowledge/` updated, the
+  containing index bullet updated only when a concept was added, renamed, or
+  re-described, and a dated entry appended to the change log. It expects the
+  bundle to be validated rather than regenerated, because the generator
+  overwrites hand-edited concept files. Read the guide for the contract as it
+  stands, note a genuinely missing update, and do not ask for a regeneration.
 
 ## Security anchors
 
