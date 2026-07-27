@@ -407,6 +407,43 @@ func TestCreateCampaign_MalformedCampaignIDIsUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestFirstCampaignID_BoundsMaterialization: a malformed 200 packed with thousands of null
+// CampaignIds / PartialErrors must NOT expand into millions of retained slice elements — the
+// bounded slice types cap what's kept while still decoding the (valid) arrays, and the first
+// real id is still read. Guards against the per-create OOM risk on an up-to-8-MiB body.
+func TestFirstCampaignID_BoundsMaterialization(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"CampaignIds":[321`)
+	for i := 0; i < 5000; i++ {
+		b.WriteString(",null")
+	}
+	b.WriteString(`],"PartialErrors":[`)
+	for i := 0; i < 5000; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(`{"Code":9999}`)
+	}
+	b.WriteString(`]}`)
+
+	// The leading id is still read despite the huge tail.
+	if id, err := firstCampaignID([]byte(b.String())); err != nil || id != "321" {
+		t.Fatalf("firstCampaignID = (%q, %v), want (\"321\", nil) — leading id must survive the bounded decode", id, err)
+	}
+
+	// The bounded slice types retain at most the cap, not all 5000+ entries.
+	var resp createCampaignsResponse
+	if err := json.Unmarshal([]byte(b.String()), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.CampaignIds) > maxDecodedErrorItems {
+		t.Errorf("CampaignIds retained %d, want <= the %d cap", len(resp.CampaignIds), maxDecodedErrorItems)
+	}
+	if len(resp.PartialErrors) > maxDecodedErrorItems {
+		t.Errorf("PartialErrors retained %d, want <= the %d cap", len(resp.PartialErrors), maxDecodedErrorItems)
+	}
+}
+
 func TestCreateCampaign_NullPartialErrorIsUnconfirmed(t *testing.T) {
 	// v13's PartialErrors is a SPARSE BatchError list (a failed item only, carrying an Index),
 	// so a real single-item failure never produces a null-only entry. This defensively covers a
