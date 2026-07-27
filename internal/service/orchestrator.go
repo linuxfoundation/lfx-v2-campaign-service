@@ -120,6 +120,15 @@ const dispatchQueueTimeout = 10 * time.Minute
 // separately.
 const providerCallTimeout = 2 * time.Minute
 
+// toggleCallTimeout bounds the SYNCHRONOUS status-toggle platform call, which runs on the
+// HTTP request goroutine (unlike the async dispatch above). Without it, a cascade of
+// sequential PATCHes — each with its own retry budget — could exceed the server's
+// DefaultWriteTimeout (60s), so the platform + DB would change but the response could no
+// longer reach the caller (a silent "did it apply?" for the operator). Kept comfortably
+// under the 60s write timeout so a failed toggle still returns an error the client receives;
+// on timeout the platform call is cancelled and surfaces as UNCONFIRMED (verify/retry).
+const toggleCallTimeout = 45 * time.Second
+
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
@@ -164,12 +173,15 @@ type StatusToggler interface {
 // Status-toggle classification sentinels. These distinguish a client/state error (the
 // toggle never reached the ad platform) from a real platform-call failure, so the service
 // can return an accurate status + message instead of blaming the platform for everything.
+// These sentinels are DEFINED in internal/domain (the dependency-free base package) so a
+// platform dispatcher can return them directly without importing this orchestration layer;
+// they are re-exported here as aliases for the existing service call sites and back-compat.
 var (
 	// ErrToggleUnsupported: the campaign's platform has no status-toggle capability wired.
-	ErrToggleUnsupported = errors.New("status toggle is not supported for this platform")
-	// ErrCampaignNotProvisioned: the campaign row has no upstream platform id yet (it may
-	// not have finished creating, or the create was ambiguous/partial). Nothing to toggle.
-	ErrCampaignNotProvisioned = errors.New("campaign has no platform campaign id (it may not have finished creating)")
+	ErrToggleUnsupported = domain.ErrToggleUnsupported
+	// ErrCampaignNotProvisioned: the campaign is not fully provisioned for the toggle (no
+	// upstream id yet, or a missing child ad group/ad on ACTIVATE). Nothing serviceable to toggle.
+	ErrCampaignNotProvisioned = domain.ErrCampaignNotProvisioned
 )
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
@@ -861,6 +873,12 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 		return fmt.Errorf("%w: %s", ErrToggleUnsupported, platform)
 	}
 	// Any error from here is from the platform call itself (or the dispatcher's own
-	// pre-flight cred resolution) — surfaced as a platform failure by the caller.
-	return toggler.ToggleStatus(ctx, projectID, platform, campaign, status)
+	// pre-flight cred resolution) — surfaced as a platform failure by the caller. Bound the
+	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
+	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
+	// caller as an error rather than mutating the platform after the response can no longer be
+	// delivered. A context deadline surfaces as UNCONFIRMED (the caller reports verify/retry).
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	return toggler.ToggleStatus(callCtx, projectID, platform, campaign, status)
 }

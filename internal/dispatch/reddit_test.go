@@ -17,7 +17,6 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
 // ---- fakes ----------------------------------------------------------------
@@ -463,7 +462,7 @@ func TestReddit_ToggleStatus_ActivateWithoutChildIDsRejected(t *testing.T) {
 	}
 	// It must be ErrCampaignNotProvisioned so the service maps it to a 409 state error, NOT a
 	// 503 platform failure — the platform is never contacted.
-	if !errors.Is(err, service.ErrCampaignNotProvisioned) {
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Errorf("error = %v, want ErrCampaignNotProvisioned (a client/state error → 409, not 503)", err)
 	}
 	if count != 0 {
@@ -499,7 +498,7 @@ func TestReddit_ToggleStatus_ActivateWithAdGroupButNoAdRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error activating a campaign with an ad group but no ad")
 	}
-	if !errors.Is(err, service.ErrCampaignNotProvisioned) {
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Errorf("error = %v, want ErrCampaignNotProvisioned", err)
 	}
 	if count != 0 {
