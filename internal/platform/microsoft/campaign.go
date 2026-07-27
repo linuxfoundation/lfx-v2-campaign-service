@@ -126,9 +126,13 @@ type CampaignResult struct {
 	AccountLabel string `json:"accountLabel,omitempty"`
 	CampaignName string `json:"campaignName"`
 	CampaignID   string `json:"campaignId"`
-	// AlreadyExisted is true when findCampaignByName matched a prior campaign and
-	// CreateCampaign returned it WITHOUT issuing a create — so the caller knows this
-	// run did not create anything new.
+	// AlreadyExisted is true when this run did not create the campaign — the campaign
+	// existed before this call resolved it. That happens on two paths: (1) the pre-check
+	// findCampaignByName matched a prior campaign, so no create was issued; and (2) the
+	// duplicate-name self-heal — a create that LOST the race to a concurrent creator
+	// (DUPLICATE_NAME) is reconciled by re-looking the winner up, and the winner is
+	// reported as already-existing. In both cases the caller knows this run did not create
+	// the campaign (even though path 2 did issue a create attempt that was rejected).
 	AlreadyExisted  bool     `json:"alreadyExisted,omitempty"`
 	MicrosoftAdsURL string   `json:"microsoftAdsUrl"`
 	Steps           []string `json:"steps"`
