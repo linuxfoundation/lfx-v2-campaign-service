@@ -158,6 +158,18 @@ func TestGoogleAds_DispatchSuccessMapsResult(t *testing.T) {
 	if gotLoginCustomer != "9999999999" {
 		t.Errorf("login-customer-id header = %q, want the connection's MCC id 9999999999", gotLoginCustomer)
 	}
+	// The persisted row must carry the budget/type/config (via applyCampaignConfig), not just
+	// id/name/status — a NULL budget/type/config_snapshot row would lose the configuration
+	// (per @dealako's blocking review; mirrors the sibling adapters).
+	if camp.BudgetAmount == nil || *camp.BudgetAmount != 50 {
+		t.Errorf("BudgetAmount = %v, want 50 (persisted from googleAdsConfig.budget)", camp.BudgetAmount)
+	}
+	if camp.BudgetType == nil || *camp.BudgetType != model.BudgetDaily {
+		t.Errorf("BudgetType = %v, want %q (GA uses a daily budget)", camp.BudgetType, model.BudgetDaily)
+	}
+	if len(camp.ConfigSnapshot) == 0 {
+		t.Error("ConfigSnapshot must capture the validated googleAdsConfig")
+	}
 }
 
 func TestGoogleAds_AmbiguousCreateRetainsClaim(t *testing.T) {

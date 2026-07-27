@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -132,22 +133,35 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("google ads campaign creation failed before any upstream create: %w", cerr))
 		}
-		return campaignFromGoogleAds(result), fmt.Errorf("google ads campaign creation UNCONFIRMED: %w", cerr)
+		return campaignFromGoogleAds(ctx, result, cfg), fmt.Errorf("google ads campaign creation UNCONFIRMED: %w", cerr)
 	}
-	return campaignFromGoogleAds(result), nil
+	return campaignFromGoogleAds(ctx, result, cfg), nil
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The
 // orchestrator fills project/brief/job/platform (and, for a retained ambiguous orphan,
-// status); this sets what only the dispatcher knows — upstream id, name, the provider
-// result blob, and a "created" status on the success path.
-func campaignFromGoogleAds(r *googleads.CampaignResult) *model.Campaign {
+// status); this sets what only the dispatcher knows — upstream id, name, the persisted
+// budget/type/config, the provider result blob, and a "created" status on the success path.
+func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg googleAdsConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: r.CampaignID,
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
-	if raw, err := json.Marshal(r); err == nil {
+	// Persist the caller-supplied budget + validated config, mirroring the sibling adapters
+	// (a NULL budget/type/config_snapshot row otherwise loses the campaign's configuration).
+	// GA's shell uses a DAILY budget (no lifetime flag) and sets no flight dates here — those
+	// land with GA-3+; ConfigSnapshot captures the validated config regardless.
+	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
+	if raw, err := json.Marshal(r); err != nil {
+		// A marshal failure should be near-impossible for this plain struct, but do NOT
+		// swallow it: Result is the sole carrier of the reconcile-by-name payload (the
+		// deterministic CampaignBudgetName) on the ambiguous-orphan path, so a silently-empty
+		// Result loses reconciliation data precisely when it's most needed. Log it (the row is
+		// still persisted with its id/status/config). Mirrors the meta/twitter/linkedin adapters.
+		slog.WarnContext(ctx, "failed to marshal google ads campaign result blob (Result left empty)",
+			"campaign_id", c.PlatformCampaignID, "error", err)
+	} else {
 		c.Result = raw
 	}
 	return c
