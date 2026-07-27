@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -31,14 +32,44 @@ func activeGoogleAdsConn(creds string) *model.Connection {
 }
 
 // googleAdsServers wires a token endpoint + an API server whose budget/campaign
-// :mutate handlers are supplied per-test, returning the base URLs as client options.
-func googleAdsServers(t *testing.T, budgetH, campaignH http.HandlerFunc) []googleads.Option {
+// credCapture records what the dispatcher's credential mapping actually put on the wire: the
+// OAuth token-request form values and the API developer-token header. A test can assert these
+// so a regression that drops/misroutes a credential is CAUGHT (otherwise the fake endpoints
+// accept anything and the happy path stays green even with the mapping removed). Guarded by mu
+// because the token and API requests run on separate httptest handler goroutines.
+type credCapture struct {
+	mu             sync.Mutex
+	clientID       string
+	clientSecret   string
+	refreshToken   string
+	developerToken string
+	sawToken       bool
+	sawAPI         bool
+}
+
+// :mutate handlers are supplied per-test, returning the base URLs as client options. The
+// returned *credCapture records the OAuth token form + API developer-token header for assertion.
+func googleAdsServers(t *testing.T, budgetH, campaignH http.HandlerFunc) ([]googleads.Option, *credCapture) {
 	t.Helper()
-	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	cap := &credCapture{}
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		cap.mu.Lock()
+		cap.sawToken = true
+		cap.clientID = r.PostFormValue("client_id")
+		cap.clientSecret = r.PostFormValue("client_secret")
+		cap.refreshToken = r.PostFormValue("refresh_token")
+		cap.mu.Unlock()
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	t.Cleanup(tokenSrv.Close)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cap.mu.Lock()
+		cap.sawAPI = true
+		if dt := r.Header.Get("developer-token"); dt != "" {
+			cap.developerToken = dt
+		}
+		cap.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
@@ -50,7 +81,7 @@ func googleAdsServers(t *testing.T, budgetH, campaignH http.HandlerFunc) []googl
 		}
 	}))
 	t.Cleanup(apiSrv.Close)
-	return []googleads.Option{googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL)}
+	return []googleads.Option{googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL)}, cap
 }
 
 // ---- pre-create paths -----------------------------------------------------
@@ -100,7 +131,7 @@ func TestGoogleAds_BadConfigIsPreCreate(t *testing.T) {
 func TestGoogleAds_ClientPreCreateRejectionReleasesClaim(t *testing.T) {
 	// A server that fails any request, proving the rejection happens BEFORE the client's
 	// first upstream mutate (no request should reach here).
-	opts := googleAdsServers(t,
+	opts, _ := googleAdsServers(t,
 		func(w http.ResponseWriter, _ *http.Request) {
 			t.Error("client must reject the zero-budget config before any upstream mutate")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -149,7 +180,7 @@ func TestGoogleAds_DispatchSuccessMapsResult(t *testing.T) {
 	// connection's AccountID and login_customer_id reach the outbound request — a
 	// dropped/misrouted mapping would otherwise target the wrong account context.
 	var gotPath, gotLoginCustomer string
-	opts := googleAdsServers(t,
+	opts, creds := googleAdsServers(t,
 		func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
 			gotLoginCustomer = r.Header.Get("login-customer-id")
@@ -192,6 +223,23 @@ func TestGoogleAds_DispatchSuccessMapsResult(t *testing.T) {
 	if gotLoginCustomer != "9999999999" {
 		t.Errorf("login-customer-id header = %q, want the connection's MCC id 9999999999", gotLoginCustomer)
 	}
+	// The dispatcher's credential mapping must actually reach the wire: the OAuth token
+	// request carries the decoded client_id/client_secret/refresh_token, and the API
+	// developer-token header carries the developer token. Asserting these means dropping any
+	// of those mappings (or the developer-token header) FAILS this test instead of passing
+	// silently against the accept-anything fakes. Values come from goodGoogleAdsCreds.
+	creds.mu.Lock()
+	defer creds.mu.Unlock()
+	if !creds.sawToken || !creds.sawAPI {
+		t.Fatalf("expected both a token exchange (%v) and an API call (%v)", creds.sawToken, creds.sawAPI)
+	}
+	if creds.clientID != "cid" || creds.clientSecret != "csec" || creds.refreshToken != "rt" {
+		t.Errorf("OAuth token form = client_id %q / client_secret %q / refresh_token %q, want cid/csec/rt from the stored credential",
+			creds.clientID, creds.clientSecret, creds.refreshToken)
+	}
+	if creds.developerToken != "dev" {
+		t.Errorf("developer-token header = %q, want %q from the stored credential", creds.developerToken, "dev")
+	}
 	// The persisted row must carry the budget/type/config (via applyCampaignConfig), not just
 	// id/name/status — a NULL budget/type/config_snapshot row would lose the configuration
 	// (per @dealako's blocking review; mirrors the sibling adapters).
@@ -211,7 +259,7 @@ func TestGoogleAds_AmbiguousCreateRetainsClaim(t *testing.T) {
 	// GA client returns a non-nil partial (name-only, carrying the orphaned budget) with
 	// an error. The adapter must RETAIN the claim (not NoUpstreamCreate) and still return
 	// the campaign so the orphan is recorded.
-	opts := googleAdsServers(t,
+	opts, _ := googleAdsServers(t,
 		func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
 		},
