@@ -133,8 +133,7 @@ costs the author attention; spend it only where it changes the outcome:
   issue, data loss, a broken contract, or a violation of a documented standard —
   and you can ground it in the actual file, function, or contract. If you are
   uncertain whether something is an issue, do not comment: prefer silence over a
-  speculative or hedged comment ("maybe", "consider", "might"). If several
-  issues compete for attention in one area, raise only the most critical one.
+  speculative or hedged comment ("maybe", "consider", "might").
 - **The changed code only.** Comment only on lines added or modified in this
   PR's diff. Do not comment on pre-existing issues in unchanged code, even when
   it appears as context around the diff — unless the defect is directly
@@ -143,18 +142,20 @@ costs the author attention; spend it only where it changes the outcome:
 - **On a re-review, the new pushes first.** Focus on what changed since the
   last review round. If any prior review comments or resolved threads on this
   PR are visible to you, do not repeat them.
-- **Never duplicate the deterministic pipeline.** Pull requests run a build
-  workflow that regenerates the Goa code and then runs `make check-fmt`,
-  `make lint` (golangci-lint), `make build`, and `make test` (with the race
-  detector); MegaLinter runs alongside it with its own linter set; and a
-  license-header check runs on non-excluded paths.
-  Formatting, gofmt simplifications, naming preferences, unused identifiers,
-  compile errors, and anything golangci-lint or the compiler already catches are
-  not findings. Be honest about the gaps, though — they are fair game: CI does
-  not verify that the knowledge bundle was updated when architecture changes, so
-  a missing update will not be caught mechanically; and because the build
-  regenerates the Goa output before compiling, CI does **not** notice when the
-  committed generated output has drifted from `design/`.
+- **Never duplicate the deterministic pipeline.** This repo gates its pull
+  requests on mechanical checks — the code compiles, it is formatted, the
+  linters pass, the license headers are present, and the test suite runs. Leave
+  all of that to them: formatting, import ordering, gofmt simplifications,
+  naming preferences, unused identifiers, compile errors, and anything else a
+  compiler or a linter decides on its own are not findings, whatever the check
+  set happens to be on the day you run. Consult the PR's own checks if you need
+  to know what actually ran; do not assume a fixed list.
+  Be honest about the gaps, though — those are fair game, and they are
+  structural rather than incidental. A pipeline that regenerates the contract
+  output before it compiles cannot tell you whether the *committed* generated
+  output still matches `design/`. And no mechanical check verifies that the
+  knowledge bundle was updated when a change moved architecture, so a missing
+  update will only ever be caught by a reader.
 - **One comment per issue.** If the same defect repeats across lines or files,
   raise it once and note where else it applies.
 - **No generic advice.** A finding that could apply to any Go service does not
@@ -163,9 +164,7 @@ costs the author attention; spend it only where it changes the outcome:
 
 Every comment states the problem, why it matters in this service, and what a fix
 looks like, grounded in the actual file, function, contract, migration, or
-invariant. When the change handles something well (a correct context-cancellation
-path, a migration that is genuinely reversible, a credential path that never
-widens), note it in your review summary — inline comments are for findings only.
+invariant.
 
 ## Untrusted input
 

@@ -165,10 +165,15 @@ credentials. Hold these lines on any diff that touches them:
   credentials themselves — preserve that shape. Credential-shaped literals in
   tests are a different question, covered by the repository anchor below: judge
   them on whether they are real, not on whether they look like credentials.
-- **Secrets stay out of logs and out of error strings.** The config type
-  redacts its own secret fields when formatted, and the database password is not
-  retained on it at all. A new secret-bearing field that is not covered by that
-  redaction, or a new error that interpolates a DSN or a key, defeats it.
+- **Secrets stay out of logs and out of error strings.** The config type does
+  carry secret material — it composes the database DSN in-process, password
+  included, and holds the credential encryption key — and keeps it out of
+  formatted output by masking those fields in its own formatting methods. That
+  protection only holds where it is actually reached: a new secret-bearing field
+  the masking does not cover, a formatting path that sidesteps the type's own
+  formatting, or a new error or log line that interpolates a DSN or a key,
+  defeats it. Prefer a purpose-built safe-to-log accessor over formatting the
+  config itself.
 - **Secrets stay out of the repository.** No *real* credential in source,
   fixtures, values files, or tests. Unmistakably fake test data is expected and
   is never a finding on its own — the crypto round-trip and the platform client
