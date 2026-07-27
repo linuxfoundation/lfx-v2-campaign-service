@@ -388,10 +388,13 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// the platform was never called.
 			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
 		case errors.Is(terr, ErrCampaignNotProvisioned):
-			// The campaign has no upstream id yet (still creating / ambiguous create) — a
-			// client/state error, NOT a platform rejection. A retry now would fail the same
-			// way, so this is a conflict, not a 503.
-			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully created yet (no platform campaign id); wait for creation to finish before toggling its status"}
+			// The campaign is not fully provisioned for this toggle — either it has no upstream
+			// platform id yet (still creating / ambiguous create), OR (on ACTIVATE) it lacks the
+			// child ad group/ad needed to serve (e.g. a create that produced no ad). A
+			// client/state error, NOT a platform rejection: a retry now would fail the same way,
+			// so this is a 409, not a 503. The message avoids "wait" (a campaign missing a child
+			// never gains one by waiting) and points at the actual remedy.
+			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned for activation — it has no platform campaign id yet, or it lacks the ad group/ad needed to serve; finish or recreate the campaign before toggling its status"}
 		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
 			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
 			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT

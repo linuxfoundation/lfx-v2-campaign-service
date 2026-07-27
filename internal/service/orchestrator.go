@@ -157,9 +157,10 @@ type PlatformDispatcher interface {
 }
 
 // StatusToggler is an OPTIONAL dispatcher capability: pause/resume an existing campaign on
-// the platform. Not every platform supports it (architecture line 271 lists Meta/Reddit/X),
-// so the orchestrator type-asserts for it rather than adding it to PlatformDispatcher —
-// a dispatcher that doesn't implement it yields a clean "not supported" error.
+// the platform. Not every platform's dispatcher implements it (see the status-toggle roadmap
+// in the architecture doc), so the orchestrator type-asserts for it rather than adding it to
+// PlatformDispatcher — a dispatcher that doesn't implement it yields a clean "not supported"
+// error (ErrToggleUnsupported → 400).
 type StatusToggler interface {
 	// ToggleStatus sets the platform campaign's run state. status is
 	// model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when the
