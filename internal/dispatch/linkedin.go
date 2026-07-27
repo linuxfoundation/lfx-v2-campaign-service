@@ -232,6 +232,12 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 	// creative's effective status is gated by the campaign). The client discovers the
 	// creatives (LinkedIn persists only a count) and lifts each DRAFT→ACTIVE (or holds PAUSED).
 	if uerr := client.UpdateCampaignAndCreativesStatus(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
+		// An activate refused up front because the campaign has no servable creatives is a
+		// local/state error (the platform mutation never ran), so classify it as
+		// ErrCampaignNotProvisioned → 409, not the default 503. Mirrors reddit/meta.
+		if linkedin.IsNotServable(uerr) {
+			return fmt.Errorf("%w: %s", domain.ErrCampaignNotProvisioned, uerr.Error())
+		}
 		if linkedin.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}

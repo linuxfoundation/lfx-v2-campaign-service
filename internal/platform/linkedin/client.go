@@ -393,6 +393,16 @@ func isBadRequest(err error) bool {
 	return errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest
 }
 
+// ErrCampaignNotServable marks an ACTIVATE refused BEFORE any mutating call because the
+// campaign cannot serve (e.g. it has zero creatives). It is a local/state condition, not a
+// platform failure — the caller (dispatcher) maps it to a client 409, not a 503. Exposed as a
+// sentinel so the dispatcher can classify it across the package boundary via IsNotServable.
+var ErrCampaignNotServable = errors.New("campaign cannot be made servable")
+
+// IsNotServable reports whether err is (or wraps) ErrCampaignNotServable — an activate refused
+// up front because the campaign has nothing to serve.
+func IsNotServable(err error) bool { return errors.Is(err, ErrCampaignNotServable) }
+
 // IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
 // UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied by
 // LinkedIn even though it errored (a transport failure, a mutating 3xx/429/5xx). A definite
@@ -541,7 +551,7 @@ func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignI
 	// success for a campaign that cannot deliver (mirrors the Meta zero-ads guard). PAUSE with
 	// zero creatives is fine (nothing to pause; the campaign gate stops delivery anyway).
 	if !mutatedBefore && status == StatusActive && len(creativeURNs) == 0 {
-		return fmt.Errorf("linkedin: cannot activate campaign %s: it has no creatives, so it cannot serve", campaignID)
+		return fmt.Errorf("%w: linkedin campaign %s has no creatives", ErrCampaignNotServable, campaignID)
 	}
 	creativeStatus := creativeIntendedStatus(status)
 	mutated := mutatedBefore

@@ -197,6 +197,14 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// The ad set id is read from the persisted CampaignResult (Meta stores it, but not the
 	// individual ad ids — the client discovers those via GET /{adSetID}/ads).
 	adSetID := metaAdSetID(campaign)
+	// ACTIVATE requires a servable tree. A legacy/incomplete "created" row can lack the ad
+	// set id (absent/unparseable Result), so activating would fail without ever serving.
+	// Refuse before any HTTP call and return ErrCampaignNotProvisioned so the service maps it
+	// to a 409 state error (the platform is never contacted), not the default 503 — matching
+	// the reddit path. Pausing needs no child id (pausing the parent stops delivery).
+	if metaStatus == meta.StatusActive && strings.TrimSpace(adSetID) == "" {
+		return fmt.Errorf("%w: meta campaign %s cannot be activated because it has no ad set to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus); uerr != nil {
 		if meta.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}

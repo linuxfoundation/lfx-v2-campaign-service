@@ -568,6 +568,33 @@ func TestLinkedIn_ToggleStatus_ActivateDiscoveryFailureIsClean(t *testing.T) {
 	}
 }
 
+// TestLinkedIn_ToggleStatus_ActivateZeroCreativesNotProvisioned: activating a campaign whose
+// creative discovery returns ZERO creatives can never serve — it must be refused before any
+// mutation and classified as ErrCampaignNotProvisioned (→ 409), not a 503 platform failure.
+func TestLinkedIn_ToggleStatus_ActivateZeroCreativesNotProvisioned(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[]}`) // discovery finds NO creatives
+			return
+		}
+		t.Errorf("no mutation should be issued when there are zero creatives to serve: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error activating a campaign with zero creatives")
+	}
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Errorf("error = %v, want ErrCampaignNotProvisioned (a 409 state error, not 503)", err)
+	}
+}
+
 // TestLinkedIn_ToggleStatus_NoOrgIDNeeded proves a status update works with a connection
 // that has an access token + account id but NO org_id (Dispatch requires org_id; a toggle
 // must not) — locking in that contract against a future refactor.

@@ -492,6 +492,32 @@ func TestMeta_ToggleStatus_CascadesToTree(t *testing.T) {
 	}
 }
 
+// TestMeta_ToggleStatus_ActivateWithoutAdSetRejected: activating a legacy/incomplete
+// "created" campaign that has no stored ad set id must be refused before any HTTP call and
+// classified as ErrCampaignNotProvisioned (→ 409), not a 503 platform failure.
+func TestMeta_ToggleStatus_ActivateWithoutAdSetRejected(t *testing.T) {
+	var count int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count++
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, metaToggleCampaign("23847290", ""), model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error activating a campaign with no ad set id")
+	}
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Errorf("error = %v, want ErrCampaignNotProvisioned (a 409 state error, not 503)", err)
+	}
+	if count != 0 {
+		t.Errorf("issued %d requests, want 0 (rejected before any HTTP call)", count)
+	}
+}
+
 // TestMeta_ToggleStatus_5xxIsUnconfirmed verifies a 5xx surfaces as Unconfirmed().
 func TestMeta_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
