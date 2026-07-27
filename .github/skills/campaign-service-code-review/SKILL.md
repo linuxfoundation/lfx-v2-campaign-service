@@ -80,10 +80,10 @@ Run these on the changed code, scaled to the size of the change:
   contract never promised.
 - **Tests.** New or changed behavior needs tests that assert real behavior, not
   that a mock was called; the repo's style is table-driven Go tests beside the
-  code. The suite runs with the race detector, so a test that introduces shared
-  mutable state without synchronization is a defect. Missing tests on a
-  contract-bearing, concurrency-bearing, or security-sensitive path is always
-  worth flagging.
+  code. A test that introduces shared mutable state without synchronization is a
+  defect whether or not the suite happens to run under a race detector. Missing
+  tests on a contract-bearing, concurrency-bearing, or security-sensitive path is
+  always worth flagging.
 - **Performance.** Unbounded result sets, a query per row where a set operation
   would do, an HTTP client or credential decryption rebuilt per request when it
   could be hoisted, and outbound calls to an ad platform without a timeout or a

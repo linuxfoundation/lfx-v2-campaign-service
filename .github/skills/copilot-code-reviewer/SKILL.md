@@ -160,9 +160,14 @@ costs the author attention; spend it only where it changes the outcome:
   update will only ever be caught by a reader.
 - **One comment per issue.** If the same defect repeats across lines or files,
   raise it once and note where else it applies.
-- **No generic advice.** A finding that could apply to any Go service does not
-  belong here; tie every comment to this service's shape, invariants, or
-  documented standards.
+- **No generic advice.** The test is the shape of the comment, not the class of
+  the bug. Abstract counsel that could be pasted into any review — "add a nil
+  check", "consider extracting a helper", "add tests" — with nothing behind it
+  does not belong. A concrete defect you can point at in this diff is a finding
+  however ordinary its class: a nil dereference, a dropped error, a leak, or a
+  race breaks this service as surely as any bespoke mistake, and being a common
+  kind of mistake does not excuse it. Ground every comment in the code,
+  invariants, or documented standards in front of you.
 
 Every comment states the problem, why it matters in this service, and what a fix
 looks like, grounded in the actual file, function, contract, migration, or
