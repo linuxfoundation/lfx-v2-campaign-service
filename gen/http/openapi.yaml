@@ -1074,7 +1074,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: toggle-campaign-status lfx-v2-campaign-service-briefs
-            description: Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms.
+            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400 (Reddit is wired in this change; other platforms follow).'
             operationId: lfx-v2-campaign-service-briefs#toggle-campaign-status
             parameters:
                 - name: project_id

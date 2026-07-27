@@ -35,7 +35,9 @@ type Service interface {
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
 	// the new status. Unlike update-campaign (which only writes the DB row), this
 	// dispatches the status change to the platform and updates the row only after
-	// the platform confirms.
+	// the platform confirms. Support is per-platform: a campaign whose platform
+	// has no status-toggle dispatcher wired returns 400 (Reddit is wired in this
+	// change; other platforms follow).
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Poll campaign-creation job status.
 	GetJob(context.Context, *GetJobPayload) (res *JobPollResponse, err error)

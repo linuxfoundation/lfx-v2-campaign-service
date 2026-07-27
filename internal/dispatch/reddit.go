@@ -13,6 +13,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
 // redditCreds is the credential shape stored (encrypted) for a Reddit connection —
@@ -231,6 +232,17 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 		return err
 	}
 	adGroupID, adID := redditChildIDs(campaign)
+	// ACTIVATE requires the FULL servable tree. A reddit create can legitimately land a
+	// campaign + ad group but NO ad (the no-PostURL path returns AdCount 0 / empty AdID) and
+	// the dispatcher still persists that row as "created" — which passes the service's
+	// toggleability guard. Activating it would PATCH the campaign + ad group, silently skip
+	// the absent ad, and report "active" even though the campaign cannot serve (no ad). Refuse
+	// unless BOTH child ids are known, and return ErrCampaignNotProvisioned so the service
+	// classifies it as a 409 state error (the platform is never called), not a 503. Pausing
+	// needs no child ids — pausing the parent already stops delivery.
+	if redditStatus == reddit.StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
+		return fmt.Errorf("%w: reddit campaign %s cannot be activated because it has no fully-created ad group + ad to serve", service.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, redditStatus); uerr != nil {
 		// An UNCONFIRMED outcome (transport/5xx/3xx-mutating) means the PATCH MAY have
 		// applied upstream — wrap it in an error that reports Unconfirmed() so the caller
