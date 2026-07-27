@@ -190,8 +190,14 @@ Hold these lines on any diff that touches them:
   authenticates and OpenFGA authorizes on a project relation before a request
   arrives, so the in-process JWT handling exists to require a token's presence
   and extract principal claims for *attribution*. Do not let a diff turn those
-  claims into an authorization decision or trusted identity — they are not
-  verified here, and the code says so — or make a route reachable off that path.
+  claims into an authorization decision or trusted identity, or make a route
+  reachable off that path. Be careful how you cite this: the security scheme in
+  `design/` and the handler that implements it currently describe in-process
+  validation differently, and the repo has not settled which is intended. Treat
+  that as an open question rather than a decided contract — a diff that deepens
+  reliance on claims the process has not verified is a finding, and one that
+  closes the gap is a change to the authentication boundary and should read like
+  one.
 - **The chart's route and its authorization rules must stay in agreement.** They
   are two hand-maintained matchers over the same path set, coupled only by a
   parity test in the chart. Because the rule engine is default-deny, a path the
