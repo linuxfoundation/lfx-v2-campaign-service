@@ -106,6 +106,7 @@ without touching every adapter. **reddit** implements it: `resolveRedditClient` 
 `Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
 then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
 its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
-PAUSES all three, so toggling only the campaign would not serve. Meta/X/Twitter toggles follow.
+PAUSES all three, so toggling only the campaign would not serve. Meta + LinkedIn toggles follow
+(stacked PR); X/Twitter + Google Ads follow later.
 
 See [internal/dispatch](../../../internal/dispatch).

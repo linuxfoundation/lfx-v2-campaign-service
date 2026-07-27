@@ -81,9 +81,13 @@ with `{"data":{"configured_status": "ACTIVE"|"PAUSED"}}` — the same envelope +
 field the create path sets (`configured_status` is the advertiser-set state, distinct from the
 read-only `effective_status`). The cascade is parent-first (campaign → ad group → ad) so an
 intermediate failure never leaves a servable child under a paused parent. Two edge cases:
-ACTIVATING with no known ad group id is REFUSED before any PATCH (activating only the campaign
-would leave the tree unable to serve, so the caller must not persist "active"); PAUSING with no
-child id is fine (pausing the parent already halts delivery) and toggles the campaign alone. If
+ACTIVATING requires the FULL servable tree: it is REFUSED before any PATCH when EITHER the ad
+group id OR the ad id is missing (a reddit create can land a campaign + ad group but no ad — the
+no-`PostURL` path returns AdCount 0 / empty AdID — yet still persist as "created"; activating it
+would leave nothing to serve, so the caller must not persist "active"). The refusal returns
+`domain.ErrCampaignNotProvisioned` (→ 409, a client/state error; the platform is never called).
+PAUSING with no child id is fine (pausing the parent already halts delivery) and toggles the
+campaign alone. If
 the campaign PATCH commits but a later child PATCH fails, the result is a `partialCascadeError`
 whose `Unconfirmed()` is true (via `IsOutcomeUnconfirmed`), so the service reports 503-unconfirmed
 ("verify before retry") rather than "not modified" — a retry re-runs the idempotent cascade. `StatusActive`/`StatusPaused`

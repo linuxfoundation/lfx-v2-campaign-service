@@ -66,9 +66,11 @@ campaign is rejected 409 — toggling one would activate an incomplete campaign 
 overwrite its reconciliation marker with the run state (a non-empty `PlatformCampaignID`
 alone is not sufficient, since a partial/degraded campaign can carry an upstream id). A stale
 `If-Match` fails BEFORE the paid platform call;
-failures are classified (`ErrCampaignNotProvisioned` → 409 for a campaign with no upstream id
-yet, `ErrToggleUnsupported` → 400, an UNCONFIRMED outcome → 503 "verify before retrying", a
-definite platform failure → 503 "not modified") rather than all blamed on the platform. An
+failures are classified (`ErrCampaignNotProvisioned` → 409 — a campaign with no upstream id yet,
+OR one that on ACTIVATE lacks the child ad group/ad ids needed to serve, so not every 409 means
+an unfinished create; `ErrToggleUnsupported` → 400, an UNCONFIRMED outcome → 503 "verify before
+retrying", a definite platform failure → 503 "not modified") rather than all blamed on the
+platform. An
 UNCONFIRMED outcome is a transport/5xx/redirect error the PATCH may have applied — the client
 exposes it via `reddit.IsOutcomeUnconfirmed`, the dispatcher wraps it in an error whose
 `Unconfirmed()` reports true (same behavioral-interface pattern as `NoUpstreamCreate`), and
