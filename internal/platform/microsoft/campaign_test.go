@@ -620,6 +620,40 @@ func TestNumberID(t *testing.T) {
 // Campaigns field (nil pointer, not an empty list) can't confirm the campaign is absent, so it
 // must be UNCONFIRMED (no create issued) — not treated as "absent" (which would run the paid
 // create and risk a duplicate). A PRESENT empty list, by contrast, is a real "absent".
+// TestLookupCampaignByName covers the streaming lookup directly: it finds a name match
+// without materializing the whole array, preserves the omitted/null-vs-present distinction,
+// and reports a matched-but-no-id case. Streaming means a huge (malformed) body costs O(1).
+func TestLookupCampaignByName(t *testing.T) {
+	// present + match with a usable id, even when the match is buried after many entries.
+	var big strings.Builder
+	big.WriteString(`{"Campaigns":[`)
+	for i := 0; i < 5000; i++ {
+		big.WriteString(`{"Id":null,"Name":"other"},`)
+	}
+	big.WriteString(`{"Id":777,"Name":"TARGET"}]}`)
+	id, matched, present, err := lookupCampaignByName([]byte(big.String()), "target") // case-insensitive
+	if err != nil || !present || !matched || id != "777" {
+		t.Fatalf("buried match: got id=%q matched=%v present=%v err=%v, want 777/true/true/nil", id, matched, present, err)
+	}
+
+	// omitted field → present=false (UNCONFIRMED).
+	if _, m, p, err := lookupCampaignByName([]byte(`{}`), "x"); err != nil || m || p {
+		t.Errorf("omitted Campaigns: got matched=%v present=%v err=%v, want false/false/nil", m, p, err)
+	}
+	// null field → present=false.
+	if _, _, p, err := lookupCampaignByName([]byte(`{"Campaigns":null}`), "x"); err != nil || p {
+		t.Errorf("null Campaigns: present=%v err=%v, want false/nil", p, err)
+	}
+	// present empty → present=true, matched=false (genuine absence, safe to create).
+	if _, m, p, err := lookupCampaignByName([]byte(`{"Campaigns":[]}`), "x"); err != nil || m || !p {
+		t.Errorf("empty Campaigns: matched=%v present=%v err=%v, want false/true/nil", m, p, err)
+	}
+	// matched but no usable id → matched=true, id="".
+	if id, m, _, err := lookupCampaignByName([]byte(`{"Campaigns":[{"Id":null,"Name":"z"}]}`), "z"); err != nil || !m || id != "" {
+		t.Errorf("match-no-id: id=%q matched=%v err=%v, want \"\"/true/nil", id, m, err)
+	}
+}
+
 func TestCreateCampaign_OmittedCampaignsFieldIsUnconfirmed(t *testing.T) {
 	postReached := false
 	api := &campaignsAPI{getBody: `{}`} // no Campaigns field

@@ -221,20 +221,6 @@ type queryCampaignsRequest struct {
 	CampaignType string      `json:"CampaignType"`
 }
 
-// queryCampaignsResponse is the (subset of the) QueryByAccountId response used by
-// findCampaignByName to look a campaign up by its deterministic name.
-type queryCampaignsResponse struct {
-	// Campaigns is a POINTER slice so an OMITTED or null "Campaigns" field (which decodes to a
-	// nil pointer) is distinguishable from a present-but-empty list ([]). A missing field means
-	// the lookup result is unreadable — we can't confirm the campaign is absent — so it must NOT
-	// be treated as "absent" (which would let the paid create run and risk a duplicate); only a
-	// PRESENT empty list proves absence. See findCampaignByName.
-	Campaigns *[]struct {
-		Id   *json.Number `json:"Id"`
-		Name string       `json:"Name"`
-	} `json:"Campaigns"`
-}
-
 // CreateCampaign find-or-creates a PAUSED Microsoft Advertising Search campaign.
 //
 // Microsoft enforces that Campaign.Name is UNIQUE among the account's active/paused
@@ -446,31 +432,117 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 	if err != nil {
 		return "", err
 	}
-	var resp queryCampaignsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
-		return "", fmt.Errorf("decode QueryByAccountId response: %w", uErr)
+	// STREAM the Campaigns array comparing names as we go, rather than Unmarshaling the whole
+	// account campaign set into memory: a malformed (up to 8 MiB) body packed with `{}` entries
+	// would otherwise expand into millions of structs + slice growth, tens of MiB per concurrent
+	// create. lookupCampaignByName decodes element-by-element and keeps only what it needs, while
+	// PRESERVING the omitted-vs-empty distinction (an omitted/null Campaigns field is UNCONFIRMED,
+	// a present-but-empty list is a genuine "absent").
+	id, matched, present, err := lookupCampaignByName(body, name)
+	if err != nil {
+		return "", fmt.Errorf("decode QueryByAccountId response: %w", err)
 	}
-	// A 2xx whose body OMITS or nulls the Campaigns field is unreadable — we can't confirm the
-	// campaign is absent, so treat it as UNCONFIRMED (verify before create) rather than "absent"
-	// (which would let the paid create run and risk a duplicate). A PRESENT empty list is a
-	// genuine "no campaigns" and falls through to return "" (safe to create).
-	if resp.Campaigns == nil {
+	if !present {
+		// The body OMITS or nulls the Campaigns field — unreadable, so we can't confirm the
+		// campaign is absent. UNCONFIRMED (verify before create) rather than "absent" (which
+		// would let the paid create run and risk a duplicate).
 		return "", fmt.Errorf("QueryByAccountId response omitted the Campaigns field; cannot confirm %q is absent", name)
 	}
-	for _, cp := range *resp.Campaigns {
-		if !strings.EqualFold(cp.Name, name) {
-			continue
-		}
-		if id := numberID(cp.Id); id != "" {
-			return id, nil
-		}
-		// The name matched but the id is null/unparseable: the campaign almost certainly
-		// exists (its unique name matched). Reporting "" (absent) would let CreateCampaigns
-		// run and create a DUPLICATE. Return an error so the caller treats it as UNCONFIRMED
-		// (verify before retrying) rather than proceeding to create.
+	if matched && id == "" {
+		// The name matched but the id is null/unparseable: the campaign almost certainly exists
+		// (its unique name matched). Reporting "" (absent) would let CreateCampaigns run and
+		// create a DUPLICATE. Error so the caller treats it as UNCONFIRMED (verify before retry).
 		return "", fmt.Errorf("campaign %q found in lookup with no usable id", name)
 	}
-	return "", nil
+	// id != "" → the match with a usable id; "" with present-empty (no match) → safe to create.
+	return id, nil
+}
+
+// lookupCampaignByName streams the QueryByAccountId response body and returns, WITHOUT
+// materializing the whole Campaigns array, the first case-insensitive name match: its usable
+// id (or "" when the matched campaign has no usable id), whether a name match was found, and
+// whether the Campaigns field was PRESENT (a non-null array) at all. A malformed 8-MiB body
+// therefore costs O(1) memory instead of O(campaigns). present=false means the field was
+// omitted or null (→ UNCONFIRMED); present=true with matched=false means a genuine "absent".
+func lookupCampaignByName(body []byte, name string) (id string, matched, present bool, err error) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	// Walk to the top-level object's "Campaigns" key.
+	tok, err := dec.Token()
+	if err != nil {
+		return "", false, false, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return "", false, false, fmt.Errorf("expected a JSON object")
+	}
+	for dec.More() {
+		keyTok, kerr := dec.Token()
+		if kerr != nil {
+			return "", false, false, kerr
+		}
+		key, _ := keyTok.(string)
+		if key != "Campaigns" {
+			// Skip this value (whatever its shape) without materializing it.
+			if serr := skipJSONValue(dec); serr != nil {
+				return "", false, false, serr
+			}
+			continue
+		}
+		// The Campaigns value: null (present=false) or an array we stream.
+		vTok, verr := dec.Token()
+		if verr != nil {
+			return "", false, false, verr
+		}
+		if vTok == nil { // JSON null → treated as omitted
+			return "", false, false, nil
+		}
+		d, ok := vTok.(json.Delim)
+		if !ok || d != '[' {
+			return "", false, false, fmt.Errorf("expected a JSON array for Campaigns")
+		}
+		present = true
+		for dec.More() {
+			var cp struct {
+				Id   *json.Number `json:"Id"`
+				Name string       `json:"Name"`
+			}
+			if derr := dec.Decode(&cp); derr != nil {
+				return "", false, present, derr
+			}
+			if matched || !strings.EqualFold(cp.Name, name) {
+				continue // keep draining the array to leave the stream well-formed, but stop matching
+			}
+			matched = true
+			id = numberID(cp.Id)
+		}
+		// Consumed the whole array; the top-level object may have more keys but we have our answer.
+		return id, matched, present, nil
+	}
+	// No Campaigns key at all → omitted.
+	return "", false, false, nil
+}
+
+// skipJSONValue consumes exactly one JSON value (object/array/scalar) from dec, discarding it.
+// It reads matching open/close delimiters so nested structures are fully skipped without being
+// materialized — used to walk past sibling keys cheaply.
+func skipJSONValue(dec *json.Decoder) error {
+	depth := 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if d, ok := tok.(json.Delim); ok {
+			switch d {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+			}
+		}
+		if depth == 0 {
+			return nil
+		}
+	}
 }
 
 // errPartialFailure marks a create-Campaigns 200 whose id slot was null AND a
