@@ -64,10 +64,13 @@ Run these on the changed code, scaled to the size of the change:
   block, and cancellation honored; goroutines with a defined lifetime and a way
   to stop; shared state that is late-bound or swapped at runtime accessed under
   the lock that guards it; bounded parallelism where the code fans out to
-  several platforms; `defer` for every acquired resource. A detached goroutine
-  that deliberately outlives its request context is a real pattern here — the
-  question is whether its lifetime is bounded and its shutdown accounted for,
-  not whether it exists.
+  several platforms; every acquired resource released on every path — `defer`
+  where the resource's lifetime genuinely is the function's, and an explicit
+  release at the end of each iteration where it is acquired inside a loop or a
+  retry, so cleanups cannot pile up until the function finally returns. A
+  detached goroutine that deliberately outlives its request context is a real
+  pattern here — the question is whether its lifetime is bounded and its
+  shutdown accounted for, not whether it exists.
 - **Error handling.** Errors wrapped with `%w` so sentinels survive; nothing
   swallowed; failures distinguished by remedy, not collapsed. The domain package
   defines the sentinel errors and the service layer maps them onto the
@@ -107,10 +110,13 @@ Run these on the changed code, scaled to the size of the change:
   column the repository writes but the contract never exposes, or a schema
   change whose documentation is untouched are each worth raising.
 - **Optimistic concurrency.** Rows carry a version that powers ETag and
-  `If-Match` on conditional updates, with distinct statuses for a missing
-  precondition and a stale one. A new mutating endpoint that skips this, or an
-  update that fails to distinguish "not found" from "version mismatch", breaks a
-  contract the callers depend on.
+  `If-Match`, with distinct statuses for a missing precondition and a stale one.
+  That contract governs the *conditional* paths — replacing or transitioning an
+  existing resource — while creates, deletes, and action endpoints deliberately
+  sit outside it. Check the documented API design rules for the shape an endpoint
+  is meant to have rather than assuming every mutation is conditional. A
+  conditional path that skips the precondition, or that fails to distinguish "not
+  found" from "version mismatch", breaks a contract the callers depend on.
 - **Connections are singleton per provider per project**, keyed by the project
   identifier, and that identifier is the exact-match key the dispatch path joins
   on. A change to how that identifier is validated or normalised on any route
@@ -154,17 +160,21 @@ credentials. Hold these lines on any diff that touches them:
 - **Credentials are encrypted in the application, before storage.** The
   encryption key comes from the environment and is deliberately never given to
   the database. Any path that would write a credential unencrypted, return one
-  in a response body, or put one in a log, an error message, or a test fixture
-  is a security defect. Responses report *whether* a connection holds
-  credentials, not the credentials themselves — preserve that shape.
+  in a response body, or put one in a log or an error message is a security
+  defect. Responses report *whether* a connection holds credentials, not the
+  credentials themselves — preserve that shape. Credential-shaped literals in
+  tests are a different question, covered by the repository anchor below: judge
+  them on whether they are real, not on whether they look like credentials.
 - **Secrets stay out of logs and out of error strings.** The config type
   redacts its own secret fields when formatted, and the database password is not
   retained on it at all. A new secret-bearing field that is not covered by that
   redaction, or a new error that interpolates a DSN or a key, defeats it.
-- **Secrets stay out of the repository.** No real credential in source,
-  fixtures, values files, or tests. A sample key that exists for local
-  development is only acceptable while it is unmistakably marked as
-  non-production.
+- **Secrets stay out of the repository.** No *real* credential in source,
+  fixtures, values files, or tests. Unmistakably fake test data is expected and
+  is never a finding on its own — the crypto round-trip and the platform client
+  tests cannot be written without credential-shaped inputs. A sample key that
+  exists for local development is only acceptable while it is unmistakably
+  marked as non-production.
 - **Authorization happens at the gateway, not in this process.** Heimdall
   authenticates and OpenFGA authorizes on a project relation before a request
   arrives, so the in-process JWT handling exists to require a token's presence
@@ -197,8 +207,8 @@ credentials. Hold these lines on any diff that touches them:
   its own sake; working, readable code needs no improvement. The repetitive
   per-provider shape in this repo is intentional — do not ask for it to be
   collapsed.
-- **Know your limits.** Distinguish "this is wrong" from "this might be a
-  problem depending on context", and say which one you mean. When a judgment
-  depends on something you cannot see — the platform FGA model, a deployed Helm
-  value, an ad platform's live API behavior, the calling UI — note the
-  dependency rather than asserting a defect you cannot confirm.
+- **Know your limits.** Comment only on what you can establish from the code in
+  front of you. When a judgment depends on something you cannot see — the
+  platform FGA model, a deployed Helm value, an ad platform's live API behavior,
+  the calling UI — you cannot confirm it, so leave it alone rather than
+  asserting a defect or asking the author to confirm one on your behalf.
