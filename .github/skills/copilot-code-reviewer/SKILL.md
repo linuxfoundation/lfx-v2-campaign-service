@@ -28,27 +28,30 @@ authenticates and OpenFGA authorizes against a relation on the `project` object
 — so the business API nests under `/projects/{projectId}/…` and the service does
 not make that authorization decision itself. A narrow documentation surface is
 routed deliberately unauthorized; the health probes are not routed through the
-gateway at all. Unlike a read-side service, it owns real state: PostgreSQL
-tables for connections, briefs, campaigns, and dispatch jobs, plus the outbound
-calls to the ad platforms themselves. Listing and revision history for the
-resources this service indexes are served by the platform Query Service rather
-than by bespoke endpoints here.
+gateway at all. Unlike a read-side service, it owns real state: the PostgreSQL
+tables behind its own resources, plus the outbound calls to the ad platforms
+themselves. Much of the listing and revision history for those resources is
+meant to come from the platform Query Service rather than from bespoke
+endpoints here, so check the repo's documented API design rules before treating
+a new list endpoint as either duplication or a gap.
 
 Inside the repo the layering is deliberate, and a change that crosses it wrongly
 is an architectural finding even when it compiles:
 
 - `design/` is the Goa DSL — the **only** place the HTTP contract is authored.
-- `gen/` is Goa output, committed and marked DO NOT EDIT. Contract changes ship
-  as a `design/` edit plus regenerated output.
+- `gen/` is Goa output, committed, and its generated Go files are marked DO NOT
+  EDIT. Contract changes ship as a `design/` edit plus all of the output the
+  codegen target regenerates.
 - `internal/domain` holds the model, the port interfaces, and the sentinel
   errors, and carries no infrastructure dependencies.
 - `internal/service` implements the generated service interfaces and maps
   domain errors onto the contract's typed errors.
 - `internal/infrastructure` holds config, credential crypto, and the pgx-backed
   repositories and migrations.
-- `internal/platform/<provider>` holds the ad-platform API clients;
-  `internal/dispatch` holds the adapters that bridge the orchestrator to those
-  clients — it is the only package that knows both sides.
+- `internal/platform/<provider>` holds the upstream API clients, one package per
+  provider; `internal/dispatch` holds the adapters that bridge the orchestrator
+  to them. Not every provider has an adapter, so a missing sibling is not by
+  itself a gap.
 - `internal/container` wires everything, including the database cold-start path.
 - `pkg/` holds the genuinely reusable pieces (constants, logging, OTel).
 
@@ -107,10 +110,12 @@ Three sources, each authoritative for its own domain:
      and authorization rules, which must stay in agreement with each other; the
      health-probe semantics that Kubernetes acts on; the shared constants that
      the chart and the code both depend on.
-   - When a change touches one provider's adapter or client, ask whether the
-     same defect exists in its siblings — the per-provider packages are
-     deliberately parallel, so a fix in one is often owed to the others, and a
-     divergence introduced in one is worth naming.
+   - When a change touches one provider's adapter or client, read the sibling
+     packages to judge whether the changed code matches the shape the repo has
+     already settled on — the per-provider packages are deliberately parallel.
+     Use them as grounding, not as a second search surface: a divergence this
+     diff introduces is a finding, a pre-existing difference in a sibling the
+     PR does not touch is not.
 3. **Judge the implementation.** Run `/campaign-service-code-review` on any code
    change, however small — it carries the line-level method: the grounding
    technique, the repo's documented standards, the quality dimensions, the
@@ -145,13 +150,11 @@ costs the author attention; spend it only where it changes the outcome:
   license-header check runs on non-excluded paths.
   Formatting, gofmt simplifications, naming preferences, unused identifiers,
   compile errors, and anything golangci-lint or the compiler already catches are
-  not findings. Be precise about the gaps, though — they are fair game:
-  golangci-lint is disabled inside MegaLinter's config, so its coverage comes
-  from `make lint` only; the OKF knowledge-bundle validator runs on a
-  path-filtered trigger, so a PR that changes architecture without touching the
-  bundle never invokes it; and because the build regenerates `gen/` before
-  compiling, CI does **not** notice when the committed generated output has
-  drifted from `design/`.
+  not findings. Be honest about the gaps, though — they are fair game: CI does
+  not verify that the knowledge bundle was updated when architecture changes, so
+  a missing update will not be caught mechanically; and because the build
+  regenerates the Goa output before compiling, CI does **not** notice when the
+  committed generated output has drifted from `design/`.
 - **One comment per issue.** If the same defect repeats across lines or files,
   raise it once and note where else it applies.
 - **No generic advice.** A finding that could apply to any Go service does not

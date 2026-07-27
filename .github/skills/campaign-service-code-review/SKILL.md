@@ -45,9 +45,10 @@ with it. They live in:
   `api-catalog.md` (the API design rules every endpoint follows and the
   endpoint catalog), and `channel-connections-schema.md` (the table
   definitions).
-- **`docs/knowledge/`** — the Open Knowledge Format bundle, with a concept file
-  per package and per Kubernetes resource. It is the fastest way to check what a
-  package is *supposed* to do before judging whether the diff belongs there.
+- **`docs/knowledge/`** — the Open Knowledge Format bundle, with concept files
+  covering the service's main packages and its Kubernetes resources. Where a
+  package has one, it is the fastest way to check what that package is
+  *supposed* to do before judging whether the diff belongs there.
 
 Enforcement runs in both directions: code that violates a documented standard is
 a finding, and a documented standard the code has visibly outgrown is a finding
@@ -112,10 +113,9 @@ Run these on the changed code, scaled to the size of the change:
   contract the callers depend on.
 - **Connections are singleton per provider per project**, keyed by the project
   identifier, and that identifier is the exact-match key the dispatch path joins
-  on. The create routes therefore constrain it more tightly than the read and
-  update routes, which stay permissive for historical rows. A change that
-  loosens the create-side constraint or tightens the read-side one changes which
-  records can be reached — say so.
+  on. A change to how that identifier is validated or normalised on any route
+  therefore changes which records are reachable — say so rather than treating it
+  as a validation tweak.
 - **Startup and shutdown are load-bearing.** The service supports a database
   cold start: it boots serving the contract's typed 503, retries in the
   background, and late-binds live backends without a pod restart; a migration
@@ -130,11 +130,11 @@ Run these on the changed code, scaled to the size of the change:
   change that makes readiness fail in that mode, or that couples liveness to the
   pool, breaks how Kubernetes treats the pod.
 - **Configuration.** CLI flags win over environment variables, which win over
-  defaults; the service's configuration variable names live as constants in the
-  shared constants package rather than as string literals at the use site (the
-  logging package's own level switches are the standing exception); and a
-  partially supplied database configuration is rejected at startup rather than
-  silently half-applied. A new setting that skips any of those is a finding.
+  defaults; the server and database settings resolve their environment-variable
+  names through the shared constants package rather than string literals at the
+  use site, so a new setting on that path should follow suit; and a partially
+  supplied database configuration is rejected at startup rather than silently
+  half-applied. A new setting that skips any of those is a finding.
 - **Logging.** Structured `slog`, using the context-carrying call forms wherever
   a request context is in hand, so the request ID the middleware attaches lands
   on the line. Ad-hoc printing, an unstructured message where fields belong, or

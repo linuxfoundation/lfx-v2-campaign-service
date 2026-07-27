@@ -26,10 +26,11 @@ orchestration of multi-platform campaign creation.
 Two boundaries shape almost every review here:
 
 - **The API contract is generated, not written.** `design/` holds the Goa DSL
-  and is the only place the HTTP contract is authored; everything under `gen/`
-  is Goa output, is committed to the repo, and carries a DO-NOT-EDIT header. A
-  contract change is a `design/` change plus regenerated output — a hand edit
-  under `gen/` is a defect regardless of how correct it looks.
+  and is the only place the HTTP contract is authored; the codegen output is
+  committed to the repo, and its generated Go files carry a DO-NOT-EDIT header.
+  A contract change is a `design/` change plus all of the output the codegen
+  target regenerates — a hand edit to generated output is a defect regardless
+  of how correct it looks.
 - **Ad-platform credentials are secrets at rest.** Connection credentials are
   encrypted in the application layer with AES-256-GCM before they reach
   PostgreSQL, using a key supplied from a Kubernetes secret through the
