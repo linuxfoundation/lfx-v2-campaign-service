@@ -5,6 +5,7 @@ package microsoft
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -437,6 +438,27 @@ func TestParseErrorCodes(t *testing.T) {
 	// Collection is bounded — a huge fault never returns an unbounded slice.
 	if got := parseErrorCodes([]byte(big.String())); len(got) > maxRetainedErrorCodes {
 		t.Errorf("collected %d codes, want <= the %d cap", len(got), maxRetainedErrorCodes)
+	}
+
+	// MEMORY is bounded too: boundedErrorItems retains at most maxDecodedErrorItems while
+	// still parsing the whole (valid) array — a pathological fault with thousands of tiny
+	// items can't materialize them all before the code cap is consulted.
+	var many boundedErrorItems
+	arr := `[` + strings.Repeat(`{"ErrorCode":"X"},`, 5000) + `{"ErrorCode":"Y"}]`
+	if err := json.Unmarshal([]byte(arr), &many); err != nil {
+		t.Fatalf("boundedErrorItems must parse a large valid array without error: %v", err)
+	}
+	if len(many) != maxDecodedErrorItems {
+		t.Errorf("boundedErrorItems retained %d items, want the %d cap", len(many), maxDecodedErrorItems)
+	}
+	// A JSON null and a non-array are handled gracefully.
+	var nul boundedErrorItems
+	if err := json.Unmarshal([]byte(`null`), &nul); err != nil || nul != nil {
+		t.Errorf("null must decode to a nil slice, got err=%v val=%v", err, nul)
+	}
+	var bad boundedErrorItems
+	if err := json.Unmarshal([]byte(`{"not":"an array"}`), &bad); err == nil {
+		t.Error("a non-array must be rejected")
 	}
 }
 

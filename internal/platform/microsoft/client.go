@@ -902,13 +902,54 @@ type msErrorEnvelope struct {
 	Code      json.RawMessage `json:"Code"`
 	ErrorCode json.RawMessage `json:"ErrorCode"`
 	// Some responses nest the operation errors under an Errors/OperationErrors array.
-	Errors          []msErrorItem `json:"Errors"`
-	OperationErrors []msErrorItem `json:"OperationErrors"`
+	// Each is a boundedErrorItems so a large (up-to-8-MiB) fault body carrying thousands
+	// of tiny items can't materialize them all: only maxDecodedErrorItems per array are
+	// retained during decode (the rest are parsed-and-discarded), which is far more than
+	// the maxRetainedErrorCodes codes we ultimately keep.
+	Errors          boundedErrorItems `json:"Errors"`
+	OperationErrors boundedErrorItems `json:"OperationErrors"`
 	// BatchErrors is the ApiFaultDetail per-list-item fault array (v13). A duplicate/
 	// field error on one item of a batch mutate lands here, not in OperationErrors.
-	BatchErrors []msErrorItem `json:"BatchErrors"`
+	BatchErrors boundedErrorItems `json:"BatchErrors"`
 	// PartialErrors is present on a 200 that had per-entity failures.
-	PartialErrors []msErrorItem `json:"PartialErrors"`
+	PartialErrors boundedErrorItems `json:"PartialErrors"`
+}
+
+// maxDecodedErrorItems caps how many items of each error array parseErrorCodes retains
+// while decoding. Each item yields up to 2 codes and the final result keeps at most
+// maxRetainedErrorCodes (16), so retaining 16 items per array can never starve the code
+// collection while bounding memory to O(1) regardless of the (up to 8 MiB) body size.
+const maxDecodedErrorItems = maxRetainedErrorCodes
+
+// boundedErrorItems is a []msErrorItem that, during UnmarshalJSON, streams the whole JSON
+// array (so it never truncates/corrupts a large valid body) but only RETAINS the first
+// maxDecodedErrorItems elements — later elements are decoded into a scratch and dropped, so
+// a pathological fault with thousands of tiny items can't balloon memory before the cap.
+type boundedErrorItems []msErrorItem
+
+func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok == nil { // JSON null
+		return nil
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return fmt.Errorf("expected a JSON array for error items")
+	}
+	for dec.More() {
+		var it msErrorItem
+		if err := dec.Decode(&it); err != nil {
+			return err
+		}
+		if len(*b) < maxDecodedErrorItems {
+			*b = append(*b, it)
+		}
+		// else: parsed to advance the stream, then discarded (bounds memory).
+	}
+	return nil
 }
 
 // msErrorItem is one error entry (a v13 BatchError/OperationError). Microsoft uses
@@ -950,7 +991,7 @@ func parseErrorCodes(body []byte) []string {
 	if !add(env.ErrorCode) || !add(env.Code) {
 		return codes
 	}
-	for _, group := range [][]msErrorItem{env.Errors, env.OperationErrors, env.BatchErrors, env.PartialErrors} {
+	for _, group := range []boundedErrorItems{env.Errors, env.OperationErrors, env.BatchErrors, env.PartialErrors} {
 		for _, it := range group {
 			if !add(it.ErrorCode) || !add(it.Code) {
 				return codes
