@@ -431,7 +431,11 @@ const (
 // status — returning the trimmed campaign id. It is a pure, no-HTTP check so a bad input fails
 // cleanly BEFORE any creative discovery or mutation, regardless of cascade ordering.
 func (c *Client) validateToggleInput(campaignID, status string) (string, error) {
-	if strings.TrimSpace(c.creds.AccessToken) == "" {
+	// Reject an empty OR surrounding-whitespace access token, matching CreateCampaign's preflight
+	// — a padded " token " would otherwise be sent verbatim as `Authorization: Bearer  token `.
+	// (Unreachable in practice: the token comes from the create path, which already rejects
+	// padding; this keeps the two preflights consistent rather than implying a stricter check.)
+	if c.creds.AccessToken == "" || c.creds.AccessToken != strings.TrimSpace(c.creds.AccessToken) {
 		return "", fmt.Errorf("linkedin: access token is required")
 	}
 	campaignID = strings.TrimSpace(campaignID)
@@ -555,12 +559,22 @@ func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignI
 	}
 	creativeStatus := creativeIntendedStatus(status)
 	mutated := mutatedBefore
+	// Track how many creatives were tolerated as an in-review 400 skip vs actually paused. A 400
+	// is used by LinkedIn for MANY errors (malformed patch, bad URN, wrong field), not only the
+	// documented in-review-creative case, so tolerating EVERY 400 on PAUSE could mask a
+	// systematic request bug and report success while nothing was paused. We can't rely on a
+	// specific structured error code here (LinkedIn's in-review code is not contract-documented),
+	// so we bound the tolerance by COUNT: skipping a few in-review creatives is normal, but if
+	// EVERY discovered creative 400-skipped and NONE was actually updated, that is suspect and we
+	// fail closed (partialCascadeError → the caller verifies) rather than claim a clean pause.
+	skipped400 := 0
 	for _, urn := range creativeURNs {
 		path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(urn))
 		body := map[string]any{"patch": map[string]any{"$set": map[string]any{"intendedStatus": creativeStatus}}}
 		headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
 		if _, uerr := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); uerr != nil {
 			if creativeStatus == StatusPaused && isBadRequest(uerr) {
+				skipped400++
 				continue // in-review creative can't be paused; the campaign gate already stopped it
 			}
 			// If an upstream change may already have landed (mutatedBefore, an earlier
@@ -573,6 +587,13 @@ func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignI
 			return fmt.Errorf("linkedin: creative update failed: %w", uerr)
 		}
 		mutated = true
+	}
+	// Every discovered creative 400-skipped and none was updated: the campaign is already paused
+	// (the gate stops delivery), but a systematic 400 across ALL creatives is far more likely a
+	// request/code defect than every creative genuinely being in review. Fail closed so the
+	// caller verifies rather than persisting a "paused" the creatives never actually reflected.
+	if creativeStatus == StatusPaused && len(creativeURNs) > 0 && skipped400 == len(creativeURNs) {
+		return &partialCascadeError{stage: "creative", err: fmt.Errorf("all %d creative pause updates were rejected with 400; the creatives may not be paused (verify)", len(creativeURNs))}
 	}
 	return nil
 }
@@ -693,8 +714,11 @@ func creativeURN(el responseElement) string {
 // decimal, or exponent — so a malformed id can't produce a bogus URN.
 var creativeNumericIDRE = regexp.MustCompile(`^[0-9]+$`)
 
-// partialCascadeError marks a cascade that updated the campaign upstream but then failed on a
-// creative: the run state is PARTIALLY applied. Its Unconfirmed() reports true so
+// partialCascadeError marks a status cascade that is PARTIALLY applied. Because the cascade
+// ordering is status-dependent — on PAUSE the campaign is updated first, on ACTIVATE the
+// creatives are updated first and the campaign last — it deliberately does NOT assert WHICH node
+// changed: it can wrap a creative failure after the campaign was updated (pause) OR a campaign
+// failure after creatives were lifted (activate). Its Unconfirmed() reports true so
 // IsOutcomeUnconfirmed treats it as "may be applied — verify before retrying" rather than
 // "not modified"; a retry re-runs the idempotent cascade. Mirrors the reddit/meta clients.
 type partialCascadeError struct {

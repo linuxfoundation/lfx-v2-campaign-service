@@ -206,6 +206,13 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 		return fmt.Errorf("%w: meta campaign %s cannot be activated because it has no ad set to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus); uerr != nil {
+		// An activate refused up front because the ad set has zero ads is a local/state error
+		// (the platform mutation never ran), so classify it as ErrCampaignNotProvisioned → 409,
+		// not the default 503 — deterministic "reprovision", not a transient "verify/retry".
+		// Mirrors the LinkedIn dispatcher's zero-creatives handling.
+		if meta.IsNotServable(uerr) {
+			return fmt.Errorf("%w: %s", domain.ErrCampaignNotProvisioned, uerr.Error())
+		}
 		if meta.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}

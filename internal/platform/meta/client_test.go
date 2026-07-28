@@ -4016,41 +4016,10 @@ func TestUpdateCampaignAndChildrenStatus_ActivateDefiniteChildFailureIsClean(t *
 	}
 }
 
-// TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected verifies that ACTIVATING an ad
-// set with zero ads is refused before the campaign is flipped — a degraded broker campaign
-// (0 ads) cannot serve, so reporting success would be misleading.
-func TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected(t *testing.T) {
-	// Capture the campaign flip over a buffered channel (handler write happens-before the
-	// test read after close) so this is race-safe under `go test -race`.
-	flipCh := make(chan struct{}, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/23847290" {
-			flipCh <- struct{}{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
-			_, _ = io.WriteString(w, `{"data":[],"paging":{}}`) // zero ads
-			return
-		}
-		_, _ = io.WriteString(w, `{"success":true}`)
-	}))
-	defer srv.Close()
-	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
-	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
-	if err == nil {
-		t.Fatal("expected an error activating an ad set with zero ads")
-	}
-	// The ad set was already POSTed ACTIVE before the zero-ads check, so this is a PARTIAL
-	// application — it must be Unconfirmed (verify/reconcile), not a plain "not modified".
-	var unconf interface{ Unconfirmed() bool }
-	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
-		t.Errorf("zero-ads activate (ad set already flipped) must be Unconfirmed, got %T: %v", err, err)
-	}
-	close(flipCh)
-	if _, flipped := <-flipCh; flipped {
-		t.Error("campaign was flipped ACTIVE despite the ad set having no ads")
-	}
-}
+// (The former TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsRejected is superseded by
+// TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsIsNotServable above: with the discover-first
+// restructuring, zero ads is refused BEFORE any mutation as a clean ErrCampaignNotServable → 409,
+// no longer a post-ad-set-flip Unconfirmed partial.)
 
 // TestPartialCascadeError_MessageDoesNotAssertCampaignChanged verifies the reconciliation
 // message no longer hardcodes "campaign status changed" (untrue when a creative/ad fails
@@ -4069,27 +4038,73 @@ type errStub string
 
 func (e errStub) Error() string { return string(e) }
 
-// TestUpdateCampaignAndChildrenStatus_ActivateAdSetMutatedThenDiscoveryFailsIsUnconfirmed:
-// on ACTIVATE the ad set is POSTed ACTIVE before ad discovery; if discovery then fails, the ad
-// set has ALREADY changed upstream, so the outcome must be Unconfirmed (not a clean failure).
-func TestUpdateCampaignAndChildrenStatus_ActivateAdSetMutatedThenDiscoveryFailsIsUnconfirmed(t *testing.T) {
+// TestUpdateCampaignAndChildrenStatus_ActivateDiscoveryFailsIsCleanBeforeAnyMutation: on
+// ACTIVATE, ad discovery (a GET) now runs BEFORE any mutation, so a discovery failure means
+// NOTHING changed upstream — a clean, DEFINITE failure (not Unconfirmed). This is the
+// discover-first contract: the campaign is still paused and no ad/ad-set was touched, so a
+// retry is safe and the operator gets a deterministic failure rather than a "verify" 503.
+func TestUpdateCampaignAndChildrenStatus_ActivateDiscoveryFailsIsCleanBeforeAnyMutation(t *testing.T) {
+	var mutated bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
-			w.WriteHeader(http.StatusForbidden) // definite 403 on discovery, AFTER the ad set POST
+			w.WriteHeader(http.StatusForbidden) // definite 403 on discovery, BEFORE any mutation
 			return
 		}
+		if r.Method == http.MethodPost {
+			mutated = true // any POST here would mean we mutated before discovering — a bug
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"success":true}`) // ad set POST succeeds
+		_, _ = io.WriteString(w, `{"success":true}`)
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
 	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
 	if err == nil {
-		t.Fatal("expected an error when discovery fails after the ad set was mutated")
+		t.Fatal("expected an error when discovery fails on activate")
 	}
+	if mutated {
+		t.Error("discover-first: no ad/ad-set POST must happen before ad discovery on activate")
+	}
+	// Nothing was mutated, so the outcome must NOT be Unconfirmed — it is a clean, retry-safe failure.
 	var unconf interface{ Unconfirmed() bool }
-	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
-		t.Errorf("discovery failure after the ad set POST committed must be Unconfirmed, got %T: %v", err, err)
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a discovery failure BEFORE any mutation must be a clean (not Unconfirmed) error, got: %v", err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsIsNotServable: on ACTIVATE, an ad set with
+// zero ads is refused BEFORE any mutation with ErrCampaignNotServable (→ dispatcher 409), and
+// nothing is POSTed — so a degraded zero-ads campaign converges to a deterministic reprovision
+// error rather than looping on a 503 that re-POSTs the ad set each retry.
+func TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsIsNotServable(t *testing.T) {
+	var mutated bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			_, _ = io.WriteString(w, `{"data":[]}`) // genuine empty page: the ad set has no ads
+			return
+		}
+		if r.Method == http.MethodPost {
+			mutated = true
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("activating an ad set with zero ads must be refused")
+	}
+	if !IsNotServable(err) {
+		t.Errorf("zero-ads activate must be ErrCampaignNotServable (→ 409), got %T: %v", err, err)
+	}
+	if mutated {
+		t.Error("zero-ads activate must be refused BEFORE any mutation (nothing POSTed)")
+	}
+	// It must NOT be Unconfirmed — nothing changed, so it is a clean deterministic failure.
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("zero-ads not-servable must be clean, not Unconfirmed: %v", err)
 	}
 }
 

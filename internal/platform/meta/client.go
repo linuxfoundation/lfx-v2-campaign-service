@@ -703,6 +703,17 @@ func createOutcomeAmbiguous(err error) bool {
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
 }
 
+// ErrCampaignNotServable marks an ACTIVATE refused BEFORE any mutating call because the
+// campaign cannot serve (e.g. its ad set has zero ads). It is a local/state condition, not a
+// platform failure — the dispatcher maps it to a client 409, not a 503. Exposed as a sentinel
+// so the dispatcher can classify it across the package boundary via IsNotServable. Mirrors the
+// LinkedIn client's sentinel of the same name.
+var ErrCampaignNotServable = errors.New("campaign cannot be made servable")
+
+// IsNotServable reports whether err is (or wraps) ErrCampaignNotServable — an activate refused
+// up front because the campaign has nothing to serve.
+func IsNotServable(err error) bool { return errors.Is(err, ErrCampaignNotServable) }
+
 // IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
 // UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied by
 // Meta even though it errored (a transportError, a 5xx, or a 3xx on a mutating method). A
@@ -818,35 +829,39 @@ func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, 
 	if adSetID == "" {
 		return nil
 	}
-	// Capture the "this is an activate cascade, campaign not yet flipped" intent BEFORE the ad
-	// set POST flips mutatedBefore — the zero-ads guard below keys on the original intent, not
-	// on whether an upstream mutation has since happened.
 	activating := !mutatedBefore && status == StatusActive
-	if err := c.doRequest(ctx, http.MethodPost, "/"+adSetID, map[string]any{"status": status}, nil); err != nil {
-		return classifyCascadeErr("ad set", err, mutatedBefore)
-	}
-	// The ad set POST has now committed (even on the activate path where the campaign hasn't
-	// flipped yet — the ad set itself changed upstream), so every subsequent failure is a
-	// partial application: classify with mutatedBefore=true from here on.
-	mutatedBefore = true
+	// DISCOVER-FIRST: list the ads BEFORE mutating anything. Discovery is a GET (no side
+	// effect), so on the activate path (mutatedBefore==false) a discovery failure or the
+	// zero-ads guard below is still a CLEAN, nothing-mutated error — matching the LinkedIn
+	// sibling (discover creatives, refuse zero before touching the campaign). The previous
+	// order (ad set POST first, then discover) turned a legitimately-degraded zero-ads campaign
+	// into a non-converging 503 loop: it re-POSTed the ad set ACTIVE and then returned an
+	// Unconfirmed partial every retry. Discovering first lets zero ads return a deterministic
+	// not-servable error the dispatcher maps to 409 ("reprovision"), and re-POSTs nothing.
 	adIDs, err := c.listAdIDs(ctx, adSetID)
 	if err != nil {
 		return classifyCascadeErr("ad discovery", err, mutatedBefore)
 	}
 	// On ACTIVATE, a tree with ZERO ads can never serve — Meta creation treats per-variant ad
-	// failures as non-fatal, so a degraded broker campaign can legitimately have an active ad
-	// set but no ads. Flipping the campaign ACTIVE would report success for a campaign that
-	// cannot deliver. Refuse. NOTE: the ad set was ALREADY POSTed ACTIVE above (mutatedBefore
-	// is now true), so this is a PARTIAL application — surface it Unconfirmed (verify/reconcile)
-	// rather than a plain "not modified" error, which would misreport the ad set as unchanged.
-	// PAUSE with zero ads is fine (nothing to pause) and never reaches here.
+	// failures as non-fatal, so a degraded broker campaign can legitimately have an ad set but
+	// no ads. Refuse BEFORE any mutation so this is a clean not-servable error (nothing changed
+	// upstream → the dispatcher returns a deterministic 409, not a transient 503). PAUSE with
+	// zero ads is fine (nothing to pause) and passes through.
 	if activating && len(adIDs) == 0 {
-		return &partialCascadeError{stage: "ad set activated but no ads to serve", err: fmt.Errorf("ad set %s has no ads, so the campaign cannot serve", adSetID)}
+		return fmt.Errorf("%w: meta ad set %s has no ads, so the campaign cannot serve", ErrCampaignNotServable, adSetID)
 	}
+	// Mutate BOTTOM-UP: ads first, then the ad set. Every child stays gated by the still-paused
+	// campaign on the activate path, so the ordering contract ("children before the campaign
+	// flip") holds. Once the FIRST ad POST may have committed, subsequent failures are partial
+	// applications (mutatedBefore=true).
 	for _, adID := range adIDs {
 		if err := c.doRequest(ctx, http.MethodPost, "/"+adID, map[string]any{"status": status}, nil); err != nil {
 			return classifyCascadeErr("ad", err, mutatedBefore)
 		}
+		mutatedBefore = true
+	}
+	if err := c.doRequest(ctx, http.MethodPost, "/"+adSetID, map[string]any{"status": status}, nil); err != nil {
+		return classifyCascadeErr("ad set", err, mutatedBefore)
 	}
 	return nil
 }

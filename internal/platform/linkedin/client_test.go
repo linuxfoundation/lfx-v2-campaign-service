@@ -1138,6 +1138,51 @@ func TestUpdateCampaignAndCreativesStatus_UnusableElementIDFails(t *testing.T) {
 	}
 }
 
+// TestUpdateCampaignAndCreativesStatus_AllCreatives400OnPauseFailsClosed verifies that when
+// EVERY discovered creative's PAUSE update is rejected with 400 (and none is actually paused),
+// the cascade fails closed with an Unconfirmed partial rather than reporting a clean success — a
+// systematic 400 across all creatives is far more likely a request/code bug than every creative
+// genuinely being in review.
+func TestUpdateCampaignAndCreativesStatus_AllCreatives400OnPauseFailsClosed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"},{"id":"urn:li:sponsoredCreative:901"}],"metadata":{}}`)
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			w.WriteHeader(http.StatusBadRequest) // EVERY creative 400s
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused)
+	if err == nil {
+		t.Fatal("all-creatives-400 on pause must fail closed, not report clean success")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("all-creatives-400 must be Unconfirmed (verify), got %T: %v", err, err)
+	}
+}
+
+// TestValidateToggleInput_RejectsPaddedToken verifies a surrounding-whitespace access token is
+// rejected up front (parity with CreateCampaign), before any HTTP call.
+func TestValidateToggleInput_RejectsPaddedToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen for a padded token: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: " tok "}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused); err == nil {
+		t.Fatal("a padded access token must be rejected")
+	} else if !strings.Contains(err.Error(), "access token") {
+		t.Errorf("rejection should cite the access token, got: %v", err)
+	}
+}
+
 // TestUpdateCampaignAndCreativesStatus_Non400OnPauseAborts verifies that on a PAUSE, only a 400
 // (in-review) is tolerated: a 403 (or other non-400 4xx) on a creative ABORTS the toggle.
 func TestUpdateCampaignAndCreativesStatus_Non400OnPauseAborts(t *testing.T) {
