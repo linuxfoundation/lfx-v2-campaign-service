@@ -132,12 +132,14 @@ type CampaignInput struct {
 	// v13 publishes no per-character weighted formula, so this client conservatively applies
 	// the reduced 15 / 45 cap whenever ANY double-width character is present — it never emits
 	// an over-length asset (which would fail the ad after its parents were created), at the
-	// cost of truncating mixed copy a little short of the theoretical maximum. Each entry must also
-	// contain at least one word and no newline. When a caller supplies fewer than the
+	// cost of truncating mixed copy a little short of the theoretical maximum. Each entry must
+	// also contain at least one word and no control character (checkAdCopyList rejects ANY
+	// control rune — \t/\v/\f/NUL, not just \n/\r). When a caller supplies fewer than the
 	// minimum, deterministic placeholders derived from EventName/Project pad the lists up to
 	// the minimum (a safe PAUSED default a human edits before enabling); supplying more than
-	// the maximum, a duplicate, an over-long, an empty-of-words, or a newline entry is a
-	// clean up-front validation error. Leave both empty to auto-compose entirely.
+	// the maximum, a duplicate, an over-long, or a whitespace-only (non-empty, word-less) entry
+	// is a clean up-front validation error. A genuinely empty "" entry is IGNORED and padded to
+	// the minimum, not rejected. Leave both slices empty to auto-compose entirely.
 	Headlines    []string
 	Descriptions []string
 }
