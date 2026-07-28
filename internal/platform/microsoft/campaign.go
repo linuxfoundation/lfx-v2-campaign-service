@@ -339,7 +339,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			limit = maxDisplayDomainRunesWide
 		}
 		if n := utf8.RuneCountInString(authority); n > limit {
-			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", authority, n, limit)
+			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", truncate(authority, maxErrorBodyChars), n, limit)
 		}
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
