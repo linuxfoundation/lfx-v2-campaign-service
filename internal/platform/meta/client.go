@@ -840,7 +840,16 @@ func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, 
 	// not-servable error the dispatcher maps to 409 ("reprovision"), and re-POSTs nothing.
 	adIDs, err := c.listAdIDs(ctx, adSetID)
 	if err != nil {
-		return classifyCascadeErr("ad discovery", err, mutatedBefore)
+		// Discovery is a READ that runs before any mutation on the activate path, so it is NOT
+		// classified through createOutcomeAmbiguous (which treats every 5xx/transport as
+		// ambiguous — correct only for a MUTATING call that may have committed). A pre-mutation
+		// read failure applied nothing, so it is CLEAN; it is only a partial (Unconfirmed) when a
+		// prior mutation already landed (mutatedBefore — e.g. the PAUSE path flipped the campaign
+		// first). Mirrors the LinkedIn finder path exactly.
+		if mutatedBefore {
+			return &partialCascadeError{stage: "ad discovery", err: err}
+		}
+		return fmt.Errorf("meta: ad discovery for ad set %s failed: %w", adSetID, err)
 	}
 	// On ACTIVATE, a tree with ZERO ads can never serve — Meta creation treats per-variant ad
 	// failures as non-fatal, so a degraded broker campaign can legitimately have an ad set but

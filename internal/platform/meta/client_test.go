@@ -4072,6 +4072,38 @@ func TestUpdateCampaignAndChildrenStatus_ActivateDiscoveryFailsIsCleanBeforeAnyM
 	}
 }
 
+// TestUpdateCampaignAndChildrenStatus_ActivateDiscovery5xxIsCleanBeforeAnyMutation verifies the
+// same for a 5xx: a pre-mutation READ (discovery GET) failure is classified CLEAN, not routed
+// through createOutcomeAmbiguous (which is for mutating calls that may have committed). Nothing
+// was applied, so the operator gets a deterministic failure, not a spurious "verify" 503.
+func TestUpdateCampaignAndChildrenStatus_ActivateDiscovery5xxIsCleanBeforeAnyMutation(t *testing.T) {
+	var mutated bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			w.WriteHeader(http.StatusBadGateway) // 5xx on discovery, BEFORE any mutation
+			return
+		}
+		if r.Method == http.MethodPost {
+			mutated = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error when discovery returns 5xx on activate")
+	}
+	if mutated {
+		t.Error("discover-first: nothing must be POSTed before discovery")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a pre-mutation 5xx discovery failure must be CLEAN, not Unconfirmed: %v", err)
+	}
+}
+
 // TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsIsNotServable: on ACTIVATE, an ad set with
 // zero ads is refused BEFORE any mutation with ErrCampaignNotServable (→ dispatcher 409), and
 // nothing is POSTed — so a degraded zero-ads campaign converges to a deterministic reprovision
