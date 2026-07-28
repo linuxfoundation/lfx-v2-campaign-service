@@ -269,10 +269,24 @@ geoTargets: string[]            — ISO country codes ['US', 'JP']
 project?: string                — Canonical LFX project slug (e.g. 'cncf', 'tlf'); used verbatim in the campaign-name Project segment. Should be derived from the authenticated {projectId}, not free-typed.
 driveFolderUrl?: string
 platforms?: CampaignPlatform[]
+googleAdsConfig?: object        — Google Ads-specific params (see GoogleAdsConfig below)
 linkedInConfig?: object         — LinkedIn-specific params
 redditConfig?: object           — Reddit-specific params
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
+```
+
+#### GoogleAdsConfig (the `googleAdsConfig` object)
+
+Google Ads per-platform config. Today the dispatcher creates a PAUSED search-campaign shell, so `budget` is the only caller-supplied key here; targeting/keywords land in a later phase (GA-3+). **Budget is in whole units of the ad ACCOUNT's currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
+
+```
+budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
+                                  applied as the campaign's DAILY budget. Must be a finite, POSITIVE
+                                  number; NaN/Inf or a non-positive value is rejected by the client
+                                  during dispatch (a pre-create job failure, since CreateCampaigns is
+                                  async). Omitting it leaves the shell with no budget, which fails the
+                                  platform job asynchronously — supply it explicitly.
 ```
 
 #### MetaConfig (the `metaConfig` object)
