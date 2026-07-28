@@ -738,6 +738,43 @@ func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_RejectsOverLongComposedFinalURL: a raw registration URL that is itself
+// VALID and under the FinalUrls cap, but whose UTM-composed FinalUrls exceeds maxFinalURLRunes,
+// must be rejected UP FRONT (nil, err, no API call) — otherwise it would fail only at AddAds,
+// after the PAUSED campaign/ad group already exist (orphaning them). Guards the 2,048-char
+// composed-URL check (which the raw-URL validation alone does not enforce).
+func TestCreateCampaign_RejectsOverLongComposedFinalURL(t *testing.T) {
+	var reached bool
+	api := &campaignsAPI{}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		base(w, r)
+	})
+	in := validInput()
+	// A short valid host but a path just under 2,048 total; the appended utm_* params push the
+	// COMPOSED FinalUrls over maxFinalURLRunes even though this raw URL passes validateAdURL.
+	longPath := strings.Repeat("a", maxFinalURLRunes-len("https://x.example/"))
+	in.RegistrationURL = "https://x.example/" + longPath
+	if got := utf8.RuneCountInString(in.RegistrationURL); got > maxFinalURLRunes {
+		t.Fatalf("test setup: raw URL is already %d > %d; it must be within the cap so only the composed URL exceeds it", got, maxFinalURLRunes)
+	}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected a composed-final-URL length validation error")
+	}
+	if !strings.Contains(err.Error(), "final URL") {
+		t.Errorf("error should name the composed final URL, got: %v", err)
+	}
+	if res != nil {
+		t.Errorf("an over-long composed final URL must fail cleanly (nil result), got %+v", res)
+	}
+	if reached {
+		t.Error("no API call should be made — the composed URL is invalid up front")
+	}
+}
+
 // TestCreateCampaign_DisplayDomainCountsNonDefaultPort: a hostname UNDER the 67-char cap
 // that a non-default port pushes OVER must be rejected up front — the display-domain check
 // counts the full host authority (hostname + non-default port), not just Hostname(), so the
@@ -1197,6 +1234,13 @@ func TestCreateCampaign_CreateBodiesCarryV13Contract(t *testing.T) {
 	a := ad.Ads[0]
 	if a.Type != adTypeResponsiveSearch || a.Status != adStatusPaused || len(a.FinalUrls) != 1 {
 		t.Errorf("ad body = Type %q Status %q FinalUrls %v, want ResponsiveSearch/PAUSED/one-url", a.Type, a.Status, a.FinalUrls)
+	}
+	// AddAds requires the parent AdGroupId at the TOP LEVEL of the request body (a sibling to
+	// Ads, not in the URL). The fake routes only by path, so without this assertion the test
+	// would still pass if the body omitted/corrupted the ad-group id — the central v13 contract
+	// this test locks down. It must carry the created ad group's id (654 from the handler).
+	if string(ad.AdGroupId) != "654" {
+		t.Errorf("ad request AdGroupId = %q, want the created ad group id 654 (AddAds requires it in the body)", ad.AdGroupId)
 	}
 }
 
