@@ -355,11 +355,16 @@ func TestAdGroupAndAdStreamingLookups(t *testing.T) {
 	if _, m, p, err := lookupNamedEntity([]byte(`{"AdGroups":[]}`), "AdGroups", "x"); err != nil || m || !p {
 		t.Errorf("adgroup empty: m=%v p=%v err=%v want false/true/nil", m, p, err)
 	}
-	// truncated → fail closed (error)
-	for _, bad := range []string{`{"AdGroups":[`, `{"AdGroups":[{"Id":1,"Name":"a"}`} {
+	// truncated → fail closed (error). Includes `{"AdGroups":[]` where the ARRAY closes but the
+	// enclosing OBJECT does not — that must still error, not be read as a clean empty lookup.
+	for _, bad := range []string{`{"AdGroups":[`, `{"AdGroups":[{"Id":1,"Name":"a"}`, `{"AdGroups":[]`, `{"AdGroups":[],"x":`} {
 		if _, _, _, err := lookupNamedEntity([]byte(bad), "AdGroups", "a"); err == nil {
 			t.Errorf("adgroup truncated %q must error (fail closed)", bad)
 		}
+	}
+	// a VALID body with a sibling key AFTER the array still parses (finishObject drains it).
+	if _, m, p, err := lookupNamedEntity([]byte(`{"AdGroups":[{"Id":9,"Name":"a"}],"TrackingId":"t"}`), "AdGroups", "a"); err != nil || !m || !p {
+		t.Errorf("adgroup with trailing sibling key: m=%v p=%v err=%v want true/true/nil", m, p, err)
 	}
 
 	// lookupAdByFinalURL — match by destination on canonical form; a re-encoded URL still matches.
@@ -971,6 +976,45 @@ func TestComposeAdCopy_DropsWordlessAssets(t *testing.T) {
 	}
 }
 
+func TestComposeAdCopy_DoesNotAugmentSufficientCallerCopy(t *testing.T) {
+	// A caller who supplies at least the minimum count of valid, unique copy must get exactly
+	// their copy back — the auto-composed fallbacks are padding for a shortfall, not an
+	// augmentation up to the maximum. Three supplied headlines must stay three (not grow toward
+	// nine), and two supplied descriptions must stay two, honouring the CampaignInput contract.
+	headlines := make([]string, minAdHeadlines)
+	for i := range headlines {
+		headlines[i] = fmt.Sprintf("Caller Headline %d", i)
+	}
+	descriptions := make([]string, minAdDescriptions)
+	for i := range descriptions {
+		descriptions[i] = fmt.Sprintf("Caller Description %d", i)
+	}
+
+	hs, ds := composeAdCopy(CampaignInput{
+		Headlines:    headlines,
+		Descriptions: descriptions,
+		EventName:    "KubeCon", // present, but must not be appended over sufficient caller copy
+		Project:      "CNCF",
+	})
+
+	if len(hs) != len(headlines) {
+		t.Errorf("caller-supplied headlines were augmented: got %d, want %d: %q", len(hs), len(headlines), hs)
+	}
+	if len(ds) != len(descriptions) {
+		t.Errorf("caller-supplied descriptions were augmented: got %d, want %d: %q", len(ds), len(descriptions), ds)
+	}
+	for i, h := range headlines {
+		if hs[i] != h {
+			t.Errorf("caller headline %d changed: got %q, want %q", i, hs[i], h)
+		}
+	}
+	for i, d := range descriptions {
+		if ds[i] != d {
+			t.Errorf("caller description %d changed: got %q, want %q", i, ds[i], d)
+		}
+	}
+}
+
 func assertUniqueBounded(t *testing.T, items []string, maxRunes int, kind string) {
 	t.Helper()
 	seen := map[string]struct{}{}
@@ -1036,7 +1080,7 @@ func TestAdCopyDedupeIsUnicodeCaseFold(t *testing.T) {
 		t.Fatalf("checkAdCopyList accepted a Unicode-case-fold duplicate: %v", dupes)
 	}
 
-	got := boundedUniqueCopy(dupes, maxAdHeadlineRunes, maxAdHeadlineRunesWide, 1, maxAdHeadlines)
+	got := boundedUniqueCopy(dupes, maxAdHeadlineRunes, maxAdHeadlineRunesWide, 1, maxAdHeadlines, len(dupes))
 	if len(got) != 1 {
 		t.Fatalf("boundedUniqueCopy kept %d entries for a Unicode-case-fold duplicate, want 1: %q", len(got), got)
 	}

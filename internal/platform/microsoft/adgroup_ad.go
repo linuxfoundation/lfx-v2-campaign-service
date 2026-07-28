@@ -523,9 +523,39 @@ func lookupNamedEntity(body []byte, field, name string) (id string, matched, pre
 		if d, ok := endTok.(json.Delim); !ok || d != ']' {
 			return "", false, false, fmt.Errorf("malformed %s array (unterminated)", field)
 		}
+		// The array closed, but the ENCLOSING OBJECT must also be well-formed to trust the
+		// result: a truncated body like `{"%s":[]` has a valid array yet an unterminated object,
+		// and reporting a clean "present, no match" there would let the paid create run on an
+		// unverified body. finishObject drains the remaining keys and confirms the closing '}'.
+		if ferr := finishObject(dec); ferr != nil {
+			return "", false, false, ferr
+		}
 		return id, matched, true, nil
 	}
 	return "", false, false, nil // no such key → omitted
+}
+
+// finishObject consumes the remaining key/value pairs of the CURRENT JSON object and validates
+// its closing '}', erroring on a truncated/malformed remainder. It is called after the sought
+// array has been fully read, so a truncated enclosing object fails closed rather than being
+// trusted as a complete lookup response.
+func finishObject(dec *json.Decoder) error {
+	for dec.More() {
+		if _, kerr := dec.Token(); kerr != nil { // key
+			return kerr
+		}
+		if verr := skipJSONValue(dec); verr != nil { // value
+			return verr
+		}
+	}
+	endTok, eerr := dec.Token()
+	if eerr != nil {
+		return eerr
+	}
+	if d, ok := endTok.(json.Delim); !ok || d != '}' {
+		return fmt.Errorf("malformed response object (unterminated)")
+	}
+	return nil
 }
 
 // findOrCreateResponsiveSearchAd returns (id, existed, err). It looks for an existing ad
@@ -687,6 +717,10 @@ func lookupAdByFinalURL(body []byte, finalURL string) (id string, matched, prese
 		if d, ok := endTok.(json.Delim); !ok || d != ']' {
 			return "", false, false, fmt.Errorf("malformed Ads array (unterminated)")
 		}
+		// Validate the enclosing object closes too (a truncated `{"Ads":[]` must fail closed).
+		if ferr := finishObject(dec); ferr != nil {
+			return "", false, false, ferr
+		}
 		return id, matched, true, nil
 	}
 	return "", false, false, nil // no Ads key → omitted
@@ -757,26 +791,34 @@ func composeAdCopy(in CampaignInput) (headlines, descriptions []string) {
 	event := sanitizeNamePart(in.EventName)
 	project := sanitizeNamePart(in.Project)
 
-	// Headline candidates: caller-supplied first, then deterministic fallbacks. join()
-	// drops empty segments so a missing Project doesn't yield "Register for  ".
-	hCandidates := append([]string{}, in.Headlines...)
-	hCandidates = append(hCandidates,
+	// Deterministic fallbacks, used ONLY to pad below-minimum copy (not to augment
+	// caller-authored copy). join() drops empty segments so a missing Project doesn't yield
+	// "Register for  ".
+	hFallbacks := []string{
 		event,
 		join(" | ", project, event),
 		join(" ", "Register for", event),
 		"Register Today",
 		"Learn More",
 		"Join Us",
-	)
-	dCandidates := append([]string{}, in.Descriptions...)
-	dCandidates = append(dCandidates,
-		join(" ", "Learn more about", event)+".",
-		join(" ", "Register now for", event, pfx("by ", project))+".",
-		join(" ", "Join us for", event)+".",
-	)
+	}
+	dFallbacks := []string{
+		join(" ", "Learn more about", event) + ".",
+		join(" ", "Register now for", event, pfx("by ", project)) + ".",
+		join(" ", "Join us for", event) + ".",
+	}
 
-	headlines = boundedUniqueCopy(hCandidates, maxAdHeadlineRunes, maxAdHeadlineRunesWide, minAdHeadlines, maxAdHeadlines)
-	descriptions = boundedUniqueCopy(dCandidates, maxAdDescriptionRunes, maxAdDescriptionRunesWide, minAdDescriptions, maxAdDescriptions)
+	// Caller-supplied copy is used AS-IS (deduped + bounded); the fallbacks are appended only
+	// as padding candidates, so a caller who supplies >= the minimum keeps EXACTLY their copy
+	// (never silently augmented up to the maximum). The trailing len(in.Headlines)/len(in.Descriptions)
+	// argument tells boundedUniqueCopy how many leading candidates are caller-authored: those are
+	// always kept (up to maxCount), while the fallbacks that follow are consumed only while the
+	// list is still below minCount. This honors the CampaignInput contract: explicit copy overrides
+	// the auto-composition, and fallbacks only fill a shortfall to the minimum.
+	headlines = boundedUniqueCopy(append(append([]string{}, in.Headlines...), hFallbacks...),
+		maxAdHeadlineRunes, maxAdHeadlineRunesWide, minAdHeadlines, maxAdHeadlines, len(in.Headlines))
+	descriptions = boundedUniqueCopy(append(append([]string{}, in.Descriptions...), dFallbacks...),
+		maxAdDescriptionRunes, maxAdDescriptionRunesWide, minAdDescriptions, maxAdDescriptions, len(in.Descriptions))
 	return headlines, descriptions
 }
 
@@ -830,13 +872,16 @@ func hasWord(s string) bool {
 }
 
 // boundedUniqueCopy trims each candidate, truncates it to its WIDTH-AWARE limit (single or
-// wide), keeps only non-empty, word-bearing, case-insensitively-unique entries in order,
-// caps the result at maxCount, and — if fewer than minCount survive — pads with numbered
-// "Learn More N" placeholders so the required minimum is always met (the ad is PAUSED, so a
-// placeholder is a safe default). The word check mirrors checkAdCopyList so an auto-composed
-// asset (e.g. a sanitized EventName that is all punctuation) can't reach AddAds and orphan a
-// PAUSED campaign behind a Microsoft rejection.
-func boundedUniqueCopy(candidates []string, singleLimit, wideLimit, minCount, maxCount int) []string {
+// wide), keeps only non-empty, word-bearing, case-insensitively-unique entries in order, and
+// caps the result at maxCount. The FIRST callerCount candidates are the caller-authored copy
+// and are kept AS-IS (up to maxCount); the remaining candidates are auto-composed FALLBACKS
+// that are consumed ONLY to pad the list up to minCount — so a caller who supplies at least
+// minCount entries gets exactly their copy, never silently augmented with auto-composed
+// headlines/descriptions up to the maximum. If a shortfall remains after the fallbacks, it is
+// filled with numbered "Learn More N" placeholders (the ad is PAUSED, so a placeholder is a
+// safe default). The word check mirrors checkAdCopyList so an auto-composed asset (e.g. a
+// sanitized EventName that is all punctuation) can't reach AddAds and orphan a PAUSED campaign.
+func boundedUniqueCopy(candidates []string, singleLimit, wideLimit, minCount, maxCount, callerCount int) []string {
 	out := make([]string, 0, maxCount)
 	add := func(s string) bool {
 		s = strings.TrimSpace(s)
@@ -855,7 +900,13 @@ func boundedUniqueCopy(candidates []string, singleLimit, wideLimit, minCount, ma
 		out = append(out, s)
 		return len(out) >= maxCount
 	}
-	for _, c := range candidates {
+	for i, c := range candidates {
+		// A fallback candidate (index >= callerCount) is only used to pad a shortfall: once the
+		// minimum is met, stop consuming fallbacks so caller copy is never augmented past what
+		// they authored. Caller entries (index < callerCount) are always added (up to maxCount).
+		if i >= callerCount && len(out) >= minCount {
+			break
+		}
 		if add(c) {
 			return out
 		}

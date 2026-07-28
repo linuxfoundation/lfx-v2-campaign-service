@@ -608,8 +608,13 @@ func lookupCampaignByName(body []byte, name string) (id string, matched, present
 		if d, ok := endTok.(json.Delim); !ok || d != ']' {
 			return "", false, false, fmt.Errorf("malformed Campaigns array (unterminated)")
 		}
+		// The array closed, but the enclosing object must also be well-formed to trust the
+		// result: a truncated `{"Campaigns":[]` has a valid array but an unterminated object, and
+		// reporting a clean absence there would let the paid create run on an unverified body.
+		if ferr := finishObject(dec); ferr != nil {
+			return "", false, false, ferr
+		}
 		present = true
-		// The array closed cleanly; the top-level object may have more keys but we have our answer.
 		return id, matched, present, nil
 	}
 	// No Campaigns key at all → omitted.
