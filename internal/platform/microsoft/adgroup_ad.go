@@ -370,9 +370,29 @@ func (c *Client) createAdGroupAndAd(
 // group to /AdGroups with the CampaignId in the body. Ad-group names are unique within a
 // campaign, so the name lookup is the idempotency key (a stable name → a retry reuses
 // the existing group).
+// unconfirmedLookupErr classifies an idempotency-lookup failure the way the campaign level does
+// (findCampaignByName): a lookup is a READ that confirms absence before the find-first create,
+// so ANY failure that is not a caller cancel means we could NOT confirm the entity is absent —
+// a blind create might duplicate one a prior attempt made (v13 ALLOWS duplicate RSAs, so this is
+// sharp for ads). Such a failure is UNCONFIRMED, not a clean "creation failed". We fold it onto
+// errNoID (which createAdGroupAndAd's switch already maps to UNCONFIRMED) EXCEPT a bare caller
+// context error (Canceled/DeadlineExceeded from the caller's ctx), which is a clean abort —
+// nothing was created — and must stay classifiable by the switch's cancel branch. Note a
+// PER-ATTEMPT client timeout surfaces inside a transportError (createOutcomeAmbiguous), not as a
+// bare context error, so it is already UNCONFIRMED and unaffected here.
+func unconfirmedLookupErr(ferr error) error {
+	if errors.Is(ferr, context.Canceled) || errors.Is(ferr, context.DeadlineExceeded) {
+		return ferr
+	}
+	if errors.Is(ferr, errNoID) {
+		return ferr // already UNCONFIRMED-classified
+	}
+	return fmt.Errorf("idempotency lookup failed (cannot confirm the entity is absent; verify before retrying): %w: %w", ferr, errNoID)
+}
+
 func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdGroupByName(ctx, campaignID, name); ferr != nil {
-		return "", false, ferr
+		return "", false, unconfirmedLookupErr(ferr)
 	} else if existingID != "" {
 		return existingID, true, nil
 	}
@@ -587,7 +607,7 @@ func finishObject(dec *json.Decoder) error {
 // path is never entered concurrently for the same destination.
 func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID string, headlines, descriptions []string, finalURL string) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdByFinalURL(ctx, adGroupID, finalURL); ferr != nil {
-		return "", false, ferr
+		return "", false, unconfirmedLookupErr(ferr)
 	} else if existingID != "" {
 		return existingID, true, nil
 	}

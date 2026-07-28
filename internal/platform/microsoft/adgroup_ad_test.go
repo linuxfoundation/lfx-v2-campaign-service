@@ -1351,6 +1351,47 @@ func TestCreateCampaign_LookupServerErrorIsUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_Lookup4xxIsUnconfirmed: a DEFINITE 4xx (e.g. 403) on the idempotency
+// lookup must be UNCONFIRMED, not a clean "creation failed" — a lookup is a READ that confirms
+// absence before the find-first create, so a failed lookup never proves the entity is absent,
+// and (v13 ALLOWS duplicate RSAs) a clean-failure reading could invite a duplicate on retry.
+// This is the ad/ad-group parity with the campaign-level lookup contract.
+func TestCreateCampaign_Lookup4xxIsUnconfirmed(t *testing.T) {
+	cases := []struct{ name, failPath string }{
+		{"ad group lookup 403", "/AdGroups/QueryByCampaignId"},
+		{"ad lookup 403", "/Ads/QueryByAdGroupId"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+				p := r.URL.Path
+				switch {
+				case strings.HasSuffix(p, tc.failPath):
+					w.WriteHeader(http.StatusForbidden) // DEFINITE 4xx on the lookup
+				case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+					_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+				case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+					_, _ = io.WriteString(w, `{"AdGroups":[]}`)
+				case strings.HasSuffix(p, "/Campaigns"):
+					_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
+				case strings.HasSuffix(p, "/AdGroups"):
+					_, _ = io.WriteString(w, `{"AdGroupIds":[654],"PartialErrors":[]}`)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, p)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			})
+			_, err := c.CreateCampaign(context.Background(), validInput())
+			if err == nil {
+				t.Fatal("expected an error on a 403 lookup")
+			}
+			if !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Errorf("a definite 4xx lookup failure must be UNCONFIRMED (absence not confirmed), got: %v", err)
+			}
+		})
+	}
+}
+
 // TestCreateCampaign_DuplicateAdGroupReconciledAsExisting: a 1214 (duplicate ad group) on the
 // create — a race lost after the find-first lookup — is reconciled by re-looking the group up
 // by name, not surfaced as a hard failure. The re-lookup returns the winner's id.
