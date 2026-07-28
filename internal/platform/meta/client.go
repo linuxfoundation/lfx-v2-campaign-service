@@ -766,11 +766,14 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // child's serving by its parent's status ("all the objects below it automatically inherit"
 // a paused/archived parent), so ordering is STATUS-DEPENDENT to avoid a partial activation
 // leaving paid delivery running:
-//   - ACTIVATE: ads FIRST, then ad set, then the campaign LAST — every child is still gated by
-//     the paused campaign until the final flip, so a mid-cascade failure leaves NOTHING serving
-//     (clean, since nothing was made servable). Only once a servable mutation may have landed
-//     is the outcome Unconfirmed.
-//   - PAUSE: campaign FIRST (delivery stops at the gate immediately), then ad set, then ads.
+//   - ACTIVATE: the ad-set-and-ads step FIRST (the ad set, THEN each discovered ad), and the
+//     campaign flipped ACTIVE LAST — the still-paused campaign gates every child until that
+//     final flip, so a failure BEFORE any child mutation leaves NOTHING serving (a clean,
+//     definite failure). But once the FIRST child mutation may have landed (the ad set POST, or
+//     a later ad), the outcome is Unconfirmed even though the paused campaign still prevents
+//     serving — a reconciler cannot assume the change was rolled back. classifyCascadeErr
+//     encodes exactly this: mutatedBefore || ambiguous → partial/Unconfirmed.
+//   - PAUSE: campaign FIRST (delivery stops at the gate immediately), then the ad set, then ads.
 //
 // An empty adSetID toggles the campaign alone — but this is allowed only on PAUSE (a degraded
 // create can still be paused); ACTIVATE with no ad set id is REJECTED, since a campaign with no
@@ -881,7 +884,14 @@ func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error
 			path += "&after=" + url.QueryEscape(after)
 		}
 		var resp struct {
-			Data []struct {
+			// Data is a POINTER slice so an ABSENT/null `data` field is distinguishable from a
+			// present-but-empty `{"data":[]}`. A malformed 2xx body like `{}` or `null` decodes
+			// with Data == nil (field absent) and CANNOT prove the ad set has no ads, whereas an
+			// intentional empty page is `{"data":[]}` (Data non-nil, len 0). Decoding both to a
+			// plain nil slice would let a `{}` body read as "fully enumerated, zero ads" and flip
+			// the campaign ACTIVE while ads stay PAUSED — the fail-open trap this cascade forbids.
+			// Mirrors the LinkedIn discovery path's `Elements *[]...` presence check.
+			Data *[]struct {
 				ID string `json:"id"`
 			} `json:"data"`
 			Paging struct {
@@ -894,7 +904,12 @@ func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error
 		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 			return nil, err
 		}
-		for _, a := range resp.Data {
+		if resp.Data == nil {
+			// 2xx but no `data` field: the body is malformed and we cannot prove the ad set's ads
+			// were enumerated. Fail closed rather than report a spurious complete-empty result.
+			return nil, fmt.Errorf("ad discovery for ad set %s returned a 2xx response with no data field; cannot confirm all ads were enumerated", adSetID)
+		}
+		for _, a := range *resp.Data {
 			id := strings.TrimSpace(a.ID)
 			if !numericIDRE.MatchString(id) {
 				// The edge returned an ad but its id is missing/non-numeric — we can't PATCH

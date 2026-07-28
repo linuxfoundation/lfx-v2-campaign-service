@@ -118,10 +118,10 @@ mid-cascade failure leaves NOTHING serving; PAUSE flips the campaign gate FIRST 
 children. Ids are validated numeric up front (nothing applied on a bad id); activating with no
 ad set id — or with an ad set that has ZERO ads (a degraded broker campaign, since Meta treats
 per-variant ad failures as non-fatal at creation) — is refused before the campaign flip, since
-such a tree cannot serve. A failure once an upstream change may have landed (the pause path, or an
-ambiguous 5xx/transport outcome) is a `partialCascadeError` (Unconfirmed); a DEFINITE (4xx)
-child failure on the activate path — before the campaign flip, nothing serving — is a clean
-failure. `StatusActive`/`StatusPaused` are the
+such a tree cannot serve. A failure once an upstream change may have landed — the pause path, an ambiguous 5xx/transport
+outcome, OR any activate-path failure AFTER the ad set (or an earlier ad) was already updated —
+is a `partialCascadeError` (Unconfirmed). Only a DEFINITE (4xx) child failure on the activate
+path BEFORE any child has been mutated (nothing serving, nothing changed) is a clean failure. `StatusActive`/`StatusPaused` are the
 accepted values; ids are validated numeric (`numericIDRE`) before interpolation. The narrower
 `UpdateCampaignStatus(ctx, campaignID, status)` (campaign node only) is retained as the
 building block. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classifier (and honors

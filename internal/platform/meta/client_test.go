@@ -3832,6 +3832,48 @@ func TestUpdateCampaignAndChildrenStatus_TruncatedDiscoveryFails(t *testing.T) {
 	}
 }
 
+// TestUpdateCampaignAndChildrenStatus_AbsentDataFieldFails verifies that a 2xx ad-discovery
+// response whose `data` field is ABSENT or null fails closed rather than reading as a
+// fully-enumerated zero-ad page. A malformed `{}` body would otherwise let the cascade report
+// success without updating any ads — flipping the campaign ACTIVE while ads stay PAUSED.
+func TestUpdateCampaignAndChildrenStatus_AbsentDataFieldFails(t *testing.T) {
+	for name, adsBody := range map[string]string{
+		"empty object": `{}`,
+		"null data":    `{"data":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+					_, _ = io.WriteString(w, adsBody) // 2xx but no usable data field
+					return
+				}
+				_, _ = io.WriteString(w, `{"success":true}`)
+			}))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusPaused)
+			if err == nil {
+				t.Fatalf("%s: a 2xx discovery with no data field must fail closed, not report zero ads", name)
+			}
+		})
+	}
+	// A genuine empty page ({"data":[]}, no next) is NOT an error — it means the ad set has no ads.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ads") {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777"}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "23847290", "999", StatusPaused); err != nil {
+		t.Fatalf("a genuine empty ad page ({\"data\":[]}) must succeed, got: %v", err)
+	}
+}
+
 // TestListAdIDs_PagesViaCursorNotRawNextURL verifies paging advances via the opaque `after`
 // cursor (built into our own path) and never reuses Meta's raw paging.next URL — so a
 // credential in paging.next can't leak into the request path or a logged error. It also

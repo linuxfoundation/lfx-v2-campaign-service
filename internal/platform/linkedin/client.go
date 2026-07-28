@@ -754,14 +754,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 	// Marketing API calls (campaign group, campaign, dark post, creative) that
 	// can trip a per-account rate limit mid-flow.
 	//
-	// Only SAFE/idempotent methods (GET, HEAD) are retried on a 429. A non-
-	// idempotent method (POST — every campaign-group/campaign/post/creative
-	// create) is NOT retried: LinkedIn's create endpoints carry no idempotency
-	// key, so a 429 whose first attempt may already have succeeded upstream would
-	// be double-sent on retry, creating a DUPLICATE resource. For those methods
-	// the 429 is returned as an error immediately so the caller does not
-	// double-create.
-	idempotent := method == http.MethodGet || method == http.MethodHead
+	// SAFE/idempotent methods (GET, HEAD) are retried on a 429. So are PARTIAL_UPDATE
+	// requests — LinkedIn tunnels them over POST with an `X-Restli-Method: PARTIAL_UPDATE`
+	// header, but a `$set` of a field (e.g. intendedStatus) is a SET-STATE operation:
+	// re-applying it yields the same result, so a 429-retry cannot create a duplicate or
+	// otherwise diverge. This matters for the status cascade, which issues up to 100
+	// sequential per-creative PARTIAL_UPDATEs; without retry a single normal rate-limit 429
+	// would abort the whole toggle as unconfirmed. Plain create POSTs (campaign-group,
+	// campaign, post, creative — no PARTIAL_UPDATE header) stay NON-idempotent: those
+	// endpoints carry no idempotency key, so a 429 whose first attempt may already have
+	// committed upstream must NOT be re-sent (it would create a DUPLICATE resource).
+	idempotent := method == http.MethodGet || method == http.MethodHead ||
+		strings.EqualFold(headers["X-Restli-Method"], "PARTIAL_UPDATE")
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		var reqBody *bytes.Reader
 		if encoded != nil {

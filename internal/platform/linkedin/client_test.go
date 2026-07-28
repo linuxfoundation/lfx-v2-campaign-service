@@ -1160,6 +1160,46 @@ func TestUpdateCampaignAndCreativesStatus_Non400OnPauseAborts(t *testing.T) {
 	}
 }
 
+// TestUpdateCampaignAndCreativesStatus_PartialUpdateRetriesOn429 verifies that a set-state
+// PARTIAL_UPDATE (creative intendedStatus) is RETRIED on a 429 rather than aborting the toggle.
+// The cascade can issue up to 100 sequential creative updates, so a normal rate-limit 429 must
+// not disproportionately fail the whole toggle; re-applying a $set is idempotent, so a retry is
+// safe (unlike a create POST, which carries no idempotency key and is not retried).
+func TestUpdateCampaignAndCreativesStatus_PartialUpdateRetriesOn429(t *testing.T) {
+	var creativeAttempts int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			mu.Lock()
+			creativeAttempts++
+			n := creativeAttempts
+			mu.Unlock()
+			if n == 1 {
+				w.WriteHeader(http.StatusTooManyRequests) // first attempt rate-limited
+				return
+			}
+			w.WriteHeader(http.StatusOK) // retry succeeds
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused); err != nil {
+		t.Fatalf("a PARTIAL_UPDATE 429 must be retried, not abort the toggle: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if creativeAttempts < 2 {
+		t.Errorf("expected the creative PARTIAL_UPDATE to be retried after a 429 (attempts=%d, want >=2)", creativeAttempts)
+	}
+}
+
 // TestUpdateCampaignAndCreativesStatus_ActivateOrdersCreativesBeforeCampaign verifies that on
 // ACTIVATE the creatives are lifted BEFORE the campaign is flipped ACTIVE — so a creative
 // failure can't leave paid delivery running (the campaign, still paused, gates everything).
