@@ -230,8 +230,18 @@ func TestCanonicalFinalURL(t *testing.T) {
 // result so an unbounded caller-controlled URL can't produce a megabyte-scale persisted
 // error — on BOTH the successful-parse branch and the fallback.
 func TestRedactAdURL(t *testing.T) {
-	// Secrets dropped on a normal URL.
-	got := redactAdURL("https://user:pass@events.example.org/register?token=SECRET#frag")
+	// Secrets dropped on a normal URL. The userinfo is built at runtime via url.UserPassword
+	// rather than written as a "https://user:pass@host" literal, which would trip secretlint's
+	// BasicAuth rule in CI (MegaLinter). Mirrors TestCreateCampaign_RejectsBadAdURL in this file.
+	secretURL := (&url.URL{
+		Scheme:   "https",
+		User:     url.UserPassword("user", "pass"),
+		Host:     "events.example.org",
+		Path:     "/register",
+		RawQuery: "token=SECRET",
+		Fragment: "frag",
+	}).String()
+	got := redactAdURL(secretURL)
 	if strings.Contains(got, "SECRET") || strings.Contains(got, "pass") || strings.Contains(got, "#frag") {
 		t.Errorf("redactAdURL leaked a secret/fragment: %q", got)
 	}
