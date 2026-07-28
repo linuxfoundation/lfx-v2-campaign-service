@@ -1629,12 +1629,14 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // classification so the service does not persist a run state the platform did not fully
 // apply.
 func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID, status string) error {
-	// Activating a campaign whose child ad group id is unknown cannot make the tree
-	// servable (the ad group stays PAUSED), so refuse rather than PATCH only the campaign
-	// and let the caller persist a misleading "active". Pausing is fine without children —
-	// pausing the parent already stops delivery.
-	if status == StatusActive && strings.TrimSpace(adGroupID) == "" {
-		return fmt.Errorf("reddit: cannot activate campaign %s: no ad group id is known, so the tree cannot be made servable", campaignID)
+	// Activating a campaign whose child ad group OR ad id is unknown cannot make the tree
+	// servable (the missing child stays PAUSED, or — for an absent ad id — the ad PATCH below
+	// is silently skipped), so refuse rather than PATCH only some nodes and let the caller
+	// persist a misleading "active". This mirrors RedditDispatcher.ToggleStatus's own guard so
+	// the exported low-level method is self-consistent for any direct caller, not just the
+	// dispatcher. Pausing is fine without children — pausing the parent already stops delivery.
+	if status == StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
+		return fmt.Errorf("reddit: cannot activate campaign %s: its ad group and ad ids must both be known, so the tree cannot be made servable", campaignID)
 	}
 	if err := c.updateEntityStatus(ctx, "campaigns", campaignID, status); err != nil {
 		return err

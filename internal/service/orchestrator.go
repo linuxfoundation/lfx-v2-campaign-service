@@ -873,8 +873,16 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrToggleUnsupported, platform)
 	}
-	// Any error from here is from the platform call itself (or the dispatcher's own
-	// pre-flight cred resolution) — surfaced as a platform failure by the caller. Bound the
+	// Any error from here is from the platform call itself (or the dispatcher's own pre-flight
+	// cred resolution) — surfaced as a platform failure by the caller. This deliberately
+	// includes a dispatcher's CONNECTION-STATE pre-flight failures (connection not ACTIVE,
+	// incomplete credentials, missing account id): the ad platform is never contacted, so a 503
+	// slightly over-attributes to the platform, but these are surfaced as-is (not a distinct
+	// sentinel) because the remedy — reactivate/repair the connection then retry — is the same
+	// operator action a platform 503 already prompts, and the classification is UNIFORM across
+	// all dispatchers (reddit/meta/linkedin/twitter/googleads resolve identically). Promoting
+	// connection-state to its own 409/422 sentinel is a cross-dispatcher change tracked as
+	// follow-up rather than a reddit-only divergence. Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
 	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
 	// caller as an error rather than mutating the platform after the response can no longer be

@@ -3870,6 +3870,49 @@ func TestUpdateCampaignAndChildrenStatus_CascadesToTree(t *testing.T) {
 	}
 }
 
+// TestUpdateCampaignAndChildrenStatus_ActivateRequiresBothChildIDs verifies the low-level
+// method refuses to ACTIVATE when EITHER the ad group id OR the ad id is missing (mirroring the
+// dispatcher guard), so a direct caller can't PATCH a subset of the tree and persist a
+// misleading "active" for a campaign that cannot serve. No API call is made.
+func TestUpdateCampaignAndChildrenStatus_ActivateRequiresBothChildIDs(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen when a child id is missing on activate: %s %s", r.Method, r.URL.Path)
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	for name, tc := range map[string]struct{ adGroupID, adID string }{
+		"missing ad id":       {adGroupID: "t5_ag", adID: ""},
+		"missing ad group id": {adGroupID: "", adID: "t6_ad"},
+		"missing both":        {adGroupID: "", adID: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", tc.adGroupID, tc.adID, StatusActive)
+			if err == nil {
+				t.Fatalf("%s: activate must be refused when a child id is missing", name)
+			}
+			if !strings.Contains(err.Error(), "servable") {
+				t.Errorf("%s: error should explain the tree cannot be made servable, got: %v", name, err)
+			}
+		})
+	}
+	// PAUSE with missing child ids is fine (pausing the parent stops delivery). Use a permissive
+	// server so the campaign PATCH can proceed — the guard applies to ACTIVATE only.
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer okSrv.Close()
+	pc := NewClient(testCreds, testAccount, WithBaseURL(okSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	if err := pc.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", "", "", StatusPaused); err != nil {
+		t.Errorf("pause with no child ids must be allowed, got: %v", err)
+	}
+}
+
 // TestUpdateCampaignStatus_ValidatesInput rejects bad input BEFORE any API call.
 func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
