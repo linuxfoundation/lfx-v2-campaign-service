@@ -254,6 +254,36 @@ func TestGoogleAds_DispatchSuccessMapsResult(t *testing.T) {
 	}
 }
 
+func TestGoogleAds_TrimsWhitespaceCustomerID(t *testing.T) {
+	// A whitespace-padded connection AccountID must be TRIMMED before it reaches the client:
+	// the dispatcher's empty check already trims, so an untrimmed CustomerID would pass that
+	// check and then fail the client's digits-only validation as a confusing pre-create error.
+	// The outbound request path must be scoped to the trimmed customer id.
+	var gotPath string
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+	conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+	conn.AccountID = "  1234567890  " // padded — must be trimmed before use
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, opts...)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, json.RawMessage(`{"googleAdsConfig":{"budget":50}}`))
+	if err != nil {
+		t.Fatalf("Dispatch with a whitespace-padded customer id must succeed after trimming, got: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "222" {
+		t.Fatalf("expected a created campaign, got %+v", camp)
+	}
+	if !strings.Contains(gotPath, "customers/1234567890/") || strings.Contains(gotPath, " ") {
+		t.Errorf("request path %q must be scoped to the TRIMMED customer id (no whitespace)", gotPath)
+	}
+}
+
 func TestGoogleAds_AmbiguousCreateRetainsClaim(t *testing.T) {
 	// The budget is created, then the campaign :mutate returns a 5xx (ambiguous): the
 	// GA client returns a non-nil partial (name-only, carrying the orphaned budget) with

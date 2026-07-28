@@ -69,7 +69,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
 		return nil, notCreated(fmt.Errorf("google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)"))
 	}
-	if strings.TrimSpace(res.accountID) == "" {
+	// Trim ONCE and use the trimmed value for both the empty check and the CustomerID passed
+	// to the client: without this a whitespace-padded id would pass the empty check here and
+	// then be sent untrimmed to the client's digits-only validator, failing as a confusing
+	// pre-create error. LoginCustomerID is already trimmed below; this keeps the two ids
+	// consistent (mirrors the sibling adapters, which trim before use).
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
 		return nil, notCreated(fmt.Errorf("google ads connection for project %s has no account id (customer id)", brief.ProjectID))
 	}
 
@@ -108,7 +114,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			RefreshToken:   creds.RefreshToken,
 		},
 		googleads.AccountConfig{
-			CustomerID:      res.accountID,
+			CustomerID:      accountID,
 			LoginCustomerID: strings.TrimSpace(res.providerConfig["login_customer_id"]),
 			Label:           res.label,
 		},
