@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // ---- full-tree happy path --------------------------------------------------
@@ -689,6 +691,46 @@ func TestCreateCampaign_DisplayDomainWideCapRejectsCJKHost(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "display domain") {
 		t.Errorf("expected a display-domain error, got: %v", err)
+	}
+}
+
+func TestCreateCampaign_DisplayDomainWideCapDecodesPunycodeHost(t *testing.T) {
+	// A caller may supply the host already in its ASCII punycode (`xn--`) A-label. finalURL is
+	// buildAdFinalURL's wire form, so re-parsing it yields the `xn--` host verbatim — measuring
+	// THAT ascii form would miss both the double-width detection and the true rune count, letting
+	// a wide CJK host clear the 67-rune single-width cap only to be rejected by Microsoft's decoded
+	// wide-host rule at AddAds and orphan the PAUSED campaign/ad group. The check must decode the
+	// host to its Unicode form first. 40 CJK runes (「字」×40) punycode-encode to an `xn--` label
+	// that is UNDER 67 ASCII chars, so without decoding this URL would wrongly pass.
+	unicodeHost := strings.Repeat("字", 40) + ".example"
+	asciiHost, err := idna.Lookup.ToASCII(unicodeHost)
+	if err != nil {
+		t.Fatalf("failed to punycode-encode the test host: %v", err)
+	}
+	if strings.EqualFold(asciiHost, unicodeHost) {
+		t.Fatal("test host did not punycode-encode; fixture is not exercising the xn-- path")
+	}
+	var reached bool
+	api := &campaignsAPI{}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		base(w, r)
+	})
+	in := validInput()
+	in.RegistrationURL = "https://" + asciiHost + "/register"
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected a display-domain rejection for a punycode-encoded wide CJK host")
+	}
+	if !strings.Contains(err.Error(), "display domain") {
+		t.Errorf("expected a display-domain error, got: %v", err)
+	}
+	if res != nil {
+		t.Errorf("a bad display domain must fail cleanly (nil result), got %+v", res)
+	}
+	if reached {
+		t.Error("no API call should be made — the punycode display domain is invalid up front")
 	}
 }
 

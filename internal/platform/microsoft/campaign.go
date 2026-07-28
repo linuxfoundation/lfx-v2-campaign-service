@@ -19,6 +19,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // ---------------------------------------------------------------------------
@@ -327,12 +329,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// stripped so it never counts against an otherwise-valid host. Parse errors are ignored:
 	// validateAdURL already rejected a malformed URL (and its embedded userinfo).
 	if u, perr := url.Parse(finalURL); perr == nil {
-		authority := u.Hostname()
+		// Decode the host to its Unicode (U-label) form BEFORE the width/length check. finalURL
+		// is buildAdFinalURL's u.String() wire form, so a caller-supplied punycode host arrives as
+		// its ASCII `xn--` A-label: hasDoubleWidth would never fire on it and the rune count would
+		// measure the ASCII form, letting a wide host clear the 67-rune cap only to hit Microsoft's
+		// decoded wide-host rule (33 runes) at AddAds — the exact orphaning this check prevents.
+		// Conversely a short CJK host inflated by punycode could be false-rejected. idna ToUnicode
+		// decodes `xn--` back to CJK and is a no-op for a plain ASCII or already-percent-decoded
+		// host; on failure keep Hostname() so a malformed label still gets a length check.
+		host := u.Hostname()
+		if uni, ierr := idna.Lookup.ToUnicode(host); ierr == nil && uni != "" {
+			host = uni
+		}
+		authority := host
 		// Lower-case the scheme before the default-port test: validateAdURL accepts any scheme
 		// casing and buildAdFinalURL preserves it, so a valid HTTPS://…:443 would otherwise
 		// miss the case-sensitive "https" match and wrongly count :443 against the host length.
 		if port := u.Port(); port != "" && !isDefaultPort(strings.ToLower(u.Scheme), port) {
-			authority = net.JoinHostPort(u.Hostname(), port)
+			authority = net.JoinHostPort(host, port)
 		}
 		limit := maxDisplayDomainRunes
 		if hasDoubleWidth(authority) {
