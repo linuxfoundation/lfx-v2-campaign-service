@@ -4,6 +4,7 @@
 package microsoft
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -144,9 +145,13 @@ type createAdGroupsRequest struct {
 	ReturnInheritedBidStrategyTypes bool        `json:"ReturnInheritedBidStrategyTypes"`
 }
 
+// Both arrays are BOUNDED slice types (see boundedNumberIDs / boundedErrorItems) so a
+// malformed up-to-8-MiB create response packed with null/empty entries can't amplify into tens
+// of MiB of allocations per concurrent create — only the first id and whether ANY PartialError
+// is present are ever needed. Mirrors createCampaignsResponse.
 type createAdGroupsResponse struct {
-	AdGroupIds    []*json.Number `json:"AdGroupIds"`
-	PartialErrors []msErrorItem  `json:"PartialErrors"`
+	AdGroupIds    boundedNumberIDs  `json:"AdGroupIds"`
+	PartialErrors boundedErrorItems `json:"PartialErrors"`
 }
 
 // queryAdGroupsRequest is the POST /AdGroups/QueryByCampaignId body used by
@@ -154,18 +159,6 @@ type createAdGroupsResponse struct {
 // CampaignId in the body, not a GET.
 type queryAdGroupsRequest struct {
 	CampaignId json.Number `json:"CampaignId"`
-}
-
-// queryAdGroupsResponse is the (subset of the) QueryByCampaignId response. AdGroups is a
-// POINTER slice so an OMITTED or null "AdGroups" field (nil pointer) is distinguishable from
-// a present-but-empty list (non-nil, len 0). A missing field means the response never
-// confirmed the ad group is absent, so findAdGroupByName fails closed (UNCONFIRMED) rather
-// than treating nil as "no ad group" and creating a duplicate. Mirrors queryCampaignsResponse.
-type queryAdGroupsResponse struct {
-	AdGroups *[]struct {
-		Id   *json.Number `json:"Id"`
-		Name string       `json:"Name"`
-	} `json:"AdGroups"`
 }
 
 // msTextAsset is a TextAsset carried inside an AssetLink. Microsoft stores a responsive
@@ -209,9 +202,10 @@ type createAdsRequest struct {
 	Ads       []msResponsiveSearchAd `json:"Ads"`
 }
 
+// Bounded slice types, as createAdGroupsResponse — a malformed 8-MiB create body can't OOM.
 type createAdsResponse struct {
-	AdIds         []*json.Number `json:"AdIds"`
-	PartialErrors []msErrorItem  `json:"PartialErrors"`
+	AdIds         boundedNumberIDs  `json:"AdIds"`
+	PartialErrors boundedErrorItems `json:"PartialErrors"`
 }
 
 // queryAdsRequest is the POST /Ads/QueryByAdGroupId body used by findAdByFinalURL. Unlike
@@ -450,33 +444,88 @@ func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string)
 	if err != nil {
 		return "", err
 	}
-	var resp queryAdGroupsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
-		// A 2xx lookup whose body won't decode leaves it UNKNOWN whether a matching ad group
-		// exists, so a blind create could duplicate. Wrap errNoID so the caller classifies it
-		// UNCONFIRMED (verify before retry), not a definite "creation failed".
-		return "", fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", uErr, errNoID)
+	// STREAM the AdGroups array by name (see lookupNamedEntity) rather than Unmarshaling the
+	// whole set: a malformed up-to-8-MiB body packed with `{}` entries would otherwise amplify
+	// into tens of MiB per concurrent create. The omitted/null-vs-present distinction is
+	// preserved and validated (a truncated array fails closed), mirroring lookupCampaignByName.
+	id, matched, present, err := lookupNamedEntity(body, "AdGroups", name)
+	if err != nil {
+		return "", fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", err, errNoID)
 	}
-	if resp.AdGroups == nil {
-		// The response OMITTED the AdGroups field entirely: we cannot confirm the ad group is
-		// absent, and a blind create could duplicate. Fail closed as UNCONFIRMED rather than
-		// treating a missing field as "no ad group".
+	if !present {
+		// The response OMITTED (or nulled, or truncated) the AdGroups field: we cannot confirm
+		// the ad group is absent, and a blind create could duplicate. Fail closed as UNCONFIRMED.
 		return "", fmt.Errorf("AdGroups/QueryByCampaignId response omitted the AdGroups field; cannot confirm ad group %q is absent: %w", name, errNoID)
 	}
-	for _, g := range *resp.AdGroups {
-		if !strings.EqualFold(g.Name, name) {
-			continue
-		}
-		if id := numberID(g.Id); id != "" {
-			return id, nil
-		}
-		// The name matched (ad-group names are case-insensitively unique under a campaign)
-		// but the id is null/unparseable: the group almost certainly exists. Reporting ""
-		// (absent) would issue POST /AdGroups and create a DUPLICATE. Return errNoID so the
-		// caller treats it as UNCONFIRMED (verify before retry).
+	if matched && id == "" {
+		// The name matched (ad-group names are case-insensitively unique under a campaign) but
+		// the id is null/unparseable: the group almost certainly exists. Reporting "" (absent)
+		// would issue POST /AdGroups and create a DUPLICATE. errNoID → UNCONFIRMED.
 		return "", fmt.Errorf("ad group %q found with no usable id: %w", name, errNoID)
 	}
-	return "", nil
+	return id, nil
+}
+
+// lookupNamedEntity streams the top-level object's `field` array (whose elements are
+// {"Id":..,"Name":..}) comparing each Name case-insensitively to `name`, WITHOUT materializing
+// the whole array. It returns the first match's usable id (or "" when the match has no usable
+// id), whether a match was found, and whether the field was PRESENT as a well-formed, fully
+// closed array. A truncated/unterminated array errors (fail closed), and an omitted/null field
+// yields present=false. Shared by findAdGroupByName; mirrors lookupCampaignByName exactly.
+func lookupNamedEntity(body []byte, field, name string) (id string, matched, present bool, err error) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	tok, err := dec.Token()
+	if err != nil {
+		return "", false, false, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return "", false, false, fmt.Errorf("expected a JSON object")
+	}
+	for dec.More() {
+		keyTok, kerr := dec.Token()
+		if kerr != nil {
+			return "", false, false, kerr
+		}
+		if key, _ := keyTok.(string); key != field {
+			if serr := skipJSONValue(dec); serr != nil {
+				return "", false, false, serr
+			}
+			continue
+		}
+		vTok, verr := dec.Token()
+		if verr != nil {
+			return "", false, false, verr
+		}
+		if vTok == nil { // null → omitted
+			return "", false, false, nil
+		}
+		if d, ok := vTok.(json.Delim); !ok || d != '[' {
+			return "", false, false, fmt.Errorf("expected a JSON array for %s", field)
+		}
+		for dec.More() {
+			var e struct {
+				Id   *json.Number `json:"Id"`
+				Name string       `json:"Name"`
+			}
+			if derr := dec.Decode(&e); derr != nil {
+				return "", false, false, derr
+			}
+			if matched || !strings.EqualFold(e.Name, name) {
+				continue
+			}
+			matched = true
+			id = numberID(e.Id)
+		}
+		endTok, eerr := dec.Token() // must consume+validate the closing ']' (fail closed on truncation)
+		if eerr != nil {
+			return "", false, false, eerr
+		}
+		if d, ok := endTok.(json.Delim); !ok || d != ']' {
+			return "", false, false, fmt.Errorf("malformed %s array (unterminated)", field)
+		}
+		return id, matched, true, nil
+	}
+	return "", false, false, nil // no such key → omitted
 }
 
 // findOrCreateResponsiveSearchAd returns (id, existed, err). It looks for an existing ad
@@ -535,19 +584,6 @@ func textAssetLinks(texts []string) []msAssetLink {
 	return links
 }
 
-// queryAdsResponse is the (subset of the) Ads/QueryByAdGroupId response used to match an
-// existing ad by its destination for idempotency. Ads is a POINTER slice so an OMITTED or
-// null "Ads" field (nil pointer) is distinguishable from a present-but-empty list. This
-// matters MOST for ads: v13 permits duplicate responsive search ads and there is NO
-// create-time duplicate reconcile, so treating a missing field as "no ad" would stack a
-// duplicate ad on retry. A nil field makes findAdByFinalURL fail closed (UNCONFIRMED).
-type queryAdsResponse struct {
-	Ads *[]struct {
-		Id        *json.Number `json:"Id"`
-		FinalUrls []string     `json:"FinalUrls"`
-	} `json:"Ads"`
-}
-
 // findAdByFinalURL returns the id of an ad in the group whose FinalUrls contains
 // finalURL, or "" if none. It POSTs /Ads/QueryByAdGroupId with the AdGroupId in the body
 // (the v13 GetAdsByAdGroupId REST operation is a POST-with-body, not a GET). A READ
@@ -565,45 +601,95 @@ func (c *Client) findAdByFinalURL(ctx context.Context, adGroupID, finalURL strin
 	if err != nil {
 		return "", err
 	}
-	var resp queryAdsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
-		// A 2xx lookup whose body won't decode leaves it UNKNOWN whether a matching ad
-		// exists, so a blind create could duplicate. Wrap errNoID so the caller classifies it
-		// UNCONFIRMED (verify before retry), not a definite "creation failed".
-		return "", fmt.Errorf("decode Ads/QueryByAdGroupId response (%v): %w", uErr, errNoID)
+	// STREAM the Ads array matching on the destination, rather than Unmarshaling the whole set:
+	// a malformed up-to-8-MiB body packed with `{}` entries would otherwise amplify into tens of
+	// MiB per concurrent create. The omitted/null-vs-present distinction is preserved+validated
+	// (a truncated array fails closed), mirroring lookupCampaignByName.
+	id, matched, present, err := lookupAdByFinalURL(body, finalURL)
+	if err != nil {
+		return "", fmt.Errorf("decode Ads/QueryByAdGroupId response (%v): %w", err, errNoID)
 	}
-	if resp.Ads == nil {
-		// The response OMITTED the Ads field entirely: we cannot confirm the ad is absent.
-		// Because v13 permits duplicate RSAs and there is no create-time reconcile, treating a
+	if !present {
+		// The response OMITTED (or nulled, or truncated) the Ads field: we cannot confirm the ad
+		// is absent. v13 permits duplicate RSAs with no create-time reconcile, so treating a
 		// missing field as "no ad" would stack a duplicate on retry. Fail closed as UNCONFIRMED.
 		return "", fmt.Errorf("Ads/QueryByAdGroupId response omitted the Ads field; cannot confirm the ad for %q is absent: %w", redactAdURL(finalURL), errNoID)
 	}
-	wantKey := canonicalFinalURL(finalURL)
-	for _, ad := range *resp.Ads {
-		matchesDest := false
-		for _, u := range ad.FinalUrls {
-			// Compare on a canonical form, not byte-for-byte: buildAdFinalURL emits
-			// url.Values.Encode() (sorted, percent-encoded) but Microsoft may re-encode the
-			// stored FinalUrls on read-back (reorder params, re-case the %-escape hex, drop a
-			// default port, lower-case the host). A byte-exact compare would then miss and — v13
-			// permits duplicate RSAs and this is the idempotency key — a retry would stack a
-			// duplicate ad. canonicalFinalURL folds those representation-only differences away.
-			if u == finalURL || canonicalFinalURL(u) == wantKey {
-				matchesDest = true
-				break
-			}
-		}
-		if !matchesDest {
-			continue
-		}
-		if id := numberID(ad.Id); id != "" {
-			return id, nil
-		}
-		// Destination matched but the id is nil/unparseable: the ad exists yet we
-		// cannot key on it. Ambiguous — do not report "absent".
+	if matched && id == "" {
+		// Destination matched but the id is nil/unparseable: the ad exists yet we cannot key on
+		// it. Ambiguous — do not report "absent".
 		return "", fmt.Errorf("ad for %q found with no usable id: %w", redactAdURL(finalURL), errNoID)
 	}
-	return "", nil
+	return id, nil
+}
+
+// lookupAdByFinalURL streams the Ads/QueryByAdGroupId body, matching each ad's FinalUrls against
+// finalURL on a CANONICAL form (canonicalFinalURL folds representation-only differences —
+// param order, %-escape casing, default port, host case — so Microsoft re-encoding the stored
+// URL on read-back still matches; a byte-exact compare would miss and stack a duplicate RSA).
+// It never materializes the whole Ads set, preserves+validates the omitted/null-vs-present
+// distinction (truncated → error, fail closed), and returns the first matching ad's usable id
+// (or "" when the match has no usable id).
+func lookupAdByFinalURL(body []byte, finalURL string) (id string, matched, present bool, err error) {
+	wantKey := canonicalFinalURL(finalURL)
+	dec := json.NewDecoder(bytes.NewReader(body))
+	tok, err := dec.Token()
+	if err != nil {
+		return "", false, false, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return "", false, false, fmt.Errorf("expected a JSON object")
+	}
+	for dec.More() {
+		keyTok, kerr := dec.Token()
+		if kerr != nil {
+			return "", false, false, kerr
+		}
+		if key, _ := keyTok.(string); key != "Ads" {
+			if serr := skipJSONValue(dec); serr != nil {
+				return "", false, false, serr
+			}
+			continue
+		}
+		vTok, verr := dec.Token()
+		if verr != nil {
+			return "", false, false, verr
+		}
+		if vTok == nil { // null → omitted
+			return "", false, false, nil
+		}
+		if d, ok := vTok.(json.Delim); !ok || d != '[' {
+			return "", false, false, fmt.Errorf("expected a JSON array for Ads")
+		}
+		for dec.More() {
+			var ad struct {
+				Id        *json.Number `json:"Id"`
+				FinalUrls []string     `json:"FinalUrls"`
+			}
+			if derr := dec.Decode(&ad); derr != nil {
+				return "", false, false, derr
+			}
+			if matched {
+				continue
+			}
+			for _, u := range ad.FinalUrls {
+				if u == finalURL || canonicalFinalURL(u) == wantKey {
+					matched = true
+					id = numberID(ad.Id)
+					break
+				}
+			}
+		}
+		endTok, eerr := dec.Token() // consume+validate the closing ']' (fail closed on truncation)
+		if eerr != nil {
+			return "", false, false, eerr
+		}
+		if d, ok := endTok.(json.Delim); !ok || d != ']' {
+			return "", false, false, fmt.Errorf("malformed Ads array (unterminated)")
+		}
+		return id, matched, true, nil
+	}
+	return "", false, false, nil // no Ads key → omitted
 }
 
 // errNoID marks a 2xx create response that carried neither a usable id NOR a

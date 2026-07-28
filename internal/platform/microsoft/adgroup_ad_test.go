@@ -330,6 +330,56 @@ func TestCreateCampaign_AdLookupMatchWithNoIDIsUnconfirmed(t *testing.T) {
 // AdGroups field (nil pointer slice, not an empty list) must NOT be read as "no ad group".
 // Treating it as absent would POST /AdGroups and could duplicate; the step must be
 // UNCONFIRMED and issue no ad-group create.
+// TestAdGroupAndAdStreamingLookups covers the streaming lookup helpers directly: they find a
+// buried match without materializing the whole array, preserve the omitted/null-vs-present
+// distinction, and FAIL CLOSED (error) on a truncated array so a partial body is never read as
+// a clean absence (which would risk a duplicate create).
+func TestAdGroupAndAdStreamingLookups(t *testing.T) {
+	// lookupNamedEntity (ad groups) — buried match by name (case-insensitive).
+	var big strings.Builder
+	big.WriteString(`{"AdGroups":[`)
+	for i := 0; i < 3000; i++ {
+		big.WriteString(`{"Id":null,"Name":"other"},`)
+	}
+	big.WriteString(`{"Id":111,"Name":"TARGET"}]}`)
+	if id, m, p, err := lookupNamedEntity([]byte(big.String()), "AdGroups", "target"); err != nil || !m || !p || id != "111" {
+		t.Fatalf("adgroup buried match: id=%q m=%v p=%v err=%v, want 111/true/true/nil", id, m, p, err)
+	}
+	// omitted / null / present-empty
+	if _, m, p, err := lookupNamedEntity([]byte(`{}`), "AdGroups", "x"); err != nil || m || p {
+		t.Errorf("adgroup omitted: m=%v p=%v err=%v want false/false/nil", m, p, err)
+	}
+	if _, _, p, err := lookupNamedEntity([]byte(`{"AdGroups":null}`), "AdGroups", "x"); err != nil || p {
+		t.Errorf("adgroup null: p=%v err=%v want false/nil", p, err)
+	}
+	if _, m, p, err := lookupNamedEntity([]byte(`{"AdGroups":[]}`), "AdGroups", "x"); err != nil || m || !p {
+		t.Errorf("adgroup empty: m=%v p=%v err=%v want false/true/nil", m, p, err)
+	}
+	// truncated → fail closed (error)
+	for _, bad := range []string{`{"AdGroups":[`, `{"AdGroups":[{"Id":1,"Name":"a"}`} {
+		if _, _, _, err := lookupNamedEntity([]byte(bad), "AdGroups", "a"); err == nil {
+			t.Errorf("adgroup truncated %q must error (fail closed)", bad)
+		}
+	}
+
+	// lookupAdByFinalURL — match by destination on canonical form; a re-encoded URL still matches.
+	target := "https://events.example.org/register?a=1&b=2"
+	reenc := "https://Events.Example.ORG/register?b=2&a=1"
+	body := `{"Ads":[{"Id":null,"FinalUrls":["https://x.example/nope"]},{"Id":222,"FinalUrls":["` + reenc + `"]}]}`
+	if id, m, p, err := lookupAdByFinalURL([]byte(body), target); err != nil || !m || !p || id != "222" {
+		t.Fatalf("ad canonical match: id=%q m=%v p=%v err=%v, want 222/true/true/nil", id, m, p, err)
+	}
+	if _, m, p, err := lookupAdByFinalURL([]byte(`{}`), target); err != nil || m || p {
+		t.Errorf("ad omitted: m=%v p=%v err=%v want false/false/nil", m, p, err)
+	}
+	if _, m, p, err := lookupAdByFinalURL([]byte(`{"Ads":[]}`), target); err != nil || m || !p {
+		t.Errorf("ad empty: m=%v p=%v err=%v want false/true/nil", m, p, err)
+	}
+	if _, _, _, err := lookupAdByFinalURL([]byte(`{"Ads":[{"Id":1,"FinalUrls":["`+target+`"]}`), target); err == nil {
+		t.Error("ad truncated must error (fail closed)")
+	}
+}
+
 func TestCreateCampaign_OmittedAdGroupsFieldIsUnconfirmed(t *testing.T) {
 	in := validInput()
 	api := &campaignsAPI{adGroupGetBody: `{}`} // AdGroups field omitted entirely
