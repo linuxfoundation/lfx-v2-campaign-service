@@ -855,6 +855,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				wait = maxRetryWait
 			}
 			if err := sleepCtx(ctx, wait); err != nil {
+				// The 429 arrived AFTER the request was sent. For a MUTATING retryable request
+				// (PARTIAL_UPDATE, tunneled over POST), that request may have COMMITTED upstream
+				// before the 429, so a context cancellation during the backoff must NOT surface as
+				// a plain (clean/cancel) error — it is AMBIGUOUS. Wrap it as a transportError so the
+				// caller treats the mutation as "may be applied" (Unconfirmed). A non-mutating
+				// GET/HEAD retryable request commits nothing, so its plain context error is correct.
+				if isMutatingMethod(method) {
+					return nil, &transportError{Method: method, Path: path, Err: err}
+				}
 				return nil, err
 			}
 			continue

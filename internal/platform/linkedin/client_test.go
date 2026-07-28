@@ -1168,6 +1168,38 @@ func TestUpdateCampaignAndCreativesStatus_AllCreatives400OnPauseFailsClosed(t *t
 	}
 }
 
+// TestUpdateCampaignAndCreativesStatus_MutatingBackoffCancelIsUnconfirmed verifies that a 429 on
+// a mutating PARTIAL_UPDATE followed by a context cancellation DURING the retry backoff surfaces
+// as Unconfirmed (transportError), not a plain clean/cancel error — the 429 arrived after the
+// request was sent, so the creative update may have committed upstream before the rate-limit.
+func TestUpdateCampaignAndCreativesStatus_MutatingBackoffCancelIsUnconfirmed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}],"metadata":{}}`)
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			cancel()                                  // cancel the caller ctx so the backoff sleep aborts
+			w.WriteHeader(http.StatusTooManyRequests) // 429 AFTER the request was sent (may have committed)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	// A non-trivial base delay guarantees the retry enters sleepCtx (which then sees the cancel).
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Second))
+	err := c.UpdateCampaignAndCreativesStatus(ctx, "555", StatusActive)
+	if err == nil {
+		t.Fatal("expected an error when the backoff is cancelled after a mutating 429")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a mutating-429 backoff cancel must be Unconfirmed (may have committed), got %T: %v", err, err)
+	}
+}
+
 // TestValidateToggleInput_RejectsPaddedToken verifies a surrounding-whitespace access token is
 // rejected up front (parity with CreateCampaign), before any HTTP call.
 func TestValidateToggleInput_RejectsPaddedToken(t *testing.T) {
