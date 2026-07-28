@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -555,6 +556,18 @@ func finishObject(dec *json.Decoder) error {
 	}
 	if d, ok := endTok.(json.Delim); !ok || d != '}' {
 		return fmt.Errorf("malformed response object (unterminated)")
+	}
+	// Require EOF after the closing '}'. The decoder spans the WHOLE response body, so any
+	// trailing bytes — junk appended to a truncated stream, or a second concatenated JSON
+	// value — mean the body is malformed. Without this check `{"Ads":[]}garbage` would be
+	// trusted as a clean empty lookup and the caller would create a duplicate, breaking the
+	// fail-closed idempotency contract this helper exists to enforce. Insignificant trailing
+	// whitespace is fine: json.Decoder skips it, so a well-formed body reports io.EOF here.
+	if _, terr := dec.Token(); terr != io.EOF {
+		if terr != nil {
+			return terr
+		}
+		return fmt.Errorf("malformed response object (trailing data after object)")
 	}
 	return nil
 }
@@ -1129,16 +1142,72 @@ func canonicalFinalURL(raw string) string {
 		u.Path = "/"
 		u.RawPath = ""
 	}
-	// Upper-case the hex digits of any percent-escape in the path WITHOUT decoding it, so
-	// `/a%2fb` and `/a%2Fb` produce the same key while `%2F` (an escaped slash) stays
-	// distinct from a literal `/`. Set RawPath so u.String() emits this exact spelling.
+	// Normalize percent-escapes in the path so two spellings of the SAME request target key
+	// equal: (1) DECODE escapes of RFC 3986 unreserved bytes (A-Z a-z 0-9 - . _ ~) to their
+	// literal form — `/a%7Eb` and `/a~b` are the same target, and Microsoft may return either,
+	// so without this a retry would miss the existing ad and post a duplicate; (2) upper-case
+	// the hex of every REMAINING (reserved/other) escape so `%2f` and `%2F` match, WITHOUT
+	// decoding it — an escaped slash `%2F` must stay distinct from a literal `/`, which carries
+	// a different meaning. Set RawPath so u.String() emits this exact normalized spelling.
 	escaped := u.EscapedPath()
-	u.RawPath = upperPercentEscapes(escaped)
+	u.RawPath = upperPercentEscapes(decodeUnreservedEscapes(escaped))
 	// Re-decode then re-encode the query into url.Values' normal form (sorted keys,
 	// canonical escaping) so param order and %-escape casing don't affect the key. The
 	// #fragment is left intact (see the doc above) — it is part of the destination.
 	u.RawQuery = u.Query().Encode()
 	return u.String()
+}
+
+// decodeUnreservedEscapes decodes every percent-escape whose octet is an RFC 3986 UNRESERVED
+// byte (A-Z a-z 0-9 - . _ ~) to that literal character, leaving all other escapes (reserved
+// or non-ASCII, e.g. `%2F`, `%20`, `%E4`) untouched. Per RFC 3986 §2.3 an unreserved octet
+// and its percent-encoding are equivalent, so decoding them never changes the target — it
+// only canonicalizes spelling (`%7E` -> `~`). A malformed escape (fewer than two following
+// hex digits) is left as-is. Used to key `/a%7Eb` and `/a~b` — the same target — equal.
+func decodeUnreservedEscapes(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) && isHexDigit(s[i+1]) && isHexDigit(s[i+2]) {
+			if oct := hexByte(s[i+1], s[i+2]); isUnreservedByte(oct) {
+				b.WriteByte(oct)
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// isUnreservedByte reports whether c is an RFC 3986 §2.3 unreserved character.
+func isUnreservedByte(c byte) bool {
+	switch {
+	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+		c == '-', c == '.', c == '_', c == '~':
+		return true
+	}
+	return false
+}
+
+// hexByte returns the byte value of the two-hex-digit pair (hi, lo). Callers must ensure both
+// are hex digits (isHexDigit).
+func hexByte(hi, lo byte) byte {
+	return hexVal(hi)<<4 | hexVal(lo)
+}
+
+func hexVal(c byte) byte {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0'
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10
+	default: // 'A'-'F'
+		return c - 'A' + 10
+	}
 }
 
 // upperPercentEscapes upper-cases the two hex digits following each '%' in s, leaving every

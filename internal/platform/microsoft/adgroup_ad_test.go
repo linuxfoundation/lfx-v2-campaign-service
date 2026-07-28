@@ -170,6 +170,15 @@ func TestCanonicalFinalURL(t *testing.T) {
 			"https://x.example/a%2fb",
 			"https://x.example/a%2Fb",
 		},
+		{ // unreserved-byte escapes DECODE to their literal form (RFC 3986 §2.3): same target
+			"https://x.example/a~b",
+			"https://x.example/a%7Eb", // ~ = U+007E
+			"https://x.example/a%7eb", // lower-hex spelling of the same escape
+		},
+		{ // a mix: unreserved letters/digits decode, a reserved escape stays escaped
+			"https://x.example/%41%42c%2Fd", // %41=A %42=B, %2F stays escaped
+			"https://x.example/ABc%2Fd",
+		},
 		{ // an IDN and its punycode A-label are the SAME DNS name → same key
 			"https://café.example/p",
 			"https://xn--caf-dma.example/p",
@@ -357,12 +366,25 @@ func TestAdGroupAndAdStreamingLookups(t *testing.T) {
 	if _, m, p, err := lookupNamedEntity([]byte(`{"AdGroups":[]}`), "AdGroups", "x"); err != nil || m || !p {
 		t.Errorf("adgroup empty: m=%v p=%v err=%v want false/true/nil", m, p, err)
 	}
-	// truncated → fail closed (error). Includes `{"AdGroups":[]` where the ARRAY closes but the
-	// enclosing OBJECT does not — that must still error, not be read as a clean empty lookup.
-	for _, bad := range []string{`{"AdGroups":[`, `{"AdGroups":[{"Id":1,"Name":"a"}`, `{"AdGroups":[]`, `{"AdGroups":[],"x":`} {
+	// truncated/malformed → fail closed (error). Includes `{"AdGroups":[]` where the ARRAY closes
+	// but the enclosing OBJECT does not, and `{"AdGroups":[]}garbage`/concatenated objects where
+	// the object closes but trailing bytes follow — all must error, not be read as a clean empty
+	// lookup (the fail-closed idempotency contract; trailing data means a malformed body).
+	for _, bad := range []string{
+		`{"AdGroups":[`,
+		`{"AdGroups":[{"Id":1,"Name":"a"}`,
+		`{"AdGroups":[]`,
+		`{"AdGroups":[],"x":`,
+		`{"AdGroups":[]}garbage`,          // trailing junk after the closing brace
+		`{"AdGroups":[]} {"AdGroups":[]}`, // a second concatenated JSON object
+	} {
 		if _, _, _, err := lookupNamedEntity([]byte(bad), "AdGroups", "a"); err == nil {
-			t.Errorf("adgroup truncated %q must error (fail closed)", bad)
+			t.Errorf("adgroup malformed %q must error (fail closed)", bad)
 		}
+	}
+	// Insignificant trailing whitespace after the object is still a well-formed body.
+	if _, m, p, err := lookupNamedEntity([]byte("{\"AdGroups\":[]}\n\t "), "AdGroups", "x"); err != nil || m || !p {
+		t.Errorf("adgroup trailing whitespace: m=%v p=%v err=%v want false/true/nil", m, p, err)
 	}
 	// a VALID body with a sibling key AFTER the array still parses (finishObject drains it).
 	if _, m, p, err := lookupNamedEntity([]byte(`{"AdGroups":[{"Id":9,"Name":"a"}],"TrackingId":"t"}`), "AdGroups", "a"); err != nil || !m || !p {
@@ -384,6 +406,12 @@ func TestAdGroupAndAdStreamingLookups(t *testing.T) {
 	}
 	if _, _, _, err := lookupAdByFinalURL([]byte(`{"Ads":[{"Id":1,"FinalUrls":["`+target+`"]}`), target); err == nil {
 		t.Error("ad truncated must error (fail closed)")
+	}
+	// trailing data after the closing object → fail closed, not a clean empty lookup.
+	for _, bad := range []string{`{"Ads":[]}garbage`, `{"Ads":[]}{"Ads":[]}`} {
+		if _, _, _, err := lookupAdByFinalURL([]byte(bad), target); err == nil {
+			t.Errorf("ad malformed %q must error (fail closed)", bad)
+		}
 	}
 }
 
