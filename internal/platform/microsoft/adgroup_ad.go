@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/idna"
+	"golang.org/x/text/width"
 )
 
 // ---------------------------------------------------------------------------
@@ -835,19 +836,45 @@ func composeAdCopy(in CampaignInput) (headlines, descriptions []string) {
 // accepts (which would fail the ad AFTER its parent campaign/ad group were created). The
 // copy composed here is auto-generated marketing text on a PAUSED shell, so a slightly
 // tighter bound is an acceptable trade for guaranteed acceptance.
+//
+// Classification uses the Unicode East Asian Width property (golang.org/x/text/width)
+// rather than a hand-maintained range list: the previous hardcoded ranges MISSED wide
+// symbols outside them (⌚ U+231A, ⏰ U+23F0, ⬛ U+2B1B, ⭐ U+2B50, Hangul Jamo Ext-A)
+// — which would then wrongly get the 30-rune cap and break this function's own
+// "never longer than Microsoft accepts" guarantee — while being OVER-inclusive on common
+// narrow BMP symbols (★ U+2605, ✓ U+2713 are East-Asian-Ambiguous/Neutral, i.e. single
+// width in a Latin context) and hard-rejecting otherwise-valid caller copy. The width
+// table folds all of those correctly. Emoji are handled separately: many render
+// double-width but carry a Neutral/Ambiguous width property, so any codepoint in an emoji
+// plane, plus the VS16 emoji-presentation selector (which promotes a preceding BMP glyph
+// to a wide emoji), is treated as wide regardless of its width-table kind.
 func hasDoubleWidth(s string) bool {
 	for _, r := range s {
-		switch {
-		case r >= 0x1100 && r <= 0x11FF, // Hangul Jamo
-			r >= 0x2600 && r <= 0x27BF, // BMP emoji: Misc Symbols + Dingbats (☀ ❤ ✈ ✉ …)
-			r >= 0x2E80 && r <= 0x9FFF, // CJK radicals … unified ideographs
-			r == 0xFE0F,                // emoji variation selector (VS16, promotes a BMP glyph to emoji)
-			r >= 0xAC00 && r <= 0xD7AF, // Hangul syllables
-			r >= 0xF900 && r <= 0xFAFF, // CJK compatibility ideographs
-			r >= 0xFF00 && r <= 0xFFEF, // full-width forms
-			r >= 0x1F000:               // emoji / supplementary symbol planes
+		if isEmojiWidth(r) {
 			return true
 		}
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			return true
+		}
+	}
+	return false
+}
+
+// isEmojiWidth reports whether r is an emoji-plane codepoint (or the VS16 emoji-presentation
+// selector) that renders double-width even though its East Asian Width property may be
+// Neutral or Ambiguous. Kept as an explicit supplement to the width table in hasDoubleWidth.
+//
+// It deliberately does NOT blanket the BMP Misc-Symbols/Dingbats block (U+2600–U+27BF):
+// those symbols are TEXT-presentation (single width) by default in a Latin context — star
+// ★ U+2605 and check ✓ U+2713 among them — and only render wide when explicitly promoted
+// by a following VS16, which the 0xFE0F case already catches. Blanketing the whole block
+// would re-introduce the over-inclusive hard-rejection of otherwise-valid caller copy.
+func isEmojiWidth(r rune) bool {
+	switch {
+	case r == 0xFE0F, // VS16 — promotes a preceding BMP glyph to a wide emoji
+		r >= 0x1F000 && r <= 0x1FAFF: // emoji / supplementary symbol & pictograph planes
+		return true
 	}
 	return false
 }
@@ -980,13 +1007,24 @@ func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLim
 			continue
 		}
 		s := strings.TrimSpace(raw)
-		if strings.ContainsAny(raw, "\n\r") {
-			return fmt.Errorf("%s %d must not contain a newline", kind, i+1)
+		// Reject ANY control rune, not just \n/\r: a \t, \v, \f, or NUL embedded in caller
+		// copy would otherwise reach POST /Ads verbatim and be rejected by Microsoft only
+		// AFTER the campaign/ad group exist, orphaning the PAUSED shell — the same post-create
+		// failure the newline check guards against. Mirrors sanitizeNamePart, which maps all
+		// control runes. Checks raw (pre-trim) so a leading/trailing control char is caught too.
+		if idx := strings.IndexFunc(raw, unicode.IsControl); idx >= 0 {
+			return fmt.Errorf("%s %d must not contain a control character", kind, i+1)
 		}
 		if !hasWord(s) {
 			return fmt.Errorf("%s %d must contain at least one word", kind, i+1)
 		}
 		if limit := adCopyLimit(s, singleLimit, wideLimit); utf8.RuneCountInString(s) > limit {
+			// Name WHY the cap is the reduced one when a wide character forced it: otherwise a
+			// caller sees "exceeds 15 characters" on what looks like a 20-char headline and can't
+			// tell that a CJK/emoji glyph halved the limit. The wide cap is Microsoft's, not ours.
+			if hasDoubleWidth(s) {
+				return fmt.Errorf("%s %d exceeds %d characters (the reduced limit applies because it contains a double-width character)", kind, i+1, limit)
+			}
 			return fmt.Errorf("%s %d exceeds %d characters", kind, i+1, limit)
 		}
 		// EqualFold (not a ToLower map key) so Unicode case variants like Σ/ς

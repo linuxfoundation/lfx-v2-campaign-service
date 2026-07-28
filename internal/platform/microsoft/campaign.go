@@ -326,9 +326,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// front too. Count the full host AUTHORITY (hostname + a non-default port), not just
 	// Hostname(): Hostname() drops the port, so a hostname just under the cap plus e.g. :8443
 	// could slip past here and be rejected at AddAds. A redundant default port (:80/:443) is
-	// stripped so it never counts against an otherwise-valid host. Parse errors are ignored:
-	// validateAdURL already rejected a malformed URL (and its embedded userinfo).
-	if u, perr := url.Parse(finalURL); perr == nil {
+	// stripped so it never counts against an otherwise-valid host. A parse failure here is a
+	// near-impossibility (validateAdURL already accepted the raw URL and buildAdFinalURL only
+	// re-encoded the query), but fail CLOSED rather than silently skip the display-domain cap:
+	// a skipped check is the exact orphan-after-AddAds risk this block exists to prevent.
+	u, perr := url.Parse(finalURL)
+	if perr != nil {
+		return nil, fmt.Errorf("microsoft-ads could not parse the composed ad final URL to validate its display domain: %w", perr)
+	}
+	{
 		// Decode the host to its Unicode (U-label) form BEFORE the width/length check. finalURL
 		// is buildAdFinalURL's u.String() wire form, so a caller-supplied punycode host arrives as
 		// its ASCII `xn--` A-label: hasDoubleWidth would never fire on it and the rune count would

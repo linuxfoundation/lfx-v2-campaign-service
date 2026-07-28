@@ -1160,14 +1160,71 @@ func TestCreateCampaign_AdGroupLookupMatchWithNoIDIsUnconfirmed(t *testing.T) {
 // TestHasDoubleWidth_BMPEmoji: BMP emoji (❤️ ☀️ ✈️ — U+2600..27BF + the VS16 selector) must
 // be treated as double-width so the reduced copy cap applies, not just supplementary-plane
 // emoji (>= U+1F000).
-func TestHasDoubleWidth_BMPEmoji(t *testing.T) {
-	for _, s := range []string{"❤️", "☀", "✈️", "❤"} {
+func TestHasDoubleWidth_Classification(t *testing.T) {
+	// WIDE: CJK/Hangul/full-width via the East Asian Width table, plus wide symbols the old
+	// hardcoded ranges MISSED (⌚ U+231A, ⏰ U+23F0, ⬛ U+2B1B, ⭐ U+2B50), astral-plane emoji,
+	// and BMP symbols explicitly promoted to emoji presentation by a trailing VS16 (❤️, ✈️).
+	wide := []string{
+		"字",  // CJK ideograph
+		"가",  // Hangul syllable
+		"Ａ",  // full-width Latin
+		"⌚",  // U+231A watch — missed by the old ranges
+		"⏰",  // U+23F0 alarm clock — missed
+		"⬛",  // U+2B1B black square — missed
+		"⭐",  // U+2B50 star — missed
+		"🎉",  // astral emoji
+		"❤️", // U+2764 + VS16 → emoji presentation
+		"✈️", // U+2708 + VS16 → emoji presentation
+	}
+	for _, s := range wide {
 		if !hasDoubleWidth(s) {
-			t.Errorf("hasDoubleWidth(%q) = false, want true (BMP emoji)", s)
+			t.Errorf("hasDoubleWidth(%q) = false, want true", s)
 		}
 	}
-	if hasDoubleWidth("Register Today") {
-		t.Error("plain ASCII must not be flagged double-width")
+
+	// NOT WIDE: plain ASCII, and bare BMP symbols in text presentation (no VS16). The old code
+	// blanket-flagged the whole U+2600–U+27BF block, hard-rejecting otherwise-valid caller copy
+	// containing a star or check mark; East-Asian-Ambiguous/Neutral symbols are single width in
+	// a Latin context, so they must NOT trip the reduced wide cap.
+	narrow := []string{
+		"Register Today", // ASCII
+		"★",              // U+2605 star (text presentation) — was over-rejected before
+		"✓",              // U+2713 check mark — was over-rejected before
+	}
+	for _, s := range narrow {
+		if hasDoubleWidth(s) {
+			t.Errorf("hasDoubleWidth(%q) = true, want false (single-width in Latin context)", s)
+		}
+	}
+}
+
+// TestCheckAdCopyList_RejectsControlChars: caller copy carrying any control rune (not just
+// \n/\r — also \t, \v, \f, NUL) is rejected UP FRONT so it can't reach POST /Ads verbatim and
+// orphan the PAUSED campaign/ad group behind a Microsoft rejection.
+func TestCheckAdCopyList_RejectsControlChars(t *testing.T) {
+	for name, bad := range map[string]string{
+		"newline":      "Register\nToday",
+		"carriage":     "Register\rToday",
+		"tab":          "Register\tToday",
+		"vertical-tab": "Register\vToday",
+		"form-feed":    "Register\fToday",
+		"nul":          "Register\x00Today",
+		"leading-tab":  "\tRegister Today",
+		"trailing-nul": "Register Today\x00",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := checkAdCopyList("headline", []string{bad}, maxAdHeadlines, maxAdHeadlineRunes, maxAdHeadlineRunesWide)
+			if err == nil {
+				t.Fatalf("a %s control char must be rejected: %q", name, bad)
+			}
+			if !strings.Contains(err.Error(), "control character") {
+				t.Errorf("rejection should cite the control character, got: %v", err)
+			}
+		})
+	}
+	// A clean headline with no control chars still passes.
+	if err := checkAdCopyList("headline", []string{"Register Today"}, maxAdHeadlines, maxAdHeadlineRunes, maxAdHeadlineRunesWide); err != nil {
+		t.Errorf("a clean headline must pass: %v", err)
 	}
 }
 
