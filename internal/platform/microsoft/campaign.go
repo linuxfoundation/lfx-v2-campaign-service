@@ -499,14 +499,13 @@ func lookupCampaignByName(body []byte, name string) (id string, matched, present
 		if !ok || d != '[' {
 			return "", false, false, fmt.Errorf("expected a JSON array for Campaigns")
 		}
-		present = true
 		for dec.More() {
 			var cp struct {
 				Id   *json.Number `json:"Id"`
 				Name string       `json:"Name"`
 			}
 			if derr := dec.Decode(&cp); derr != nil {
-				return "", false, present, derr
+				return "", false, false, derr
 			}
 			if matched || !strings.EqualFold(cp.Name, name) {
 				continue // keep draining the array to leave the stream well-formed, but stop matching
@@ -514,7 +513,20 @@ func lookupCampaignByName(body []byte, name string) (id string, matched, present
 			matched = true
 			id = numberID(cp.Id)
 		}
-		// Consumed the whole array; the top-level object may have more keys but we have our answer.
+		// dec.More() returning false only means "no more elements" — it does NOT prove the array
+		// actually closed. Read the closing ']' and confirm it: a TRUNCATED body (e.g.
+		// `{"Campaigns":[`) leaves dec.Token() erroring at EOF here, so we must NOT report a clean
+		// "present, no match" (which would let the paid create run and risk a duplicate). Only a
+		// well-formed, fully-closed array is a trustworthy result — set present=true ONLY then.
+		endTok, eerr := dec.Token()
+		if eerr != nil {
+			return "", false, false, eerr
+		}
+		if d, ok := endTok.(json.Delim); !ok || d != ']' {
+			return "", false, false, fmt.Errorf("malformed Campaigns array (unterminated)")
+		}
+		present = true
+		// The array closed cleanly; the top-level object may have more keys but we have our answer.
 		return id, matched, present, nil
 	}
 	// No Campaigns key at all → omitted.

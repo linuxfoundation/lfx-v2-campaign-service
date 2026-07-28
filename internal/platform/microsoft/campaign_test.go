@@ -652,6 +652,19 @@ func TestLookupCampaignByName(t *testing.T) {
 	if id, m, _, err := lookupCampaignByName([]byte(`{"Campaigns":[{"Id":null,"Name":"z"}]}`), "z"); err != nil || !m || id != "" {
 		t.Errorf("match-no-id: id=%q matched=%v err=%v, want \"\"/true/nil", id, m, err)
 	}
+
+	// FAIL-CLOSED on a truncated body: an unterminated Campaigns array must ERROR (→ the caller
+	// treats it as UNCONFIRMED), NOT be reported as present-with-no-match (a clean "absent" that
+	// would let the paid create run and risk a duplicate).
+	for _, bad := range []string{
+		`{"Campaigns":[`,                     // array opened, never closed (EOF mid-array)
+		`{"Campaigns":[{"Id":1,"Name":"a"}`,  // one element, no closing ]
+		`{"Campaigns":[{"Id":1,"Name":"a"},`, // trailing comma then EOF
+	} {
+		if _, m, p, err := lookupCampaignByName([]byte(bad), "a"); err == nil {
+			t.Errorf("truncated %q must error (fail closed), got matched=%v present=%v err=nil", bad, m, p)
+		}
+	}
 }
 
 func TestCreateCampaign_OmittedCampaignsFieldIsUnconfirmed(t *testing.T) {
