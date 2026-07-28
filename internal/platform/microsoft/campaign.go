@@ -250,13 +250,18 @@ type queryCampaignsRequest struct {
 	CampaignType string      `json:"CampaignType"`
 }
 
-// CreateCampaign find-or-creates a PAUSED Microsoft Advertising Search campaign.
+// CreateCampaign find-or-creates a PAUSED Microsoft Advertising Search campaign AND then
+// completes the Campaign -> AdGroup -> Ad hierarchy under it, returning a usable paused
+// campaign rather than an empty shell.
 //
 // Microsoft enforces that Campaign.Name is UNIQUE among the account's active/paused
 // campaigns, using a CASE-INSENSITIVE comparison. That uniqueness is the idempotency
 // key here (there is no client-supplied idempotency token): CreateCampaign FIRST looks
-// the campaign up by its deterministic name (a read, retried on 429) and returns the
-// existing one (AlreadyExisted=true) without creating a second.
+// the campaign up by its deterministic name (a read, retried on 429) and reuses the
+// existing one without creating a second. Reuse of the campaign ALONE does NOT set
+// AlreadyExisted — the call continues into the ad-group/ad steps, and result.AlreadyExisted
+// is true ONLY when the ENTIRE tree (campaign AND ad group AND ad) was found pre-existing
+// and nothing was created at any level (see CampaignResult.AlreadyExisted).
 //
 // Otherwise it POSTs the campaign. Because the create reports per-entity failure as
 // PartialErrors on a 200, every outcome is classified by whether it may have committed:
