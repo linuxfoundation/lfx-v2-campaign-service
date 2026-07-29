@@ -372,17 +372,23 @@ func (c *Client) createAdGroupAndAd(
 // the existing group).
 // unconfirmedLookupErr classifies an idempotency-lookup failure the way the campaign level does
 // (findCampaignByName): a lookup is a READ that confirms absence before the find-first create,
-// so ANY failure that is not a caller cancel means we could NOT confirm the entity is absent —
-// a blind create might duplicate one a prior attempt made (v13 ALLOWS duplicate RSAs, so this is
-// sharp for ads). Such a failure is UNCONFIRMED, not a clean "creation failed". We fold it onto
-// errNoID (which createAdGroupAndAd's switch already maps to UNCONFIRMED) EXCEPT a bare caller
-// context error (Canceled/DeadlineExceeded from the caller's ctx), which is a clean abort —
-// nothing was created — and must stay classifiable by the switch's cancel branch. Note a
-// PER-ATTEMPT client timeout surfaces inside a transportError (createOutcomeAmbiguous), not as a
-// bare context error, so it is already UNCONFIRMED and unaffected here.
-func unconfirmedLookupErr(ferr error) error {
-	if errors.Is(ferr, context.Canceled) || errors.Is(ferr, context.DeadlineExceeded) {
-		return ferr
+// so ANY failure that did not stem from the CALLER cancelling means we could NOT confirm the
+// entity is absent — a blind create might duplicate one a prior attempt made (v13 ALLOWS
+// duplicate RSAs, so this is sharp for ads). Such a failure is UNCONFIRMED, not a clean
+// "creation failed", so it is folded onto errNoID (which createAdGroupAndAd's switch maps to
+// UNCONFIRMED).
+//
+// The clean-abort test gates on the CALLER's ctx.Err(), NOT errors.Is(ferr, DeadlineExceeded):
+// a token refresh runs under its own DETACHED timeout and surfaces a tokenTransportError
+// wrapping context.DeadlineExceeded while the caller's context is still live (client.go). That
+// is a FAILED lookup (absence unconfirmed), not a caller abort — matching a bare
+// errors.Is(DeadlineExceeded) would mislabel it a clean abort and invite a duplicate. Only when
+// the caller's own ctx is done is nothing-was-created true, so the error passes through for the
+// switch's cancel branch. (A per-attempt client timeout already surfaces inside a transportError
+// → createOutcomeAmbiguous → UNCONFIRMED, independent of this.)
+func unconfirmedLookupErr(ctx context.Context, ferr error) error {
+	if ctx.Err() != nil {
+		return ferr // the caller cancelled/timed out — a clean abort; nothing created
 	}
 	if errors.Is(ferr, errNoID) {
 		return ferr // already UNCONFIRMED-classified
@@ -392,7 +398,7 @@ func unconfirmedLookupErr(ferr error) error {
 
 func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdGroupByName(ctx, campaignID, name); ferr != nil {
-		return "", false, unconfirmedLookupErr(ferr)
+		return "", false, unconfirmedLookupErr(ctx, ferr)
 	} else if existingID != "" {
 		return existingID, true, nil
 	}
@@ -607,7 +613,7 @@ func finishObject(dec *json.Decoder) error {
 // path is never entered concurrently for the same destination.
 func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID string, headlines, descriptions []string, finalURL string) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdByFinalURL(ctx, adGroupID, finalURL); ferr != nil {
-		return "", false, unconfirmedLookupErr(ferr)
+		return "", false, unconfirmedLookupErr(ctx, ferr)
 	} else if existingID != "" {
 		return existingID, true, nil
 	}
@@ -1028,8 +1034,18 @@ func validateAdCopy(in CampaignInput) error {
 // auto-composed fallback candidates (which are not caller copy and ARE allowed to truncate)
 // can be dropped by that dedup, which is by design — they exist to pad to the minimum.
 func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLimit int) error {
-	if n := len(items); n > maxCount {
-		return fmt.Errorf("at most %d %ss are allowed, got %d", maxCount, kind, n)
+	// Count only NON-EMPTY entries against the maximum: a genuinely empty "" is ignored and
+	// padded by composeAdCopy, so it emits no asset and must not count. Otherwise 15 valid
+	// headlines plus one "" would be rejected as 16 even though only 15 assets are produced. A
+	// whitespace-only entry is non-empty (it fails the word check below) and DOES count.
+	nonEmpty := 0
+	for _, raw := range items {
+		if raw != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty > maxCount {
+		return fmt.Errorf("at most %d %ss are allowed, got %d", maxCount, kind, nonEmpty)
 	}
 	seen := make([]string, 0, len(items))
 	for i, raw := range items {

@@ -970,8 +970,8 @@ func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
 	// Over-count or over-long caller ad copy fails UP FRONT (before any API call), a clean
 	// (nil, err) — the composed responsive search ad would otherwise be rejected by Microsoft.
 	cases := map[string]func(*CampaignInput){
-		"too many headlines":    func(in *CampaignInput) { in.Headlines = make([]string, maxAdHeadlines+1) },
-		"too many descriptions": func(in *CampaignInput) { in.Descriptions = make([]string, maxAdDescriptions+1) },
+		"too many headlines":    func(in *CampaignInput) { in.Headlines = distinctCopy("Headline", maxAdHeadlines+1) },
+		"too many descriptions": func(in *CampaignInput) { in.Descriptions = distinctCopy("Description", maxAdDescriptions+1) },
 		"over-long headline":    func(in *CampaignInput) { in.Headlines = []string{strings.Repeat("x", maxAdHeadlineRunes+1)} },
 		"over-long description": func(in *CampaignInput) { in.Descriptions = []string{strings.Repeat("x", maxAdDescriptionRunes+1)} },
 		"duplicate headline":    func(in *CampaignInput) { in.Headlines = []string{"Register", "register"} }, // case-insensitive dup
@@ -1093,6 +1093,31 @@ func TestComposeAdCopy_DoesNotAugmentSufficientCallerCopy(t *testing.T) {
 			t.Errorf("caller description %d changed: got %q, want %q", i, ds[i], d)
 		}
 	}
+}
+
+// TestCheckAdCopyList_EmptyEntryDoesNotCountAgainstMax: maxCount valid entries plus a genuinely
+// empty "" must be ACCEPTED — the "" is ignored/padded and emits no asset, so it must not count
+// toward the maximum (previously len(items) rejected it as one over).
+func TestCheckAdCopyList_EmptyEntryDoesNotCountAgainstMax(t *testing.T) {
+	headlines := append(distinctCopy("Headline", maxAdHeadlines), "") // maxAdHeadlines valid + one ""
+	if err := checkAdCopyList("headline", headlines, maxAdHeadlines, maxAdHeadlineRunes, maxAdHeadlineRunesWide); err != nil {
+		t.Errorf("maxCount valid entries + one empty \"\" must be accepted (empty is ignored/padded), got: %v", err)
+	}
+	// But maxCount+1 NON-EMPTY entries is still an over-max error.
+	if err := checkAdCopyList("headline", distinctCopy("Headline", maxAdHeadlines+1), maxAdHeadlines, maxAdHeadlineRunes, maxAdHeadlineRunesWide); err == nil {
+		t.Error("maxCount+1 non-empty entries must still be rejected as over-max")
+	}
+}
+
+// distinctCopy returns n distinct non-empty copy strings ("<prefix> 0", "<prefix> 1", …). Used
+// to exercise the over-max count path, which counts only NON-EMPTY entries (empty "" entries are
+// ignored and padded, so a slice of empty strings is no longer an over-max error).
+func distinctCopy(prefix string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("%s %d", prefix, i)
+	}
+	return out
 }
 
 func assertUniqueBounded(t *testing.T, items []string, maxRunes int, kind string) {
