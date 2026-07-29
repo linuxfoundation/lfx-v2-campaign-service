@@ -113,9 +113,12 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		NameSuffix: brief.ID,
 	}
 
-	// login_customer_id is the OPTIONAL parent manager (MCC) account the ad account is accessed
-	// through; it lives in the connection's ProviderConfig (not the credential blob). Trimmed
-	// here for the same reason as the account id.
+	// customer_id is the OPTIONAL parent manager (MCC) account the ad account is accessed
+	// through; it lives in the connection's ProviderConfig (not the credential blob). NOTE the
+	// key is `customer_id` — the Microsoft connection service persists it there
+	// (connection.go buildMicrosoftAdsResult / CreateMicrosoftAds), NOT `login_customer_id`
+	// (that is the Google Ads key). Reading the wrong key would silently drop the CustomerId
+	// header and break MCC-scoped accounts. Trimmed for the same reason as the account id.
 	client := microsoft.NewClient(
 		microsoft.Credentials{
 			ClientID:       creds.ClientID,
@@ -125,7 +128,7 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		},
 		microsoft.AccountConfig{
 			AccountID:  accountID,
-			CustomerID: strings.TrimSpace(res.providerConfig["login_customer_id"]),
+			CustomerID: strings.TrimSpace(res.providerConfig["customer_id"]),
 			Label:      res.label,
 		},
 		d.opts...,

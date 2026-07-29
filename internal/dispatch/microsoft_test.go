@@ -26,7 +26,7 @@ func activeMicrosoftConn(creds string) *model.Connection {
 		Provider:             model.ProviderMicrosoftAds,
 		AccountID:            "1234567",
 		EncryptedCredentials: []byte(creds),
-		ProviderConfig:       map[string]string{"login_customer_id": "9999999"},
+		ProviderConfig:       map[string]string{"customer_id": "9999999"},
 		Status:               model.StatusActive,
 	}
 }
@@ -190,7 +190,7 @@ func TestMicrosoft_DispatchSuccessMapsResultAndCreds(t *testing.T) {
 		t.Errorf("CustomerAccountId header = %q, want the connection's account id 1234567", creds.accountHeader)
 	}
 	if creds.customerHeader != "9999999" {
-		t.Errorf("CustomerId header = %q, want the connection's login_customer_id 9999999", creds.customerHeader)
+		t.Errorf("CustomerId header = %q, want the connection's customer_id 9999999", creds.customerHeader)
 	}
 }
 
