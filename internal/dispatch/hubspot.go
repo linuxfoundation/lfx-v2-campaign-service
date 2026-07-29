@@ -113,7 +113,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		// created the email, so retain the claim with a name-only partial for reconcile; a
 		// definite failure created nothing (claim released).
 		if hubspot.IsUnconfirmed(cerr) {
-			return emailPartial(cloneName), fmt.Errorf("hubspot email clone UNCONFIRMED (an email named %q may exist — verify before retrying): %w", cloneName, cerr)
+			return emailPartial(ctx, cloneName), fmt.Errorf("hubspot email clone UNCONFIRMED (an email named %q may exist — verify before retrying): %w", cloneName, cerr)
 		}
 		return nil, notCreated(fmt.Errorf("hubspot email clone failed: %w", cerr))
 	}
@@ -194,8 +194,25 @@ func composeEmailName(eventName, eventSlug, briefID string) string {
 }
 
 // emailPartial builds a name-only reconcilable campaign for an UNCONFIRMED clone (no id known).
-func emailPartial(name string) *model.Campaign {
-	return &model.Campaign{CampaignName: name, Status: campaignStatusCreated}
+// It MUST populate Result (not just CampaignName): the orchestrator persists a retained,
+// id-less orphan only when PlatformCampaignID != "" OR len(Result) > 0, so an empty Result would
+// drop the row and lose the deterministic name needed to reconcile the maybe-created draft. The
+// status is `unconfirmed` (not `created`) so the object is never falsely labelled created when
+// nothing was confirmed. Mirrors the linkedin group-ambiguous partial.
+func emailPartial(ctx context.Context, name string) *model.Campaign {
+	c := &model.Campaign{CampaignName: name, Status: campaignStatusUnconfirmed}
+	// Carry the name in Result so the orchestrator's len(Result) > 0 persist condition keeps
+	// the row and a reconciler can look the draft up by name.
+	if raw, err := json.Marshal(struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}{Name: name, Status: campaignStatusUnconfirmed}); err != nil {
+		slog.WarnContext(ctx, "failed to marshal hubspot unconfirmed-clone result blob (Result left empty)",
+			"campaign_name", name, "error", err)
+	} else {
+		c.Result = raw
+	}
+	return c
 }
 
 // campaignFromHubSpot maps the cloned email to the persistence model. The email's HubSpot id is

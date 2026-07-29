@@ -173,6 +173,18 @@ func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Errorf("error should say UNCONFIRMED, got: %v", err)
 	}
+	// The partial MUST carry a non-empty Result (the orchestrator persists an id-less orphan
+	// only when PlatformCampaignID != "" OR len(Result) > 0) so the maybe-created draft is
+	// reconcilable by name; and its status must be `unconfirmed`, not `created`.
+	if len(camp.Result) == 0 {
+		t.Error("an UNCONFIRMED partial must populate Result (else the orchestrator drops the id-less orphan)")
+	}
+	if camp.Status != campaignStatusUnconfirmed {
+		t.Errorf("status = %q, want %q for an unconfirmed clone", camp.Status, campaignStatusUnconfirmed)
+	}
+	if camp.CampaignName == "" {
+		t.Error("the partial must carry the deterministic clone name for reconcile")
+	}
 }
 
 // TestHubSpot_SendListFailureIsPartial: the clone succeeds but SetSendList fails — the email
