@@ -574,78 +574,13 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 // whether the Campaigns field was PRESENT (a non-null array) at all. A malformed 8-MiB body
 // therefore costs O(1) memory instead of O(campaigns). present=false means the field was
 // omitted or null (→ UNCONFIRMED); present=true with matched=false means a genuine "absent".
+//
+// It is a thin alias for lookupNamedEntity over the "Campaigns" field: the streaming-parser
+// logic (decode → validate array → finishObject → EOF guard) lives in ONE place so a
+// correctness fix (truncation handling, null-vs-omit) applies to both the campaign and
+// ad-group lookups at once. See lookupNamedEntity in adgroup_ad.go.
 func lookupCampaignByName(body []byte, name string) (id string, matched, present bool, err error) {
-	dec := json.NewDecoder(bytes.NewReader(body))
-	// Walk to the top-level object's "Campaigns" key.
-	tok, err := dec.Token()
-	if err != nil {
-		return "", false, false, err
-	}
-	if d, ok := tok.(json.Delim); !ok || d != '{' {
-		return "", false, false, fmt.Errorf("expected a JSON object")
-	}
-	for dec.More() {
-		keyTok, kerr := dec.Token()
-		if kerr != nil {
-			return "", false, false, kerr
-		}
-		key, _ := keyTok.(string)
-		if key != "Campaigns" {
-			// Skip this value (whatever its shape) without materializing it.
-			if serr := skipJSONValue(dec); serr != nil {
-				return "", false, false, serr
-			}
-			continue
-		}
-		// The Campaigns value: null (present=false) or an array we stream.
-		vTok, verr := dec.Token()
-		if verr != nil {
-			return "", false, false, verr
-		}
-		if vTok == nil { // JSON null → treated as omitted
-			return "", false, false, nil
-		}
-		d, ok := vTok.(json.Delim)
-		if !ok || d != '[' {
-			return "", false, false, fmt.Errorf("expected a JSON array for Campaigns")
-		}
-		for dec.More() {
-			var cp struct {
-				Id   *json.Number `json:"Id"`
-				Name string       `json:"Name"`
-			}
-			if derr := dec.Decode(&cp); derr != nil {
-				return "", false, false, derr
-			}
-			if matched || !strings.EqualFold(cp.Name, name) {
-				continue // keep draining the array to leave the stream well-formed, but stop matching
-			}
-			matched = true
-			id = numberID(cp.Id)
-		}
-		// dec.More() returning false only means "no more elements" — it does NOT prove the array
-		// actually closed. Read the closing ']' and confirm it: a TRUNCATED body (e.g.
-		// `{"Campaigns":[`) leaves dec.Token() erroring at EOF here, so we must NOT report a clean
-		// "present, no match" (which would let the paid create run and risk a duplicate). Only a
-		// well-formed, fully-closed array is a trustworthy result — set present=true ONLY then.
-		endTok, eerr := dec.Token()
-		if eerr != nil {
-			return "", false, false, eerr
-		}
-		if d, ok := endTok.(json.Delim); !ok || d != ']' {
-			return "", false, false, fmt.Errorf("malformed Campaigns array (unterminated)")
-		}
-		// The array closed, but the enclosing object must also be well-formed to trust the
-		// result: a truncated `{"Campaigns":[]` has a valid array but an unterminated object, and
-		// reporting a clean absence there would let the paid create run on an unverified body.
-		if ferr := finishObject(dec); ferr != nil {
-			return "", false, false, ferr
-		}
-		present = true
-		return id, matched, present, nil
-	}
-	// No Campaigns key at all → omitted.
-	return "", false, false, nil
+	return lookupNamedEntity(body, "Campaigns", name)
 }
 
 // skipJSONValue consumes exactly one JSON value (object/array/scalar) from dec, discarding it.
@@ -724,29 +659,27 @@ func isDuplicateCampaignNameErr(err error) bool { return errors.Is(err, errDupli
 // The caller distinguishes the definite-rejection case via errors.Is(err,
 // errPartialFailure) and the already-exists case via isDuplicateCampaignNameErr.
 func firstCampaignID(body []byte) (string, error) {
-	var resp createCampaignsResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("decode create-campaigns response: %w", err)
-	}
-	if len(resp.CampaignIds) > 0 {
-		// numberID rejects a non-positive-integer id (negative/fractional/exponent), so a
-		// malformed 200 carrying a bogus id falls through to the UNCONFIRMED path below
-		// rather than being reported as a successful create with an unusable id.
-		if id := numberID(resp.CampaignIds[0]); id != "" {
-			return id, nil
+	// Delegate id extraction + the shared three-case classification (valid id → success;
+	// null id + actual PartialError → errPartialFailure; else → errNoID) to firstEntityID,
+	// so the create-response contract lives in ONE place (see firstEntityID in adgroup_ad.go).
+	// Campaigns add only ONE specialization on top: a duplicate-name PartialError is surfaced
+	// as errDuplicateName (a wrapper of errPartialFailure) so the caller can self-heal the
+	// already-exists race. firstEntityID has no notion of that, so re-inspect the partials
+	// here and, when firstEntityID reported a generic errPartialFailure whose cause is the
+	// duplicate-name code, upgrade the error to errDuplicateName.
+	var partials []msErrorItem
+	id, err := firstEntityID(body, "CampaignIds", func(b []byte) ([]*json.Number, []msErrorItem, error) {
+		var resp createCampaignsResponse
+		if uerr := json.Unmarshal(b, &resp); uerr != nil {
+			return nil, nil, uerr
 		}
+		partials = resp.PartialErrors
+		return resp.CampaignIds, resp.PartialErrors, nil
+	})
+	if err != nil && errors.Is(err, errPartialFailure) && isDuplicateCampaignPartial(partials) {
+		return "", fmt.Errorf("%w: %s", errDuplicateName, partialErrorCodes(partials))
 	}
-	// No valid id. If an ACTUAL PartialError explains why, this is a definite rejection;
-	// otherwise the 200 is malformed (or carries only null placeholders) and the outcome
-	// is unknown → UNCONFIRMED.
-	if partialErrorsHaveAny(resp.PartialErrors) {
-		codes := partialErrorCodes(resp.PartialErrors)
-		if isDuplicateCampaignPartial(resp.PartialErrors) {
-			return "", fmt.Errorf("%w: %s", errDuplicateName, codes)
-		}
-		return "", fmt.Errorf("%w: %s", errPartialFailure, codes)
-	}
-	return "", fmt.Errorf("create-campaigns response carried no campaign id")
+	return id, err
 }
 
 // partialErrorsHaveAny reports whether the slice contains at least one ACTUAL error —
