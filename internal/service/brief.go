@@ -324,8 +324,18 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// This DB-only update MUST NOT be a back door for changing the RUN status
+	// (active/paused): that would persist a run state WITHOUT contacting the ad platform,
+	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists
+	// to prevent. `status` stays in the payload so a client can round-trip the row it read
+	// (a name/config edit re-sends the current status unchanged), but an ATTEMPT to flip the
+	// run state here is rejected and routed to the platform toggle. A submitted status equal
+	// to the stored one is a harmless no-op; anything else that is a run-state value is
+	// refused. The stored status is otherwise preserved verbatim — this path never writes it.
+	if p.Campaign.Status != existing.Status && model.IsCampaignRunStatus(p.Campaign.Status) {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
+	}
 	existing.CampaignName = p.Campaign.CampaignName
-	existing.Status = p.Campaign.Status
 	// Only overwrite the stored config when the caller actually supplied one.
 	// config is optional in CampaignUpdateInput, so an omitted value must leave
 	// the existing ConfigSnapshot intact rather than wiping it to NULL on a
