@@ -3904,6 +3904,41 @@ func TestUpdateCampaignAndChildrenStatus_PauseIsCampaignFirst(t *testing.T) {
 	}
 }
 
+// TestUpdateCampaignAndChildrenStatus_PauseAdFailureIsPartialError verifies the sibling of the
+// ad-group PAUSE-failure case: on PAUSE the campaign gate AND ad group succeed, then the AD PATCH
+// fails — the tree is partially applied, so the result is a partialCascadeError{stage:"ad"} whose
+// Unconfirmed() is true (verify-before-retry), mirroring the ad-group branch. Delivery is already
+// stopped by the campaign gate, so this is a state-consistency concern only.
+func TestUpdateCampaignAndChildrenStatus_PauseAdFailureIsPartialError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/ads/") { // the ad PATCH fails; campaign + ad group succeed
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer srv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", "t5_ag", "t6_ad", StatusPaused)
+	if err == nil {
+		t.Fatal("an ad PATCH failure after the campaign+ad-group pause must return an error")
+	}
+	var pce *partialCascadeError
+	if !errors.As(err, &pce) || pce.stage != "ad" {
+		t.Fatalf("want a partialCascadeError{stage:\"ad\"}, got %T: %v", err, err)
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("the ad partial cascade must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
 // TestUpdateCampaignAndChildrenStatus_ActivateChildFailureDoesNotOpenGate verifies that when a
 // child PATCH fails during ACTIVATE, the campaign gate is NEVER flipped — nothing can serve, so
 // the failure is a plain (not partial/unconfirmed-serving) error and the campaign stays paused.
