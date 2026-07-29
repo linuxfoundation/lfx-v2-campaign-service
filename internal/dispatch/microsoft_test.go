@@ -194,6 +194,49 @@ func TestMicrosoft_DispatchSuccessMapsResultAndCreds(t *testing.T) {
 	}
 }
 
+// TestMicrosoft_AmbiguousCreateRetainsClaim: when the campaign lookup is absent but the create
+// POST returns a 5xx (ambiguous — the campaign MAY have been created upstream), the MS client
+// returns a non-nil partial + error. The dispatcher must RETAIN the claim (return a non-nil
+// campaign, NOT NoUpstreamCreate) and surface an UNCONFIRMED error, so the orchestrator does not
+// release the claim and blind-retry into a possible duplicate.
+func TestMicrosoft_AmbiguousCreateRetainsClaim(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"Campaigns":[]}`) // absent → create runs
+		case strings.HasSuffix(p, "/Campaigns"):
+			w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on the create — may have committed
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+		}
+	}))
+	defer apiSrv.Close()
+	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL))
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, json.RawMessage(`{"microsoftConfig":{"budget":50}}`))
+	if err == nil {
+		t.Fatal("expected an error on an ambiguous 5xx campaign create")
+	}
+	if camp == nil {
+		t.Fatal("an ambiguous create must return a NON-nil partial so the claim is RETAINED, got nil")
+	}
+	// It must NOT be NoUpstreamCreate — a released claim here would invite a duplicate campaign.
+	var nuc interface{ NoUpstreamCreate() bool }
+	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
+		t.Errorf("an ambiguous create must NOT be NoUpstreamCreate (claim must be retained): %v", err)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an ambiguous create must surface UNCONFIRMED, got: %v", err)
+	}
+}
+
 // TestMicrosoft_TrimsWhitespaceAccountID: a whitespace-padded connection AccountID must be
 // trimmed before it reaches the client (else it passes the empty check then fails the client's
 // digits-only validation as a confusing pre-create error). The request header must carry the
