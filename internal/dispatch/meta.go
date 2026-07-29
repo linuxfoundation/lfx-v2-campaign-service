@@ -223,14 +223,24 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 
 // metaAdSetID pulls the ad set id the create path stored in the persisted CampaignResult
 // blob. A missing/unparseable blob yields "" (the campaign is toggled alone — the service
-// already blocks toggling a degraded campaign).
+// already blocks toggling a degraded campaign, and on Meta the CAMPAIGN status is the
+// effective delivery gate, so a PAUSE without the ad set id still stops serving; only an
+// ACTIVATE requires it, and ToggleStatus refuses that up front — see the guard above).
+//
+// It unmarshals into the SAME meta.CampaignResult type the create path marshals into Result
+// (campaignFromMeta), rather than a private struct with a hardcoded "AdSetID" key. This keeps
+// ONE definition of the persisted wire shape: if the CampaignResult field/tag is ever renamed,
+// reader and writer move together instead of silently desyncing (the previous inline struct
+// matched only by coincidence of Go's default field-name marshaling). Making the dependency on
+// the create-path result explicit was the intent behind the review note; a dedicated
+// model.Campaign.PlatformAdSetID column was considered but is Meta-specific (no other platform
+// has an ad set) and would need a schema migration on the shared campaigns table — this keeps
+// the fix proportional to a status-toggle PR while removing the fragility.
 func metaAdSetID(campaign *model.Campaign) string {
 	if campaign == nil || len(campaign.Result) == 0 {
 		return ""
 	}
-	var blob struct {
-		AdSetID string `json:"AdSetID"`
-	}
+	var blob meta.CampaignResult
 	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
 		return ""
 	}

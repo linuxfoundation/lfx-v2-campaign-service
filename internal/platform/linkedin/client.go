@@ -385,12 +385,28 @@ func createOutcomeAmbiguous(err error) bool {
 	return false
 }
 
-// isBadRequest reports whether err is exactly an HTTP 400 apiError. Used to tolerate the
-// specific 400 LinkedIn returns when pausing an in-review creative — a narrower check than
-// "any 4xx" so a 401/403/404/other still aborts the toggle.
-func isBadRequest(err error) bool {
+// isInReviewPauseRejection reports whether err is the specific HTTP 400 LinkedIn returns when
+// PAUSE is applied to an in-review creative — the ONLY 400 the PAUSE cascade tolerates. Per the
+// v202xx creatives contract "You can't pause an ad creative in review. This endpoint returns a
+// 400 error if you attempt to change the status of an in-review ad creative to paused", but the
+// error table publishes NO dedicated serviceErrorCode for it (unlike CANNOT_UPDATE_CANCELED_-
+// CREATIVE etc.), so it cannot be matched by code. We therefore classify on the response body's
+// review signal: a genuine in-review rejection names the review state, whereas a STRUCTURAL 400
+// (INVALID_URN_TYPE, EMPTY_FIELD, IMMUTABLE_FIELD, a malformed patch) does not. Matching this
+// narrowly means a systematic request bug 400s HARD on the FIRST creative instead of being
+// silently skipped — addressing the "all-400 masks a request defect" gap. The body is read for
+// internal classification only and is NEVER surfaced (apiError.Error omits it), preserving the
+// no-untrusted-body-in-errors contract.
+func isInReviewPauseRejection(err error) bool {
 	var ae *apiError
-	return errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	b := strings.ToLower(ae.Body)
+	// "review" covers the documented review-state enums (UNDER_REVIEW, NEEDS_REVIEW, PENDING
+	// review) and the human message ("...in review..."); "not been reviewed" covers the
+	// serving-hold phrasing. A structural 400 body contains none of these.
+	return strings.Contains(b, "review")
 }
 
 // ErrCampaignNotServable marks an ACTIVATE refused BEFORE any mutating call because the
@@ -559,21 +575,21 @@ func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignI
 	}
 	creativeStatus := creativeIntendedStatus(status)
 	mutated := mutatedBefore
-	// Track how many creatives were tolerated as an in-review 400 skip vs actually paused. A 400
-	// is used by LinkedIn for MANY errors (malformed patch, bad URN, wrong field), not only the
-	// documented in-review-creative case, so tolerating EVERY 400 on PAUSE could mask a
-	// systematic request bug and report success while nothing was paused. We can't rely on a
-	// specific structured error code here (LinkedIn's in-review code is not contract-documented),
-	// so we bound the tolerance by COUNT: skipping a few in-review creatives is normal, but if
-	// EVERY discovered creative 400-skipped and NONE was actually updated, that is suspect and we
-	// fail closed (partialCascadeError → the caller verifies) rather than claim a clean pause.
+	// Track how many creatives were tolerated as an in-review 400 skip vs actually paused. LinkedIn
+	// uses 400 for MANY errors (malformed patch, bad URN, wrong field), not only the documented
+	// in-review-creative case, so only the 400 whose body carries a REVIEW signal is tolerated
+	// (isInReviewPauseRejection) — a STRUCTURAL 400 (bad URN, empty field, malformed patch) is a
+	// hard failure on the FIRST creative, so a systematic request bug surfaces immediately instead
+	// of being silently skipped. The COUNT guard below is a secondary net: even if every creative
+	// legitimately reports in-review, an all-skipped/none-updated PAUSE is still suspicious enough
+	// to fail closed (partialCascadeError → the caller verifies) rather than claim a clean pause.
 	skipped400 := 0
 	for _, urn := range creativeURNs {
 		path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(urn))
 		body := map[string]any{"patch": map[string]any{"$set": map[string]any{"intendedStatus": creativeStatus}}}
 		headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
 		if _, uerr := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); uerr != nil {
-			if creativeStatus == StatusPaused && isBadRequest(uerr) {
+			if creativeStatus == StatusPaused && isInReviewPauseRejection(uerr) {
 				skipped400++
 				continue // in-review creative can't be paused; the campaign gate already stopped it
 			}

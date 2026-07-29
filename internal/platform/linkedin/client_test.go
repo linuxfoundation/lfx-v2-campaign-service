@@ -915,8 +915,10 @@ func TestUpdateCampaignAndCreativesStatus_CascadesAndTolerates(t *testing.T) {
 			st = body.Patch.Set.IntendedStatus
 		}
 		// Creative 901 is "in review": a PAUSE on it returns 400 (LinkedIn's documented rule).
+		// The body carries the review signal LinkedIn returns — only THAT 400 is tolerated.
 		if strings.HasSuffix(r.URL.Path, "sponsoredCreative:901") && st == StatusPaused {
 			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"serviceErrorCode":0,"message":"Creative is UNDER_REVIEW and cannot be paused","status":400}`)
 			gotCh <- req{r.Method, r.URL.Path, r.Header.Get("X-Restli-Method"), st}
 			return
 		}
@@ -1139,10 +1141,10 @@ func TestUpdateCampaignAndCreativesStatus_UnusableElementIDFails(t *testing.T) {
 }
 
 // TestUpdateCampaignAndCreativesStatus_AllCreatives400OnPauseFailsClosed verifies that when
-// EVERY discovered creative's PAUSE update is rejected with 400 (and none is actually paused),
-// the cascade fails closed with an Unconfirmed partial rather than reporting a clean success — a
-// systematic 400 across all creatives is far more likely a request/code bug than every creative
-// genuinely being in review.
+// EVERY discovered creative's PAUSE update is rejected with an IN-REVIEW 400 (each body carries
+// the review signal, so each is individually tolerated) and none is actually paused, the COUNT
+// guard still fails closed with an Unconfirmed partial rather than reporting a clean success —
+// an all-skipped/none-updated pause is suspicious even when every 400 looks in-review.
 func TestUpdateCampaignAndCreativesStatus_AllCreatives400OnPauseFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
@@ -1151,7 +1153,8 @@ func TestUpdateCampaignAndCreativesStatus_AllCreatives400OnPauseFailsClosed(t *t
 			return
 		}
 		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
-			w.WriteHeader(http.StatusBadRequest) // EVERY creative 400s
+			w.WriteHeader(http.StatusBadRequest) // EVERY creative 400s, each with a review signal
+			_, _ = io.WriteString(w, `{"message":"Creative is UNDER_REVIEW and cannot be paused","status":400}`)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -1165,6 +1168,42 @@ func TestUpdateCampaignAndCreativesStatus_AllCreatives400OnPauseFailsClosed(t *t
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
 		t.Errorf("all-creatives-400 must be Unconfirmed (verify), got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndCreativesStatus_StructuralBadRequestOnPauseAborts verifies that a 400 whose
+// body carries NO review signal (a structural request bug — bad URN, empty field, malformed patch)
+// is NOT tolerated on a PAUSE: it aborts immediately on the FIRST creative as an Unconfirmed
+// partial, so a systematic request defect surfaces at once instead of being silently skipped.
+func TestUpdateCampaignAndCreativesStatus_StructuralBadRequestOnPauseAborts(t *testing.T) {
+	creativeCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"},{"id":"urn:li:sponsoredCreative:901"}],"metadata":{}}`)
+			return
+		}
+		if strings.Contains(r.URL.EscapedPath(), "creatives/urn") {
+			creativeCalls++
+			w.WriteHeader(http.StatusBadRequest) // structural 400 — the body names NO review state
+			_, _ = io.WriteString(w, `{"serviceErrorCode":0,"message":"INVALID_URN_TYPE: value must be a Creative URN","status":400}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	err := c.UpdateCampaignAndCreativesStatus(context.Background(), "555", StatusPaused)
+	if err == nil {
+		t.Fatal("a structural (non-review) 400 on pause must abort, not be tolerated as in-review")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a structural 400 after the campaign flip must be Unconfirmed, got %T: %v", err, err)
+	}
+	// It must abort on the FIRST creative, not silently skip through all of them.
+	if creativeCalls != 1 {
+		t.Errorf("structural 400 must abort on the first creative, got %d creative calls", creativeCalls)
 	}
 }
 
