@@ -1,5 +1,21 @@
 # Log
 
+## 2026-07-29
+
+**Update** — Added the HubSpot (email channel) PlatformDispatcher (LFXV2-2777, Capability C —
+staging). `registerDispatchers` now wires `model.ProviderHubSpot` →
+`dispatch.NewHubSpotDispatcher`, which — unlike the ad adapters — STAGES a marketing email
+rather than creating a campaign: it resolves the HubSpot connection, fetches the brief's BUILT
+audience from `campaign_audiences` (via a new narrow `audienceReader`, refusing when the newest
+hubspot audience is not `built`), CLONES the caller's template (`hubspotConfig.sourceEmailId`) as
+a DRAFT, and sets the clone's send list to the audience's `PlatformMasterListID` +
+`SuppressionListIDs`. The cloned email id is the campaign's `PlatformCampaignID`. Claim contract:
+UNCONFIRMED clone → name-only partial (claim retained); post-clone send-list failure → partial
+(email exists); definite pre-clone failure → claim released. `registerDispatchers` gained an
+`*postgres.AudienceRepo` arg (both container call sites updated); the container test's
+registered-provider set now includes hubspot. AI body content (LFXV2-2775) and audience building
+(LFXV2-2774) remain separate stories.
+
 ## 2026-07-24
 
 **Update** — Review-hardened the Microsoft campaign contract (PR #44, copilot):
