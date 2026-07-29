@@ -1621,13 +1621,23 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // three entities, so toggling only the campaign to ACTIVE would leave the ad group/ad PAUSED
 // and the campaign would not serve; cascading keeps the run state consistent across the tree.
 //
-// Order on ACTIVATE is parent-first (campaign → ad group → ad) so an intermediate failure
-// never leaves a servable child under a paused parent; the reverse is harmless because a
-// PATCH is idempotent. An empty adGroupID/adID is skipped (a degraded/partial create that
-// stored no child id — already blocked from toggling by the service guard). Any per-entity
-// error stops the cascade and is returned, preserving the UNCONFIRMED vs rejected
-// classification so the service does not persist a run state the platform did not fully
-// apply.
+// Ordering is STATUS-DEPENDENT so a PARTIAL cascade never leaves paid delivery running
+// unattended (matching the Meta/LinkedIn fail-closed ordering):
+//   - ACTIVATE: lift the CHILDREN first (ad, then ad group) while the campaign is still PAUSED
+//     and gates them, then flip the CAMPAIGN ACTIVE LAST. If a child PATCH fails (even with an
+//     ambiguous 5xx that actually committed), the campaign gate is still PAUSED, so NOTHING is
+//     serving — the tree is safely non-servable. Doing the campaign first would open the gate,
+//     so a later child failure could leave the whole tree ACTIVE (serving paid delivery) while
+//     the service reports UNCONFIRMED and leaves the DB "paused" — a silent divergence.
+//   - PAUSE: flip the CAMPAIGN first (the gate stops delivery immediately), then the children.
+//     A child failure after the gate closed still leaves delivery stopped.
+//
+// An empty adGroupID/adID is skipped (a degraded/partial create that stored no child id —
+// already blocked from toggling by the service guard). Any per-entity error stops the cascade
+// and is returned, preserving the UNCONFIRMED vs rejected classification so the service does
+// not persist a run state the platform did not fully apply. A campaign-first change that
+// commits before a later child fails is a partialCascadeError (Unconfirmed); on the ACTIVATE
+// path a child failure BEFORE the campaign flip is a plain error (nothing is serving yet).
 func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID, status string) error {
 	// Activating a campaign whose child ad group OR ad id is unknown cannot make the tree
 	// servable (the missing child stays PAUSED, or — for an absent ad id — the ad PATCH below
@@ -1638,14 +1648,34 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if status == StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
 		return fmt.Errorf("reddit: cannot activate campaign %s: its ad group and ad ids must both be known, so the tree cannot be made servable", campaignID)
 	}
+
+	if status == StatusActive {
+		// CHILDREN-FIRST, campaign LAST. Nothing is serving until the campaign gate flips at the
+		// end, so a child failure here (before the gate opens) is a plain error — the tree is
+		// still non-servable, safe to report as "not modified" and retry. The activate guard
+		// above guarantees both child ids are present.
+		if err := c.updateEntityStatus(ctx, "ads", strings.TrimSpace(adID), status); err != nil {
+			return err
+		}
+		if err := c.updateEntityStatus(ctx, "ad_groups", strings.TrimSpace(adGroupID), status); err != nil {
+			return err
+		}
+		// The gate: flip the campaign ACTIVE last. A failure here leaves the children ACTIVE but
+		// the campaign PAUSED (gating them) — still nothing serving — so it is a plain error, not
+		// a partial that could be serving.
+		return c.updateEntityStatus(ctx, "campaigns", campaignID, status)
+	}
+
+	// PAUSE: campaign (gate) FIRST so delivery stops immediately, then the children.
 	if err := c.updateEntityStatus(ctx, "campaigns", campaignID, status); err != nil {
 		return err
 	}
-	// The campaign PATCH already committed. A subsequent CHILD failure means the tree is
-	// PARTIALLY applied (parent changed, child not) — that is NOT "not modified", and a
-	// retry is safe because every PATCH is idempotent. Surface it as a partial-cascade
-	// error whose Unconfirmed() is true so the caller reports "verify/retry" and does not
-	// persist a run state the whole tree does not yet reflect.
+	// The campaign PATCH already committed and delivery is gated off. A subsequent CHILD failure
+	// means the tree is PARTIALLY applied (parent paused, child not) — that is NOT "not
+	// modified", and a retry is safe because every PATCH is idempotent. Surface it as a
+	// partial-cascade error whose Unconfirmed() is true so the caller reports "verify/retry" and
+	// does not persist a run state the whole tree does not yet reflect. (Delivery is already
+	// stopped by the campaign gate, so this is a state-consistency concern, not a serving one.)
 	if strings.TrimSpace(adGroupID) != "" {
 		if err := c.updateEntityStatus(ctx, "ad_groups", adGroupID, status); err != nil {
 			return &partialCascadeError{stage: "ad group", err: err}
