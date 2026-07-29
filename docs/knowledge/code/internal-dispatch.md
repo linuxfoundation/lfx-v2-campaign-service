@@ -75,8 +75,9 @@ report "no dispatcher registered" (logged as a startup warning via
 `logMissingDispatchers`); adapters land incrementally per platform.
 
 Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**,
-**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642). Google Ads follows once its client
-(PR #33) merges; the email (HubSpot) dispatcher is LFXV2-2777.
+**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **microsoft** (Bing Ads, LFXV2-2805).
+Google Ads follows once its dispatcher (PR #41) merges; the email (HubSpot) dispatcher is
+LFXV2-2777.
 
 Each adapter interprets its own credential + config shape:
 - **reddit** — OAuth2 (clientId/secret/refreshToken); AccountID from the connection.
@@ -93,5 +94,15 @@ Each adapter interprets its own credential + config shape:
   currency (no FX). Surfaces a `Reused` reuse/config-drift flag and classifies an
   exhausted mutating 429 as UNCONFIRMED; validates the destination URL (https/http, no
   embedded userinfo) up front.
+- **microsoft** — OAuth2 app (clientId/secret) + a developer token + refreshToken;
+  AccountConfig from the connection's AccountID (the DIGITS-ONLY `CustomerAccountId`, trimmed)
+  plus an optional `login_customer_id` (the manager/`CustomerId` header). The client builds the
+  full Campaign → AdGroup → Ad hierarchy (all PAUSED) — so the adapter needs no ad config
+  beyond `microsoftConfig.budget` (the DAILY budget, in the ACCOUNT's currency, no FX) and an
+  optional `timeZone`. `NameSuffix = brief.ID` gives deterministic retry-safe names (Microsoft
+  enforces case-insensitive campaign-name uniqueness, so a retry find-firsts the existing
+  campaign as UNCONFIRMED-already-exists rather than duplicating). A non-nil result with an
+  error is an UNCONFIRMED partial (claim retained); (nil, err) means nothing was created (claim
+  released).
 
 See [internal/dispatch](../../../internal/dispatch).

@@ -1,5 +1,21 @@
 # Log
 
+## 2026-07-28
+
+**Update** — Added the Microsoft Advertising (Bing) PlatformDispatcher (MS-3, LFXV2-2805,
+PR for feat/LFXV2-2805-microsoft-dispatcher). `registerDispatchers` now wires
+`model.ProviderMicrosoftAds` → `dispatch.NewMicrosoftDispatcher`, so Microsoft campaigns
+dispatch upstream instead of recording "no dispatcher registered". The adapter resolves the
+OAuth2-app + developer-token + refresh-token connection, maps the brief + `microsoftConfig`
+(`budget` in ACCOUNT currency as the DAILY budget, optional `timeZone`) onto the client's
+`CreateCampaign`, which builds the full Campaign → AdGroup → Ad hierarchy (all PAUSED), and
+maps the result back to a `model.Campaign` (budget/type/config persisted via
+`applyCampaignConfig`, parity with the siblings). AccountID → `CustomerAccountId` (digits-only,
+trimmed); `login_customer_id` → optional `CustomerId`. `NameSuffix = brief.ID` for retry-safe
+idempotency. Non-nil result + error = UNCONFIRMED partial (claim retained); (nil, err) =
+nothing created (claim released). Removed Microsoft from the `logMissingDispatchers` gap list;
+updated the container test's registered-provider set to include it.
+
 ## 2026-07-24
 
 **Update** — Review-hardened the Microsoft campaign contract (PR #44, copilot):

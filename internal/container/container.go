@@ -252,19 +252,20 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 // dispatcher registered" for that platform (logged as a startup warning).
 func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor) map[model.Provider]service.PlatformDispatcher {
 	return map[model.Provider]service.PlatformDispatcher{
-		model.ProviderRedditAds:   dispatch.NewRedditDispatcher(repo, enc),
-		model.ProviderLinkedInAds: dispatch.NewLinkedInDispatcher(repo, enc),
-		model.ProviderMetaAds:     dispatch.NewMetaDispatcher(repo, enc),
-		model.ProviderTwitterAds:  dispatch.NewTwitterDispatcher(repo, enc),
+		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
+		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
+		model.ProviderMetaAds:      dispatch.NewMetaDispatcher(repo, enc),
+		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
+		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
 	}
 }
 
 // adPlatformProviders is the full set of providers a brief can select (per the
 // CreateCampaigns contract); any without a registered dispatcher is logged at startup
-// so the gap is visible in production. MicrosoftAds and HubSpot are included even
-// though no adapter exists yet — CreateCampaigns accepts both, so a selection of
-// either would otherwise fail silently with "no dispatcher registered" and never be
-// surfaced here. (HubSpot is the email channel; its adapter lands with LFXV2-2777.)
+// so the gap is visible in production. HubSpot is included even though no adapter
+// exists yet — CreateCampaigns accepts it, so a selection would otherwise fail
+// silently with "no dispatcher registered" and never be surfaced here. (HubSpot is the
+// email channel; its adapter lands with LFXV2-2777.) MicrosoftAds now has an adapter.
 var adPlatformProviders = []model.Provider{
 	model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds,
 	model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds,

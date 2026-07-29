@@ -152,8 +152,8 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 }
 
 // registeredProviders is the set of providers registerDispatchers wires up on this
-// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter). Each is guarded so
-// dropping its map entry — the production wiring each PR adds — fails a test rather
+// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter, microsoft). Each is
+// guarded so dropping its map entry — the production wiring each PR adds — fails a test rather
 // than silently restoring "no dispatcher registered" (the adapters are unit-tested by
 // direct instantiation, which bypasses the map).
 var registeredProviders = []model.Provider{
@@ -161,6 +161,7 @@ var registeredProviders = []model.Provider{
 	model.ProviderLinkedInAds,
 	model.ProviderMetaAds,
 	model.ProviderTwitterAds,
+	model.ProviderMicrosoftAds,
 }
 
 // TestRegisterDispatchers_RegistersProviders asserts every expected provider maps to a
@@ -195,8 +196,9 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	for _, p := range registeredProviders {
 		assert.NotContains(t, out, string(p), "%s is registered, so it must not be logged as missing", p)
 	}
-	// ...and at least one genuinely-unregistered known provider MUST be named.
-	assert.Contains(t, out, string(model.ProviderMicrosoftAds), "an unregistered known provider (microsoft-ads) must be surfaced in the log")
+	// ...and at least one genuinely-unregistered known provider MUST be named. Microsoft now
+	// has an adapter, so use google-ads (still unregistered on this branch) as the sentinel.
+	assert.Contains(t, out, string(model.ProviderGoogleAds), "an unregistered known provider (google-ads) must be surfaced in the log")
 }
 
 func TestNewContainer_NoDatabase(t *testing.T) {
