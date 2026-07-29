@@ -519,9 +519,42 @@ func TestMeta_ToggleStatus_ActivateWithoutAdSetRejected(t *testing.T) {
 }
 
 // TestMeta_ToggleStatus_5xxIsUnconfirmed verifies a 5xx surfaces as Unconfirmed().
-func TestMeta_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+// TestMeta_ToggleStatus_5xxAfterMutationIsUnconfirmed: a 5xx that lands AFTER an upstream
+// mutation may have committed is Unconfirmed. On PAUSE the campaign gate is flipped FIRST, so a
+// subsequent 5xx (here, on ad discovery) is a partial application → Unconfirmed (verify/retry).
+func TestMeta_ToggleStatus_5xxAfterMutationIsUnconfirmed(t *testing.T) {
+	var n int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
+		n++
+		if n == 1 { // the PAUSE campaign flip succeeds first
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"success":true}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway) // then ad discovery 5xx — a partial application
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, metaToggleCampaign("23847290", "999"), model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx after the campaign was paused")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx AFTER a mutation must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestMeta_ToggleStatus_ActivateDiscovery5xxIsClean: on ACTIVATE, ad discovery (a GET) runs
+// BEFORE any mutation, so a 5xx there applied nothing — it must be a CLEAN, definite failure
+// (NOT Unconfirmed), so the operator gets a deterministic retry-safe error rather than a
+// spurious "verify" 503. This is the discover-first contract.
+func TestMeta_ToggleStatus_ActivateDiscovery5xxIsClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway) // first call is discovery on activate → clean
 	}))
 	defer srv.Close()
 	d := NewMetaDispatcher(
@@ -530,11 +563,11 @@ func TestMeta_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 	)
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, metaToggleCampaign("23847290", "999"), model.CampaignRunActive)
 	if err == nil {
-		t.Fatal("expected an error on a 5xx toggle")
+		t.Fatal("expected an error on a 5xx discovery")
 	}
 	var unconf interface{ Unconfirmed() bool }
-	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
-		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a pre-mutation discovery 5xx on activate must be CLEAN, not Unconfirmed: %v", err)
 	}
 }
 
