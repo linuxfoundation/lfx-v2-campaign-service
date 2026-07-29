@@ -385,7 +385,8 @@ func TestReddit_ToggleStatus_PatchesPlatform(t *testing.T) {
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
-	// Cascade PATCHes campaign, ad group, then ad — parent-first — all to PAUSED.
+	// On PAUSE the cascade flips the campaign gate FIRST, then the ad group, then the ad — all
+	// to PAUSED (ACTIVATE uses the reverse, children-first order; see the client-level tests).
 	want := []patch{
 		{http.MethodPatch, "/api/v3/ad_accounts/t2_acct/campaigns/t3_c", "PAUSED"},
 		{http.MethodPatch, "/api/v3/ad_accounts/t2_acct/ad_groups/t5_ag", "PAUSED"},
@@ -506,14 +507,15 @@ func TestReddit_ToggleStatus_ActivateWithAdGroupButNoAdRejected(t *testing.T) {
 	}
 }
 
-// TestReddit_ToggleStatus_PartialCascadeIsUnconfirmed verifies that when the campaign PATCH
-// succeeds but a child PATCH fails, the outcome is UNCONFIRMED (partially applied), not a
-// clean failure — the caller must verify/retry rather than report "not modified".
+// TestReddit_ToggleStatus_PartialCascadeIsUnconfirmed verifies that on a PAUSE — where the
+// campaign gate is flipped FIRST — a subsequent child PATCH failure is UNCONFIRMED (partially
+// applied), not a clean failure: the caller must verify/retry rather than report "not modified".
+// (On PAUSE this is a state-consistency concern only; the campaign gate has already stopped
+// delivery. The ACTIVATE path is children-first, so a child failure there never opens the gate —
+// covered by TestReddit_ToggleStatus_ActivateChildFailureIsCleanNotServing.)
 func TestReddit_ToggleStatus_PartialCascadeIsUnconfirmed(t *testing.T) {
-	var n int
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n++
-		// First PATCH (campaign) succeeds; the ad-group PATCH fails with a definite 400.
+		// On PAUSE the campaign PATCH is first (succeeds); the ad-group PATCH then fails 400.
 		if strings.Contains(r.URL.Path, "/ad_groups/") {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -531,13 +533,48 @@ func TestReddit_ToggleStatus_PartialCascadeIsUnconfirmed(t *testing.T) {
 		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
 		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, toggleCampaign("t3_c", "t5_ag", "t6_ad"), model.CampaignRunActive)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, toggleCampaign("t3_c", "t5_ag", "t6_ad"), model.CampaignRunPaused)
 	if err == nil {
 		t.Fatal("expected an error when a child PATCH fails after the campaign PATCH")
 	}
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
 		t.Errorf("a partial cascade (campaign applied, child failed) must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestReddit_ToggleStatus_ActivateChildFailureIsCleanNotServing verifies that on ACTIVATE
+// (children-first, campaign gate LAST) a child PATCH failure returns an error but the campaign
+// gate is never opened — so nothing serves and the failure is NOT a serving/unconfirmed partial.
+func TestReddit_ToggleStatus_ActivateChildFailureIsCleanNotServing(t *testing.T) {
+	var campaignPatched bool
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/campaigns/") {
+			campaignPatched = true
+		}
+		if strings.Contains(r.URL.Path, "/ad_groups/") {
+			w.WriteHeader(http.StatusInternalServerError) // child fails before the gate flip
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, toggleCampaign("t3_c", "t5_ag", "t6_ad"), model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when a child PATCH fails during activate")
+	}
+	if campaignPatched {
+		t.Error("the campaign gate must NOT be opened when a child activate fails (nothing should serve)")
 	}
 }
 
