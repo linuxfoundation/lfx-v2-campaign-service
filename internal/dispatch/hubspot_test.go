@@ -149,6 +149,47 @@ func TestHubSpot_DispatchClonesAndSetsSendList(t *testing.T) {
 	}
 }
 
+// TestHubSpot_StagesWithoutEventName: email staging must proceed even when the brief has no
+// eventName (unlike the ad adapters, which require it). The clone name falls back to the event
+// slug / brief id.
+func TestHubSpot_StagesWithoutEventName(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	// A brief whose details carry NO eventName (only a url).
+	brief := &model.CampaignBrief{ID: "brief-2", ProjectID: "cncf", EventSlug: "kubecon-na-2026", URL: "https://events.example/kc"}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err != nil {
+		t.Fatalf("staging must succeed without an eventName: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "999" || !rec.sawClone {
+		t.Fatalf("expected a cloned email, got %+v (sawClone=%v)", camp, rec.sawClone)
+	}
+}
+
+// TestHubSpot_MasterInSuppressionRefusedBeforeClone: when the audience master list is also in its
+// suppression set (which would exclude the whole audience), the dispatcher must refuse BEFORE any
+// HubSpot call — otherwise the clone would be created and then orphaned when SetSendList rejects.
+func TestHubSpot_MasterInSuppressionRefusedBeforeClone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no HubSpot call should happen when master is in the suppression set: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"26724"})} // master also suppressed
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil {
+		t.Fatal("a master-in-suppression audience must be refused")
+	}
+	if camp != nil {
+		t.Errorf("a pre-clone refusal must return a nil campaign (nothing created), got %+v", camp)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a pre-clone conflict must be NoUpstreamCreate (claim released), got %T: %v", err, err)
+	}
+}
+
 // TestHubSpot_CloneUnconfirmedRetainsClaim: a clone that returns 2xx with no id (UNCONFIRMED —
 // a draft may exist) must retain the claim (non-nil name-only partial) with an UNCONFIRMED error.
 func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {

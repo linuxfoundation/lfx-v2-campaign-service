@@ -86,16 +86,27 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if strings.TrimSpace(cfg.SourceEmailID) == "" {
 		return nil, notCreated(fmt.Errorf("hubspot campaign requires a sourceEmailId (the template email to clone)"))
 	}
-	bf, err := decodeBriefFields(brief)
-	if err != nil {
-		return nil, notCreated(err)
-	}
+	// NOTE: unlike the ad adapters, this does NOT call decodeBriefFields — that helper REQUIRES a
+	// non-empty eventName (every ad platform's create contract needs it), but email staging only
+	// uses the event name to LABEL the cloned draft, and composeEmailName falls back to the event
+	// slug / brief id. A brief with no eventName in its details must still be able to stage an
+	// email, so the name is read leniently instead.
+	eventName := lenientEventName(brief)
 
 	// Resolve the brief's BUILT audience: the send list is the audience's HubSpot master list.
 	// All of this is pre-create (no HubSpot mutation yet), so any failure releases the claim.
 	masterListID, suppressionIDs, aerr := d.resolveBuiltAudience(ctx, brief.ProjectID, brief.ID)
 	if aerr != nil {
 		return nil, notCreated(aerr)
+	}
+	// Pre-flight the master/suppression conflict BEFORE cloning: SetSendList rejects when the
+	// master list also appears in the suppression set (it would exclude the whole audience), but
+	// discovering that only after CloneEmail would orphan a draft. This is pure validation (no
+	// HubSpot call), so a conflict fails cleanly with nothing created.
+	for _, s := range suppressionIDs {
+		if s == masterListID {
+			return nil, notCreated(fmt.Errorf("hubspot: the audience master list %q is also in its suppression set — the send list would exclude the entire audience", masterListID))
+		}
 	}
 
 	client := hubspot.NewClient(
@@ -106,7 +117,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 
 	// STEP 1 (mutating): clone the template email. From here a failure MAY have created the
 	// clone upstream, so classify by whether the outcome is confirmable.
-	cloneName := composeEmailName(bf.EventName, brief.EventSlug, brief.ID)
+	cloneName := composeEmailName(eventName, brief.EventSlug, brief.ID)
 	email, cerr := client.CloneEmail(ctx, cfg.SourceEmailID, cloneName)
 	if cerr != nil {
 		// A clone is the FIRST mutating call: an UNCONFIRMED outcome (transport/5xx) may have
@@ -178,6 +189,27 @@ func decodeSuppressionIDs(raw json.RawMessage) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// lenientEventName reads the brief's event name from its detail blobs WITHOUT requiring it (used
+// only to label the cloned email; composeEmailName falls back when it is empty). It returns ""
+// rather than erroring on a brief that has no eventName — email staging must still proceed.
+func lenientEventName(brief *model.CampaignBrief) string {
+	for _, blob := range []json.RawMessage{brief.EventDetails, brief.Copy} {
+		if len(blob) == 0 {
+			continue
+		}
+		var partial struct {
+			EventName string `json:"eventName"`
+		}
+		if err := json.Unmarshal(blob, &partial); err != nil {
+			continue
+		}
+		if s := strings.TrimSpace(partial.EventName); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // composeEmailName builds the cloned email's name from the event + brief id so it is

@@ -273,7 +273,27 @@ linkedInConfig?: object         — LinkedIn-specific params
 redditConfig?: object           — Reddit-specific params
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
+hubspotConfig?: object          — HubSpot (email channel) params (see HubSpotConfig below)
 ```
+
+#### HubSpotConfig (the `hubspotConfig` object)
+
+HubSpot (email channel) per-platform config. Unlike the ad platforms (which CREATE a campaign),
+the HubSpot dispatcher STAGES a marketing email: it CLONES a template email as a DRAFT and points
+its send list at the brief's already-**built** audience (the `campaign_audiences` resource,
+populated by the audience-building step). No budget/schedule — email has none.
+
+```
+sourceEmailId: string           — REQUIRED. The HubSpot marketing-email id to CLONE as this
+                                  campaign's email. There is no default template. The clone is
+                                  created as a DRAFT (a human reviews and sends it), so staging is
+                                  safe. The AI body content (subject/preheader/body) is applied by
+                                  a separate content-generation step.
+```
+
+The connection supplies the HubSpot private-app token (credentials) and `portal_id` (provider
+config); the send-list audience comes from the built `campaign_audiences` row for the brief, not
+this config.
 
 #### MetaConfig (the `metaConfig` object)
 
