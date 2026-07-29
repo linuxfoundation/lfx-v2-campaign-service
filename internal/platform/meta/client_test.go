@@ -4102,6 +4102,12 @@ func TestUpdateCampaignAndChildrenStatus_ActivateDiscovery5xxIsCleanBeforeAnyMut
 	if errors.As(err, &unconf) && unconf.Unconfirmed() {
 		t.Errorf("a pre-mutation 5xx discovery failure must be CLEAN, not Unconfirmed: %v", err)
 	}
+	// Assert via the DISPATCHER's classifier too: IsOutcomeUnconfirmed unwraps with errors.As,
+	// so a %w-wrapped transportError/5xx cause would still read as ambiguous → a spurious 503.
+	// The clean path stringizes the cause (%v) to break that chain; guard against a regression.
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("IsOutcomeUnconfirmed must be false for a clean pre-mutation discovery failure: %v", err)
+	}
 }
 
 // TestUpdateCampaignAndChildrenStatus_ActivateZeroAdsIsNotServable: on ACTIVATE, an ad set with

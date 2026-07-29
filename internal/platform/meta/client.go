@@ -849,7 +849,12 @@ func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, 
 		if mutatedBefore {
 			return &partialCascadeError{stage: "ad discovery", err: err}
 		}
-		return fmt.Errorf("meta: ad discovery for ad set %s failed: %w", adSetID, err)
+		// Render the cause with %v, NOT %w: a pre-mutation READ failure is CLEAN, but the
+		// underlying error is often a transportError/5xx that createOutcomeAmbiguous (which
+		// unwraps via errors.As) would treat as ambiguous → IsOutcomeUnconfirmed → a spurious
+		// 503. Stringizing the cause breaks the unwrap chain so this stays a clean, definite
+		// failure. (The mutatedBefore branch above intentionally KEEPS it ambiguous/partial.)
+		return fmt.Errorf("meta: ad discovery for ad set %s failed (nothing was mutated): %v", adSetID, err)
 	}
 	// On ACTIVATE, a tree with ZERO ads can never serve — Meta creation treats per-variant ad
 	// failures as non-fatal, so a degraded broker campaign can legitimately have an ad set but
