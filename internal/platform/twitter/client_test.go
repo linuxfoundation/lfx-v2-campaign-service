@@ -3422,3 +3422,111 @@ func TestIsDuplicatePromotedTweetErr_Excludes429(t *testing.T) {
 		t.Error("a 429 carrying DUPLICATE_PROMOTABLE_ENTITY must NOT be classified as a duplicate (verify-before-retry)")
 	}
 }
+
+// newToggleTestClient builds a client pointed at srv with pacing disabled.
+func newToggleTestClient(t *testing.T, srvURL string) *Client {
+	t.Helper()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srvURL),
+		WithAPIVersion("12"),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	return c
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildFirst pins the ACTIVATE ordering:
+// the line item must be enabled BEFORE the campaign gate, so the tree never sits in a state
+// where the campaign is serving but its line item is still paused.
+func TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildFirst(t *testing.T) {
+	var order []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/line_items/"):
+			order = append(order, "line_item")
+		case strings.Contains(r.URL.Path, "/campaigns/"):
+			order = append(order, "campaign")
+		}
+		if got := r.URL.Query().Get("entity_status"); got != StatusActive {
+			t.Errorf("entity_status = %q, want %q", got, StatusActive)
+		}
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %s, want PUT", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", StatusActive); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if len(order) != 2 || order[0] != "line_item" || order[1] != "campaign" {
+		t.Errorf("activate order = %v, want [line_item campaign] (child first, gate last)", order)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseOrdersCampaignFirst pins the PAUSE ordering: the
+// campaign gate stops delivery immediately, before the line item is touched.
+func TestUpdateCampaignAndChildrenStatus_PauseOrdersCampaignFirst(t *testing.T) {
+	var order []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/line_items/"):
+			order = append(order, "line_item")
+		case strings.Contains(r.URL.Path, "/campaigns/"):
+			order = append(order, "campaign")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", StatusPaused); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if len(order) != 2 || order[0] != "campaign" || order[1] != "line_item" {
+		t.Errorf("pause order = %v, want [campaign line_item] (gate first)", order)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateRequiresLineItem refuses an ACTIVATE with no
+// known line item BEFORE any call: activating the campaign alone would leave the line item
+// paused and nothing serving, while the caller persisted a misleading "active".
+func TestUpdateCampaignAndChildrenStatus_ActivateRequiresLineItem(t *testing.T) {
+	var reached bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "  ", StatusActive)
+	if err == nil {
+		t.Fatal("activating without a line-item id must be refused")
+	}
+	if reached {
+		t.Error("no API call should be made — the refusal is up front")
+	}
+	// Pausing the same campaign WITHOUT a line item is fine: the gate stops delivery.
+	if perr := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "", StatusPaused); perr != nil {
+		t.Errorf("pause without a line-item id must succeed (the gate stops delivery): %v", perr)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_RejectsBadInput guards the input contract.
+func TestUpdateCampaignAndChildrenStatus_RejectsBadInput(t *testing.T) {
+	c := newToggleTestClient(t, "http://127.0.0.1:1")
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", "ENABLED"); err == nil {
+		t.Error("an unsupported entity_status must be rejected")
+	}
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), " ", "li1", StatusPaused); err == nil {
+		t.Error("an empty campaign id must be rejected")
+	}
+}

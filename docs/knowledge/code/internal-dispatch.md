@@ -117,7 +117,19 @@ without touching every adapter. **reddit** implements it: `resolveRedditClient` 
 `Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
 then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
 its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
-PAUSES all three, so toggling only the campaign would not serve. Meta + LinkedIn toggles follow
-(stacked PR); X/Twitter + Google Ads follow later.
+PAUSES all three, so toggling only the campaign would not serve.
+
+**X/Twitter** implements it too, with a DIFFERENT cascade shape: scope is the campaign + line
+item ONLY. `CreateCampaign` creates both PAUSED but the promoted-tweet association is created
+ACTIVE by the API (that endpoint does not accept `entity_status`), and the LINE ITEM is X's
+delivery gate — so pausing the line item stops serving and re-activating it resumes serving
+without the association ever changing. Toggling the promoted tweet would be unnecessary and,
+on activate, unable to make an otherwise-paused tree serve. `UpdateCampaignAndChildrenStatus`
+PUTs `entity_status` (query params, not a JSON body, per the X Ads v12 contract), ordering
+child-first on ACTIVATE and campaign-gate-first on PAUSE. An ACTIVATE with an unknown
+line-item id is refused as `ErrCampaignNotProvisioned` (a 409) before any call.
+
+Meta + LinkedIn toggles follow (stacked PR); Google Ads and Microsoft Ads follow once their
+dispatchers land.
 
 See [internal/dispatch](../../../internal/dispatch).

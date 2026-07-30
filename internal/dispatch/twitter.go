@@ -189,3 +189,105 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 	}
 	return c
 }
+
+// resolveTwitterClient builds an X Ads client from the project's stored connection.
+// Split out of Dispatch so ToggleStatus resolves credentials the same way (active
+// connection, complete OAuth1 4-tuple, account + funding-instrument ids).
+func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID string, platform model.Provider) (*twitter.Client, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if res.status != model.StatusActive {
+		return nil, fmt.Errorf("twitter connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds twitterCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return nil, fmt.Errorf("decode twitter credentials: %w", err)
+	}
+	if creds.ConsumerKey == "" || creds.ConsumerSecret == "" || creds.AccessToken == "" || creds.AccessTokenSecret == "" {
+		return nil, fmt.Errorf("twitter credentials are incomplete (need consumerKey, consumerSecret, accessToken, accessTokenSecret)")
+	}
+	accountID := strings.TrimSpace(res.accountID)
+	fundingID := strings.TrimSpace(res.providerConfig["funding_instrument_id"])
+	if accountID == "" {
+		return nil, fmt.Errorf("twitter connection for project %s is missing account id", projectID)
+	}
+	// A toggle only PUTs entity_status on existing entities, so the funding instrument
+	// (a create-time requirement) is not needed here — don't refuse a pause for a field
+	// this call never uses.
+	return twitter.NewClient(
+		twitter.Credentials{
+			ConsumerKey:       creds.ConsumerKey,
+			ConsumerSecret:    creds.ConsumerSecret,
+			AccessToken:       creds.AccessToken,
+			AccessTokenSecret: creds.AccessTokenSecret,
+		},
+		twitter.AccountConfig{AccountID: accountID, FundingInstrumentID: fundingID},
+		d.opts...,
+	), nil
+}
+
+// twitterRunStatus maps the service's run-state vocabulary to X's entity_status.
+func twitterRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return twitter.StatusActive, nil
+	case model.CampaignRunPaused:
+		return twitter.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
+}
+
+// twitterChildIDs pulls the line-item id out of the persisted result blob.
+//
+// The blob is campaignFromTwitter's json.Marshal of an untagged twitter.CampaignResult, so
+// the key is the Go field name "LineItemID" (the reddit blob uses lowerCamel — the shapes
+// differ per platform). Casing itself is forgiving (encoding/json matches keys
+// case-insensitively), but a renamed or nested field would silently yield "" and turn every
+// ACTIVATE into a spurious not-provisioned 409, so the shape is pinned by a round-trip test.
+func twitterChildIDs(campaign *model.Campaign) (lineItemID string) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		LineItemID string `json:"LineItemID"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	return blob.LineItemID
+}
+
+// ToggleStatus implements service.StatusToggler for X (Twitter) Ads.
+//
+// Scope is the campaign + line item; the promoted tweet is intentionally untouched (see
+// twitter.UpdateCampaignAndChildrenStatus — the line item is X's delivery gate and the
+// association is always ACTIVE). ACTIVATE requires a known line-item id, since activating
+// the campaign alone would leave the line item PAUSED and nothing serving while the row
+// claimed "active"; that refusal is ErrCampaignNotProvisioned so the service maps it to a
+// 409 state error without ever calling X. Pausing needs no child id.
+func (d *TwitterDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
+	twitterStatus, err := twitterRunStatus(status)
+	if err != nil {
+		return err
+	}
+	client, err := d.resolveTwitterClient(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	lineItemID := twitterChildIDs(campaign)
+	if twitterStatus == twitter.StatusActive && strings.TrimSpace(lineItemID) == "" {
+		return fmt.Errorf("%w: twitter campaign %s cannot be activated because its line item is not known, so nothing would serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, lineItemID, twitterStatus); uerr != nil {
+		// An ambiguous outcome (transport/5xx/mutating-3xx/mutating-429) may have applied
+		// upstream, so report "verify before retry" rather than a flat "not applied".
+		if twitter.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
+}

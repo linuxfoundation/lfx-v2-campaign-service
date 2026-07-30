@@ -1768,3 +1768,91 @@ func extractPromotedTweetID(resp *apiResponse) string {
 	}
 	return extractID(resp)
 }
+
+// Run states an X campaign/line item can be toggled between. X calls this
+// `entity_status`; ACTIVE is spelled ACTIVE on both entities (the create path uses
+// PAUSED, the same vocabulary).
+const (
+	// StatusActive is the X entity_status that lets an entity serve.
+	StatusActive = "ACTIVE"
+	// StatusPaused is the X entity_status that stops an entity serving.
+	StatusPaused = "PAUSED"
+)
+
+// IsOutcomeUnconfirmed reports whether err leaves the mutation's outcome AMBIGUOUS —
+// X may have applied it despite the error, so the caller must VERIFY before retrying
+// rather than assume "not applied". Exported so the dispatcher can classify across the
+// package boundary (mirrors the reddit client's helper of the same name).
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
+
+// updateEntityStatus PUTs a single entity's entity_status. Per the X Ads v12 contract
+// (the same one createRequest documents) parameters go in the QUERY STRING, not a JSON
+// body, and are folded into the OAuth signature base string.
+func (c *Client) updateEntityStatus(ctx context.Context, path, status string) error {
+	if err := c.pace(ctx); err != nil {
+		return err
+	}
+	_, err := c.doRequest(ctx, http.MethodPut, path, map[string]string{"entity_status": status})
+	return err
+}
+
+// UpdateCampaignAndChildrenStatus toggles an X campaign and its line item between
+// ACTIVE and PAUSED.
+//
+// SCOPE — campaign + line item ONLY; the promoted tweet is deliberately NOT touched.
+// CreateCampaign creates the campaign and line item PAUSED but the promoted-tweet
+// association is created ACTIVE by the API (that endpoint does not accept
+// entity_status): the LINE ITEM is the delivery gate on X, so pausing it stops serving
+// and re-activating it resumes serving without the association ever changing. Toggling
+// the promoted tweet would be both unnecessary and (on activate) unable to make an
+// otherwise-paused tree serve.
+//
+// ORDER mirrors the reddit cascade: on ACTIVATE, child FIRST then the campaign gate
+// LAST, so nothing serves until the whole tree is ready; on PAUSE, the campaign gate
+// FIRST so delivery stops immediately even if the line-item call then fails.
+//
+// Activating with an unknown line-item id is refused: the line item would stay PAUSED
+// and nothing would serve, so reporting "active" would be a lie. Pausing needs no child
+// id — pausing the campaign already stops delivery.
+func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, lineItemID, status string) error {
+	if status != StatusActive && status != StatusPaused {
+		return fmt.Errorf("twitter: unsupported entity_status %q (want %s or %s)", status, StatusActive, StatusPaused)
+	}
+	if strings.TrimSpace(campaignID) == "" {
+		return fmt.Errorf("twitter: cannot update status: campaign id is empty")
+	}
+	if status == StatusActive && strings.TrimSpace(lineItemID) == "" {
+		return fmt.Errorf("twitter: cannot activate campaign %s: its line-item id must be known, so the tree cannot be made servable", campaignID)
+	}
+
+	campaignPath := "campaigns/" + url.PathEscape(campaignID)
+	lineItemPath := "line_items/" + url.PathEscape(lineItemID)
+
+	if status == StatusActive {
+		if err := c.updateEntityStatus(ctx, lineItemPath, status); err != nil {
+			return fmt.Errorf("twitter: line item %s activate failed: %w", lineItemID, err)
+		}
+		if err := c.updateEntityStatus(ctx, campaignPath, status); err != nil {
+			return fmt.Errorf("twitter: campaign %s activate failed: %w", campaignID, err)
+		}
+		return nil
+	}
+
+	// PAUSE: campaign gate first — delivery stops even if the line-item call fails below.
+	if err := c.updateEntityStatus(ctx, campaignPath, status); err != nil {
+		return fmt.Errorf("twitter: campaign %s pause failed: %w", campaignID, err)
+	}
+	if strings.TrimSpace(lineItemID) == "" {
+		return nil
+	}
+	if err := c.updateEntityStatus(ctx, lineItemPath, status); err != nil {
+		return fmt.Errorf("twitter: line item %s pause failed (the campaign is paused, so delivery is already stopped): %w", lineItemID, err)
+	}
+	return nil
+}
