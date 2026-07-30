@@ -75,8 +75,8 @@ report "no dispatcher registered" (logged as a startup warning via
 `logMissingDispatchers`); adapters land incrementally per platform.
 
 Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**,
-**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642). Google Ads follows once its client
-(PR #33) merges; the email (HubSpot) dispatcher is LFXV2-2777.
+**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **hubspot** (the email channel,
+LFXV2-2777). Google Ads (PR #41) and Microsoft (PR #50) follow once their PRs merge.
 
 Each adapter interprets its own credential + config shape:
 - **reddit** — OAuth2 (clientId/secret/refreshToken); AccountID from the connection.
@@ -93,5 +93,31 @@ Each adapter interprets its own credential + config shape:
   currency (no FX). Surfaces a `Reused` reuse/config-drift flag and classifies an
   exhausted mutating 429 as UNCONFIRMED; validates the destination URL (https/http, no
   embedded userinfo) up front.
+- **hubspot** — the EMAIL channel (not an ad platform), single private-app token. Unlike the ad
+  adapters (which CREATE a campaign) it STAGES a marketing email: it CLONES a caller-specified
+  template (`hubspotConfig.sourceEmailId`) and points the clone's send list at the brief's BUILT
+  audience — resolved from the `campaign_audiences` resource (LFXV2-2773) via an injected
+  `audienceReader`, taking the newest hubspot audience and refusing if it is not yet `built`
+  (`PlatformMasterListID` → the send list, `SuppressionListIDs` → exclusions). The cloned email's
+  HubSpot id is the campaign's `PlatformCampaignID`; the clone is a DRAFT (a human sends it). AI
+  body content (LFXV2-2775) and audience building (LFXV2-2774) are separate steps. Claim
+  contract: an UNCONFIRMED clone (2xx-no-id / transport) retains the claim with a name-only
+  partial; a post-clone send-list failure is a partial (the email exists — retain + reconcile);
+  a definite pre-clone failure releases the claim.
+
+## Status toggle (optional capability)
+
+`StatusToggler` is an OPTIONAL dispatcher interface (separate from `PlatformDispatcher`) —
+`ToggleStatus(ctx, projectID, platform, campaign *model.Campaign, status)` — for
+pausing/resuming a live campaign on the platform (ACTIVE↔PAUSED). It receives the full
+persisted `*model.Campaign` (not just the id) so an adapter can reach any child ids it stored
+at creation. The orchestrator's `ToggleCampaignStatus` type-asserts it (returning
+`ErrToggleUnsupported` when a platform hasn't wired it), so it can be added platform-by-platform
+without touching every adapter. **reddit** implements it: `resolveRedditClient` (shared with
+`Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
+then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
+its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
+PAUSES all three, so toggling only the campaign would not serve. Meta + LinkedIn toggles follow
+(stacked PR); X/Twitter + Google Ads follow later.
 
 See [internal/dispatch](../../../internal/dispatch).

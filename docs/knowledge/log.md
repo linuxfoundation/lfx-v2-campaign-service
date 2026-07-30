@@ -21,6 +21,19 @@ path exclusion was deliberately rejected: unlike the `*_test.go` allowlist in
 files, letting a real credential in a new test bypass both scanners. Also noted
 that `REPOSITORY_SECRETLINT_FILTER_REGEX_EXCLUDE` is inert here because secretlint
 runs in MegaLinter's `project` CLI lint mode.
+**Update** — Added the HubSpot (email channel) PlatformDispatcher (LFXV2-2777, Capability C —
+staging). `registerDispatchers` now wires `model.ProviderHubSpot` →
+`dispatch.NewHubSpotDispatcher`, which — unlike the ad adapters — STAGES a marketing email
+rather than creating a campaign: it resolves the HubSpot connection, fetches the brief's BUILT
+audience from `campaign_audiences` (via a new narrow `audienceReader`, refusing when the newest
+hubspot audience is not `built`), CLONES the caller's template (`hubspotConfig.sourceEmailId`) as
+a DRAFT, and sets the clone's send list to the audience's `PlatformMasterListID` +
+`SuppressionListIDs`. The cloned email id is the campaign's `PlatformCampaignID`. Claim contract:
+UNCONFIRMED clone → name-only partial (claim retained); post-clone send-list failure → partial
+(email exists); definite pre-clone failure → claim released. `registerDispatchers` gained an
+`*postgres.AudienceRepo` arg (both container call sites updated); the container test's
+registered-provider set now includes hubspot. AI body content (LFXV2-2775) and audience building
+(LFXV2-2774) remain separate stories.
 
 ## 2026-07-24
 
@@ -61,6 +74,33 @@ create) stays UNCONFIRMED — classification reordered so createOutcomeAmbiguous
 a ctx check runs before the ad step so a done context doesn't fire ad HTTP work. (6) Doc fixes:
 `CampaignResult.AdID`/`AlreadyExisted` and `CampaignInput.Headlines/Descriptions` comments
 corrected (RSA, all-three-level AlreadyExisted, width-aware limits).
+
+## 2026-07-23 (2)
+
+**Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
+CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
+would activate a campaign whose children stayed PAUSED — it would not serve. Added
+`reddit.UpdateCampaignAndChildrenStatus` (status-dependent fail-closed ordering: ACTIVATE
+lifts children first then the campaign gate last, PAUSE flips the campaign gate first then the
+children; skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
+`StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
+the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
+(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
+
+## 2026-07-23
+
+**Update** — Campaign status toggle (LFXV2-2806, PR #46). New
+`PATCH /projects/{p}/briefs/{b}/campaigns/{id}/status` {active|paused} that pauses/resumes a
+campaign ON THE AD PLATFORM then persists (previously `update-campaign` only wrote the DB row,
+so a "paused" status didn't actually pause the campaign). Reddit first. Adds
+`reddit.UpdateCampaignStatus` (PATCH `configured_status`), an optional `StatusToggler`
+dispatcher interface + `RedditDispatcher.ToggleStatus` (via a shared `resolveRedditClient`),
+`Orchestrator.ToggleCampaignStatus` (type-asserts the toggler), and
+`BriefService.ToggleCampaignStatus` (platform-first, DB-after-confirm on a WithoutCancel
+context, If-Match guarded, classified errors: 409 not-provisioned / 400 unsupported / 503
+platform-failure). `model.CampaignRunActive/Paused` constants. Meta + X/Twitter toggles are a
+follow-up. Review-hardened per dealako-sim + cursor + copilot (error classification, cancel
+safety, `?`/`#` path-guard, dedup).
 
 ## 2026-07-22
 
@@ -160,7 +200,6 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
-
 ## 2026-07-21
 
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review

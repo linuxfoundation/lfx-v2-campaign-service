@@ -255,6 +255,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/briefs", true},
 		{"/projects/p1/briefs/b-42", true},
 		{"/projects/p1/briefs/b-42/campaigns/c-9", true},
+		// The campaign status-toggle (LFXV2-2806) is a deeper subroute under a campaign; it
+		// inherits the `briefs(/.*)?` HTTPRoute match and the `/briefs/**` campaign_manager
+		// rule. This row pins that coverage so a future narrowing of the briefs match/rule
+		// can't leave the /status endpoint routed-but-unauthorized (or unreachable).
+		{"/projects/p1/briefs/b-42/campaigns/c-9/status", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
