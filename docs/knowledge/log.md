@@ -1,5 +1,21 @@
 # Log
 
+## 2026-07-29
+
+**Update** — Added the HubSpot (email channel) PlatformDispatcher (LFXV2-2777, Capability C —
+staging). `registerDispatchers` now wires `model.ProviderHubSpot` →
+`dispatch.NewHubSpotDispatcher`, which — unlike the ad adapters — STAGES a marketing email
+rather than creating a campaign: it resolves the HubSpot connection, fetches the brief's BUILT
+audience from `campaign_audiences` (via a new narrow `audienceReader`, refusing when the newest
+hubspot audience is not `built`), CLONES the caller's template (`hubspotConfig.sourceEmailId`) as
+a DRAFT, and sets the clone's send list to the audience's `PlatformMasterListID` +
+`SuppressionListIDs`. The cloned email id is the campaign's `PlatformCampaignID`. Claim contract:
+UNCONFIRMED clone → name-only partial (claim retained); post-clone send-list failure → partial
+(email exists); definite pre-clone failure → claim released. `registerDispatchers` gained an
+`*postgres.AudienceRepo` arg (both container call sites updated); the container test's
+registered-provider set now includes hubspot. AI body content (LFXV2-2775) and audience building
+(LFXV2-2774) remain separate stories.
+
 ## 2026-07-24
 
 **Update** — Review-hardened the Microsoft campaign contract (PR #44, copilot):
@@ -10,6 +26,35 @@ a live caller context is a FAILED lookup (UNCONFIRMED), not a clean abort. Also,
 duplicate-name self-heal whose reconciliation re-lookup errors now surfaces that
 cause. Aligned the `internal-platform-microsoft` concept + the older log entry to
 the corrected `ctx.Err()` distinction and the duplicate-name-REJECTED contract.
+## 2026-07-23
+
+**Update** — Microsoft Ads MS-2.5 PR #45 review follow-up (copilot + cursor). (1) The ≥1-word
+RSA asset rule now also covers AUTO-composed copy: `boundedUniqueCopy` drops any wordless
+candidate (shared `hasWord` helper), so a punctuation-only `EventName` — which survives
+`sanitizeNamePart` non-empty — can no longer become a headline that AddAds rejects after the
+PAUSED campaign/ad group exist. (2) Added an up-front DISPLAY-DOMAIN check: the composed
+`FinalUrls` host is validated against Microsoft's 67-char display-URL limit (RSA sets no
+`Path1`/`Path2`, so the host is the whole budget); an over-long host passed the 2,048-char
+check but was rejected only at AddAds. (3) Test fix: the userinfo `RejectsBadAdURL` fixture is
+built at runtime via `url.UserPassword` instead of a `user:pass@host` literal that tripped
+secretlint (mirrors the reddit client tests).
+
+**Update** — Microsoft Ads MS-2.5 v13-contract hardening (PR #45 review, copilot + cursor —
+VERIFIED against learn.microsoft.com). (1) RSA copy limits are WIDTH-AWARE: normal copy
+30/90; Microsoft documents a reduced 15/45 cap "for languages with double-width characters"
+(CJK/Korean/Japanese/Chinese/emoji). v13 gives no per-character weighted formula, so the
+client conservatively applies 15/45 whenever ANY double-width char is present (never
+over-length, may truncate mixed copy slightly short) — validation AND truncation both do
+this. (2) Each asset must contain ≥1 word
+and no newline (enforced up front). (3) The composed `FinalUrls` (registration URL + utm_*) is
+length-checked against Microsoft's 2,048-char limit up front (not just the raw URL). (4)
+`AddAdGroups` body carries the docs-required `ReturnInheritedBidStrategyTypes` (reserved; sent
+`false`). (5) Context handling: a BARE context.Canceled/DeadlineExceeded from a read lookup is
+a clean abort (nothing created), while a ctx-cancel wrapped in transportError (mid-flight
+create) stays UNCONFIRMED — classification reordered so createOutcomeAmbiguous wins first; and
+a ctx check runs before the ad step so a done context doesn't fire ad HTTP work. (6) Doc fixes:
+`CampaignResult.AdID`/`AlreadyExisted` and `CampaignInput.Headlines/Descriptions` comments
+corrected (RSA, all-three-level AlreadyExisted, width-aware limits).
 
 ## 2026-07-23 (6)
 
@@ -43,8 +88,9 @@ creative cascade, so all three platforms now cascade.)
 **Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
 CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
 would activate a campaign whose children stayed PAUSED — it would not serve. Added
-`reddit.UpdateCampaignAndChildrenStatus` (PATCHes campaign → ad group → ad, parent-first,
-skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
+`reddit.UpdateCampaignAndChildrenStatus` (status-dependent fail-closed ordering: ACTIVATE
+lifts children first then the campaign gate last, PAUSE flips the campaign gate first then the
+children; skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
 `StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
 the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
 (`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
@@ -101,6 +147,34 @@ is unconfirmed/absent or the campaign/line-item was reused. Client changes landi
 it: a `Reused` reuse/config-drift flag on `CampaignResult`; an exhausted mutating 429
 classified UNCONFIRMED; destination-URL validation (https/http, reject embedded userinfo)
 with `redactURLForError` so a persisted validation error can't leak a secret.
+**Update** — Microsoft Ads MS-2.5 ad type corrected to Responsive Search Ad (PR #45
+review, copilot — VERIFIED against learn.microsoft.com). The initial MS-2.5 added a
+`TextAd`, but v13 does NOT support adding text/expanded-text ads (every `TextAd` field is
+"Add: Not supported"; a standard-text-ad add fails with `CampaignServiceAdTypeInvalid`) —
+the permissive test double masked a guaranteed runtime rejection. Switched the ad payload
+to `ResponsiveSearchAd`: 3–15 unique headline assets (≤30) + 2–4 unique description assets
+(≤90), each a `TextAsset` in an `AssetLink`, plus required `FinalUrls`. Ad group now sends
+`AdGroupType: SearchStandard` (required to host an RSA) and a `Language` (campaign sets
+none). `Ad.Status` defaults to Active on Add, so the ad sends `Status: Paused` explicitly.
+`Ad.Type` "ResponsiveSearch" IS sent as the AddAds polymorphic discriminator (Add:Read-only
+bars changing the type, not omitting the wire discriminator). `CampaignInput.Headline/Description` (singular)
+became `Headlines/Descriptions` (lists); `composeAdCopy` de-dups/truncates/pads to the
+minimum, `validateAdCopy` rejects over-count/over-long up front. Also: ad URL + copy now
+validated BEFORE the campaign create (not before the ad group) so a bad input never
+orphans a PAUSED campaign; `AlreadyExisted` is true only when all three levels pre-existed.
+
+**Update** — Microsoft Ads MS-2.5 (ad group + ad) on the corrected v13 contract
+(`adgroup_ad.go`). `CreateCampaign` now completes Campaign → AdGroup → Ad (all PAUSED).
+Creates are `POST /AdGroups` (body `{CampaignId,AdGroups}`) and `POST /Ads` (body
+`{AdGroupId,Ads}`) — parent id in the BODY, not the URL; reads are `POST
+/AdGroups/QueryByCampaignId` and `POST /Ads/QueryByAdGroupId` (POST-with-body, not GET).
+Ad-group idempotency = case-insensitive name; ad idempotency = FinalUrl match. Shared
+`firstEntityID` classifier; reconcilable partials carry the ids known so far. Ad
+destination validated (https/http, no userinfo) before any ad-group create; `FinalUrls` =
+registration URL with LFX `utm_*` set; copy caller-supplied or derived from EventName,
+bounded to Title 30 / Text 90. Rebased onto the corrected MS-2 (AccountId body, POST
+QueryByAccountId lookup, case-insensitive-unique names, TimeZone sent).
+
 **Update** — Microsoft Ads MS-2 corrected to the real v13 REST contract (PR #44 review,
 copilot — VERIFIED against learn.microsoft.com). The initial MS-2 assumed a
 GET-CampaignsByAccountId lookup, no request-body AccountId, and duplicate-names-allowed —

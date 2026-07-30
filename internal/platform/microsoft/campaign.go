@@ -10,22 +10,27 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // ---------------------------------------------------------------------------
 // Campaign creation (MS-2): find-or-create a PAUSED campaign
 //
-// The Microsoft Advertising REST hierarchy is Campaign -> AdGroup -> Ad. MS-2
-// creates the PAUSED campaign shell only (POST CampaignManagement/v13/Campaigns);
-// ad group + ad creation land in a later slice. Everything is created PAUSED so
-// nothing serves until a human enables it.
+// The Microsoft Advertising REST hierarchy is Campaign -> AdGroup -> Ad. CreateCampaign
+// find-or-creates the PAUSED campaign (POST CampaignManagement/v13/Campaigns) and then
+// completes the hierarchy under it — a PAUSED ad group and a PAUSED Responsive Search Ad
+// (see createAdGroupAndAd in adgroup_ad.go). Everything is created PAUSED so nothing serves
+// until a human enables it.
 //
 // Two Microsoft-specific transport facts drive the contract here:
 //
@@ -83,19 +88,16 @@ const (
 )
 
 // CampaignInput is the platform-agnostic request to create a Microsoft Advertising
-// campaign. Only the fields needed for a PAUSED search-campaign shell are consumed
-// today; targeting/ad groups/ads are added in a later slice. Mirrors the google-ads
-// CampaignInput so the orchestrator can build one input shape per platform.
+// campaign. CreateCampaign consumes these fields to build the full PAUSED hierarchy
+// (campaign + ad group + responsive search ad). Mirrors the google-ads CampaignInput so
+// the orchestrator can build one input shape per platform.
 type CampaignInput struct {
 	// EventName is the human-readable campaign subject, folded into the campaign name.
 	// Caller-supplied and otherwise unbounded, so it is sanitized and the composed name
 	// is length-capped before any create call.
 	EventName string
-	// EventSlug is the URL-safe event identifier, carried for struct parity with the
-	// sibling clients (which use it to build UTM click-through params on the ad's final
-	// URL). CreateCampaign builds only a PAUSED campaign shell today — no ads / final
-	// URLs — so this field is accepted but not yet consumed; a later slice (ad creation)
-	// will use it. Reserved now so the platform-agnostic input shape is stable.
+	// EventSlug is the URL-safe event identifier used to build the UTM click-through params
+	// appended to the created ad's final URL (utm_campaign), matching the sibling clients.
 	EventSlug string
 	// Project is folded into the composed name alongside EventName. It is the canonical
 	// attribution key the data pipeline parses out of the campaign name.
@@ -117,6 +119,29 @@ type CampaignInput struct {
 	// defaultTimeZone is used. A caller that knows the account's intended zone can pass a
 	// supported enum string.
 	TimeZone string
+	// RegistrationURL is the landing page the created Ad points to (its FinalUrls). It
+	// is REQUIRED to create the Ad: Microsoft rejects a responsive search ad with no final
+	// URL. Validated (https/http only, no embedded userinfo) before any create. UTM params
+	// for attribution are appended from EventSlug/Project.
+	RegistrationURL string
+	// Headlines / Descriptions override the auto-composed responsive-search-ad copy. A
+	// Microsoft responsive search ad REQUIRES 3-15 unique headlines and 2-4 unique
+	// descriptions. Character limits are WIDTH-DEPENDENT: normal copy allows 30 (headline) /
+	// 90 (description) final characters; Microsoft documents a reduced 15 / 45 cap "for
+	// languages with double-width characters" (CJK, Korean, Japanese, Chinese, or emoji).
+	// v13 publishes no per-character weighted formula, so this client conservatively applies
+	// the reduced 15 / 45 cap whenever ANY double-width character is present — it never emits
+	// an over-length asset (which would fail the ad after its parents were created), at the
+	// cost of truncating mixed copy a little short of the theoretical maximum. Each entry must
+	// also contain at least one word and no control character (checkAdCopyList rejects ANY
+	// control rune — \t/\v/\f/NUL, not just \n/\r). When a caller supplies fewer than the
+	// minimum, deterministic placeholders derived from EventName/Project pad the lists up to
+	// the minimum (a safe PAUSED default a human edits before enabling); supplying more than
+	// the maximum, a duplicate, an over-long, or a whitespace-only (non-empty, word-less) entry
+	// is a clean up-front validation error. A genuinely empty "" entry is IGNORED and padded to
+	// the minimum, not rejected. Leave both slices empty to auto-compose entirely.
+	Headlines    []string
+	Descriptions []string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -127,13 +152,19 @@ type CampaignResult struct {
 	AccountLabel string `json:"accountLabel,omitempty"`
 	CampaignName string `json:"campaignName"`
 	CampaignID   string `json:"campaignId"`
-	// AlreadyExisted is true when this run did not create the campaign — the campaign
-	// existed before this call resolved it. That happens on two paths: (1) the pre-check
-	// findCampaignByName matched a prior campaign, so no create was issued; and (2) the
-	// duplicate-name self-heal — a create that LOST the race to a concurrent creator
-	// (DUPLICATE_NAME) is reconciled by re-looking the winner up, and the winner is
-	// reported as already-existing. In both cases the caller knows this run did not create
-	// the campaign (even though path 2 did issue a create attempt that was rejected).
+	// AdGroupName / AdGroupID identify the ad group created (or found) under the
+	// campaign. AdGroupName is deterministic, so an ambiguous ad-group failure BEFORE an
+	// id is known is reconcilable by name (scoped to the campaign).
+	AdGroupName string `json:"adGroupName,omitempty"`
+	AdGroupID   string `json:"adGroupId,omitempty"`
+	// AdID identifies the Responsive Search Ad created under the ad group.
+	AdID string `json:"adId,omitempty"`
+	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
+	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
+	// create was issued at any level. If ANY level was created this run, it is false, even
+	// when the campaign itself was reused. So true means "the entire tree already existed".
+	// (At the campaign level, a reused campaign is one found by findCampaignByName OR one
+	// reconciled by the duplicate-name self-heal after losing a create race.)
 	AlreadyExisted  bool     `json:"alreadyExisted,omitempty"`
 	MicrosoftAdsURL string   `json:"microsoftAdsUrl"`
 	Steps           []string `json:"steps"`
@@ -221,13 +252,18 @@ type queryCampaignsRequest struct {
 	CampaignType string      `json:"CampaignType"`
 }
 
-// CreateCampaign find-or-creates a PAUSED Microsoft Advertising Search campaign.
+// CreateCampaign find-or-creates a PAUSED Microsoft Advertising Search campaign AND then
+// completes the Campaign -> AdGroup -> Ad hierarchy under it, returning a usable paused
+// campaign rather than an empty shell.
 //
 // Microsoft enforces that Campaign.Name is UNIQUE among the account's active/paused
 // campaigns, using a CASE-INSENSITIVE comparison. That uniqueness is the idempotency
 // key here (there is no client-supplied idempotency token): CreateCampaign FIRST looks
-// the campaign up by its deterministic name (a read, retried on 429) and returns the
-// existing one (AlreadyExisted=true) without creating a second.
+// the campaign up by its deterministic name (a read, retried on 429) and reuses the
+// existing one without creating a second. Reuse of the campaign ALONE does NOT set
+// AlreadyExisted — the call continues into the ad-group/ad steps, and result.AlreadyExisted
+// is true ONLY when the ENTIRE tree (campaign AND ad group AND ad) was found pre-existing
+// and nothing was created at any level (see CampaignResult.AlreadyExisted).
 //
 // Otherwise it POSTs the campaign. Because the create reports per-entity failure as
 // PartialErrors on a 200, every outcome is classified by whether it may have committed:
@@ -272,6 +308,72 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	campaignName := composeName(in)
 	if err := validateEntityName("campaign", campaignName, utf8.RuneCountInString(campaignName), maxCampaignNameRunes, "characters"); err != nil {
 		return nil, err
+	}
+
+	// Validate the ad destination URL up front, BEFORE the campaign is created. It becomes
+	// the Ad's FinalUrls in a later step; deferring the check until then would let a bad
+	// URL fail only AFTER a PAUSED campaign (and possibly ad group) already exists,
+	// orphaning them. This is pure input validation with no side effects, so a bad URL is a
+	// clean (nil, err) failure — nothing has been created yet.
+	if err := validateAdURL(in.RegistrationURL); err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign requires a valid ad destination URL: %w", err)
+	}
+	// The ad's FinalUrls is the registration URL WITH the LFX utm_* params appended, and
+	// Microsoft caps FinalUrls at maxFinalURLRunes. Validate the fully COMPOSED URL length up
+	// front: a raw URL near the limit passes validateAdURL but the longer composed URL would
+	// be rejected only at AddAds — after the campaign/ad group exist, the exact orphaning the
+	// up-front checks prevent.
+	finalURL := buildAdFinalURL(in)
+	if n := utf8.RuneCountInString(finalURL); n > maxFinalURLRunes {
+		return nil, fmt.Errorf("microsoft-ads composed ad final URL is %d characters, exceeding the %d limit (shorten the registration URL)", n, maxFinalURLRunes)
+	}
+	// Microsoft also derives the ad's DISPLAY domain from the FinalUrls host and caps it at
+	// maxDisplayDomainRunes. A host longer than that passes the FinalUrls length check above
+	// but is rejected only at AddAds, orphaning the PAUSED campaign/ad group — so reject it up
+	// front too. Count the full host AUTHORITY (hostname + a non-default port), not just
+	// Hostname(): Hostname() drops the port, so a hostname just under the cap plus e.g. :8443
+	// could slip past here and be rejected at AddAds. A redundant default port (:80/:443) is
+	// stripped so it never counts against an otherwise-valid host. A parse failure here is a
+	// near-impossibility (validateAdURL already accepted the raw URL and buildAdFinalURL only
+	// re-encoded the query), but fail CLOSED rather than silently skip the display-domain cap:
+	// a skipped check is the exact orphan-after-AddAds risk this block exists to prevent.
+	u, perr := url.Parse(finalURL)
+	if perr != nil {
+		return nil, fmt.Errorf("microsoft-ads could not parse the composed ad final URL to validate its display domain: %w", perr)
+	}
+	{
+		// Decode the host to its Unicode (U-label) form BEFORE the width/length check. finalURL
+		// is buildAdFinalURL's u.String() wire form, so a caller-supplied punycode host arrives as
+		// its ASCII `xn--` A-label: hasDoubleWidth would never fire on it and the rune count would
+		// measure the ASCII form, letting a wide host clear the 67-rune cap only to hit Microsoft's
+		// decoded wide-host rule (33 runes) at AddAds — the exact orphaning this check prevents.
+		// Conversely a short CJK host inflated by punycode could be false-rejected. idna ToUnicode
+		// decodes `xn--` back to CJK and is a no-op for a plain ASCII or already-percent-decoded
+		// host; on failure keep Hostname() so a malformed label still gets a length check.
+		host := u.Hostname()
+		if uni, ierr := idna.Lookup.ToUnicode(host); ierr == nil && uni != "" {
+			host = uni
+		}
+		authority := host
+		// Lower-case the scheme before the default-port test: validateAdURL accepts any scheme
+		// casing and buildAdFinalURL preserves it, so a valid HTTPS://…:443 would otherwise
+		// miss the case-sensitive "https" match and wrongly count :443 against the host length.
+		if port := u.Port(); port != "" && !isDefaultPort(strings.ToLower(u.Scheme), port) {
+			authority = net.JoinHostPort(host, port)
+		}
+		limit := maxDisplayDomainRunes
+		if hasDoubleWidth(authority) {
+			limit = maxDisplayDomainRunesWide
+		}
+		if n := utf8.RuneCountInString(authority); n > limit {
+			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", truncate(authority, maxErrorBodyChars), n, limit)
+		}
+	}
+	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
+	// descriptions), so a bad copy input fails cleanly before the campaign is created rather
+	// than at the paid ad create. composeAdCopy pads short lists to the required minimum.
+	if err := validateAdCopy(in); err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err)
 	}
 
 	var steps []string
@@ -319,85 +421,93 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// prior attempt made. Report UNCONFIRMED so the caller reconciles by name.
 		return namePartial(), fmt.Errorf("microsoft-ads campaign lookup failed (cannot confirm %q is absent; verify in Microsoft Advertising before retrying): %w", campaignName, err)
 	}
+	var (
+		campaignID     string
+		alreadyExisted bool
+	)
 	if existingID != "" {
 		steps = append(steps, fmt.Sprintf("Campaign already exists by name: %s (not re-created)", existingID))
+		campaignID = existingID
+		alreadyExisted = true
+	} else {
+		// Step 2: create the campaign (PAUSED). Non-idempotent — NOT retried on 429.
+		timeZone := in.TimeZone
+		if timeZone == "" {
+			timeZone = defaultTimeZone
+		}
+		req := createCampaignsRequest{
+			AccountId: json.Number(c.account.AccountID),
+			Campaigns: []msCampaign{{
+				Name:         campaignName,
+				CampaignType: campaignTypeSearch,
+				BudgetType:   budgetTypeDailyStandard,
+				DailyBudget:  in.Budget,
+				Status:       campaignStatusPaused,
+				TimeZone:     timeZone,
+			}},
+		}
+		respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
+		if err != nil {
+			switch {
+			case createOutcomeAmbiguous(err):
+				return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
+			default:
+				return nil, fmt.Errorf("microsoft-ads campaign creation failed: %w", err)
+			}
+		}
+		campaignID, err = firstCampaignID(respBody)
+		if err != nil {
+			if isDuplicateCampaignNameErr(err) {
+				// A duplicate-name PartialError: a campaign with this name already exists (a
+				// prior attempt, or a race between the pre-check lookup and this create).
+				// SELF-HEAL by re-looking it up by name and treating it as already-exists —
+				// the deterministic name is unique, so the re-lookup finds the winner. This
+				// mirrors the ad-group path (findOrCreateAdGroup on a 1214), so a duplicate
+				// race resolves to a usable id instead of forcing the caller to reconcile.
+				reResolvedID, ferr := c.findCampaignByName(ctx, campaignName)
+				if ferr != nil || reResolvedID == "" {
+					// Re-lookup failed or returned no id: the campaign exists but we can't
+					// confirm its id, so surface UNCONFIRMED rather than a clean failure.
+					// Surface the RE-LOOKUP cause (ferr) when it errored — the original
+					// duplicate error only says "a duplicate exists", it hides WHY the
+					// reconciliation couldn't resolve the id (a 500, auth failure, timeout).
+					if ferr != nil {
+						return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) but the reconciliation lookup failed (%v); verify in Microsoft Advertising before retrying: %w", campaignName, ferr, err)
+					}
+					return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) but could not be re-resolved (reconciliation lookup returned no id); verify in Microsoft Advertising before retrying: %w", campaignName, err)
+				}
+				steps = append(steps, fmt.Sprintf("Campaign already exists by name (duplicate-name race reconciled): %s", reResolvedID))
+				campaignID = reResolvedID
+				alreadyExisted = true
+			} else if errors.Is(err, errPartialFailure) {
+				// A 200 with a null id slot + PartialErrors is a DEFINITE rejection: the
+				// campaign was not created. Clean failure, not UNCONFIRMED.
+				return nil, fmt.Errorf("microsoft-ads campaign creation rejected: %w", err)
+			} else {
+				// A 200 with no id and no PartialError is a malformed success: the campaign
+				// MAY have been created. UNCONFIRMED.
+				return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
+			}
+		} else {
+			steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
+		}
+	}
+
+	// campaignPartial carries the campaign id + name (and accumulates ad-group/ad ids as
+	// they land) so an ambiguous ad-group/ad failure leaves the whole tree reconcilable.
+	// It deliberately does NOT set AlreadyExisted: a partial is returned on a failed or
+	// UNCONFIRMED ad-group/ad step, where this run may have created (or attempted) a lower
+	// level even though the campaign was reused — so "created nothing" is not true. Only the
+	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
+	campaignPartial := func() *CampaignResult {
 		r := namePartial()
-		r.CampaignID = existingID
-		r.AlreadyExisted = true
-		r.Steps = steps
-		return r, nil
+		r.CampaignID = campaignID
+		return r
 	}
 
-	// Step 2: create the campaign (PAUSED). Non-idempotent — NOT retried on 429.
-	timeZone := in.TimeZone
-	if timeZone == "" {
-		timeZone = defaultTimeZone
-	}
-	req := createCampaignsRequest{
-		AccountId: json.Number(c.account.AccountID),
-		Campaigns: []msCampaign{{
-			Name:         campaignName,
-			CampaignType: campaignTypeSearch,
-			BudgetType:   budgetTypeDailyStandard,
-			DailyBudget:  in.Budget,
-			Status:       campaignStatusPaused,
-			TimeZone:     timeZone,
-		}},
-	}
-	respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
-	if err != nil {
-		switch {
-		case createOutcomeAmbiguous(err):
-			return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
-		default:
-			return nil, fmt.Errorf("microsoft-ads campaign creation failed: %w", err)
-		}
-	}
-
-	campaignID, err := firstCampaignID(respBody)
-	if err != nil {
-		if isDuplicateCampaignNameErr(err) {
-			// A duplicate-name PartialError: a campaign with this name already exists (a prior
-			// attempt, or a race between the pre-check lookup and this create). SELF-HEAL by
-			// re-looking it up by name and returning it as already-exists — the deterministic
-			// name is unique, so the re-lookup finds the winner. This mirrors the ad-group path
-			// (findOrCreateAdGroup on a 1214), so a duplicate race resolves to a usable id
-			// instead of forcing the caller to reconcile by name.
-			existingID, ferr := c.findCampaignByName(ctx, campaignName)
-			if ferr == nil && existingID != "" {
-				steps = append(steps, fmt.Sprintf("Campaign already exists by name (duplicate-name race reconciled): %s", existingID))
-				r := namePartial()
-				r.CampaignID = existingID
-				r.AlreadyExisted = true
-				r.Steps = steps
-				return r, nil
-			}
-			// Re-lookup failed or returned no id: the campaign exists but we can't confirm its
-			// id, so surface UNCONFIRMED (verify before retry) rather than a clean failure.
-			// Surface the RE-LOOKUP cause (ferr) when it errored — the original duplicate error
-			// only says "a duplicate exists", it hides WHY the reconciliation couldn't resolve
-			// the id (a 500, an auth failure, a timeout). When the re-lookup succeeded but found
-			// no id, ferr is nil and the duplicate error is the only meaningful cause.
-			if ferr != nil {
-				return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) but the reconciliation lookup failed (%v); verify in Microsoft Advertising before retrying: %w", campaignName, ferr, err)
-			}
-			return namePartial(), fmt.Errorf("microsoft-ads campaign %q already exists (duplicate name) but could not be re-resolved (reconciliation lookup returned no id); verify in Microsoft Advertising before retrying: %w", campaignName, err)
-		}
-		if errors.Is(err, errPartialFailure) {
-			// A 200 with a null id slot + PartialErrors is a DEFINITE rejection: the
-			// campaign was not created. Clean failure, not UNCONFIRMED.
-			return nil, fmt.Errorf("microsoft-ads campaign creation rejected: %w", err)
-		}
-		// A 200 with no id and no PartialError is a malformed success: the campaign MAY
-		// have been created. UNCONFIRMED.
-		return namePartial(), fmt.Errorf("microsoft-ads campaign creation UNCONFIRMED (%q may exist — verify in Microsoft Advertising before retrying): %w", campaignName, err)
-	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
-
-	r := namePartial()
-	r.CampaignID = campaignID
-	r.Steps = steps
-	return r, nil
+	// Steps 3-4: complete the Campaign -> AdGroup -> Ad hierarchy (all PAUSED) so the
+	// result is a usable paused campaign rather than an empty shell.
+	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial)
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
@@ -464,73 +574,13 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 // whether the Campaigns field was PRESENT (a non-null array) at all. A malformed 8-MiB body
 // therefore costs O(1) memory instead of O(campaigns). present=false means the field was
 // omitted or null (→ UNCONFIRMED); present=true with matched=false means a genuine "absent".
+//
+// It is a thin alias for lookupNamedEntity over the "Campaigns" field: the streaming-parser
+// logic (decode → validate array → finishObject → EOF guard) lives in ONE place so a
+// correctness fix (truncation handling, null-vs-omit) applies to both the campaign and
+// ad-group lookups at once. See lookupNamedEntity in adgroup_ad.go.
 func lookupCampaignByName(body []byte, name string) (id string, matched, present bool, err error) {
-	dec := json.NewDecoder(bytes.NewReader(body))
-	// Walk to the top-level object's "Campaigns" key.
-	tok, err := dec.Token()
-	if err != nil {
-		return "", false, false, err
-	}
-	if d, ok := tok.(json.Delim); !ok || d != '{' {
-		return "", false, false, fmt.Errorf("expected a JSON object")
-	}
-	for dec.More() {
-		keyTok, kerr := dec.Token()
-		if kerr != nil {
-			return "", false, false, kerr
-		}
-		key, _ := keyTok.(string)
-		if key != "Campaigns" {
-			// Skip this value (whatever its shape) without materializing it.
-			if serr := skipJSONValue(dec); serr != nil {
-				return "", false, false, serr
-			}
-			continue
-		}
-		// The Campaigns value: null (present=false) or an array we stream.
-		vTok, verr := dec.Token()
-		if verr != nil {
-			return "", false, false, verr
-		}
-		if vTok == nil { // JSON null → treated as omitted
-			return "", false, false, nil
-		}
-		d, ok := vTok.(json.Delim)
-		if !ok || d != '[' {
-			return "", false, false, fmt.Errorf("expected a JSON array for Campaigns")
-		}
-		for dec.More() {
-			var cp struct {
-				Id   *json.Number `json:"Id"`
-				Name string       `json:"Name"`
-			}
-			if derr := dec.Decode(&cp); derr != nil {
-				return "", false, false, derr
-			}
-			if matched || !strings.EqualFold(cp.Name, name) {
-				continue // keep draining the array to leave the stream well-formed, but stop matching
-			}
-			matched = true
-			id = numberID(cp.Id)
-		}
-		// dec.More() returning false only means "no more elements" — it does NOT prove the array
-		// actually closed. Read the closing ']' and confirm it: a TRUNCATED body (e.g.
-		// `{"Campaigns":[`) leaves dec.Token() erroring at EOF here, so we must NOT report a clean
-		// "present, no match" (which would let the paid create run and risk a duplicate). Only a
-		// well-formed, fully-closed array is a trustworthy result — set present=true ONLY then.
-		endTok, eerr := dec.Token()
-		if eerr != nil {
-			return "", false, false, eerr
-		}
-		if d, ok := endTok.(json.Delim); !ok || d != ']' {
-			return "", false, false, fmt.Errorf("malformed Campaigns array (unterminated)")
-		}
-		present = true
-		// The array closed cleanly; the top-level object may have more keys but we have our answer.
-		return id, matched, present, nil
-	}
-	// No Campaigns key at all → omitted.
-	return "", false, false, nil
+	return lookupNamedEntity(body, "Campaigns", name)
 }
 
 // skipJSONValue consumes exactly one JSON value (object/array/scalar) from dec, discarding it.
@@ -609,29 +659,27 @@ func isDuplicateCampaignNameErr(err error) bool { return errors.Is(err, errDupli
 // The caller distinguishes the definite-rejection case via errors.Is(err,
 // errPartialFailure) and the already-exists case via isDuplicateCampaignNameErr.
 func firstCampaignID(body []byte) (string, error) {
-	var resp createCampaignsResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("decode create-campaigns response: %w", err)
-	}
-	if len(resp.CampaignIds) > 0 {
-		// numberID rejects a non-positive-integer id (negative/fractional/exponent), so a
-		// malformed 200 carrying a bogus id falls through to the UNCONFIRMED path below
-		// rather than being reported as a successful create with an unusable id.
-		if id := numberID(resp.CampaignIds[0]); id != "" {
-			return id, nil
+	// Delegate id extraction + the shared three-case classification (valid id → success;
+	// null id + actual PartialError → errPartialFailure; else → errNoID) to firstEntityID,
+	// so the create-response contract lives in ONE place (see firstEntityID in adgroup_ad.go).
+	// Campaigns add only ONE specialization on top: a duplicate-name PartialError is surfaced
+	// as errDuplicateName (a wrapper of errPartialFailure) so the caller can self-heal the
+	// already-exists race. firstEntityID has no notion of that, so re-inspect the partials
+	// here and, when firstEntityID reported a generic errPartialFailure whose cause is the
+	// duplicate-name code, upgrade the error to errDuplicateName.
+	var partials []msErrorItem
+	id, err := firstEntityID(body, "CampaignIds", func(b []byte) ([]*json.Number, []msErrorItem, error) {
+		var resp createCampaignsResponse
+		if uerr := json.Unmarshal(b, &resp); uerr != nil {
+			return nil, nil, uerr
 		}
+		partials = resp.PartialErrors
+		return resp.CampaignIds, resp.PartialErrors, nil
+	})
+	if err != nil && errors.Is(err, errPartialFailure) && isDuplicateCampaignPartial(partials) {
+		return "", fmt.Errorf("%w: %s", errDuplicateName, partialErrorCodes(partials))
 	}
-	// No valid id. If an ACTUAL PartialError explains why, this is a definite rejection;
-	// otherwise the 200 is malformed (or carries only null placeholders) and the outcome
-	// is unknown → UNCONFIRMED.
-	if partialErrorsHaveAny(resp.PartialErrors) {
-		codes := partialErrorCodes(resp.PartialErrors)
-		if isDuplicateCampaignPartial(resp.PartialErrors) {
-			return "", fmt.Errorf("%w: %s", errDuplicateName, codes)
-		}
-		return "", fmt.Errorf("%w: %s", errPartialFailure, codes)
-	}
-	return "", fmt.Errorf("create-campaigns response carried no campaign id")
+	return id, err
 }
 
 // partialErrorsHaveAny reports whether the slice contains at least one ACTUAL error —
