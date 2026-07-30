@@ -329,11 +329,18 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists
 	// to prevent. `status` stays in the payload so a client can round-trip the row it read
 	// (a name/config edit re-sends the current status unchanged), but an ATTEMPT to flip the
-	// run state here is rejected and routed to the platform toggle. A submitted status equal
-	// to the stored one is a harmless no-op; anything else that is a run-state value is
-	// refused. The stored status is otherwise preserved verbatim — this path never writes it.
-	if p.Campaign.Status != existing.Status && model.IsCampaignRunStatus(p.Campaign.Status) {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
+	// run state here is rejected and routed to the platform toggle.
+	//
+	// This path NEVER writes status, so ANY mismatch must be refused, not just a run-state one:
+	// returning 200 for a PUT whose required `status` field was not applied would tell the
+	// caller a replacement succeeded when it silently did not. Run-state attempts get the
+	// specific toggle-endpoint message; every other mismatch (a provisioning state, or an
+	// unknown value) is rejected as unsupported on this path.
+	if p.Campaign.Status != existing.Status {
+		if model.IsCampaignRunStatus(p.Campaign.Status) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
+		}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "status cannot be changed via update-campaign; re-send the campaign's current status (it is set by the create/dispatch flow and the status-toggle endpoint)"}
 	}
 	existing.CampaignName = p.Campaign.CampaignName
 	// Only overwrite the stored config when the caller actually supplied one.

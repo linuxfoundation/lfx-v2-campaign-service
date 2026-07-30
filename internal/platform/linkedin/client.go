@@ -403,10 +403,24 @@ func isInReviewPauseRejection(err error) bool {
 		return false
 	}
 	b := strings.ToLower(ae.Body)
-	// "review" covers the documented review-state enums (UNDER_REVIEW, NEEDS_REVIEW, PENDING
-	// review) and the human message ("...in review..."); "not been reviewed" covers the
-	// serving-hold phrasing. A structural 400 body contains none of these.
-	return strings.Contains(b, "review")
+	// Match EXPLICIT review-state markers, never a bare "review" substring: an unrelated
+	// structural 400 ("review the submitted fields") or an innocent token ("preview") would
+	// otherwise be misread as an in-review rejection and silently skipped, letting the service
+	// persist a "paused" the creative never applied. Covers the documented review-state enums
+	// (UNDER_REVIEW / NEEDS_REVIEW / PENDING_REVIEW, in either underscore or spaced form), the
+	// human "in review" phrasing, and the "not been reviewed" serving-hold wording.
+	for _, marker := range []string{
+		"under_review", "under review",
+		"needs_review", "needs review",
+		"pending_review", "pending review",
+		"in_review", "in review",
+		"not been reviewed", "awaiting review",
+	} {
+		if strings.Contains(b, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrCampaignNotServable marks an ACTIVATE refused BEFORE any mutating call because the

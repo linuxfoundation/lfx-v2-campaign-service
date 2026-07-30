@@ -1478,3 +1478,37 @@ func TestUpdateCampaignAndCreativesStatus_PauseUpdatesCampaignFirst(t *testing.T
 		t.Fatalf("campaign gate must be flipped FIRST on pause; sequence = %v", seq)
 	}
 }
+
+// TestIsInReviewPauseRejection_RequiresExplicitMarker pins the predicate to EXPLICIT
+// review-state markers. A bare "review" substring match would treat an unrelated structural
+// 400 ("review the submitted fields") or an innocent token ("preview") as an in-review
+// rejection: that 400 would be silently skipped and, if another creative had already
+// updated, the service would persist a "paused" this creative never actually applied.
+func TestIsInReviewPauseRejection_RequiresExplicitMarker(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"under_review enum", `{"message":"creative is UNDER_REVIEW"}`, true},
+		{"needs review spaced", `{"message":"this creative needs review"}`, true},
+		{"pending_review enum", `{"message":"status PENDING_REVIEW"}`, true},
+		{"in review phrasing", `{"message":"the creative is in review"}`, true},
+		{"serving hold", `{"message":"has not been reviewed yet"}`, true},
+		{"structural 400 mentioning review", `{"message":"review the submitted fields"}`, false},
+		{"preview token", `{"message":"preview generation failed"}`, false},
+		{"plain structural 400", `{"message":"invalid creative urn"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := &apiError{StatusCode: http.StatusBadRequest, Body: tc.body}
+			if got := isInReviewPauseRejection(err); got != tc.want {
+				t.Errorf("isInReviewPauseRejection(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+	// A non-400 in-review body is still not this rejection (status gate must hold).
+	if isInReviewPauseRejection(&apiError{StatusCode: http.StatusInternalServerError, Body: `{"message":"UNDER_REVIEW"}`}) {
+		t.Error("a 500 must not be classified as an in-review pause rejection")
+	}
+}
