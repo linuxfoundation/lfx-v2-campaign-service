@@ -78,6 +78,23 @@ the repository at the target commit.
    entry, that addition **does not apply to this patch**. Judge the candidate on
    the pattern entry alone, exactly as if the new or widened floor text were not
    there. Floor entries the patch leaves untouched apply normally.
+
+   **Bootstrap case — the file is new in this patch.** Then the pre-patch floor is
+   deterministically **empty**: apply **no** waivers at all, and judge every
+   candidate on its pattern entry alone. Do **not** return `INCOMPLETE` merely
+   because `known-false-positives.md` did not exist at the base commit — an empty
+   baseline is a known, correct baseline, not an unreadable one. This is what stops
+   a branch that introduces its *first* floor from suppressing findings about
+   itself. (The `INCOMPLETE`-on-missing rule in the previous section is about the
+   knowledge-base **directory** being absent from the snapshot; it does not apply
+   to a floor file that is simply new in the diff.)
+
+   **When the baseline genuinely cannot be reconstructed** — the
+   `known-false-positives.md` hunks are ambiguous or the diff for it is unreadable,
+   so you cannot tell which entries predate the patch — return `INCOMPLETE` with an
+   error class naming the unreconstructable floor baseline. That is the *only*
+   floor-related `INCOMPLETE`. Never guess a baseline, and never fall back to
+   applying the post-patch floor as written.
 5. **One finding per distinct defect.** If one entry matches four times in a
    file, that is normally one finding naming the pattern, with evidence at the
    clearest site — unless the sites are genuinely independent defects.
@@ -180,10 +197,16 @@ your whole role is reported as INCOMPLETE, so follow them exactly:
   other two states.
 - `error` is `null` unless `state` is `INCOMPLETE`, where it is
   `{"class": "...", "message": "..."}` — use it only when you genuinely could not
-  review: an unreadable patch, or a missing/unreadable
-  `docs/reviews/knowledge-base/` in the snapshot. A missing knowledge base is
+  review: an unreadable patch, a missing/unreadable
+  `docs/reviews/knowledge-base/` in the snapshot, or a
+  `known-false-positives.md` baseline you could not reconstruct because its hunks
+  are ambiguous or unreadable. A missing knowledge base is
   always `INCOMPLETE`, never `COMPLETE_NO_FINDINGS`. Never report INCOMPLETE
   merely because you found nothing.
+- **A `known-false-positives.md` that is new in the patch is not an error.** Its
+  pre-patch baseline is deterministically empty, so apply no waivers and report the
+  state you actually reached — normally `COMPLETE_WITH_FINDINGS` or
+  `COMPLETE_NO_FINDINGS`, never `INCOMPLETE` for that reason alone.
 - `severity` is one of `critical`, `high`, `should-fix`. There is no nit severity.
 - `confidence` is an integer from 80 to 100.
 - `evidence.path` is repo-relative, `line_start`/`line_end` are real 1-based

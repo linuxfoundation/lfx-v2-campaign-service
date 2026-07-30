@@ -221,6 +221,18 @@ before you weaken an entry: read the file, then decide.
   findings in the review of that same patch — silently, and without ever
   reaching the human gate this README puts on floor changes. The reviewer skill
   now ignores floor additions and widenings introduced by the patch under review.
+
+  **Refined 2026-07-30 — the bootstrap case.** The first version of that rule left
+  the "file is new in this patch" case implicit, which risks the opposite failure:
+  a reviewer treating the absent baseline as unreadable and returning `INCOMPLETE`.
+  It is not unreadable — a floor file that is new in the patch has a
+  deterministically **empty** pre-patch baseline, so the reviewer applies **no**
+  waivers and reports the state it actually reached. That is what stops a branch
+  introducing its *first* floor from suppressing findings about itself. This very
+  patch is that case: `known-false-positives.md` is new here. `INCOMPLETE` is
+  reserved for a baseline that genuinely cannot be reconstructed because the
+  floor file's hunks are ambiguous or unreadable — never for an empty one, and
+  never as a fallback to applying the post-patch floor as written.
 - **Bare-basename anchors — expanded, not rewritten.** Two prose shorthands were
   expanded to full repo-relative paths (`internal/apivalidation/doc.go`,
   `charts/lfx-v2-campaign-service/parity_test.go`). Basenames appearing *inside a
