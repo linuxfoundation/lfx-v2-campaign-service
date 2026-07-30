@@ -38,3 +38,37 @@ The current active speckit feature spec/plan/tasks live under
 
 See `README.md` for the `make` targets used to build, test, lint, and run
 the service.
+
+## Local work cycle — post-commit and pre-PR review
+
+Run `/lfx-skills:lfx-local-review` **after every commit** while working toward a
+pull request, and once more in branch mode (`branch`) as the last step before you
+open one. It reviews the committed target in a temporary detached worktree, so you
+can keep editing while it runs.
+
+Three reviewers run in parallel: a general reviewer, plus this repo's own two
+brains — `.claude/skills/campaign-service-code-reviewer` (audits the diff against
+this repo's written rules and quotes each one) and
+`.claude/skills/campaign-service-learnings-reviewer` (matches the diff against
+`docs/reviews/knowledge-base/`, the patterns extracted from past review comments
+on this repo). The generic `local-code-review` and `local-learnings-review` names in
+`.claude/skills/` are symlinks to those two directories, and `.agents/skills/`
+exposes the same two physical directories — keep exactly one copy of each brain.
+
+The foreground summary is the evidence for that commit. It is not a report, is not
+retained, and dies with the session:
+
+- Read it in full. Its states are only `COMPLETE_WITH_FINDINGS`,
+  `COMPLETE_NO_FINDINGS` and `INCOMPLETE`.
+- `INCOMPLETE` is **not** a pass. Any incomplete role makes the whole run
+  incomplete, and the only recovery is a complete rerun of the same harness — not
+  a rerun of the failed role, and not a substitution of a different one.
+- If the summary says the run used the Claude fallback because Pi was
+  unavailable, that run is single-model evidence. Say so rather than presenting it
+  as cross-model.
+
+This cycle **stops at PR-open.** It never touches GitHub and never writes a label,
+status, review or approval.
+
+When a review's findings change what the code does, the knowledge-bundle rules
+above still apply to the follow-up commit.
