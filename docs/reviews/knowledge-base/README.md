@@ -163,7 +163,10 @@ before you weaken an entry: read the file, then decide.
 
 - **`test-hygiene.md` — P8 comment count (`14` → `12` core / `16` full scope).**
   The original `14` is not reproducible under any filter definition we can state.
-  Re-derived from the 3,850-comment corpus, restricted to Copilot-authored inline
+  Re-derived from the **3,850-comment corpus** — every inline review comment on
+  PRs #1–#50 from *all* authors (developers, `cursor[bot]` and Copilot), of which
+  the 1,603 Copilot-authored comments named in *Evidence base* are the subset this
+  probe filters down to — restricted to Copilot-authored inline
   comments on `*_test.go` paths in merged PRs #19, #20, #21 and #29: the core
   shape (`unsynchronized`, `handler goroutine`, `without ... happens-before`,
   `data race`, `t.Fatal`, `FailNow`) gives **12**; adding this entry's own
@@ -189,6 +192,35 @@ before you weaken an entry: read the file, then decide.
   `docs/knowledge/code/internal-platform-microsoft.md` in place of the label.
   Path labels tied to a base commit expire when the base moves; prefer a quote
   from a file that exists.
+- **P10 overlapped P14 on the opaque-config surface — false positive closed.**
+  `design-contract-looser-than-runtime` fires on a tightened runtime rejection
+  with no matching `design/` constraint. But a rule inside
+  `CreateCampaigns.config` *cannot* have one — the field is typed `Any` — and
+  the entry's "not a finding when" excused only *dynamic* rejections, so a
+  static platform rule such as a budget minimum matched on a technicality and
+  double-reported against `api-catalog-platform-config-drift`, which actually
+  owns that surface. P10 now excludes it explicitly and points at P14. Two
+  patterns whose detect conditions can both fire on one change need the boundary
+  written into at least one of them.
+- **P7 fix count (`Seven` → `Eight`) — off-by-one against its own list.**
+  `knowledge-bundle-upkeep.md` said "Seven verified fixes" while enumerating
+  eight PR/SHA pairs (#17, #19, #20, #21, #22, #29, #30, #39). The enumeration
+  was right and the total was wrong. Same failure family as the P8 count below:
+  a prose total drifting from the list beside it. **When an entry states a count
+  and then enumerates the items, the enumeration is the source of truth** —
+  re-count it rather than trusting the sentence.
+- **The `3,850-comment corpus` was never defined.** The figure appeared in the
+  P8 correction with no definition anywhere and looked inconsistent with the
+  1,603 Copilot inline comments in *Evidence base*, which made the probe
+  unreproducible. Both numbers are correct and measure different things; the
+  definition is now stated inline. A count is not evidence until the population
+  it was drawn from is named.
+- **The false-positive floor is applied as of the base commit.** The learnings
+  reviewer reads this directory from the *post-patch* snapshot, so a patch that
+  added or widened a `known-false-positives.md` entry would have suppressed
+  findings in the review of that same patch — silently, and without ever
+  reaching the human gate this README puts on floor changes. The reviewer skill
+  now ignores floor additions and widenings introduced by the patch under review.
 - **Bare-basename anchors — expanded, not rewritten.** Two prose shorthands were
   expanded to full repo-relative paths (`internal/apivalidation/doc.go`,
   `charts/lfx-v2-campaign-service/parity_test.go`). Basenames appearing *inside a

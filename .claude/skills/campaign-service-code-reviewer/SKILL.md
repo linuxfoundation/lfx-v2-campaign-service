@@ -199,7 +199,11 @@ plaintext provider credentials. A secret-scanner suppression is fingerprint- or
 rule-and-path-scoped; a bare `paths` allowlist mutes every rule for that tree.
 The chart composes the DSN in-process so the password never enters the pod spec.
 
-**Errors and logging.** Wrap with `fmt.Errorf("...: %w", err)`; do not swallow.
+**Errors and logging.** Wrap with `fmt.Errorf("...: %w", err)`; do not swallow —
+**except** where the cause carries untrusted upstream text or credential material,
+which must be redacted, summarised or replaced with a sentinel rather than wrapped
+verbatim. Dropping such a cause is a deliberate redaction, not a swallowed error;
+do not raise a missing-`%w` finding against it.
 Sentinels live in `internal/domain/errors.go` with their HTTP mappings. Use the
 structured `pkg/log` helpers with context — no `fmt.Println`, no ad-hoc `log`,
 and no log field carrying a credential, a DSN or a URL with a query. The OTel

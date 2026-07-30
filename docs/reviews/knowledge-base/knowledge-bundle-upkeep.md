@@ -48,7 +48,7 @@ repo, so a stale bundle silently degrades every future agent's context.
 - [`r3562410724`](https://github.com/linuxfoundation/lfx-v2-campaign-service/pull/17#discussion_r3562410724)
   (PR #17) shows it applies to a bug fix too, not only a new package: "The OKF
   knowledge bundle is not updated for this runtime bug fix". Fixed in `3035f9f`.
-- Seven verified fixes across merged PRs **#17** (`3035f9f`), **#19**
+- Eight verified fixes across merged PRs **#17** (`3035f9f`), **#19**
   (`e5714e4`), **#20** (`34a312e`), **#21** (`09f2ac1`), **#22** (`fd1cad2`),
   **#29** (`42ab758`), **#30** (`e8042d9`) and **#39** (`fdb4768`). Five of them
   landed within 5–41 minutes of the comment — developers agree with this one

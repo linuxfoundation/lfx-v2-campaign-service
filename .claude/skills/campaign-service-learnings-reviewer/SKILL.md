@@ -69,6 +69,15 @@ the repository at the target commit.
    maintainer's rebuttal and the present-day proof; if your candidate finding
    matches one, drop it silently. Do not argue with a floor entry, and do not
    re-raise it in a different wording.
+
+   **Apply the floor as it stood *before* this patch.** You read the knowledge
+   base from the post-patch snapshot, so a patch that adds a floor entry — or
+   widens an existing one — would otherwise silence findings about itself, and
+   the human gate that the KB README puts on floor changes would never be
+   reached. So: if the patch's own diff adds or widens a `known-false-positives.md`
+   entry, that addition **does not apply to this patch**. Judge the candidate on
+   the pattern entry alone, exactly as if the new or widened floor text were not
+   there. Floor entries the patch leaves untouched apply normally.
 5. **One finding per distinct defect.** If one entry matches four times in a
    file, that is normally one finding naming the pattern, with evidence at the
    clearest site — unless the sites are genuinely independent defects.

@@ -60,6 +60,15 @@ upstream state, a lookup, or a per-account value Goa cannot express. `gen/` chan
 without `design/` changes are a `repo_code` concern (the generated boundary), not
 this pattern.
 
+**Also not a finding when the tightened value lives inside
+`CreateCampaigns.config`.** That field is typed `Any`, so **no** `design/`
+constraint can express it and demanding one is a false positive — a static
+platform-config rule such as a budget minimum is not *dynamic* under the clause
+above, so it would otherwise match this Detect on a technicality. The pattern that
+owns that surface is [`api-catalog-platform-config-drift`](#api-catalog-platform-config-drift)
+below, which asks for the `docs/api-catalog.md` update instead. Raise one or the
+other for a given change, never both.
+
 ---
 
 ## docs-must-not-advertise-what-the-code-rejects
