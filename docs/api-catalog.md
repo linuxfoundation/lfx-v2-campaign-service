@@ -94,7 +94,7 @@ Each optimization action is scoped to a single campaign under its brief and is i
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED (Meta, Reddit, X). |
+| PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED. Wired for **Reddit** (this PR); Meta + LinkedIn land in the stacked follow-up. A platform without a status-toggle dispatcher returns 400. |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` | `campaign_manager` | JSON | Pause/remove Google Ads keywords for this campaign. |
 
 **Tentative** (later phases, same nesting + `campaign_manager` gating): budget adjust, bid-strategy change, per-keyword bid, ad/creative rotation, ad-copy edit, geo-target edit, audience edit, negative keywords, bid modifiers, scheduling, flight-date change. Cross-platform budget reallocation, if built, is modeled as a first-class per-project resource with its own single-target mutations — not a bulk endpoint.
@@ -274,6 +274,7 @@ linkedInConfig?: object         — LinkedIn-specific params
 redditConfig?: object           — Reddit-specific params
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
+hubspotConfig?: object          — HubSpot (email channel) params (see HubSpotConfig below)
 ```
 
 #### GoogleAdsConfig (the `googleAdsConfig` object)
@@ -288,6 +289,25 @@ budget: number                  — Whole units of the account currency (e.g. 25
                                   async). Omitting it leaves the shell with no budget, which fails the
                                   platform job asynchronously — supply it explicitly.
 ```
+
+#### HubSpotConfig (the `hubspotConfig` object)
+
+HubSpot (email channel) per-platform config. Unlike the ad platforms (which CREATE a campaign),
+the HubSpot dispatcher STAGES a marketing email: it CLONES a template email as a DRAFT and points
+its send list at the brief's already-**built** audience (the `campaign_audiences` resource,
+populated by the audience-building step). No budget/schedule — email has none.
+
+```
+sourceEmailId: string           — REQUIRED. The HubSpot marketing-email id to CLONE as this
+                                  campaign's email. There is no default template. The clone is
+                                  created as a DRAFT (a human reviews and sends it), so staging is
+                                  safe. The AI body content (subject/preheader/body) is applied by
+                                  a separate content-generation step.
+```
+
+The connection supplies the HubSpot private-app token (credentials) and `portal_id` (provider
+config); the send-list audience comes from the built `campaign_audiences` row for the brief, not
+this config.
 
 #### MetaConfig (the `metaConfig` object)
 

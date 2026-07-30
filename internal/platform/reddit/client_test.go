@@ -3791,3 +3791,250 @@ func TestCreateOutcomeAmbiguous3xxByMethod(t *testing.T) {
 		t.Error("createOutcomeAmbiguous(302 GET) = true, want false (a GET redirect is not a create)")
 	}
 }
+
+// TestUpdateCampaignStatus_PatchesConfiguredStatus verifies the toggle sends
+// PATCH /ad_accounts/{account}/campaigns/{id} with {"data":{"configured_status": ...}}.
+func TestUpdateCampaignStatus_PatchesConfiguredStatus(t *testing.T) {
+	var gotMethod, gotPath, gotStatus string
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		var body struct {
+			Data struct {
+				ConfiguredStatus string `json:"configured_status"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotStatus = body.Data.ConfiguredStatus
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"t3_camp"}}`))
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	if err := c.UpdateCampaignStatus(context.Background(), "t3_camp", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignStatus: %v", err)
+	}
+	if gotMethod != http.MethodPatch {
+		t.Errorf("method = %s, want PATCH", gotMethod)
+	}
+	if gotPath != "/api/v3/ad_accounts/t2_test/campaigns/t3_camp" {
+		t.Errorf("path = %s, want /api/v3/ad_accounts/t2_test/campaigns/t3_camp", gotPath)
+	}
+	if gotStatus != StatusPaused {
+		t.Errorf("configured_status = %q, want %q", gotStatus, StatusPaused)
+	}
+}
+
+// redditPatchRecorder returns a test API server that records each configured_status PATCH
+// (method, path, status) in call order, plus a token server, plus a client wired to both.
+func redditPatchRecorder(t *testing.T, got *[]struct{ method, path, status string }) *Client {
+	t.Helper()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Data struct {
+				ConfiguredStatus string `json:"configured_status"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		*got = append(*got, struct{ method, path, status string }{r.Method, r.URL.Path, body.Data.ConfiguredStatus})
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	t.Cleanup(apiSrv.Close)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	t.Cleanup(tokenSrv.Close)
+	return NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateIsChildrenFirst verifies that on ACTIVATE the
+// cascade lifts the CHILDREN first (ad, then ad group) and flips the CAMPAIGN GATE LAST, so a
+// mid-cascade failure never opens the gate over a not-yet-activated child (fail-closed serving
+// order, matching Meta/LinkedIn).
+func TestUpdateCampaignAndChildrenStatus_ActivateIsChildrenFirst(t *testing.T) {
+	type patch = struct{ method, path, status string }
+	var got []patch
+	c := redditPatchRecorder(t, &got)
+
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", "t5_ag", "t6_ad", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	want := []patch{
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/ads/t6_ad", StatusActive},
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/ad_groups/t5_ag", StatusActive},
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/campaigns/t3_camp", StatusActive},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("issued %d PATCHes, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("PATCH[%d] = %+v, want %+v (activate must be children-first, campaign-gate last)", i, got[i], w)
+		}
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseIsCampaignFirst verifies that on PAUSE the cascade
+// flips the CAMPAIGN GATE FIRST (delivery stops immediately) and then the children.
+func TestUpdateCampaignAndChildrenStatus_PauseIsCampaignFirst(t *testing.T) {
+	type patch = struct{ method, path, status string }
+	var got []patch
+	c := redditPatchRecorder(t, &got)
+
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", "t5_ag", "t6_ad", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	want := []patch{
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/campaigns/t3_camp", StatusPaused},
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/ad_groups/t5_ag", StatusPaused},
+		{http.MethodPatch, "/api/v3/ad_accounts/t2_test/ads/t6_ad", StatusPaused},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("issued %d PATCHes, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("PATCH[%d] = %+v, want %+v (pause must be campaign-gate first)", i, got[i], w)
+		}
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseAdFailureIsPartialError verifies the sibling of the
+// ad-group PAUSE-failure case: on PAUSE the campaign gate AND ad group succeed, then the AD PATCH
+// fails — the tree is partially applied, so the result is a partialCascadeError{stage:"ad"} whose
+// Unconfirmed() is true (verify-before-retry), mirroring the ad-group branch. Delivery is already
+// stopped by the campaign gate, so this is a state-consistency concern only.
+func TestUpdateCampaignAndChildrenStatus_PauseAdFailureIsPartialError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/ads/") { // the ad PATCH fails; campaign + ad group succeed
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer srv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", "t5_ag", "t6_ad", StatusPaused)
+	if err == nil {
+		t.Fatal("an ad PATCH failure after the campaign+ad-group pause must return an error")
+	}
+	var pce *partialCascadeError
+	if !errors.As(err, &pce) || pce.stage != "ad" {
+		t.Fatalf("want a partialCascadeError{stage:\"ad\"}, got %T: %v", err, err)
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("the ad partial cascade must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateChildFailureDoesNotOpenGate verifies that when a
+// child PATCH fails during ACTIVATE, the campaign gate is NEVER flipped — nothing can serve, so
+// the failure is a plain (not partial/unconfirmed-serving) error and the campaign stays paused.
+func TestUpdateCampaignAndChildrenStatus_ActivateChildFailureDoesNotOpenGate(t *testing.T) {
+	var campaignPatched bool
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/campaigns/") {
+			campaignPatched = true
+		}
+		if strings.Contains(r.URL.Path, "/ad_groups/") {
+			w.WriteHeader(http.StatusInternalServerError) // child fails mid-cascade
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", "t5_ag", "t6_ad", StatusActive)
+	if err == nil {
+		t.Fatal("a child failure during activate must return an error")
+	}
+	if campaignPatched {
+		t.Error("the campaign gate must NOT be flipped ACTIVE when a child activate fails (nothing should serve)")
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateRequiresBothChildIDs verifies the low-level
+// method refuses to ACTIVATE when EITHER the ad group id OR the ad id is missing (mirroring the
+// dispatcher guard), so a direct caller can't PATCH a subset of the tree and persist a
+// misleading "active" for a campaign that cannot serve. No API call is made.
+func TestUpdateCampaignAndChildrenStatus_ActivateRequiresBothChildIDs(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen when a child id is missing on activate: %s %s", r.Method, r.URL.Path)
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tokenSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	for name, tc := range map[string]struct{ adGroupID, adID string }{
+		"missing ad id":       {adGroupID: "t5_ag", adID: ""},
+		"missing ad group id": {adGroupID: "", adID: "t6_ad"},
+		"missing both":        {adGroupID: "", adID: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", tc.adGroupID, tc.adID, StatusActive)
+			if err == nil {
+				t.Fatalf("%s: activate must be refused when a child id is missing", name)
+			}
+			if !strings.Contains(err.Error(), "servable") {
+				t.Errorf("%s: error should explain the tree cannot be made servable, got: %v", name, err)
+			}
+		})
+	}
+	// PAUSE with missing child ids is fine (pausing the parent stops delivery). Use a permissive
+	// server so the campaign PATCH can proceed — the guard applies to ACTIVATE only.
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer okSrv.Close()
+	pc := NewClient(testCreds, testAccount, WithBaseURL(okSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	if err := pc.UpdateCampaignAndChildrenStatus(context.Background(), "t3_camp", "", "", StatusPaused); err != nil {
+		t.Errorf("pause with no child ids must be allowed, got: %v", err)
+	}
+}
+
+// TestUpdateCampaignStatus_ValidatesInput rejects bad input BEFORE any API call.
+func TestUpdateCampaignStatus_ValidatesInput(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no API call should happen for invalid input: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer apiSrv.Close()
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithNowFunc(fixedRedditClock()))
+
+	cases := map[string]struct{ id, status string }{
+		"empty campaign id": {"", StatusPaused},
+		"bad status":        {"t3_camp", "RUNNING"},
+		"slash in id":       {"t3/../x", StatusActive},
+		"question in id":    {"t3_c?a=b", StatusPaused},
+		"hash in id":        {"t3_c#x", StatusActive},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := c.UpdateCampaignStatus(context.Background(), tc.id, tc.status); err == nil {
+				t.Errorf("%s: expected a validation error, got nil", name)
+			}
+		})
+	}
+}

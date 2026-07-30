@@ -30,4 +30,18 @@ var (
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")
+
+	// ErrToggleUnsupported indicates the campaign's platform has no status-toggle
+	// capability wired (no dispatcher, or the dispatcher is not a StatusToggler).
+	// The platform is never contacted. Maps to 400. Lives here (not in the service
+	// layer) so a platform dispatcher can return it directly without importing the
+	// orchestration layer, and the service still maps it to an HTTP status.
+	ErrToggleUnsupported = errors.New("status toggle is not supported for this platform")
+
+	// ErrCampaignNotProvisioned indicates a status toggle was requested on a
+	// campaign that is not fully provisioned for the requested change — no upstream
+	// platform campaign id yet, or (on ACTIVATE) a missing child ad group/ad so the
+	// tree cannot be made servable. It is a client/state error: the platform is
+	// never contacted, and a retry now would fail the same way. Maps to 409.
+	ErrCampaignNotProvisioned = errors.New("campaign is not fully provisioned for this status change")
 )

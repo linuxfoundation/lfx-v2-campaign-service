@@ -15,30 +15,32 @@ import (
 
 // Client is the "lfx-v2-campaign-service-briefs" service client.
 type Client struct {
-	CreateBriefEndpoint     goa.Endpoint
-	GetBriefEndpoint        goa.Endpoint
-	UpdateBriefEndpoint     goa.Endpoint
-	ApproveBriefEndpoint    goa.Endpoint
-	DeleteBriefEndpoint     goa.Endpoint
-	CreateCampaignsEndpoint goa.Endpoint
-	GetCampaignEndpoint     goa.Endpoint
-	UpdateCampaignEndpoint  goa.Endpoint
-	GetJobEndpoint          goa.Endpoint
+	CreateBriefEndpoint          goa.Endpoint
+	GetBriefEndpoint             goa.Endpoint
+	UpdateBriefEndpoint          goa.Endpoint
+	ApproveBriefEndpoint         goa.Endpoint
+	DeleteBriefEndpoint          goa.Endpoint
+	CreateCampaignsEndpoint      goa.Endpoint
+	GetCampaignEndpoint          goa.Endpoint
+	UpdateCampaignEndpoint       goa.Endpoint
+	ToggleCampaignStatusEndpoint goa.Endpoint
+	GetJobEndpoint               goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, updateCampaign, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, updateCampaign, toggleCampaignStatus, getJob goa.Endpoint) *Client {
 	return &Client{
-		CreateBriefEndpoint:     createBrief,
-		GetBriefEndpoint:        getBrief,
-		UpdateBriefEndpoint:     updateBrief,
-		ApproveBriefEndpoint:    approveBrief,
-		DeleteBriefEndpoint:     deleteBrief,
-		CreateCampaignsEndpoint: createCampaigns,
-		GetCampaignEndpoint:     getCampaign,
-		UpdateCampaignEndpoint:  updateCampaign,
-		GetJobEndpoint:          getJob,
+		CreateBriefEndpoint:          createBrief,
+		GetBriefEndpoint:             getBrief,
+		UpdateBriefEndpoint:          updateBrief,
+		ApproveBriefEndpoint:         approveBrief,
+		DeleteBriefEndpoint:          deleteBrief,
+		CreateCampaignsEndpoint:      createCampaigns,
+		GetCampaignEndpoint:          getCampaign,
+		UpdateCampaignEndpoint:       updateCampaign,
+		ToggleCampaignStatusEndpoint: toggleCampaignStatus,
+		GetJobEndpoint:               getJob,
 	}
 }
 
@@ -182,6 +184,26 @@ func (c *Client) GetCampaign(ctx context.Context, p *GetCampaignPayload) (res *C
 func (c *Client) UpdateCampaign(ctx context.Context, p *UpdateCampaignPayload) (res *Campaign, err error) {
 	var ires any
 	ires, err = c.UpdateCampaignEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*Campaign), nil
+}
+
+// ToggleCampaignStatus calls the "toggle-campaign-status" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// ToggleCampaignStatus may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - error: internal error
+func (c *Client) ToggleCampaignStatus(ctx context.Context, p *ToggleCampaignStatusPayload) (res *Campaign, err error) {
+	var ires any
+	ires, err = c.ToggleCampaignStatusEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
