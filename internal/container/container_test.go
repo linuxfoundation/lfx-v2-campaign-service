@@ -152,8 +152,8 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 }
 
 // registeredProviders is the set of providers registerDispatchers wires up on this
-// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter). Each is guarded so
-// dropping its map entry — the production wiring each PR adds — fails a test rather
+// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter, hubspot). Each is
+// guarded so dropping its map entry — the production wiring each PR adds — fails a test rather
 // than silently restoring "no dispatcher registered" (the adapters are unit-tested by
 // direct instantiation, which bypasses the map).
 var registeredProviders = []model.Provider{
@@ -161,13 +161,14 @@ var registeredProviders = []model.Provider{
 	model.ProviderLinkedInAds,
 	model.ProviderMetaAds,
 	model.ProviderTwitterAds,
+	model.ProviderHubSpot,
 }
 
 // TestRegisterDispatchers_RegistersProviders asserts every expected provider maps to a
 // dispatcher. registerDispatchers only stores its args, so nil repo/encryptor build
 // the map without a deref.
 func TestRegisterDispatchers_RegistersProviders(t *testing.T) {
-	m := registerDispatchers(nil, nil)
+	m := registerDispatchers(nil, nil, nil)
 	for _, p := range registeredProviders {
 		_, ok := m[p]
 		assert.True(t, ok, "%s must be registered — this is the wiring its PR adds", p)
@@ -186,7 +187,7 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	m := registerDispatchers(nil, nil)
+	m := registerDispatchers(nil, nil, nil)
 	logMissingDispatchers(m)
 
 	out := buf.String()
