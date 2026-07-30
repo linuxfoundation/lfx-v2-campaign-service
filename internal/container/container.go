@@ -250,22 +250,26 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 // registered set stays identical regardless of how the DB comes up. Add a provider
 // here as its adapter lands; a provider with no entry records jobs that report "no
 // dispatcher registered" for that platform (logged as a startup warning).
-func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor) map[model.Provider]service.PlatformDispatcher {
+// audiences is the audience repository the HubSpot (email) dispatcher reads to resolve a brief's
+// built send-list. The ad dispatchers don't need it, so it is a distinct arg rather than folded
+// into the connection repo.
+func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo) map[model.Provider]service.PlatformDispatcher {
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
 		model.ProviderMetaAds:      dispatch.NewMetaDispatcher(repo, enc),
 		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
 		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
+		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences),
 	}
 }
 
 // adPlatformProviders is the full set of providers a brief can select (per the
 // CreateCampaigns contract); any without a registered dispatcher is logged at startup
-// so the gap is visible in production. HubSpot is included even though no adapter
-// exists yet — CreateCampaigns accepts it, so a selection would otherwise fail
+// so the gap is visible in production. GoogleAds is included even though its adapter
+// isn't on main yet — CreateCampaigns accepts it, so a selection would otherwise fail
 // silently with "no dispatcher registered" and never be surfaced here. (HubSpot is the
-// email channel; its adapter lands with LFXV2-2777.) MicrosoftAds now has an adapter.
+// email channel; its adapter now exists, LFXV2-2777. MicrosoftAds now has an adapter too.)
 var adPlatformProviders = []model.Provider{
 	model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds,
 	model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds,
@@ -297,12 +301,13 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// jobs that report "no dispatcher registered" for that platform (the remaining
 	// ad-platform + email adapters land incrementally, LFXV2-2636..2642 / 2777);
 	// warn so that gap is visible in production logs.
-	dispatchers := registerDispatchers(repo, enc)
+	audienceRepo := postgres.NewAudienceRepo(pool)
+	dispatchers := registerDispatchers(repo, enc, audienceRepo)
 	logMissingDispatchers(dispatchers)
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
-	c.Audiences = service.NewAudienceService(postgres.NewAudienceRepo(pool))
+	c.Audiences = service.NewAudienceService(audienceRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
 	// dispatch goroutine lived only in that process, so fail them forward now
@@ -348,7 +353,8 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			campaignRepo := postgres.NewCampaignRepo(pool)
 			jobRepo := postgres.NewJobRepo(pool)
 			// Same dispatcher set as the fast path (see registerDispatchers).
-			dispatchers := registerDispatchers(connRepo, enc)
+			audienceRepo := postgres.NewAudienceRepo(pool)
+			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
 			logMissingDispatchers(dispatchers)
 			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
@@ -356,7 +362,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// that read.
 			c.orch = orch
 			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
-			ab.SetBackend(postgres.NewAudienceRepo(pool))
+			ab.SetBackend(audienceRepo)
 			// Derive from ctx (the init context Close cancels), NOT context.Background():
 			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
 			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the

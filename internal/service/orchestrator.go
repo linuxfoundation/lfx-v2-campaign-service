@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -118,6 +120,15 @@ const dispatchQueueTimeout = 10 * time.Minute
 // separately.
 const providerCallTimeout = 2 * time.Minute
 
+// toggleCallTimeout bounds the SYNCHRONOUS status-toggle platform call, which runs on the
+// HTTP request goroutine (unlike the async dispatch above). Without it, a cascade of
+// sequential PATCHes — each with its own retry budget — could exceed the server's
+// DefaultWriteTimeout (60s), so the platform + DB would change but the response could no
+// longer reach the caller (a silent "did it apply?" for the operator). Kept comfortably
+// under the 60s write timeout so a failed toggle still returns an error the client receives;
+// on timeout the platform call is cancelled and surfaces as UNCONFIRMED (verify/retry).
+const toggleCallTimeout = 45 * time.Second
+
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
@@ -144,6 +155,35 @@ type PlatformDispatcher interface {
 	// campaign row (platform_campaign_id, status, result populated).
 	Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error)
 }
+
+// StatusToggler is an OPTIONAL dispatcher capability: pause/resume an existing campaign on
+// the platform. Not every platform's dispatcher implements it (see the status-toggle roadmap
+// in the architecture doc), so the orchestrator type-asserts for it rather than adding it to
+// PlatformDispatcher — a dispatcher that doesn't implement it yields a clean "not supported"
+// error (ErrToggleUnsupported → 400).
+type StatusToggler interface {
+	// ToggleStatus sets the platform campaign's run state. status is
+	// model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when the
+	// platform confirms the change. campaign is the persisted row so an adapter can reach
+	// any child ids it stored at creation (e.g. Reddit persists the ad group + ad ids in
+	// Result and must cascade the status to them; a single-node platform like Meta/LinkedIn
+	// ignores it and toggles the campaign alone).
+	ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error
+}
+
+// Status-toggle classification sentinels. These distinguish a client/state error (the
+// toggle never reached the ad platform) from a real platform-call failure, so the service
+// can return an accurate status + message instead of blaming the platform for everything.
+// These sentinels are DEFINED in internal/domain (the dependency-free base package) so a
+// platform dispatcher can return them directly without importing this orchestration layer;
+// they are re-exported here as aliases for the existing service call sites and back-compat.
+var (
+	// ErrToggleUnsupported: the campaign's platform has no status-toggle capability wired.
+	ErrToggleUnsupported = domain.ErrToggleUnsupported
+	// ErrCampaignNotProvisioned: the campaign is not fully provisioned for the toggle (no
+	// upstream id yet, or a missing child ad group/ad on ACTIVATE). Nothing serviceable to toggle.
+	ErrCampaignNotProvisioned = domain.ErrCampaignNotProvisioned
+)
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
 // BEFORE any upstream (paid) create call — e.g. input validation or config
@@ -810,4 +850,44 @@ func aggregateStatus(results []platformResult) model.JobStatus {
 	default:
 		return model.JobSucceeded
 	}
+}
+
+// ToggleCampaignStatus pauses or resumes an already-created campaign on its ad platform.
+// It looks up the campaign's dispatcher, requires that dispatcher to implement
+// StatusToggler (else ErrToggleUnsupported), and delegates the platform call. The caller
+// (the service) updates the persisted row only after this returns nil. platformCampaignID
+// is the campaign's stored upstream id; status is model.CampaignRunActive/Paused.
+func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
+	// Pre-platform guards return classifiable sentinels: these NEVER contact the ad
+	// platform, so the caller must NOT report them as a platform failure.
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		// No dispatcher registered is, from the caller's view, the same as "toggle not
+		// supported for this platform" — neither reaches the platform.
+		return fmt.Errorf("%w: no dispatcher registered for platform %s", ErrToggleUnsupported, platform)
+	}
+	toggler, ok := d.(StatusToggler)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrToggleUnsupported, platform)
+	}
+	// Any error from here is from the platform call itself (or the dispatcher's own pre-flight
+	// cred resolution) — surfaced as a platform failure by the caller. This deliberately
+	// includes a dispatcher's CONNECTION-STATE pre-flight failures (connection not ACTIVE,
+	// incomplete credentials, missing account id): the ad platform is never contacted, so a 503
+	// slightly over-attributes to the platform, but these are surfaced as-is (not a distinct
+	// sentinel) because the remedy — reactivate/repair the connection then retry — is the same
+	// operator action a platform 503 already prompts, and the classification is UNIFORM across
+	// all dispatchers (reddit/meta/linkedin/twitter/googleads resolve identically). Promoting
+	// connection-state to its own 409/422 sentinel is a cross-dispatcher change tracked as
+	// follow-up rather than a reddit-only divergence. Bound the
+	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
+	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
+	// caller as an error rather than mutating the platform after the response can no longer be
+	// delivered. A context deadline surfaces as UNCONFIRMED (the caller reports verify/retry).
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	return toggler.ToggleStatus(callCtx, projectID, platform, campaign, status)
 }

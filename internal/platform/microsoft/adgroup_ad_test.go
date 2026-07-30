@@ -772,6 +772,44 @@ func TestCreateCampaign_DisplayDomainWideCapDecodesPunycodeHost(t *testing.T) {
 	}
 }
 
+func TestCreateCampaign_DisplayDomainRejectsUndecodableIDNAHost(t *testing.T) {
+	// The sibling of the decode-SUCCESS case above: a malformed `xn--` A-label that idna
+	// ToUnicode cannot decode. Falling back to the raw ASCII label would measure a host that is
+	// short enough to clear the 67-rune cap, so the invalid domain would only be caught later by
+	// AddAds — after the PAUSED campaign and ad group already exist, the exact orphan this
+	// up-front block prevents. A decode failure must fail CLOSED, like the URL-parse failure.
+	const badHost = "xn--a.example" // a syntactically invalid punycode label
+	if _, derr := idna.Lookup.ToUnicode(badHost); derr == nil {
+		t.Fatalf("fixture no longer exercises the decode-failure branch: %q now decodes", badHost)
+	}
+	if len(badHost) >= maxDisplayDomainRunes {
+		t.Fatalf("fixture host must be UNDER the %d-rune cap to prove the length check alone would pass it", maxDisplayDomainRunes)
+	}
+	var reached bool
+	api := &campaignsAPI{}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		base(w, r)
+	})
+	in := validInput()
+	in.RegistrationURL = "https://" + badHost + "/register"
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected a rejection for a host whose IDNA label cannot be decoded")
+	}
+	if !strings.Contains(err.Error(), "IDNA") {
+		t.Errorf("expected an IDNA-label error, got: %v", err)
+	}
+	if res != nil {
+		t.Errorf("an undecodable host must fail cleanly (nil result, claim released), got %+v", res)
+	}
+	if reached {
+		t.Error("no API call should be made — the host is rejected before any campaign is created")
+	}
+}
+
 func TestCreateCampaign_AdNullPartialErrorIsUnconfirmed(t *testing.T) {
 	// The ad-group create succeeds (654); the ad create returns a 200 with a null id slot
 	// and only a null PartialErrors placeholder → malformed success. The ad MAY exist, so

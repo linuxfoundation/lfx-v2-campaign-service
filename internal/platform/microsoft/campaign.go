@@ -349,9 +349,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// decoded wide-host rule (33 runes) at AddAds — the exact orphaning this check prevents.
 		// Conversely a short CJK host inflated by punycode could be false-rejected. idna ToUnicode
 		// decodes `xn--` back to CJK and is a no-op for a plain ASCII or already-percent-decoded
-		// host; on failure keep Hostname() so a malformed label still gets a length check.
+		// host. A decode FAILURE means the host is not a valid IDNA label, so reject it here
+		// rather than measuring the malformed A-label: a short-but-invalid `xn--` host would
+		// otherwise clear this cap and only fail at AddAds, orphaning the PAUSED campaign and ad
+		// group this whole block exists to prevent. Fail CLOSED, as with the parse failure above.
 		host := u.Hostname()
-		if uni, ierr := idna.Lookup.ToUnicode(host); ierr == nil && uni != "" {
+		uni, ierr := idna.Lookup.ToUnicode(host)
+		if ierr != nil {
+			return nil, fmt.Errorf("microsoft-ads composed ad final URL host %q is not a valid IDNA label: %w", host, ierr)
+		}
+		if uni != "" {
 			host = uni
 		}
 		authority := host

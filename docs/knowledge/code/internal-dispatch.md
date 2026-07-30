@@ -75,9 +75,9 @@ report "no dispatcher registered" (logged as a startup warning via
 `logMissingDispatchers`); adapters land incrementally per platform.
 
 Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**,
-**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **microsoft** (Bing Ads, LFXV2-2805).
-Google Ads follows once its dispatcher (PR #41) merges; the email (HubSpot) dispatcher is
-LFXV2-2777.
+**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **microsoft** (Bing Ads, LFXV2-2805),
+**hubspot** (the email channel, LFXV2-2777). Google Ads follows once its dispatcher
+(PR #41) merges.
 
 Each adapter interprets its own credential + config shape:
 - **reddit** — OAuth2 (clientId/secret/refreshToken); AccountID from the connection.
@@ -96,13 +96,39 @@ Each adapter interprets its own credential + config shape:
   embedded userinfo) up front.
 - **microsoft** — OAuth2 app (clientId/secret) + a developer token + refreshToken;
   AccountConfig from the connection's AccountID (the DIGITS-ONLY `CustomerAccountId`, trimmed)
-  plus an optional `login_customer_id` (the manager/`CustomerId` header). The client builds the
+  plus an optional `customer_id` (the manager/`CustomerId` header). The client builds the
   full Campaign → AdGroup → Ad hierarchy (all PAUSED) — so the adapter needs no ad config
   beyond `microsoftConfig.budget` (the DAILY budget, in the ACCOUNT's currency, no FX) and an
   optional `timeZone`. `NameSuffix = brief.ID` gives deterministic retry-safe names (Microsoft
-  enforces case-insensitive campaign-name uniqueness, so a retry find-firsts the existing
-  campaign as UNCONFIRMED-already-exists rather than duplicating). A non-nil result with an
-  error is an UNCONFIRMED partial (claim retained); (nil, err) means nothing was created (claim
-  released).
+  enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name and
+  cleanly REUSES the existing campaign (`AlreadyExisted=true`, no error) rather than
+  duplicating). A non-nil result accompanied by an error is a separate UNCONFIRMED partial
+  (claim retained); (nil, err) means nothing was created (claim released).
+- **hubspot** — the EMAIL channel (not an ad platform), single private-app token. Unlike the ad
+  adapters (which CREATE a campaign) it STAGES a marketing email: it CLONES a caller-specified
+  template (`hubspotConfig.sourceEmailId`) and points the clone's send list at the brief's BUILT
+  audience — resolved from the `campaign_audiences` resource (LFXV2-2773) via an injected
+  `audienceReader`, taking the newest hubspot audience and refusing if it is not yet `built`
+  (`PlatformMasterListID` → the send list, `SuppressionListIDs` → exclusions). The cloned email's
+  HubSpot id is the campaign's `PlatformCampaignID`; the clone is a DRAFT (a human sends it). AI
+  body content (LFXV2-2775) and audience building (LFXV2-2774) are separate steps. Claim
+  contract: an UNCONFIRMED clone (2xx-no-id / transport) retains the claim with a name-only
+  partial; a post-clone send-list failure is a partial (the email exists — retain + reconcile);
+  a definite pre-clone failure releases the claim.
+
+## Status toggle (optional capability)
+
+`StatusToggler` is an OPTIONAL dispatcher interface (separate from `PlatformDispatcher`) —
+`ToggleStatus(ctx, projectID, platform, campaign *model.Campaign, status)` — for
+pausing/resuming a live campaign on the platform (ACTIVE↔PAUSED). It receives the full
+persisted `*model.Campaign` (not just the id) so an adapter can reach any child ids it stored
+at creation. The orchestrator's `ToggleCampaignStatus` type-asserts it (returning
+`ErrToggleUnsupported` when a platform hasn't wired it), so it can be added platform-by-platform
+without touching every adapter. **reddit** implements it: `resolveRedditClient` (shared with
+`Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
+then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
+its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
+PAUSES all three, so toggling only the campaign would not serve. Meta + LinkedIn toggles follow
+(stacked PR); X/Twitter + Google Ads follow later.
 
 See [internal/dispatch](../../../internal/dispatch).

@@ -107,9 +107,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		RegistrationURL: bf.RegistrationURL,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
-		// and the client's find-first lookup returns the existing campaign (reported
-		// UNCONFIRMED-already-exists) rather than creating a second paid campaign — a poor-man's
-		// idempotency key until LFXV2-2665 lands provider idempotency keys.
+		// and the client's find-first lookup cleanly REUSES the existing campaign
+		// (`AlreadyExisted=true`, no error) rather than creating a second paid campaign — a
+		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys. (An
+		// UNCONFIRMED partial is the distinct case below: a non-nil result WITH an error.)
 		NameSuffix: brief.ID,
 	}
 
