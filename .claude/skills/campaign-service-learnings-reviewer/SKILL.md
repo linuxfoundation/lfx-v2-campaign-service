@@ -28,7 +28,9 @@ covers it, say nothing — that is the correct outcome.
 ## What you may read
 
 The invoking host pins the revisions before you start and names them to you: a
-`target_sha`, and a `base_sha` for branch mode. Post-commit, review
+`target_sha`, and `base_sha` — the target's **first parent** in post-commit mode,
+the **merge-base** with the caller's pinned local `origin/main` in branch mode, and
+absent **only** when the target is a root commit. Post-commit, review
 `git show <target_sha>`; in branch mode, review
 `git diff <base_sha>..<target_sha>` and say in your report that the comparison
 base came from the caller's local `origin/main`. Never infer another target or
