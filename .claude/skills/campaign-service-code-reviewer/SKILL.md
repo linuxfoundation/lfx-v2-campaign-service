@@ -259,9 +259,14 @@ a finding. The `project-api` rule must keep `openfga_check` (not
 deliberately — `oidc` alone would reject a credential-less request before
 OpenFGA runs.
 
-**Knowledge-bundle upkeep.** When a patch changes architecture, a Helm manifest,
-a package's role, or fixes a notable bug, expect a matching concept under
-`docs/knowledge/**` **and** a dated entry in `docs/knowledge/log.md`. The
+**Knowledge-bundle upkeep.** `CLAUDE.md:17` states the trigger without
+qualification — *"Whenever you merge a PR, update a Helm manifest, **or fix a
+bug**"* — so quote it as written and do not narrow it to notable, significant or
+behaviour-changing bugs. Those softeners appear nowhere in the rule surface, and
+inventing one lets the reviewer skip an upkeep miss the written rule covers. When
+a patch changes architecture, a Helm manifest, a package's role, or fixes a bug,
+expect a matching concept under `docs/knowledge/**` **and** a dated entry in
+`docs/knowledge/log.md`. The
 containing `index.md` bullet is required **only** when a concept was added,
 renamed, or its description changed — `CLAUDE.md` conditions that step, so
 demanding an index edit for an in-place concept body update is a false finding
