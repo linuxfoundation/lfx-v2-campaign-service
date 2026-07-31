@@ -1791,6 +1791,24 @@ func IsOutcomeUnconfirmed(err error) bool {
 	return createOutcomeAmbiguous(err)
 }
 
+// partialCascadeError marks a cascade that PARTIALLY applied: an upstream entity was
+// already changed before a downstream one failed. It reports Unconfirmed() so
+// IsOutcomeUnconfirmed classifies it as verify-before-retry — a DEFINITE 4xx on the child
+// is still an ambiguous OVERALL outcome, because the parent change did land. Mirrors the
+// reddit client's type of the same name.
+type partialCascadeError struct {
+	stage string
+	err   error
+}
+
+func (e *partialCascadeError) Error() string {
+	return "twitter: campaign status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+}
+func (e *partialCascadeError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *partialCascadeError) Unconfirmed() bool { return true }
+
 // updateEntityStatus PUTs a single entity's entity_status. Per the X Ads v12 contract
 // (the same one createRequest documents) parameters go in the QUERY STRING, not a JSON
 // body, and are folded into the OAuth signature base string.
@@ -1839,7 +1857,10 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 			return fmt.Errorf("twitter: line item %s activate failed: %w", lineItemID, err)
 		}
 		if err := c.updateEntityStatus(ctx, campaignPath, status); err != nil {
-			return fmt.Errorf("twitter: campaign %s activate failed: %w", campaignID, err)
+			// The line item was already flipped to ACTIVE above, so the tree is partially
+			// applied even on a DEFINITE 4xx here: report Unconfirmed so the caller verifies
+			// rather than being told nothing changed.
+			return &partialCascadeError{stage: "campaign", err: err}
 		}
 		return nil
 	}
@@ -1852,7 +1873,10 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 		return nil
 	}
 	if err := c.updateEntityStatus(ctx, lineItemPath, status); err != nil {
-		return fmt.Errorf("twitter: line item %s pause failed (the campaign is paused, so delivery is already stopped): %w", lineItemID, err)
+		// The campaign gate is ALREADY paused (delivery has stopped), so the cascade is
+		// partially applied. Even a definite 4xx here must NOT be reported as "not modified":
+		// the campaign genuinely changed on X. Unconfirmed → verify before retry.
+		return &partialCascadeError{stage: "line item", err: err}
 	}
 	return nil
 }

@@ -60,26 +60,23 @@ func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter
 
 // Dispatch implements service.PlatformDispatcher for X (Twitter).
 func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+	// The resolve step's error is already a preCreateError, so it passes through verbatim.
 	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
 	if err != nil {
 		return nil, err // preCreateError
 	}
-	if res.status != model.StatusActive {
-		return nil, notCreated(fmt.Errorf("twitter connection for project %s is %s, not active", brief.ProjectID, res.status))
+	// validateTwitterConnection is shared with ToggleStatus so a create and a toggle accept
+	// EXACTLY the same connections. Its failures are wrapped with notCreated HERE (create-only
+	// claim semantics the toggle path must not apply).
+	creds, accountID, err := validateTwitterConnection(brief.ProjectID, res)
+	if err != nil {
+		return nil, notCreated(err)
 	}
-
-	var creds twitterCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode twitter credentials: %w", err))
-	}
-	if creds.ConsumerKey == "" || creds.ConsumerSecret == "" || creds.AccessToken == "" || creds.AccessTokenSecret == "" {
-		return nil, notCreated(fmt.Errorf("twitter credentials are incomplete (need consumerKey, consumerSecret, accessToken, accessTokenSecret)"))
-	}
-
-	accountID := strings.TrimSpace(res.accountID)
+	// The funding instrument is required to CREATE a campaign but is never used by a status
+	// toggle, so it is checked here rather than in the shared validator.
 	fundingID := strings.TrimSpace(res.providerConfig["funding_instrument_id"])
-	if accountID == "" || fundingID == "" {
-		return nil, notCreated(fmt.Errorf("twitter connection for project %s is missing account id or funding instrument id", brief.ProjectID))
+	if fundingID == "" {
+		return nil, notCreated(fmt.Errorf("twitter connection for project %s is missing funding instrument id", brief.ProjectID))
 	}
 
 	var cfg twitterConfig
@@ -190,32 +187,40 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 	return c
 }
 
-// resolveTwitterClient builds an X Ads client from the project's stored connection.
-// Split out of Dispatch so ToggleStatus resolves credentials the same way (active
-// connection, complete OAuth1 4-tuple, account + funding-instrument ids).
+// validateTwitterConnection checks a resolved connection is usable and returns the decoded
+// credentials + account id. Shared by Dispatch and ToggleStatus so a create and a toggle
+// accept EXACTLY the same connections; each caller applies its own error wrapping (Dispatch
+// wraps with notCreated for claim semantics, the toggle path does not). The funding
+// instrument is NOT checked here — it is a create-only field a toggle never uses.
+func validateTwitterConnection(projectID string, res *resolved) (twitterCreds, string, error) {
+	var creds twitterCreds
+	if res.status != model.StatusActive {
+		return creds, "", fmt.Errorf("twitter connection for project %s is %s, not active", projectID, res.status)
+	}
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return creds, "", fmt.Errorf("decode twitter credentials: %w", err)
+	}
+	if creds.ConsumerKey == "" || creds.ConsumerSecret == "" || creds.AccessToken == "" || creds.AccessTokenSecret == "" {
+		return creds, "", fmt.Errorf("twitter credentials are incomplete (need consumerKey, consumerSecret, accessToken, accessTokenSecret)")
+	}
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return creds, "", fmt.Errorf("twitter connection for project %s is missing account id", projectID)
+	}
+	return creds, accountID, nil
+}
+
+// resolveTwitterClient resolves + validates the project's connection and builds an X Ads
+// client for the TOGGLE path (see validateTwitterConnection for the shared rules).
 func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID string, platform model.Provider) (*twitter.Client, error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
-	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("twitter connection for project %s is %s, not active", projectID, res.status)
+	creds, accountID, err := validateTwitterConnection(projectID, res)
+	if err != nil {
+		return nil, err
 	}
-	var creds twitterCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, fmt.Errorf("decode twitter credentials: %w", err)
-	}
-	if creds.ConsumerKey == "" || creds.ConsumerSecret == "" || creds.AccessToken == "" || creds.AccessTokenSecret == "" {
-		return nil, fmt.Errorf("twitter credentials are incomplete (need consumerKey, consumerSecret, accessToken, accessTokenSecret)")
-	}
-	accountID := strings.TrimSpace(res.accountID)
-	fundingID := strings.TrimSpace(res.providerConfig["funding_instrument_id"])
-	if accountID == "" {
-		return nil, fmt.Errorf("twitter connection for project %s is missing account id", projectID)
-	}
-	// A toggle only PUTs entity_status on existing entities, so the funding instrument
-	// (a create-time requirement) is not needed here — don't refuse a pause for a field
-	// this call never uses.
 	return twitter.NewClient(
 		twitter.Credentials{
 			ConsumerKey:       creds.ConsumerKey,
@@ -223,7 +228,9 @@ func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID 
 			AccessToken:       creds.AccessToken,
 			AccessTokenSecret: creds.AccessTokenSecret,
 		},
-		twitter.AccountConfig{AccountID: accountID, FundingInstrumentID: fundingID},
+		// FundingInstrumentID is a create-time field; a toggle only PUTs entity_status on
+		// entities that already exist, so it is deliberately left empty here.
+		twitter.AccountConfig{AccountID: accountID, FundingInstrumentID: strings.TrimSpace(res.providerConfig["funding_instrument_id"])},
 		d.opts...,
 	), nil
 }

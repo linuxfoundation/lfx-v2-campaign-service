@@ -91,4 +91,30 @@ not applied), distinct from the ambiguous `transportError`.
 UNCONFIRMED so a create that may have committed is not blind-retried into a
 duplicate; a `preSendError` is neither, so it stays a definite "not applied".
 
+## Status toggle
+
+`UpdateCampaignAndChildrenStatus(ctx, campaignID, lineItemID, status)` toggles an existing
+campaign between `ACTIVE` and `PAUSED` (X's `entity_status`). Like the create path it PUTs
+its parameters as QUERY PARAMS, not a JSON body (the X Ads v12 contract), and it takes the
+1-req/sec write pacing.
+
+SCOPE is the campaign + line item ONLY. `CreateCampaign` leaves the promoted-tweet
+association ACTIVE (that endpoint does not accept `entity_status`) and the LINE ITEM is X's
+delivery gate, so pausing the line item stops serving and re-activating it resumes serving
+without the association ever moving. Toggling the promoted tweet would be unnecessary and,
+on activate, unable to make an otherwise-paused tree serve.
+
+ORDER: on ACTIVATE the line item flips FIRST and the campaign gate LAST (nothing serves
+until the tree is ready); on PAUSE the campaign gate flips FIRST (delivery stops
+immediately). An ACTIVATE with a blank line-item id is refused BEFORE any call — the line
+item would stay PAUSED and nothing would serve. Pausing needs no line-item id.
+
+OUTCOME CLASSIFICATION: once the first entity has been changed, a failure on the second
+returns a `partialCascadeError`, whose `Unconfirmed() bool` reports true — so even a
+DEFINITE 4xx on the child is an ambiguous OVERALL outcome (the parent genuinely changed) and
+the caller is told to verify rather than "not modified". A failure on the FIRST call mutates
+nothing, so a definite 4xx stays definite. The exported `IsOutcomeUnconfirmed` folds this
+together with `createOutcomeAmbiguous` for callers across the package boundary (the
+dispatcher), mirroring the reddit client's helper of the same name.
+
 See [internal/platform/twitter](../../../internal/platform/twitter).

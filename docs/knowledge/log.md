@@ -15,9 +15,14 @@ ACTIVATE (nothing serves until the tree is ready), campaign gate first on PAUSE 
 immediately). An ACTIVATE with an unknown line-item id is refused up front as
 `ErrCampaignNotProvisioned` → 409, never calling X.
 
-`resolveTwitterClient` was split out of `Dispatch` so a toggle accepts exactly the same
-connections a create does; it deliberately does NOT require `funding_instrument_id`, which is a
-create-time field this call never uses. `twitterChildIDs` reads the persisted `CampaignResult`
+Connection rules are shared via `validateTwitterConnection`, which BOTH `Dispatch` and
+`ToggleStatus` call, so a create and a toggle accept exactly the same connections and cannot
+drift. Each caller keeps its own error wrapping (`Dispatch` wraps with `notCreated` for claim
+semantics; the toggle path must not). `funding_instrument_id` is checked only in `Dispatch` —
+it is a create-time field a toggle never uses, so requiring it would refuse a legitimate pause.
+A post-gate cascade failure returns `partialCascadeError` (`Unconfirmed() == true`) so a
+definite 4xx on the second entity is not misreported as "not modified" when the first already
+changed. `twitterChildIDs` reads the persisted `CampaignResult`
 blob, whose shape is pinned by a round-trip test (the blob is `json.Marshal` of an UNTAGGED
 struct, so the field is `LineItemID`; a renamed/nested field would silently yield "" and turn
 every ACTIVATE into a spurious 409).

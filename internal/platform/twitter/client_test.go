@@ -3530,3 +3530,68 @@ func TestUpdateCampaignAndChildrenStatus_RejectsBadInput(t *testing.T) {
 		t.Error("an empty campaign id must be rejected")
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_PostGateFailureIsUnconfirmed pins the partial-cascade
+// contract in BOTH directions. Once an upstream entity has been changed, a failure on the
+// downstream one — even a DEFINITE 4xx — leaves the tree partially applied, so the overall
+// outcome must be Unconfirmed (verify before retry), never "not modified".
+func TestUpdateCampaignAndChildrenStatus_PostGateFailureIsUnconfirmed(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     string
+		failOnPath string // the SECOND call in that direction
+	}{
+		// PAUSE: campaign gate succeeds first, then the line item 400s.
+		{"pause: line item fails after the gate paused", StatusPaused, "/line_items/"},
+		// ACTIVATE: line item succeeds first, then the campaign 400s.
+		{"activate: campaign fails after the line item activated", StatusActive, "/campaigns/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, tc.failOnPath) {
+					w.WriteHeader(http.StatusBadRequest) // DEFINITE rejection
+					_, _ = io.WriteString(w, `{"errors":[{"message":"bad request"}]}`)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+			}))
+			defer srv.Close()
+
+			c := newToggleTestClient(t, srv.URL)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", tc.status)
+			if err == nil {
+				t.Fatal("expected an error when the second entity fails")
+			}
+			if !IsOutcomeUnconfirmed(err) {
+				t.Errorf("a post-mutation failure must be UNCONFIRMED (the first entity DID change), got %T: %v", err, err)
+			}
+			var unconf interface{ Unconfirmed() bool }
+			if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+				t.Errorf("error must report Unconfirmed() == true, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_FirstCallFailureIsDefinite is the counterpart: when the
+// FIRST entity fails, nothing was mutated, so a definite 4xx must stay definite — otherwise
+// every clean rejection would be reported as "verify", which is noise.
+func TestUpdateCampaignAndChildrenStatus_FirstCallFailureIsDefinite(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"errors":[{"message":"bad request"}]}`)
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	// PAUSE hits the campaign gate first; it fails, so nothing has been mutated.
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("a definite 4xx on the FIRST call must stay definite (nothing mutated), got: %v", err)
+	}
+}
