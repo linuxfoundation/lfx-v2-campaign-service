@@ -1,5 +1,27 @@
 # Log
 
+## 2026-07-30
+
+**Update** — Microsoft Ads campaign status toggle (LFXV2-2810), stacked on the MS-3 dispatcher
+(PR #50). `MicrosoftDispatcher` implements `service.StatusToggler`; new client method
+`UpdateCampaignAndChildrenStatus` PUTs `Status` across the Campaign → AdGroup → Ad tree, with a
+new exported `IsOutcomeUnconfirmed` and a `partialCascadeError` mirroring the reddit/twitter
+clients.
+
+FULL CASCADE (the create path PAUSES all three entities), children-first on ACTIVATE and
+campaign-gate-first on PAUSE. An ACTIVATE missing either child id is refused as
+`ErrCampaignNotProvisioned` → 409 without calling Microsoft. Microsoft spells the serving state
+`Active`.
+
+PLATFORM TRAP: a rejected update returns HTTP **200 with a populated `PartialErrors`**, so
+`putStatus` decodes and checks that body on every PUT — a bare `err == nil` would report
+success for a change that never applied. A malformed 200 is treated as UNCONFIRMED (the update
+may have applied), matching the create path. Each status PUT sends only `{Id, Status}`, so it
+is a partial update that cannot clobber budget, schedule, or targeting.
+
+Connection rules are shared via `validateMicrosoftConnection`, called by BOTH `Dispatch` and
+`ToggleStatus`, so a create and a toggle cannot drift; each caller keeps its own error wrapping.
+
 ## 2026-07-29
 
 **Update** — Added the HubSpot (email channel) PlatformDispatcher (LFXV2-2777, Capability C —

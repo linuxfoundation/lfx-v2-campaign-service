@@ -1643,3 +1643,75 @@ func TestCreateCampaign_ContextCancelledBeforeAdGroupIsCleanAbort(t *testing.T) 
 		t.Errorf("a pre-ad-group cancel should read as an abort, got: %v", err)
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_PartialErrorsAreNotSuccess pins the Microsoft-specific
+// trap: a REJECTED status update comes back as HTTP 200 with a populated PartialErrors, so a
+// naive err == nil check would report success for a change that never applied.
+func TestUpdateCampaignAndChildrenStatus_PartialErrorsAreNotSuccess(t *testing.T) {
+	c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK) // 200 — but the entity was rejected
+		_, _ = io.WriteString(w, `{"PartialErrors":[{"Code":1234,"ErrorCode":"CampaignServiceEditorialError","Message":"rejected"}]}`)
+	})
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("a 200 carrying PartialErrors must NOT be reported as a successful status change")
+	}
+	// The campaign gate is the FIRST call on pause, so nothing had mutated — this stays definite.
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("a rejection on the first call must stay definite, got: %v", err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PostGateFailureIsUnconfirmed: once an entity HAS
+// changed, a later failure leaves the tree partially applied, so the overall outcome must be
+// Unconfirmed (verify) even though the child rejection itself is definite.
+func TestUpdateCampaignAndChildrenStatus_PostGateFailureIsUnconfirmed(t *testing.T) {
+	var n int
+	c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		n++
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 { // the campaign gate succeeds
+			_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[{"Code":1234,"ErrorCode":"Err","Message":"rejected"}]}`)
+	})
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when the ad group update is rejected")
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("a failure AFTER the campaign gate paused must be UNCONFIRMED, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "campaign status changed") {
+		t.Errorf("the message must name the entity that DID change, got: %v", err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_RejectsBadInput guards the input contract before any
+// call: entity ids interpolate into request bodies as numeric ids.
+func TestUpdateCampaignAndChildrenStatus_RejectsBadInput(t *testing.T) {
+	var reached bool
+	c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	cases := []struct{ name, campaign, adGroup, ad, status string }{
+		{"unsupported status", "321", "654", "987", "ENABLED"},
+		{"non-numeric campaign id", "32a", "654", "987", StatusPaused},
+		{"non-numeric ad group id", "321", "65/4", "987", StatusPaused},
+		{"activate without children", "321", "", "", StatusActive},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reached = false
+			if err := c.UpdateCampaignAndChildrenStatus(context.Background(), tc.campaign, tc.adGroup, tc.ad, tc.status); err == nil {
+				t.Fatal("expected a rejection")
+			}
+			if reached {
+				t.Error("no API call should be made — the guard is up front")
+			}
+		})
+	}
+}

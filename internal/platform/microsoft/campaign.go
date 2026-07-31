@@ -828,3 +828,186 @@ func validateEntityName(kind, name string, measuredLen, maxLen int, unit string)
 	}
 	return nil
 }
+
+// Run states a Microsoft campaign/ad group/ad can be toggled between. Microsoft's Status
+// enums spell the serving state "Active" (the create path uses "Paused" from the same enum).
+const (
+	// StatusActive lets an entity serve.
+	StatusActive = "Active"
+	// StatusPaused stops an entity serving.
+	StatusPaused = "Paused"
+)
+
+// updateCampaignsRequest / updateAdGroupsRequest / updateAdsRequest are the PUT bodies for a
+// status-only update. Each carries the entity Id plus Status; every other field is omitted so
+// the PUT is a partial update and cannot clobber budget, schedule, or targeting.
+type updateCampaignsRequest struct {
+	AccountId json.Number        `json:"AccountId"`
+	Campaigns []msCampaignStatus `json:"Campaigns"`
+}
+
+type msCampaignStatus struct {
+	Id     json.Number `json:"Id"`
+	Status string      `json:"Status"`
+}
+
+type updateAdGroupsRequest struct {
+	CampaignId json.Number       `json:"CampaignId"`
+	AdGroups   []msAdGroupStatus `json:"AdGroups"`
+}
+
+type msAdGroupStatus struct {
+	Id     json.Number `json:"Id"`
+	Status string      `json:"Status"`
+}
+
+type updateAdsRequest struct {
+	AdGroupId json.Number  `json:"AdGroupId"`
+	Ads       []msAdStatus `json:"Ads"`
+}
+
+type msAdStatus struct {
+	Id     json.Number `json:"Id"`
+	Status string      `json:"Status"`
+}
+
+// updateStatusResponse is the (subset of the) 200 body every status PUT returns. Microsoft
+// reports a per-entity failure as HTTP 200 with a populated PartialErrors — so a naive
+// err == nil check would silently report success for a REJECTED status change.
+type updateStatusResponse struct {
+	PartialErrors boundedErrorItems `json:"PartialErrors"`
+}
+
+// IsOutcomeUnconfirmed reports whether err leaves the mutation's outcome AMBIGUOUS —
+// Microsoft may have applied it despite the error, so the caller must VERIFY before retrying
+// rather than assume "not applied". Exported so the dispatcher can classify across the
+// package boundary (mirrors the reddit/twitter/googleads clients' helper of the same name).
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
+
+// partialCascadeError marks a cascade that PARTIALLY applied: an upstream entity was already
+// changed before a downstream one failed. It reports Unconfirmed() so IsOutcomeUnconfirmed
+// classifies it as verify-before-retry — a DEFINITE rejection on the child is still an
+// ambiguous OVERALL outcome, because the parent change did land.
+type partialCascadeError struct {
+	// applied is the entity whose status DID change; stage is the one that then failed.
+	applied string
+	stage   string
+	err     error
+}
+
+func (e *partialCascadeError) Error() string {
+	return "microsoft-ads: " + e.applied + " status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+}
+func (e *partialCascadeError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *partialCascadeError) Unconfirmed() bool { return true }
+
+// putStatus issues one status-only PUT and folds Microsoft's 200-with-PartialErrors contract
+// into an ordinary error, so callers can't mistake a rejected update for a success.
+func (c *Client) putStatus(ctx context.Context, path string, req any, entity string) error {
+	body, err := c.doRequest(ctx, http.MethodPut, path, req, false)
+	if err != nil {
+		return err
+	}
+	var resp updateStatusResponse
+	if uerr := json.Unmarshal(body, &resp); uerr != nil {
+		// A malformed 200 leaves the outcome UNKNOWN: the update MAY have applied, so do not
+		// report success. transportError reports Unconfirmed, matching the create path's
+		// treatment of an undecodable success body.
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: %w", entity, uerr)}
+	}
+	if partialErrorsHaveAny(resp.PartialErrors) {
+		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors))
+	}
+	return nil
+}
+
+// UpdateCampaignAndChildrenStatus toggles a Microsoft campaign and its ad group + ad between
+// Active and Paused.
+//
+// FULL CASCADE, like reddit: CreateCampaign builds the whole Campaign -> AdGroup -> Ad tree
+// PAUSED, so toggling only the campaign would leave the children paused and nothing serving.
+// ORDER mirrors reddit — children FIRST on ACTIVATE (nothing serves until the tree is ready),
+// campaign gate FIRST on PAUSE (delivery stops immediately even if a child call then fails).
+//
+// Activating with an unknown ad-group OR ad id is refused: the missing child would stay
+// Paused and nothing would serve, so reporting "active" would be a lie. Pausing needs no
+// child ids — pausing the parent already stops delivery.
+//
+// Once an entity has been changed, a later failure returns a partialCascadeError
+// (Unconfirmed) so a definite rejection on a child is not misreported as "not modified".
+func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID, status string) error {
+	if status != StatusActive && status != StatusPaused {
+		return fmt.Errorf("microsoft-ads: unsupported status %q (want %s or %s)", status, StatusActive, StatusPaused)
+	}
+	if !idRE.MatchString(strings.TrimSpace(campaignID)) {
+		return fmt.Errorf("microsoft-ads: campaign id %q is not a numeric id", campaignID)
+	}
+	agID, aID := strings.TrimSpace(adGroupID), strings.TrimSpace(adID)
+	if status == StatusActive && (agID == "" || aID == "") {
+		return fmt.Errorf("microsoft-ads: cannot activate campaign %s: its ad group and ad ids must both be known, so the tree cannot be made servable", campaignID)
+	}
+	for _, id := range []struct{ label, val string }{{"ad group", agID}, {"ad", aID}} {
+		if id.val != "" && !idRE.MatchString(id.val) {
+			return fmt.Errorf("microsoft-ads: %s id %q is not a numeric id", id.label, id.val)
+		}
+	}
+
+	campaignReq := updateCampaignsRequest{
+		AccountId: json.Number(c.account.AccountID),
+		Campaigns: []msCampaignStatus{{Id: json.Number(strings.TrimSpace(campaignID)), Status: status}},
+	}
+
+	if status == StatusActive {
+		// CHILDREN FIRST, campaign gate LAST.
+		adGroupReq := updateAdGroupsRequest{
+			CampaignId: json.Number(strings.TrimSpace(campaignID)),
+			AdGroups:   []msAdGroupStatus{{Id: json.Number(agID), Status: status}},
+		}
+		if err := c.putStatus(ctx, "AdGroups", adGroupReq, "ad group"); err != nil {
+			return err // nothing mutated yet — a definite rejection stays definite
+		}
+		adReq := updateAdsRequest{
+			AdGroupId: json.Number(agID),
+			Ads:       []msAdStatus{{Id: json.Number(aID), Status: status}},
+		}
+		if err := c.putStatus(ctx, "Ads", adReq, "ad"); err != nil {
+			return &partialCascadeError{applied: "ad group", stage: "ad", err: err}
+		}
+		if err := c.putStatus(ctx, "Campaigns", campaignReq, "campaign"); err != nil {
+			return &partialCascadeError{applied: "ad group and ad", stage: "campaign", err: err}
+		}
+		return nil
+	}
+
+	// PAUSE: campaign gate first — delivery stops now, even if a child call fails below.
+	if err := c.putStatus(ctx, "Campaigns", campaignReq, "campaign"); err != nil {
+		return err // nothing mutated yet
+	}
+	if agID != "" {
+		adGroupReq := updateAdGroupsRequest{
+			CampaignId: json.Number(strings.TrimSpace(campaignID)),
+			AdGroups:   []msAdGroupStatus{{Id: json.Number(agID), Status: status}},
+		}
+		if err := c.putStatus(ctx, "AdGroups", adGroupReq, "ad group"); err != nil {
+			return &partialCascadeError{applied: "campaign", stage: "ad group", err: err}
+		}
+	}
+	if aID != "" {
+		adReq := updateAdsRequest{
+			AdGroupId: json.Number(agID),
+			Ads:       []msAdStatus{{Id: json.Number(aID), Status: status}},
+		}
+		if err := c.putStatus(ctx, "Ads", adReq, "ad"); err != nil {
+			return &partialCascadeError{applied: "campaign and ad group", stage: "ad", err: err}
+		}
+	}
+	return nil
+}

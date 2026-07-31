@@ -128,7 +128,16 @@ without touching every adapter. **reddit** implements it: `resolveRedditClient` 
 `Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
 then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
 its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
-PAUSES all three, so toggling only the campaign would not serve. Meta + LinkedIn toggles follow
+PAUSES all three, so toggling only the campaign would not serve. **Microsoft** implements it with a FULL cascade, like reddit: the create path builds the whole
+Campaign → AdGroup → Ad tree PAUSED, so toggling only the campaign would leave the children
+paused and nothing serving. `UpdateCampaignAndChildrenStatus` PUTs `Status` on each entity,
+children-first on ACTIVATE and campaign-gate-first on PAUSE, and refuses an ACTIVATE with an
+unknown ad-group or ad id (`ErrCampaignNotProvisioned` → 409, no upstream call). Microsoft's
+Status enum spells the serving state **Active**. Note the platform-specific trap: a REJECTED
+update returns HTTP **200 with a populated PartialErrors**, so every status PUT checks that
+body — a bare `err == nil` would report success for a change that never applied.
+
+Meta + LinkedIn toggles follow
 (stacked PR); X/Twitter + Google Ads follow later.
 
 See [internal/dispatch](../../../internal/dispatch).

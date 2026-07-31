@@ -66,24 +66,12 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err != nil {
 		return nil, err // already a preCreateError
 	}
-	if res.status != model.StatusActive {
-		return nil, notCreated(fmt.Errorf("microsoft connection for project %s is %s, not active", brief.ProjectID, res.status))
-	}
-
-	var creds microsoftCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode microsoft credentials: %w", err))
-	}
-	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
-		return nil, notCreated(fmt.Errorf("microsoft credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)"))
-	}
-	// Trim once and use the trimmed value for both the empty check and the CustomerAccountId
-	// passed to the client (mirrors the googleads adapter): a whitespace-padded id would
-	// otherwise pass the empty check and then fail the client's digits-only validation as a
-	// confusing pre-create error.
-	accountID := strings.TrimSpace(res.accountID)
-	if accountID == "" {
-		return nil, notCreated(fmt.Errorf("microsoft connection for project %s has no account id (customer account id)", brief.ProjectID))
+	// validateMicrosoftConnection is shared with ToggleStatus so a create and a toggle accept
+	// EXACTLY the same connections and cannot drift. Its failures are wrapped with notCreated
+	// HERE — create-only claim semantics the toggle path must not apply.
+	creds, accountID, err := validateMicrosoftConnection(brief.ProjectID, res)
+	if err != nil {
+		return nil, notCreated(err)
 	}
 
 	var cfg microsoftConfig
@@ -173,4 +161,115 @@ func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg
 		c.Result = raw
 	}
 	return c
+}
+
+// validateMicrosoftConnection checks a resolved connection is usable and returns the decoded
+// credentials + trimmed account id. Shared by Dispatch and ToggleStatus so a create and a
+// toggle accept EXACTLY the same connections; each caller applies its own error wrapping
+// (Dispatch wraps with notCreated for claim semantics, the toggle path does not).
+//
+// The account id is trimmed ONCE and the trimmed value returned, so a whitespace-padded id
+// can't pass the empty check here and then fail the client's digits-only validation as a
+// confusing downstream error.
+func validateMicrosoftConnection(projectID string, res *resolved) (microsoftCreds, string, error) {
+	var creds microsoftCreds
+	if res.status != model.StatusActive {
+		return creds, "", fmt.Errorf("microsoft connection for project %s is %s, not active", projectID, res.status)
+	}
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return creds, "", fmt.Errorf("decode microsoft credentials: %w", err)
+	}
+	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
+		return creds, "", fmt.Errorf("microsoft credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
+	}
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return creds, "", fmt.Errorf("microsoft connection for project %s has no account id (customer account id)", projectID)
+	}
+	return creds, accountID, nil
+}
+
+// resolveMicrosoftClient resolves + validates the project's connection and builds a client
+// for the TOGGLE path (see validateMicrosoftConnection for the shared rules).
+func (d *MicrosoftDispatcher) resolveMicrosoftClient(ctx context.Context, projectID string, platform model.Provider) (*microsoft.Client, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	creds, accountID, err := validateMicrosoftConnection(projectID, res)
+	if err != nil {
+		return nil, err
+	}
+	return microsoft.NewClient(
+		microsoft.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		microsoft.AccountConfig{
+			AccountID:  accountID,
+			CustomerID: strings.TrimSpace(res.providerConfig["customer_id"]),
+			Label:      res.label,
+		},
+		d.opts...,
+	), nil
+}
+
+// microsoftRunStatus maps the service's run-state vocabulary to Microsoft's Status enum.
+func microsoftRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return microsoft.StatusActive, nil
+	case model.CampaignRunPaused:
+		return microsoft.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
+}
+
+// microsoftChildIDs pulls the ad-group and ad ids out of the persisted result blob. The blob
+// is campaignFromMicrosoft's marshal of microsoft.CampaignResult, whose json tags are
+// lowerCamel; the shape is pinned by a round-trip test.
+func microsoftChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return "", ""
+	}
+	var blob struct {
+		AdGroupID string `json:"adGroupId"`
+		AdID      string `json:"adId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return "", ""
+	}
+	return blob.AdGroupID, blob.AdID
+}
+
+// ToggleStatus implements service.StatusToggler for Microsoft Advertising.
+//
+// FULL CASCADE, like reddit: the create path builds the whole Campaign -> AdGroup -> Ad tree
+// PAUSED, so toggling only the campaign would leave the children paused and nothing serving.
+// ACTIVATE requires BOTH child ids — a missing child would stay Paused while the row claimed
+// "active" — and that refusal is ErrCampaignNotProvisioned, so the service maps it to a 409
+// state error without ever calling Microsoft. Pausing needs no child ids.
+func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
+	msStatus, err := microsoftRunStatus(status)
+	if err != nil {
+		return err
+	}
+	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	adGroupID, adID := microsoftChildIDs(campaign)
+	if msStatus == microsoft.StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
+		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, msStatus); uerr != nil {
+		if microsoft.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
 }
