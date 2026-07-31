@@ -7,7 +7,7 @@ description: Launch the three local reviewers as Claude subagents when lfx-local
 
 # Local review — Claude fallback
 
-Launch exactly three generic subagents in one parallel batch:
+Launch exactly three generic subagents in one parallel batch, using model `opus` for all three:
 
 | Role | Skill to load |
 |---|---|
