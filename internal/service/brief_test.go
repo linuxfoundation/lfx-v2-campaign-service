@@ -29,6 +29,18 @@ func newFakeBriefRepo() *fakeBriefRepo {
 
 func briefKey(projectID, id string) string { return projectID + "|" + id }
 
+// FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
+// repo's partial-unique-index semantics (archived rows free the slug).
+func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {
+	for _, b := range r.briefs {
+		if b.ProjectID == projectID && b.EventSlug == eventSlug && b.Status != model.BriefArchived {
+			cp := *b
+			return &cp, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
 func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
@@ -886,5 +898,86 @@ func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing
 	}
 	if tog.gotID != "" {
 		t.Error("the platform must NOT be called for a pending campaign")
+	}
+}
+
+// newBriefServiceWithRepo builds a BriefService with live collaborators around repo,
+// matching how the container injects them once the DB pool is ready.
+func newBriefServiceWithRepo(t *testing.T, repo *fakeBriefRepo) *BriefService {
+	t.Helper()
+	s := NewBriefService(nil, nil, nil, nil)
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	s.SetBackend(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	return s
+}
+
+// TestFindBrief_ReturnsSavedBriefForEventSlug covers the re-paste path: a brief was already
+// generated and saved for this event, so the lookup returns it (with its AI-generated
+// copy/keywords/targeting and any later edits) instead of the caller regenerating.
+func TestFindBrief_ReturnsSavedBriefForEventSlug(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		Status: model.BriefDraft,
+		Copy:   json.RawMessage(`{"headlines":["Join KubeCon EU 2026"]}`),
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"})
+	if err != nil {
+		t.Fatalf("FindBrief: %v", err)
+	}
+	if got.ID != "b1" {
+		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+}
+
+// TestFindBrief_NotFoundIsTheFirstGenerationCase pins the ordinary first-time path: no brief
+// exists for this event yet, so the lookup 404s and the caller generates one. This must be a
+// clean NotFound, not a server error — it is the COMMON case, not a failure.
+func TestFindBrief_NotFoundIsTheFirstGenerationCase(t *testing.T) {
+	ctx := context.Background()
+	s := newBriefServiceWithRepo(t, newFakeBriefRepo())
+
+	_, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "brand-new-event"})
+	if err == nil {
+		t.Fatal("expected a not-found error for an event with no brief")
+	}
+	var nf *briefs.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Errorf("want a 404 NotFoundError (first-generation case), got %T: %v", err, err)
+	}
+}
+
+// TestFindBrief_ArchivedBriefDoesNotMatch mirrors the partial unique index: archiving frees
+// the slug, so a re-paste after archiving must 404 and generate afresh rather than resurrect
+// the archived brief.
+func TestFindBrief_ArchivedBriefDoesNotMatch(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026", Status: model.BriefArchived,
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"}); err == nil {
+		t.Fatal("an archived brief must not be returned — the slug is free for a new brief")
+	}
+}
+
+// TestFindBrief_IsScopedToProject guards tenancy: the same event slug under a DIFFERENT
+// project must not leak across.
+func TestFindBrief_IsScopedToProject(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026", Status: model.BriefDraft,
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "other-foundation", EventSlug: "kubecon-eu-2026"}); err == nil {
+		t.Fatal("a brief must not be visible to a different project")
 	}
 }

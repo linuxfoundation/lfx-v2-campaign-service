@@ -185,6 +185,31 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("find-brief", func() {
+		Description("Find the saved brief for an event slug. Returns 404 when the event has no brief yet, which is the ordinary first-time-generation case — the caller then generates one and POSTs it to create-brief.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("event_slug", String, "Event slug derived from the event page URL.", func() {
+				Example("kubecon-eu-2026")
+				MinLength(1)
+				MaxLength(255)
+			})
+			Required("project_id", "event_slug")
+		})
+		Result(Brief)
+		commonBriefErrors(false)
+		HTTP(func() {
+			// A query param, not a path segment: the slug is caller-derived free text, and
+			// a lookup that legitimately MISSES is the common case (404 = generate one).
+			GET("/projects/{project_id}/briefs")
+			Param("event_slug")
+			Header("bearer_token:Authorization")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses(false)
+		})
+	})
+
 	Method("get-brief", func() {
 		Description("Get a brief; returns ETag.")
 		Payload(func() {

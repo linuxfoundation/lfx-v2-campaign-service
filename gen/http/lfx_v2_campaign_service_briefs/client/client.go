@@ -22,6 +22,10 @@ type Client struct {
 	// create-brief endpoint.
 	CreateBriefDoer goahttp.Doer
 
+	// FindBrief Doer is the HTTP client used to make requests to the find-brief
+	// endpoint.
+	FindBriefDoer goahttp.Doer
+
 	// GetBrief Doer is the HTTP client used to make requests to the get-brief
 	// endpoint.
 	GetBriefDoer goahttp.Doer
@@ -79,6 +83,7 @@ func NewClient(
 ) *Client {
 	return &Client{
 		CreateBriefDoer:          doer,
+		FindBriefDoer:            doer,
 		GetBriefDoer:             doer,
 		UpdateBriefDoer:          doer,
 		ApproveBriefDoer:         doer,
@@ -115,6 +120,30 @@ func (c *Client) CreateBrief() goa.Endpoint {
 		resp, err := c.CreateBriefDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "create-brief", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// FindBrief returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service find-brief server.
+func (c *Client) FindBrief() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeFindBriefRequest(c.encoder)
+		decodeResponse = DecodeFindBriefResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildFindBriefRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.FindBriefDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "find-brief", err)
 		}
 		return decodeResponse(resp)
 	}

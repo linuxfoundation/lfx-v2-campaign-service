@@ -65,6 +65,41 @@ func BuildCreateBriefPayload(lfxV2CampaignServiceBriefsCreateBriefBody string, l
 	return v, nil
 }
 
+// BuildFindBriefPayload builds the payload for the
+// lfx-v2-campaign-service-briefs find-brief endpoint from CLI flags.
+func BuildFindBriefPayload(lfxV2CampaignServiceBriefsFindBriefProjectID string, lfxV2CampaignServiceBriefsFindBriefEventSlug string, lfxV2CampaignServiceBriefsFindBriefBearerToken string) (*lfxv2campaignservicebriefs.FindBriefPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsFindBriefProjectID
+	}
+	var eventSlug string
+	{
+		eventSlug = lfxV2CampaignServiceBriefsFindBriefEventSlug
+		if utf8.RuneCountInString(eventSlug) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("event_slug", eventSlug, utf8.RuneCountInString(eventSlug), 1, true))
+		}
+		if utf8.RuneCountInString(eventSlug) > 255 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("event_slug", eventSlug, utf8.RuneCountInString(eventSlug), 255, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsFindBriefBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsFindBriefBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.FindBriefPayload{}
+	v.ProjectID = projectID
+	v.EventSlug = eventSlug
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetBriefPayload builds the payload for the
 // lfx-v2-campaign-service-briefs get-brief endpoint from CLI flags.
 func BuildGetBriefPayload(lfxV2CampaignServiceBriefsGetBriefProjectID string, lfxV2CampaignServiceBriefsGetBriefBriefID string, lfxV2CampaignServiceBriefsGetBriefBearerToken string) (*lfxv2campaignservicebriefs.GetBriefPayload, error) {
@@ -325,7 +360,7 @@ func BuildUpdateCampaignPayload(lfxV2CampaignServiceBriefsUpdateCampaignBody str
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateCampaignBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Ipsum voluptates pariatur magni atque.\",\n         \"config\": \"Sit cupiditate non.\",\n         \"status\": \"Omnis doloremque at fugit dolor et.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Corrupti sit eos labore.\",\n         \"config\": \"Aliquam aut ut sit nisi architecto iure.\",\n         \"status\": \"Esse consectetur tenetur.\"\n      }\n   }'")
 		}
 		if body.Campaign == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("campaign", "body"))
