@@ -55,11 +55,21 @@ client.
 suppression itself. `internal/platform/reddit/client.go:628-635` states:
 "Deliberately DO NOT include e.Body: the upstream response body is untrusted and
 can reflect request material". `internal/infrastructure/postgres/pool.go:52`
-renders a static, DSN-free message and keeps the cause only for `Unwrap`. The
-named helpers to use rather than reinvent are `safeTransportCause`
-(`internal/platform/twitter/client.go:549`), `safeCause`
-(`internal/platform/hubspot/client.go:360`), and `truncateErr` / `truncate`
-(`internal/platform/meta/client.go:1353,1364`).
+renders a static, DSN-free message and keeps the cause only for `Unwrap`.
+
+**The named helpers split into two kinds, and only one of them redacts.**
+
+| Helper | What it does |
+|---|---|
+| `safeTransportCause` (`internal/platform/twitter/client.go:549`) | **redacts** — peels every `*url.Error` layer so the embedded request URL never reaches the rendered cause |
+| `safeCause` (`internal/platform/hubspot/client.go:360`, and `internal/platform/microsoft/client.go:362`) | **redacts** — same `*url.Error` peeling |
+| `truncateErr` / `truncate` (`internal/platform/meta/client.go:1353,1364`) | **length only** — clamps to a rune count without splitting a rune. Strips nothing |
+
+`truncateErr`/`truncate` satisfy no part of this pattern's detect condition on
+their own. Applied to an error whose message still embeds a URL or raw upstream
+text, the credential-bearing content survives — merely shorter. They belong
+**after** a redaction step, never instead of one, so a call site that only
+truncates is still a finding.
 `docs/knowledge/code/internal-platform-hubspot.md:44-47,53-55` records both the
 body-free error rule and the `*url.Error` peeling.
 
