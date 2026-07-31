@@ -1,9 +1,22 @@
 # Credentials and untrusted text
 
 Both patterns are load-bearing because error strings in this service **do not
-stay in memory**. A platform error is recorded into a job's `Steps` narrative and
-a campaign's `config_snapshot`, which are persisted unencrypted and reachable
-through the API. A leak into an error string is therefore durable, not transient.
+stay in memory**. They reach two persisted, unencrypted, API-reachable sinks — but
+by **different paths, carrying different things**:
+
+- **`Steps`** — the per-variant failure narrative, persisted inside the campaign's
+  `Result` blob (`internal/platform/meta/client.go:1451`,
+  `internal/dispatch/meta.go:172-184`). This is where a *propagated error string*
+  lands.
+- **`config_snapshot`** — written by `applyCampaignConfig`
+  (`internal/dispatch/creds.go:51`) from the **validated per-platform config**, not
+  from error text. Its leak vector is a config *field* — a destination or post URL
+  with a secret in its query string — which is why `sanitizeSnapshotURL`
+  (`creds.go:89`) strips query and fragment before the write.
+
+Look for error-string leakage in `Steps` and config-field leakage in
+`config_snapshot`; each is the wrong sink for the other's vector. Either way the
+leak is durable, not transient.
 
 ---
 
