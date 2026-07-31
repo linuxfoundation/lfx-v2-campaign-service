@@ -58,25 +58,12 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err != nil {
 		return nil, err // already a preCreateError
 	}
-	if res.status != model.StatusActive {
-		return nil, notCreated(fmt.Errorf("google ads connection for project %s is %s, not active", brief.ProjectID, res.status))
-	}
-
-	var creds googleAdsCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode google ads credentials: %w", err))
-	}
-	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
-		return nil, notCreated(fmt.Errorf("google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)"))
-	}
-	// Trim ONCE and use the trimmed value for both the empty check and the CustomerID passed
-	// to the client: without this a whitespace-padded id would pass the empty check here and
-	// then be sent untrimmed to the client's digits-only validator, failing as a confusing
-	// pre-create error. LoginCustomerID is already trimmed below; this keeps the two ids
-	// consistent (mirrors the sibling adapters, which trim before use).
-	accountID := strings.TrimSpace(res.accountID)
-	if accountID == "" {
-		return nil, notCreated(fmt.Errorf("google ads connection for project %s has no account id (customer id)", brief.ProjectID))
+	// validateGoogleAdsConnection is shared with ToggleStatus so a create and a toggle accept
+	// EXACTLY the same connections and cannot drift. Its failures are wrapped with notCreated
+	// HERE — create-only claim semantics the toggle path must not apply.
+	creds, accountID, err := validateGoogleAdsConnection(brief.ProjectID, res)
+	if err != nil {
+		return nil, notCreated(err)
 	}
 
 	var cfg googleAdsConfig
@@ -182,4 +169,96 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 		c.Result = raw
 	}
 	return c
+}
+
+// validateGoogleAdsConnection checks a resolved connection is usable and returns the decoded
+// credentials + trimmed customer id. Shared by Dispatch and ToggleStatus so a create and a
+// toggle accept EXACTLY the same connections; each caller applies its own error wrapping
+// (Dispatch wraps with notCreated for claim semantics, the toggle path does not).
+//
+// The customer id is trimmed ONCE and the trimmed value returned, so a whitespace-padded id
+// can't pass the empty check here and then fail the client's digits-only validator as a
+// confusing downstream error.
+func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCreds, string, error) {
+	var creds googleAdsCreds
+	if res.status != model.StatusActive {
+		return creds, "", fmt.Errorf("google ads connection for project %s is %s, not active", projectID, res.status)
+	}
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return creds, "", fmt.Errorf("decode google ads credentials: %w", err)
+	}
+	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
+		return creds, "", fmt.Errorf("google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
+	}
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return creds, "", fmt.Errorf("google ads connection for project %s has no account id (customer id)", projectID)
+	}
+	return creds, accountID, nil
+}
+
+// resolveGoogleAdsClient resolves + validates the project's connection and builds a client
+// for the TOGGLE path (see validateGoogleAdsConnection for the shared rules).
+func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	creds, accountID, err := validateGoogleAdsConnection(projectID, res)
+	if err != nil {
+		return nil, err
+	}
+	return googleads.NewClient(
+		googleads.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		googleads.AccountConfig{
+			CustomerID:      accountID,
+			LoginCustomerID: strings.TrimSpace(res.providerConfig["login_customer_id"]),
+			Label:           res.label,
+		},
+		d.opts...,
+	), nil
+}
+
+// googleAdsRunStatus maps the service's run-state vocabulary to Google's campaign status.
+// Note Google spells the serving state ENABLED, not ACTIVE.
+func googleAdsRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return googleads.StatusEnabled, nil
+	case model.CampaignRunPaused:
+		return googleads.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
+}
+
+// ToggleStatus implements service.StatusToggler for Google Ads.
+//
+// NO CASCADE and no not-provisioned guard, unlike reddit/twitter: the create path builds only
+// a PAUSED campaign shell (budget -> campaign) with no ad group or ad, so the campaign IS the
+// whole tree — there is no child whose absence could make an ACTIVATE non-serving. If a later
+// phase (GA-3+) adds ad groups/ads, this must grow both, matching the reddit shape.
+func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
+	gaStatus, err := googleAdsRunStatus(status)
+	if err != nil {
+		return err
+	}
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
+		// An ambiguous outcome may have applied upstream — report "verify before retry"
+		// rather than a flat "not applied".
+		if googleads.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
 }

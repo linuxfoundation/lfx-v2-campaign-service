@@ -128,7 +128,16 @@ without touching every adapter. **reddit** implements it: `resolveRedditClient` 
 `Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
 then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
 its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
-PAUSES all three, so toggling only the campaign would not serve. Meta + LinkedIn toggles follow
-(stacked PR); X/Twitter + Google Ads follow later.
+PAUSES all three, so toggling only the campaign would not serve.
+
+**Google Ads** implements it with NO cascade and no not-provisioned guard, because the create
+path builds only a PAUSED campaign shell (budget → campaign) with no ad group or ad — the
+campaign IS the whole tree, so there is no child whose absence could make an ACTIVATE
+non-serving. `UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE operation with
+`updateMask: "status"`. Note the vocabulary: Google spells the serving state **ENABLED**, not
+ACTIVE. If a later phase (GA-3+) adds ad groups/ads, this must grow both a cascade and the
+guard, matching the reddit shape.
+
+Meta + LinkedIn toggles follow (stacked PR); X/Twitter and Microsoft Ads follow separately.
 
 See [internal/dispatch](../../../internal/dispatch).

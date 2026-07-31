@@ -322,3 +322,87 @@ func TestGoogleAds_AmbiguousCreateRetainsClaim(t *testing.T) {
 		t.Errorf("Result must carry the orphaned budget's reconcile key (id/name), got: %s", camp.Result)
 	}
 }
+
+// ---- status toggle --------------------------------------------------------
+
+// TestGoogleAds_ToggleStatus_MutatesCampaignStatus verifies the dispatcher resolves creds and
+// sends a campaigns:mutate UPDATE carrying status + updateMask. There is deliberately no
+// cascade: the create path builds only a campaign shell, so the campaign IS the whole tree.
+func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
+	var gotBody string
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("issued %d API calls, want exactly 1 (no cascade): %v", len(paths), paths)
+	}
+	if !strings.HasSuffix(paths[0], "campaigns:mutate") {
+		t.Errorf("path = %q, want a campaigns:mutate", paths[0])
+	}
+	for _, want := range []string{`"status":"PAUSED"`, `"updateMask":"status"`, `campaigns/777`} {
+		if !strings.Contains(gotBody, want) {
+			t.Errorf("mutate body missing %s: %s", want, gotBody)
+		}
+	}
+	// An update must NOT carry a create payload.
+	if strings.Contains(gotBody, `"create"`) {
+		t.Errorf("a status update must not send a create operation: %s", gotBody)
+	}
+}
+
+// TestGoogleAds_ToggleStatus_ActivateUsesEnabled pins the vocabulary mapping: Google spells
+// the serving state ENABLED, not ACTIVE, so a naive pass-through would be rejected upstream.
+func TestGoogleAds_ToggleStatus_ActivateUsesEnabled(t *testing.T) {
+	var gotBody string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	if !strings.Contains(gotBody, `"status":"ENABLED"`) {
+		t.Errorf("activate must send ENABLED (Google's spelling), got: %s", gotBody)
+	}
+}
+
+// TestGoogleAds_ToggleStatus_RejectsUnsupportedStatus keeps the run-state vocabulary closed.
+func TestGoogleAds_ToggleStatus_RejectsUnsupportedStatus(t *testing.T) {
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{})
+	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, "archived"); err == nil {
+		t.Fatal("an unsupported run status must be rejected")
+	}
+}

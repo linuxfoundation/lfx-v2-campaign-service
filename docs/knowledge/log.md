@@ -1,5 +1,28 @@
 # Log
 
+## 2026-07-30
+
+**Update** — Google Ads campaign status toggle (LFXV2-2809), stacked on the GA dispatcher
+(PR #41). `GoogleAdsDispatcher` implements `service.StatusToggler`; new client method
+`UpdateCampaignStatus` sends a `campaigns:mutate` UPDATE with `updateMask: "status"`, and a new
+exported `IsOutcomeUnconfirmed` mirrors the reddit/twitter clients for cross-package
+classification.
+
+NO CASCADE and no not-provisioned guard, unlike reddit/twitter/microsoft: the GA create path
+builds only a PAUSED campaign shell (budget → campaign), so the campaign IS the whole tree.
+Documented so a GA-3+ phase that adds ad groups/ads knows to grow both. Google spells the
+serving state ENABLED, not ACTIVE — `googleAdsRunStatus` maps the service vocabulary across.
+
+`mutateOperation` gained `Update`/`UpdateMask` fields, and `Create` became `omitempty` so an
+update no longer emits `"create":null` alongside its update (a :mutate operation must carry
+exactly ONE of create/update/remove). The create path is unaffected — it always sets Create.
+
+Connection rules are shared via `validateGoogleAdsConnection`, called by BOTH `Dispatch` and
+`ToggleStatus`, so a create and a toggle cannot drift; each caller keeps its own error wrapping
+(`Dispatch` wraps with `notCreated` for claim semantics, the toggle path does not). The
+campaign id is validated digits-only before any request, since it interpolates into a
+resourceName.
+
 ## 2026-07-29
 
 **Update** — Added the HubSpot (email channel) PlatformDispatcher (LFXV2-2777, Capability C —

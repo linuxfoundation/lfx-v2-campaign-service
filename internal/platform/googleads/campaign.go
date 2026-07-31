@@ -122,7 +122,14 @@ type CampaignResult struct {
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
 type mutateOperation struct {
-	Create any `json:"create"`
+	// omitempty so an UPDATE operation doesn't emit "create":null — a :mutate operation
+	// must carry exactly ONE of create/update/remove, and a null create alongside an update
+	// is an invalid (and confusing) payload.
+	Create any `json:"create,omitempty"`
+	// Update + UpdateMask carry an UPDATE operation (e.g. a status flip). Both are omitted
+	// on a create so the payload stays exactly as the create path sends it today.
+	Update     any    `json:"update,omitempty"`
+	UpdateMask string `json:"updateMask,omitempty"`
 }
 
 // mutateRequest is the POST body for a *:mutate endpoint. partialFailure is left
@@ -596,6 +603,77 @@ func validateEntityName(kind, name string, measuredLen, maxLen int, unit string)
 	}
 	if measuredLen > maxLen {
 		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project/NameSuffix", kind, maxLen, unit, measuredLen)
+	}
+	return nil
+}
+
+// Campaign run states in the Google Ads vocabulary. Note ENABLED (not "ACTIVE") — the
+// create path uses PAUSED from this same enum.
+const (
+	// StatusEnabled lets a campaign serve.
+	StatusEnabled = "ENABLED"
+	// StatusPaused stops a campaign serving.
+	StatusPaused = "PAUSED"
+)
+
+// campaignStatusUpdate is the update payload for campaigns:mutate. resourceName identifies
+// the campaign; only the fields named in the operation's updateMask are applied.
+type campaignStatusUpdate struct {
+	ResourceName string `json:"resourceName"`
+	Status       string `json:"status"`
+}
+
+// IsOutcomeUnconfirmed reports whether err leaves the mutation's outcome AMBIGUOUS — Google
+// may have applied it despite the error, so the caller must VERIFY before retrying rather
+// than assume "not applied". Exported so the dispatcher can classify across the package
+// boundary (mirrors the reddit/twitter clients' helper of the same name).
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
+
+// UpdateCampaignStatus toggles a campaign between ENABLED and PAUSED via campaigns:mutate
+// with an updateMask of "status".
+//
+// NO CASCADE, unlike reddit/twitter/microsoft: CreateCampaign builds only a PAUSED campaign
+// shell (budget -> campaign) with no ad group or ad, so the campaign IS the whole tree and
+// there are no children to flip. If a later phase (GA-3+) adds ad groups/ads, this must grow
+// a cascade with the same children-first-on-activate ordering the other adapters use.
+//
+// The mutate is NOT treated as idempotent-retryable for the same reason the create path
+// isn't: doRequest's idempotent=false keeps an ambiguous 5xx from being blind-retried. A
+// status flip is in fact idempotent, but the ambiguity classification below is what the
+// caller needs, and re-sending adds nothing when the outcome is already reported as
+// UNCONFIRMED.
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	if err := c.validateAccountIDs(); err != nil {
+		return err
+	}
+	if status != StatusEnabled && status != StatusPaused {
+		return fmt.Errorf("google-ads: unsupported campaign status %q (want %s or %s)", status, StatusEnabled, StatusPaused)
+	}
+	id := strings.TrimSpace(campaignID)
+	if id == "" {
+		return fmt.Errorf("google-ads: cannot update status: campaign id is empty")
+	}
+	// The id is interpolated into a resourceName, so keep it strictly numeric — Google
+	// campaign ids are digits, and anything else could alter the resource path.
+	if !customerIDRE.MatchString(id) {
+		return fmt.Errorf("google-ads: campaign id %q is not numeric", campaignID)
+	}
+
+	req := mutateRequest{Operations: []mutateOperation{{
+		Update: campaignStatusUpdate{
+			ResourceName: "customers/" + c.account.CustomerID + "/campaigns/" + id,
+			Status:       status,
+		},
+		UpdateMask: "status",
+	}}}
+	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, false); err != nil {
+		return fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err)
 	}
 	return nil
 }

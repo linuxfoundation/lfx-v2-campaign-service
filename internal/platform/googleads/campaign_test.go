@@ -710,3 +710,72 @@ func firstCreate(t *testing.T, body map[string]any) map[string]any {
 	}
 	return create
 }
+
+// TestUpdateCampaignStatus_SendsUpdateMask verifies the mutate carries an UPDATE operation
+// with an updateMask of "status" — and no create payload, since a :mutate operation must
+// carry exactly one of create/update/remove.
+func TestUpdateCampaignStatus_SendsUpdateMask(t *testing.T) {
+	var body string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "222", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignStatus: %v", err)
+	}
+	for _, want := range []string{`"updateMask":"status"`, `"status":"PAUSED"`, `campaigns/222`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %s: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `"create"`) {
+		t.Errorf("an update operation must not carry a create: %s", body)
+	}
+}
+
+// TestUpdateCampaignStatus_RejectsBadInput guards the input contract BEFORE any request. The
+// campaign id interpolates into a resourceName, so a non-numeric id could alter the resource
+// path — reject it rather than send it.
+func TestUpdateCampaignStatus_RejectsBadInput(t *testing.T) {
+	var reached bool
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	defer apiSrv.Close()
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+
+	cases := []struct {
+		name       string
+		campaignID string
+		status     string
+	}{
+		{"unsupported status", "222", "ACTIVE"}, // Google spells it ENABLED
+		{"empty campaign id", "  ", StatusPaused},
+		{"non-numeric campaign id", "222/../333", StatusPaused},
+		{"campaign id with a query delimiter", "222?x=1", StatusPaused},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reached = false
+			if err := c.UpdateCampaignStatus(context.Background(), tc.campaignID, tc.status); err == nil {
+				t.Fatal("expected a rejection")
+			}
+			if reached {
+				t.Error("no API call should be made — the guard is up front")
+			}
+		})
+	}
+}
