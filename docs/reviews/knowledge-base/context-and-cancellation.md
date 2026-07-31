@@ -75,8 +75,22 @@ is the correct form, not a violation.
 **Detect:** For a mutating request, both halves must be present.
 
 *Pre-send:* a context error observed **before** `Do` is a clean, definite
-not-created failure — nothing was sent, so the claim may be released and
-`(nil, err)` is correct.
+not-created failure for **that request** — nothing was sent. Whether the *flow* may
+release its claim and return `(nil, err)` depends on what the flow has already
+committed upstream:
+
+- **before the flow's first committed mutation** — nothing exists yet, so the claim
+  may be released and `(nil, err)` is correct;
+- **after any upstream resource is committed** — a pre-send abort on a *later*
+  request must **retain** the prior partial and the claim, and return that partial
+  alongside the error. The earlier resource is real and paid for.
+
+`internal/platform/googleads/campaign.go:486-491` is the worked example: the budget
+is committed, then `ctx.Err()` is checked before the campaign `:mutate`, and the
+correct return is `budgetPartial(), err` — not `(nil, err)`. Reading the clean
+outcome as unconditional would flag that correct code and recommend discarding a
+committed budget, letting a retry duplicate it. Pre-send is a fact about one
+request, never a licence to forget what the flow already created.
 
 *In-flight:* a context error observed **during** an in-flight mutating `Do` stays
 **UNCONFIRMED** — it must produce a partial result and retain the claim.
