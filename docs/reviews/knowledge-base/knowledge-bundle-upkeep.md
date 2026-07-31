@@ -9,16 +9,25 @@ One pattern, with the strongest CI-blindness argument in this knowledge base.
 **Severity:** `should-fix`.
 
 **Detect:** A patch that adds a Go package, or shifts an existing package's role,
-or changes architecture or a Helm manifest, without **all three** of:
+or changes architecture or a Helm manifest, without **both** of:
 
 1. a concept file under `docs/knowledge/**` covering it (new, with OKF
    frontmatter `type`, `title`, `description` — or an edit to the concept whose
    subject changed);
-2. the containing `index.md` bullet added or updated;
-3. a dated entry appended to `docs/knowledge/log.md`.
+2. a dated entry appended to `docs/knowledge/log.md`.
 
-All three in the same patch. A patch that has one or two of them is still a
+**And, only when the patch adds a concept, renames one, or changes a concept's
+indexed description**, the containing `index.md` bullet added or updated.
+
+Both required parts in the same patch. A patch that has one of them is still a
 match — the incomplete update is the recurring shape, not a rarity.
+
+**The index arm is conditional, and demanding it unconditionally is a false
+finding.** `CLAUDE.md:22-23` requires the bullet only when a concept is *added,
+renamed, or its description changes*, so an in-place edit to a concept's body that
+leaves its path, title and indexed description untouched owes no index change.
+Raising one is churn, and it is the reviewer contradicting the rule surface it is
+supposed to be enforcing.
 
 **Why it matters:** this is invisible to CI by construction.
 `.github/workflows/validate-okf.yml` is `paths:`-filtered to `docs/knowledge/**`

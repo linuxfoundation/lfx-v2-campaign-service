@@ -102,7 +102,7 @@ race detector exists.
 | [platform-http-client-hygiene.md](platform-http-client-hygiene.md) | bounded reads of `cap+1`; drain before close |
 | [test-hygiene.md](test-hygiene.md) | pinned injected clocks; synchronised handler-goroutine handoff |
 | [api-contract-and-docs-currency.md](api-contract-and-docs-currency.md) | design stricter than runtime; docs must not advertise what the code rejects; opaque platform config |
-| [knowledge-bundle-upkeep.md](knowledge-bundle-upkeep.md) | concept + index bullet + dated log entry with a package change |
+| [knowledge-bundle-upkeep.md](knowledge-bundle-upkeep.md) | concept + dated log entry with a package change, and the index bullet only when a concept is added, renamed or re-described |
 | [known-false-positives.md](known-false-positives.md) | the floor, applied last |
 
 ## Entry format
