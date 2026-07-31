@@ -256,7 +256,11 @@ type responseElement struct {
 	CampaignGroup string `json:"campaignGroup"`
 }
 
-var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:?=&.-]*$`)
+// pathValidRE allow-lists the characters a built request path may contain. `%` is included
+// so a percent-encoded segment (e.g. a creative URN key `urn%3Ali%3AsponsoredCreative%3A123`,
+// which LinkedIn requires for single-entity URN keys) passes; the encoding itself is produced
+// only by encodeURNForPath from validated URN input, never from arbitrary caller strings.
+var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:%?=&.-]*$`)
 
 // apiError is a non-2xx HTTP response from the LinkedIn API. It carries the
 // status code, method, and path so an error message names exactly which call
@@ -381,10 +385,398 @@ func createOutcomeAmbiguous(err error) bool {
 	return false
 }
 
+// isInReviewPauseRejection reports whether err is the specific HTTP 400 LinkedIn returns when
+// PAUSE is applied to an in-review creative — the ONLY 400 the PAUSE cascade tolerates. Per the
+// v202xx creatives contract "You can't pause an ad creative in review. This endpoint returns a
+// 400 error if you attempt to change the status of an in-review ad creative to paused", but the
+// error table publishes NO dedicated serviceErrorCode for it (unlike CANNOT_UPDATE_CANCELED_-
+// CREATIVE etc.), so it cannot be matched by code. We therefore classify on the response body's
+// review signal: a genuine in-review rejection names the review state, whereas a STRUCTURAL 400
+// (INVALID_URN_TYPE, EMPTY_FIELD, IMMUTABLE_FIELD, a malformed patch) does not. Matching this
+// narrowly means a systematic request bug 400s HARD on the FIRST creative instead of being
+// silently skipped — addressing the "all-400 masks a request defect" gap. The body is read for
+// internal classification only and is NEVER surfaced (apiError.Error omits it), preserving the
+// no-untrusted-body-in-errors contract.
+func isInReviewPauseRejection(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	b := strings.ToLower(ae.Body)
+	// Match EXPLICIT review-state markers, never a bare "review" substring: an unrelated
+	// structural 400 ("review the submitted fields") or an innocent token ("preview") would
+	// otherwise be misread as an in-review rejection and silently skipped, letting the service
+	// persist a "paused" the creative never applied. Covers the documented review-state enums
+	// (UNDER_REVIEW / NEEDS_REVIEW / PENDING_REVIEW, in either underscore or spaced form), the
+	// human "in review" phrasing, and the "not been reviewed" serving-hold wording.
+	for _, marker := range []string{
+		"under_review", "under review",
+		"needs_review", "needs review",
+		"pending_review", "pending review",
+		"in_review", "in review",
+		"not been reviewed", "awaiting review",
+	} {
+		if strings.Contains(b, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrCampaignNotServable marks an ACTIVATE refused BEFORE any mutating call because the
+// campaign cannot serve (e.g. it has zero creatives). It is a local/state condition, not a
+// platform failure — the caller (dispatcher) maps it to a client 409, not a 503. Exposed as a
+// sentinel so the dispatcher can classify it across the package boundary via IsNotServable.
+var ErrCampaignNotServable = errors.New("campaign cannot be made servable")
+
+// IsNotServable reports whether err is (or wraps) ErrCampaignNotServable — an activate refused
+// up front because the campaign has nothing to serve.
+func IsNotServable(err error) bool { return errors.Is(err, ErrCampaignNotServable) }
+
+// IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
+// UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied by
+// LinkedIn even though it errored (a transport failure, a mutating 3xx/429/5xx). A definite
+// 4xx or a pre-send failure returns false. It also honors any error reporting Unconfirmed()
+// bool — a partialCascadeError (campaign applied, a creative then failed) is partially applied
+// and must be treated as unconfirmed even if its underlying error is a definite 4xx. Exposes
+// the same classifier the create paths use so a toggle caller can distinguish "may already
+// reflect the change" from "definitely not applied". Mirrors reddit/meta.IsOutcomeUnconfirmed.
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
+
+// Campaign run states for UpdateCampaignStatus (LinkedIn's Campaign.status enum values).
+const (
+	StatusActive = "ACTIVE"
+	StatusPaused = "PAUSED"
+)
+
+// validateToggleInput runs the shared status-toggle preflight — a missing/whitespace access
+// token (doRequest does not validate it and CreateCampaign's preflight is bypassed here), an
+// empty/non-numeric campaign id (so it can't alter the request path), and an unsupported
+// status — returning the trimmed campaign id. It is a pure, no-HTTP check so a bad input fails
+// cleanly BEFORE any creative discovery or mutation, regardless of cascade ordering.
+func (c *Client) validateToggleInput(campaignID, status string) (string, error) {
+	// Reject an empty OR surrounding-whitespace access token, matching CreateCampaign's preflight
+	// — a padded " token " would otherwise be sent verbatim as `Authorization: Bearer  token `.
+	// (Unreachable in practice: the token comes from the create path, which already rejects
+	// padding; this keeps the two preflights consistent rather than implying a stricter check.)
+	if c.creds.AccessToken == "" || c.creds.AccessToken != strings.TrimSpace(c.creds.AccessToken) {
+		return "", fmt.Errorf("linkedin: access token is required")
+	}
+	campaignID = strings.TrimSpace(campaignID)
+	if campaignID == "" {
+		return "", fmt.Errorf("linkedin: campaign id is required")
+	}
+	if !accountIDRE.MatchString(campaignID) {
+		return "", fmt.Errorf("linkedin: invalid campaign id %q: must be numeric", campaignID)
+	}
+	if status != StatusActive && status != StatusPaused {
+		return "", fmt.Errorf("linkedin: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
+	}
+	return campaignID, nil
+}
+
+// UpdateCampaignStatus sets an existing campaign's status to ACTIVE or PAUSED via LinkedIn's
+// RestLi PARTIAL_UPDATE: POST /adAccounts/{acct}/adCampaigns/{id} with header
+// X-Restli-Method: PARTIAL_UPDATE and body {"patch":{"$set":{"status": ...}}}. The account id
+// is resolved+validated from the runtime config; campaignID is validated numeric (via
+// validateToggleInput) so it can't alter the request path. This toggles the CAMPAIGN alone —
+// UpdateCampaignAndCreativesStatus is the full cascade used by the dispatcher.
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	campaignID, err := c.validateToggleInput(campaignID, status)
+	if err != nil {
+		return err
+	}
+	accountID, err := c.resolveAccountID("")
+	if err != nil {
+		return fmt.Errorf("linkedin: %w", err)
+	}
+	path := fmt.Sprintf("adAccounts/%s/adCampaigns/%s", accountID, campaignID)
+	body := map[string]any{"patch": map[string]any{"$set": map[string]any{"status": status}}}
+	headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
+	// A PARTIAL_UPDATE returns no useful body; pass noResponseBody so a 2xx with an
+	// unreadable body is a success, not a false-unconfirmed transportError.
+	if _, err := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); err != nil {
+		return fmt.Errorf("linkedin: update campaign %s status to %s: %w", campaignID, status, err)
+	}
+	return nil
+}
+
+// UpdateCampaignAndCreativesStatus sets the campaign status AND cascades the equivalent
+// intendedStatus to every creative under the campaign — the platform side of the status
+// toggle. CreateCampaign leaves creatives DRAFT (and the campaign PAUSED), so activating only
+// the campaign would not serve: a DRAFT creative is "development incomplete" and never serves,
+// and per LinkedIn a creative's EFFECTIVE status is the stricter of its own intendedStatus and
+// the parent campaign status. So a full ACTIVATE must lift each creative DRAFT→ACTIVE too.
+//
+// Ordering is status-dependent so a PARTIAL cascade never leaves paid delivery running
+// unattended — LinkedIn makes the CAMPAIGN status the effective gate over its creatives:
+//   - ACTIVATE: lift the CREATIVES first (they can't serve yet — the campaign is still
+//     PAUSED and gates them), THEN flip the campaign to ACTIVE last. If a creative update
+//     fails, the campaign is still paused, so NOTHING is serving — abort safely. (Doing the
+//     campaign first would let already-activated creatives serve while a later creative
+//     failure returns unconfirmed — paid delivery running with the DB unchanged.)
+//   - PAUSE: flip the CAMPAIGN first (delivery stops immediately at the gate), THEN pause the
+//     creatives. A creative that is in review can't be paused (LinkedIn 400) — tolerated,
+//     since the campaign gate already stopped it.
+//
+// Creatives are DISCOVERED via the creatives FINDER (LinkedIn persists only a creative COUNT,
+// not ids). Any non-tolerated failure after a first successful mutation is a
+// partialCascadeError (Unconfirmed) so the caller verifies rather than reporting "not
+// modified"; a retry re-runs the idempotent cascade.
+func (c *Client) UpdateCampaignAndCreativesStatus(ctx context.Context, campaignID, status string) error {
+	// Validate inputs FIRST, before any HTTP work (discovery or mutation), regardless of the
+	// cascade ordering below — a bad campaign id / status / token fails cleanly, not after a
+	// round of creative discovery.
+	campaignID, err := c.validateToggleInput(campaignID, status)
+	if err != nil {
+		return err
+	}
+	accountID, err := c.resolveAccountID("")
+	if err != nil {
+		return fmt.Errorf("linkedin: %w", err)
+	}
+	if status == StatusActive {
+		// Creatives first (still gated by the paused campaign), campaign last. NOTHING has
+		// mutated yet, so a discovery/creative failure here is a CLEAN failure (mutatedBefore
+		// = false) — not "unconfirmed", which would wrongly tell the caller a change may have
+		// applied when none did.
+		if err := c.updateCreativesStatus(ctx, accountID, campaignID, status, false); err != nil {
+			return err
+		}
+		if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
+			// Creatives were already lifted (but still gated by the paused campaign, so not
+			// serving) — the tree is partially applied, so this is Unconfirmed.
+			return &partialCascadeError{stage: "campaign activate", err: err}
+		}
+		return nil
+	}
+	// PAUSE: campaign gate first (stops delivery now), then creatives — the campaign HAS
+	// mutated before creative discovery, so a later failure is Unconfirmed (mutatedBefore = true).
+	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
+		return err
+	}
+	return c.updateCreativesStatus(ctx, accountID, campaignID, status, true)
+}
+
+// updateCreativesStatus discovers the campaign's creatives and PARTIAL_UPDATEs each one's
+// intendedStatus to match the run status. mutatedBefore says whether an upstream change has
+// ALREADY committed (the PAUSE path flips the campaign first): when true, a discovery or
+// creative failure is a partialCascadeError (Unconfirmed — the tree is partially applied);
+// when false (the ACTIVATE path, creatives-first, nothing mutated yet), the DISCOVERY failure
+// is returned as-is (a clean, definite failure). Once ANY creative has been updated, a
+// subsequent failure is always Unconfirmed. On a PAUSE, the specific 400 LinkedIn returns for
+// an in-review creative (which cannot be paused) is tolerated — the campaign gate stops it.
+func (c *Client) updateCreativesStatus(ctx context.Context, accountID, campaignID, status string, mutatedBefore bool) error {
+	creativeURNs, err := c.listCreativeURNs(ctx, accountID, campaignID)
+	if err != nil {
+		if mutatedBefore {
+			return &partialCascadeError{stage: "creative discovery", err: err}
+		}
+		return fmt.Errorf("linkedin: creative discovery for campaign %s: %w", campaignID, err)
+	}
+	// On ACTIVATE (mutatedBefore==false → the campaign hasn't been flipped yet), a campaign
+	// with ZERO creatives can never serve — refuse before the campaign flip rather than report
+	// success for a campaign that cannot deliver (mirrors the Meta zero-ads guard). PAUSE with
+	// zero creatives is fine (nothing to pause; the campaign gate stops delivery anyway).
+	if !mutatedBefore && status == StatusActive && len(creativeURNs) == 0 {
+		return fmt.Errorf("%w: linkedin campaign %s has no creatives", ErrCampaignNotServable, campaignID)
+	}
+	creativeStatus := creativeIntendedStatus(status)
+	mutated := mutatedBefore
+	// Track how many creatives were tolerated as an in-review 400 skip vs actually paused. LinkedIn
+	// uses 400 for MANY errors (malformed patch, bad URN, wrong field), not only the documented
+	// in-review-creative case, so only the 400 whose body carries a REVIEW signal is tolerated
+	// (isInReviewPauseRejection) — a STRUCTURAL 400 (bad URN, empty field, malformed patch) is a
+	// hard failure on the FIRST creative, so a systematic request bug surfaces immediately instead
+	// of being silently skipped. The COUNT guard below is a secondary net: even if every creative
+	// legitimately reports in-review, an all-skipped/none-updated PAUSE is still suspicious enough
+	// to fail closed (partialCascadeError → the caller verifies) rather than claim a clean pause.
+	skipped400 := 0
+	for _, urn := range creativeURNs {
+		path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(urn))
+		body := map[string]any{"patch": map[string]any{"$set": map[string]any{"intendedStatus": creativeStatus}}}
+		headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
+		if _, uerr := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); uerr != nil {
+			if creativeStatus == StatusPaused && isInReviewPauseRejection(uerr) {
+				skipped400++
+				continue // in-review creative can't be paused; the campaign gate already stopped it
+			}
+			// If an upstream change may already have landed (mutatedBefore, an earlier
+			// successful creative, or an AMBIGUOUS outcome here) the result is Unconfirmed.
+			// Otherwise — the activate path, before the campaign flip, with a DEFINITE (4xx)
+			// rejection — nothing is serving yet, so it is a clean, definite failure.
+			if mutated || createOutcomeAmbiguous(uerr) {
+				return &partialCascadeError{stage: "creative", err: uerr}
+			}
+			return fmt.Errorf("linkedin: creative update failed: %w", uerr)
+		}
+		mutated = true
+	}
+	// Every discovered creative 400-skipped and none was updated: the campaign is already paused
+	// (the gate stops delivery), but a systematic 400 across ALL creatives is far more likely a
+	// request/code defect than every creative genuinely being in review. Fail closed so the
+	// caller verifies rather than persisting a "paused" the creatives never actually reflected.
+	if creativeStatus == StatusPaused && len(creativeURNs) > 0 && skipped400 == len(creativeURNs) {
+		return &partialCascadeError{stage: "creative", err: fmt.Errorf("all %d creative pause updates were rejected with 400; the creatives may not be paused (verify)", len(creativeURNs))}
+	}
+	return nil
+}
+
+// creativeIntendedStatus maps a campaign run status to the creative intendedStatus value.
+// ACTIVE lifts a DRAFT creative so it can serve; PAUSED holds it.
+func creativeIntendedStatus(campaignStatus string) string {
+	if campaignStatus == StatusActive {
+		return StatusActive
+	}
+	return StatusPaused
+}
+
+// maxCreativesPageSize is the LinkedIn Creatives finder's maximum (and default) pageSize.
+// The docs cap it at 100 ("The max allowed pageSize is 100"), and a campaign holds at most
+// 100 creatives, so 100 fetches every creative in a single page in the common case while a
+// larger value would be rejected with a 4xx.
+const maxCreativesPageSize = 100
+
+// listCreativeURNs discovers the creative URNs under a campaign via the creatives FINDER
+// (GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})
+// with X-RestLi-Method: FINDER). It follows cursor pagination (bounded by maxListPages) and
+// returns each element's id (a sponsoredCreative URN). The campaign id is Rest.li-encoded
+// inside the List(...) so it can't break out of the literal.
+func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID string) ([]string, error) {
+	nestedPath := fmt.Sprintf("adAccounts/%s/creatives", accountID)
+	campaignURN := "urn:li:sponsoredCampaign:" + campaignID
+	var urns []string
+	pageToken := ""
+	seen := make(map[string]struct{})
+	for page := 0; page < maxListPages; page++ {
+		params := map[string]string{
+			"q":         "criteria",
+			"campaigns": "List(" + restliEncode(campaignURN) + ")",
+			// The Creatives finder caps pageSize at 100 (LinkedIn docs: "The max allowed
+			// pageSize is 100", and a campaign holds at most 100 creatives). Sending a
+			// larger value (e.g. 1000) makes discovery fail with a 4xx, which would abort
+			// BOTH status cascades. We request the max (100) and follow pageToken.
+			"pageSize": strconv.Itoa(maxCreativesPageSize),
+		}
+		if pageToken != "" {
+			params["pageToken"] = pageToken
+		}
+		headers := map[string]string{"X-Restli-Method": "FINDER"}
+		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params, headers)
+		if err != nil {
+			return nil, fmt.Errorf("find creatives for campaign %s: %w", campaignID, err)
+		}
+		if resp.Elements != nil {
+			for _, el := range *resp.Elements {
+				urn := creativeURN(el)
+				if urn == "" {
+					// The finder returned a creative element but we can't extract a usable
+					// sponsoredCreative URN from it. Silently skipping would let the cascade
+					// report success and persist ACTIVE while this creative stays DRAFT — the
+					// same fail-open trap the fail-not-truncate guards close. Fail instead.
+					return nil, fmt.Errorf("creative discovery for campaign %s returned an element with no usable id", campaignID)
+				}
+				urns = append(urns, urn)
+			}
+		}
+		next := resp.Metadata.NextPageToken
+		if next == "" {
+			return urns, nil // fully enumerated
+		}
+		if _, dup := seen[next]; dup {
+			// A stuck cursor means discovery is INCOMPLETE — returning the partial set as
+			// success would let the cascade report success and the service persist ACTIVE
+			// while undiscovered creatives stay DRAFT (not serving). Fail instead.
+			return nil, fmt.Errorf("creative discovery for campaign %s did not terminate (repeated page cursor)", campaignID)
+		}
+		seen[next] = struct{}{}
+		pageToken = next
+	}
+	// Reached the page cap with a non-empty cursor still pending: discovery is INCOMPLETE, so
+	// fail rather than silently truncate (which would leave undiscovered creatives DRAFT while
+	// the service records the campaign ACTIVE).
+	return nil, fmt.Errorf("creative discovery for campaign %s exceeded %d pages; too many creatives to enumerate", campaignID, maxListPages)
+}
+
+// encodeURNForPath percent-encodes a LinkedIn URN for use as a single-entity path key. The
+// Marketing API expects the URN's reserved characters encoded in the path
+// (urn:li:sponsoredCreative:123 → urn%3Ali%3AsponsoredCreative%3A123); url.PathEscape does
+// NOT escape ':' in a path segment, so the colons are encoded explicitly. Only ':' needs
+// encoding for a well-formed sponsoredCreative URN (letters/digits are path-safe); the input
+// is a URN produced by creativeURN (already prefix-validated), not an arbitrary string.
+func encodeURNForPath(urn string) string {
+	return strings.ReplaceAll(urn, ":", "%3A")
+}
+
+// creativeURN returns a CANONICAL sponsoredCreative URN for a finder element. The FINDER can
+// return the id in EITHER form — a full URN string ("urn:li:sponsoredCreative:123") or a bare
+// numeric long ("123") via flexibleID. In BOTH cases the numeric trailing id is extracted and
+// validated (digits only) and the URN is rebuilt from it, so a malformed value (a suffix
+// containing '?', '/', percent-encoding, or path traversal) is REJECTED rather than flowing
+// into encodeURNForPath (which escapes only colons) and, via the broadened path allow-list,
+// altering the request URL. Returns "" if no usable numeric id can be extracted.
+func creativeURN(el responseElement) string {
+	const prefix = "urn:li:sponsoredCreative:"
+	for _, cand := range []string{el.URN, el.DURN, el.ID.String()} {
+		s := strings.TrimSpace(cand)
+		if s == "" {
+			continue
+		}
+		// Normalize to the trailing id: strip the URN prefix if present, else use the value
+		// as-is (the bare-numeric form). Only a pure positive integer is accepted, so any
+		// path-altering or malformed suffix is rejected.
+		id := strings.TrimPrefix(s, prefix)
+		if creativeNumericIDRE.MatchString(id) {
+			return prefix + id
+		}
+	}
+	return ""
+}
+
+// creativeNumericIDRE matches a bare numeric creative id (the flexibleID numeric form) so it
+// can be reconstructed into a sponsoredCreative URN. A positive integer only — no sign,
+// decimal, or exponent — so a malformed id can't produce a bogus URN.
+var creativeNumericIDRE = regexp.MustCompile(`^[0-9]+$`)
+
+// partialCascadeError marks a status cascade that is PARTIALLY applied. Because the cascade
+// ordering is status-dependent — on PAUSE the campaign is updated first, on ACTIVATE the
+// creatives are updated first and the campaign last — it deliberately does NOT assert WHICH node
+// changed: it can wrap a creative failure after the campaign was updated (pause) OR a campaign
+// failure after creatives were lifted (activate). Its Unconfirmed() reports true so
+// IsOutcomeUnconfirmed treats it as "may be applied — verify before retrying" rather than
+// "not modified"; a retry re-runs the idempotent cascade. Mirrors the reddit/meta clients.
+type partialCascadeError struct {
+	stage string
+	err   error
+}
+
+func (e *partialCascadeError) Error() string {
+	// Deliberately does NOT assert WHICH entity changed: with the status-dependent ordering a
+	// partial cascade can occur before OR after the campaign flip (e.g. a creative failure on
+	// the activate path happens before the campaign is touched). It states only that the
+	// status change is partially applied / unconfirmed, which is what a reconciler needs.
+	return "linkedin: status change partially applied (" + e.stage + " step failed; verify before retrying): " + e.err.Error()
+}
+func (e *partialCascadeError) Unwrap() error     { return e.err }
+func (e *partialCascadeError) Unconfirmed() bool { return true }
+
 // doRequest performs one API call. It honors ctx, sets the OAuth2 bearer and
 // LinkedIn headers, applies the client timeout, and promotes x-restli-id into
 // the returned ID. Mirrors linkedInRequest().
-func (c *Client) doRequest(ctx context.Context, method, path string, body map[string]any, params map[string]string) (*linkedInResponse, error) {
+// doRequest performs one Marketing API call. When the caller ignores the response
+// (noResponseBody, used by status updates that decode nothing), a 2xx whose body is
+// unreadable/oversized/undecodable is treated as SUCCESS — there is nothing to parse, so an
+// unreadable body must NOT downgrade a server-confirmed mutation to an ambiguous
+// transportError (which would report the toggle unconfirmed and leave the DB stale). For a
+// caller that needs the body (the default), those cases stay ambiguous as before.
+func (c *Client) doRequest(ctx context.Context, method, path string, body map[string]any, params, headers map[string]string, noResponseBody ...bool) (*linkedInResponse, error) {
+	skipBody := len(noResponseBody) > 0 && noResponseBody[0]
 	sanitized := strings.TrimPrefix(path, "/")
 	if !pathValidRE.MatchString(sanitized) || strings.Contains(sanitized, "..") {
 		return nil, fmt.Errorf("invalid LinkedIn API path: %q", sanitized)
@@ -416,14 +808,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 	// Marketing API calls (campaign group, campaign, dark post, creative) that
 	// can trip a per-account rate limit mid-flow.
 	//
-	// Only SAFE/idempotent methods (GET, HEAD) are retried on a 429. A non-
-	// idempotent method (POST — every campaign-group/campaign/post/creative
-	// create) is NOT retried: LinkedIn's create endpoints carry no idempotency
-	// key, so a 429 whose first attempt may already have succeeded upstream would
-	// be double-sent on retry, creating a DUPLICATE resource. For those methods
-	// the 429 is returned as an error immediately so the caller does not
-	// double-create.
-	idempotent := method == http.MethodGet || method == http.MethodHead
+	// SAFE/idempotent methods (GET, HEAD) are retried on a 429. So are PARTIAL_UPDATE
+	// requests — LinkedIn tunnels them over POST with an `X-Restli-Method: PARTIAL_UPDATE`
+	// header, but a `$set` of a field (e.g. intendedStatus) is a SET-STATE operation:
+	// re-applying it yields the same result, so a 429-retry cannot create a duplicate or
+	// otherwise diverge. This matters for the status cascade, which issues up to 100
+	// sequential per-creative PARTIAL_UPDATEs; without retry a single normal rate-limit 429
+	// would abort the whole toggle as unconfirmed. Plain create POSTs (campaign-group,
+	// campaign, post, creative — no PARTIAL_UPDATE header) stay NON-idempotent: those
+	// endpoints carry no idempotency key, so a 429 whose first attempt may already have
+	// committed upstream must NOT be re-sent (it would create a DUPLICATE resource).
+	idempotent := method == http.MethodGet || method == http.MethodHead ||
+		strings.EqualFold(headers["X-Restli-Method"], "PARTIAL_UPDATE")
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		var reqBody *bytes.Reader
 		if encoded != nil {
@@ -453,6 +849,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		req.Header.Set("X-RestLi-Protocol-Version", "2.0.0")
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
+		}
+		// Optional per-call headers (e.g. X-Restli-Method: PARTIAL_UPDATE for a campaign
+		// status update). Set AFTER the defaults so a caller can override if ever needed.
+		for k, v := range headers {
+			req.Header.Set(k, v)
 		}
 
 		resp, err := c.httpClient.Do(req)
@@ -484,6 +885,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				wait = maxRetryWait
 			}
 			if err := sleepCtx(ctx, wait); err != nil {
+				// The 429 arrived AFTER the request was sent. For a MUTATING retryable request
+				// (PARTIAL_UPDATE, tunneled over POST), that request may have COMMITTED upstream
+				// before the 429, so a context cancellation during the backoff must NOT surface as
+				// a plain (clean/cancel) error — it is AMBIGUOUS. Wrap it as a transportError so the
+				// caller treats the mutation as "may be applied" (Unconfirmed). A non-mutating
+				// GET/HEAD retryable request commits nothing, so its plain context error is correct.
+				if isMutatingMethod(method) {
+					return nil, &transportError{Method: method, Path: path, Err: err}
+				}
 				return nil, err
 			}
 			continue
@@ -510,6 +920,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// (a plain failure), instead of dropping the status/method into a plain error
 			// that would always read as a safe non-create. Mirrors the Reddit/Meta clients.
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				if skipBody {
+					return nil, nil // 2xx success; caller decodes no body
+				}
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
 			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
@@ -529,6 +942,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// a GET / definite 4xx stays a plain failure — rather than discarding the
 			// status into a plain error. Mirrors the Reddit/Meta clients.
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				if skipBody {
+					return nil, nil // 2xx success; caller decodes no body
+				}
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 			}
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
@@ -542,6 +958,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			_ = resp.Body.Close()
 			cancel()
 			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
+		}
+
+		// A 2xx SUCCESS when the caller decodes no body (status updates): return without
+		// touching the body, so an unreadable/undecodable payload can't downgrade a
+		// server-confirmed mutation to ambiguous.
+		if skipBody {
+			_ = resp.Body.Close()
+			cancel()
+			return nil, nil
 		}
 
 		out := &linkedInResponse{}
@@ -799,7 +1224,7 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 		if pageToken != "" {
 			params["pageToken"] = pageToken
 		}
-		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params)
+		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params, nil)
 		if err != nil {
 			// ANY search error propagates — including a 404. A 404 on the search
 			// call does NOT prove the named resource is absent: it can equally mean
@@ -1058,7 +1483,7 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 		},
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, groupsPath, body, nil)
+	resp, err := c.doRequest(ctx, http.MethodPost, groupsPath, body, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1169,7 +1594,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		body[k] = v
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, campaignsPath, body, nil)
+	resp, err := c.doRequest(ctx, http.MethodPost, campaignsPath, body, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1245,7 +1670,7 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 		"adContext":      map[string]any{"dscAdAccount": accountURN(accountID)},
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "posts", body, nil)
+	resp, err := c.doRequest(ctx, http.MethodPost, "posts", body, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1298,7 +1723,7 @@ func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shar
 		body["name"] = adName
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, fmt.Sprintf("adAccounts/%s/creatives", accountID), body, nil)
+	resp, err := c.doRequest(ctx, http.MethodPost, fmt.Sprintf("adAccounts/%s/creatives", accountID), body, nil, nil)
 	if err != nil {
 		return "", err
 	}
