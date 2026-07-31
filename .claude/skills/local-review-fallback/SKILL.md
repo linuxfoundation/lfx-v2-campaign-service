@@ -17,9 +17,20 @@ The `lfx-local-review` host has already decided the harness and printed its pins
 | `repo_code` | `.claude/skills/local-code-review/SKILL.md` |
 | `repo_learnings` | `.claude/skills/local-learnings-review/SKILL.md` |
 
-The caller resolves central general. Resolve only the two repo paths. For each selected file, read only its YAML frontmatter to obtain the declared `name:`. Tell that subagent to load the registered skill by that declared name and follow it as its entire rulebook. Pass the absolute physical path to identify and verify the selection; do not read, paste or restate the skill body in the prompt. If the declared skill is not registered or cannot be loaded, fail that role rather than silently reading the file as ordinary text.
+## Give each subagent its exact skill
 
-Forbid ambient instruction discovery, but not evidence reads directed by the loaded skill.
+A skill declares its `name:` in YAML frontmatter, which may differ from its alias directory. Resolve each selected `SKILL.md` to an absolute physical path and read only its frontmatter to obtain that declared name.
+
+For each generic subagent:
+
+1. If the harness has the declared skill registered, tell the subagent to load it by that declared name.
+2. Otherwise, tell the subagent to read the exact absolute `SKILL.md` path in full and follow it as its entire rulebook.
+
+The by-path arm is required for a subagent launched from a session where the plugin or another repo's project skills are not registered. Reading the one selected physical skill is not copying it: never paste its body into the prompt, never restate or summarize its rules, and never discover an ambient substitute.
+
+Fail the role if the selected path is missing, unreadable or empty, or if the subagent cannot load/read that exact skill. Never continue with no rulebook or a different skill.
+
+Forbid ambient instruction discovery, but not evidence reads directed by the selected skill.
 
 Pass unchanged to every subagent: `target repo`, `target_sha`, `base_sha` (or literal `none`), the exact `review exactly:` range, and any `extra` hint. Use the pins from the single harness decision; never rerun the launcher to obtain them.
 
