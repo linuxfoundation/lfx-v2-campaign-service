@@ -181,6 +181,14 @@ output in the same patch; otherwise the API accepts and persists something that
 can never succeed. Watch the inverse too: `Required` in Goa checks presence, not
 length, so an empty array can pass decoding.
 
+**This rule does not apply inside an `Any`-typed attribute.** `config` is
+`Attribute("config", Any, …)` at `design/brief.go:82` and `:157`, so Goa can
+express no constraint on anything within it and there is no design change a
+runtime check inside that field could be paired with. Validation for it is
+documented in `docs/api-catalog.md` — see the documentation-currency rule below,
+which is the lane that owns it. Demanding a Goa constraint for a
+`CreateCampaigns.config` check is a false finding.
+
 **Layering.** `internal/service` must stay free of `internal/platform/*`
 imports — `internal/dispatch` is the only place that knows both sides. Per-provider
 credential unmarshalling belongs in the per-provider adapter, not the shared
