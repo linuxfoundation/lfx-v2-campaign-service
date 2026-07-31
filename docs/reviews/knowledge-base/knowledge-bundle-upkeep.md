@@ -8,8 +8,9 @@ One pattern, with the strongest CI-blindness argument in this knowledge base.
 
 **Severity:** `should-fix`.
 
-**Detect:** A patch that adds a Go package, or shifts an existing package's role,
-or changes architecture or a Helm manifest, without **both** of:
+**Detect:** A patch that adds a Go package, shifts an existing package's role,
+changes architecture or a Helm manifest, **or fixes a bug in behaviour a concept
+describes**, without **both** of:
 
 1. a concept file under `docs/knowledge/**` covering it (new, with OKF
    frontmatter `type`, `title`, `description` — or an edit to the concept whose
@@ -77,8 +78,20 @@ have no concept and no index bullet: `internal/apivalidation`, `internal/domain`
 and a pre-existing gap is not a finding against a patch that merely touches a
 neighbour.
 
-**Not a finding when:** the patch changes no package role, no architecture and no
-manifest — a bug fix wholly inside one function, a test-only change, a dependency
-bump. Do not demand a `log.md` entry marker other than the one the bundle actually
+**Not a finding when:** the patch changes nothing a concept documents — a
+test-only change, a dependency bump, a refactor with no behavioural effect, or a
+bug fix whose corrected behaviour no concept describes.
+
+**A bug fix is in scope when a concept describes the behaviour it changed**, and
+out of scope otherwise. `CLAUDE.md:17` triggers the contract on *"whenever you
+merge a PR, update a Helm manifest, **or fix a bug**"*, and this entry's own
+evidence is a bug fix: the PR #17 comment says in as many words that it applies to
+"a bug fix too, not only a new package". Scoping the detector to package,
+architecture and manifest changes alone contradicted both, and would have missed
+the very finding the entry was promoted on. "Wholly inside one function" is not the
+test — a one-function fix that changes documented behaviour still owes the concept
+and the log entry; a sprawling fix that changes nothing documented owes neither.
+
+Do not demand a `log.md` entry marker other than the one the bundle actually
 uses; `**Creation**` and `**Update**` are both in active use and the choice between
 them is not a finding (see `known-false-positives.md`).
