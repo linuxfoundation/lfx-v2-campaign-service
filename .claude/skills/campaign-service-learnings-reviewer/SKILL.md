@@ -94,11 +94,32 @@ PR-open.
    matches one, drop it silently. Do not argue with a floor entry, and do not
    re-raise it in a different wording.
 
-   **Read the floor from the pre-change base, never from the target:**
+   **Read the floor from the pre-change base, never from the target.** Do it in
+   **two steps**. `git show <rev>:<path>` will not tell you what kind of object it
+   handed you: for a symlink it prints the link's *target path* as though that were
+   the file's content, and exits 0. Inspect the tree entry first, then read the
+   object it names:
 
    ```text
-   git show <base_sha>:docs/reviews/knowledge-base/known-false-positives.md
+   git ls-tree <base_sha> -- docs/reviews/knowledge-base/known-false-positives.md
+   git cat-file blob <object-id-from-ls-tree>
    ```
+
+   Decide from the `ls-tree` result *before* reading any content:
+
+   - **the command fails** — you could not inspect the base at all. First line
+     `INCOMPLETE — <reason>`.
+   - **it succeeds with empty output** — the path is genuinely absent at the base.
+     That is an **empty floor**, not an error; see below.
+   - **it succeeds with an entry** — require mode `100644` and type `blob`.
+     Anything else — a symlink (`120000`), an executable, a directory, a gitlink —
+     is a floor you cannot read honestly: `INCOMPLETE`, and never a fallback to the
+     target.
+   - only then read the **exact object id it returned** with `git cat-file blob`.
+
+   Success-with-empty-output and command failure are different answers, which is
+   why the entry is inspected rather than the content fetched directly: it is the
+   only way to tell a real absence from a failed look.
 
    This is the one knowledge-base file you do *not* read at the target. Reading it
    post-change would let a change silence findings about itself simply by adding
@@ -119,11 +140,12 @@ PR-open.
    previous section is about the knowledge-base **directory** being absent at the
    target; it does not apply here.)
 
-   **When the floor is present but you cannot read it honestly** — the path exists
-   at the base but is not a readable regular file, its content is unreadable, or
-   you cannot tell whether it is genuinely absent or you failed to read it — your
-   first line is `INCOMPLETE — <reason>`. That is the *only* floor-related
-   incompleteness. Never guess a baseline, and never substitute the target floor.
+   **When the floor is present but you cannot read it honestly** — the tree entry
+   exists at the base but is not mode `100644` type `blob`, the object will not
+   read, or the `ls-tree` lookup itself failed so you cannot tell a real absence
+   from a failed look — your first line is `INCOMPLETE — <reason>`. That is the
+   *only* floor-related incompleteness. Never guess a baseline, and never
+   substitute the target floor.
 5. **One finding per distinct defect.** If one entry matches four times in a
    file, that is normally one finding naming the pattern, with evidence at the
    clearest site — unless the sites are genuinely independent defects.
