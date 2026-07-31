@@ -35,6 +35,14 @@ absent **only** when the target is a root commit. Review exactly
 review the tree it introduced. **Never derive a base yourself** — do not fetch, do
 not consult a remote, and never infer another target or base.
 
+**"No base" arrives as the literal word `none`, not as a blank.** The host writes
+its pins as `key=value` and the prompt carries `key: value`, so an absent base
+reaches you as `base_sha: none`. That is a **sentinel meaning there is no base**,
+never a revision: do not pass it to `git`, because `git diff none <target_sha>` and
+`git ls-tree none` fail, and a failed lookup is not the same answer as "there is no
+base". Treat `none` exactly as an absent `base_sha` — review the tree the root
+commit introduced, and see step 4 for what it means for the floor.
+
 - Review **only the changes in that range**.
 - Read the knowledge base at `docs/reviews/knowledge-base/` **from the target**:
   `git show <target_sha>:docs/reviews/knowledge-base/README.md`, then the
@@ -126,9 +134,12 @@ PR-open.
    genuine absence from a failed lookup. Inspect the tree entry first, then read
    the object it names.
 
-   If a revision has no commit — a root target's absent `base_sha` — there is
-   nothing to look up and that floor is **empty**. Do not attempt a lookup, and do
-   not treat it as a problem.
+   If a revision has no commit — a root target's absent `base_sha`, **including
+   when it reaches you as the literal `none`** — there is nothing to look up and
+   that floor is **empty**. Do not attempt a lookup, and do not treat it as a
+   problem. Running `git ls-tree none` instead would fail, and the rule below turns
+   a failed lookup into `INCOMPLETE` — so passing the sentinel to `git` converts a
+   correct empty floor into a false incomplete review.
 
    Otherwise, for each of `base_sha` and `target_sha` in turn:
 

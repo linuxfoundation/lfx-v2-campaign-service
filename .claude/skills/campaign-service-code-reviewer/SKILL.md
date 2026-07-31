@@ -33,6 +33,14 @@ absent **only** when the target is a root commit. Review exactly
 review the tree it introduced. **Never derive a base yourself** — do not fetch, do
 not consult a remote, and never infer another target or base.
 
+**"No base" arrives as the literal word `none`, not as a blank.** The host writes
+its pins as `key=value` and the prompt carries `key: value`, so an absent base
+reaches you as `base_sha: none`. That is a **sentinel meaning there is no base**,
+never a revision: do not pass it to `git`, because `git diff none <target_sha>` and
+`git ls-tree none` fail, and a failed lookup is not the same answer as "there is no
+base". Treat `none` exactly as an absent `base_sha` — review the tree the root
+commit introduced.
+
 - Review **only the changes in that range**.
 - Read supporting files from the **target** Git object with revision-scoped
   commands — `git show <target_sha>:<path>`, `git grep <pattern> <target_sha>`,
