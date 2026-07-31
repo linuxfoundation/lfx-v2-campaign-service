@@ -101,7 +101,21 @@ response body undrained on the retry path (`_ = resp.Body.Close()` at both the
 attempt-exhausted and the retry branch, around lines 737-747). Treat twitter as a
 site that has not adopted the pattern, not as evidence the pattern is optional.
 
-**Not a finding when:** the body was already fully read, or the path is a
-terminal error return where connection reuse is moot. The discarded `io.Copy`
+**Not a finding when:** the body was already fully read, or the client and its
+transport are demonstrably not reused after this call. The discarded `io.Copy`
 error is intentional — every sibling that adopted the drain copied the discarding
 form, so do not raise the unchecked error as a separate finding.
+
+**"Terminal error return" is not an exemption**, and was wrongly listed as one
+here. Terminal for the *call* is not terminal for the *transport*: returning an
+error abandons the request, but the undrained connection belongs to an
+`http.Transport` that outlives it and serves later requests — including through
+the shared default transport. The exemption as written suppressed the known gap
+recorded two paragraphs above, where twitter closes the 429 body undrained on the
+attempt-exhausted branch: the most terminal path in the file, and the one the
+entry cites as evidence the pattern is not optional. An exemption that silences
+the entry's own provenance is not a narrow exemption, it is a hole.
+
+Reuse must be *demonstrated* — a client constructed per call and dropped, or an
+explicitly non-reused transport. Reaching a return statement does not demonstrate
+it.
