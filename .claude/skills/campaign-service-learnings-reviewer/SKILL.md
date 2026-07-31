@@ -225,7 +225,11 @@ not go looking for them:
 ## What never becomes a finding
 
 - Anything with no matching knowledge-base entry.
-- Anything matching `docs/reviews/knowledge-base/known-false-positives.md`.
+- Anything the floor suppresses at **both** `base_sha` and `target_sha` — the full
+  rule is step 4, and the both-revision requirement is not optional shorthand. A
+  match against `docs/reviews/knowledge-base/known-false-positives.md` at the target
+  alone does **not** drop a finding; that is how a patch would waive findings about
+  itself.
 - Anything below 80 confidence. Say nothing instead.
 - Nits, style, formatting, or anything a linter owns.
 - A written repo rule with no empirical entry behind it — that is the **code**
