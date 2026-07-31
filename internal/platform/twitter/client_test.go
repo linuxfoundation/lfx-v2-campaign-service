@@ -3595,3 +3595,57 @@ func TestUpdateCampaignAndChildrenStatus_FirstCallFailureIsDefinite(t *testing.T
 		t.Errorf("a definite 4xx on the FIRST call must stay definite (nothing mutated), got: %v", err)
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_RejectsUnsafeIDs pins the path-injection guard: the
+// account id interpolates into accountURL and the entity ids into the request path, so an id
+// carrying a path/query/fragment delimiter must be refused BEFORE any signed request.
+func TestUpdateCampaignAndChildrenStatus_RejectsUnsafeIDs(t *testing.T) {
+	cases := []struct {
+		name      string
+		accountID string
+		campaign  string
+		lineItem  string
+	}{
+		{"campaign id with a path delimiter", "acc1", "cmp1/../other", "li1"},
+		{"campaign id with a query delimiter", "acc1", "cmp1?x=1", "li1"},
+		{"line item id with a fragment", "acc1", "cmp1", "li1#frag"},
+		{"account id with a path delimiter", "acc1/evil", "cmp1", "li1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var reached bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: tc.accountID},
+				WithBaseURL(srv.URL), WithAPIVersion("12"), WithWriteDelay(0),
+			)
+			c.nonceFn = func() string { return "n" }
+			c.timeFn = staticTime
+			if err := c.UpdateCampaignAndChildrenStatus(context.Background(), tc.campaign, tc.lineItem, StatusPaused); err == nil {
+				t.Fatal("an unsafe id must be rejected")
+			}
+			if reached {
+				t.Error("no request may be sent — the guard is up front")
+			}
+		})
+	}
+}
+
+// TestPartialCascadeError_NamesTheAppliedEntity guards the message text: on ACTIVATE the LINE
+// ITEM changed first, so claiming "campaign status changed" would misstate which half of the
+// tree moved for anyone reading the log.
+func TestPartialCascadeError_NamesTheAppliedEntity(t *testing.T) {
+	activate := &partialCascadeError{applied: "line item", stage: "campaign", err: errors.New("boom")}
+	if !strings.Contains(activate.Error(), "line item status changed") || !strings.Contains(activate.Error(), "campaign update failed") {
+		t.Errorf("activate message must say the LINE ITEM changed and the CAMPAIGN failed, got: %s", activate.Error())
+	}
+	pause := &partialCascadeError{applied: "campaign", stage: "line item", err: errors.New("boom")}
+	if !strings.Contains(pause.Error(), "campaign status changed") || !strings.Contains(pause.Error(), "line item update failed") {
+		t.Errorf("pause message must say the CAMPAIGN changed and the LINE ITEM failed, got: %s", pause.Error())
+	}
+}

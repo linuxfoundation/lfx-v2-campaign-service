@@ -109,6 +109,11 @@ until the tree is ready); on PAUSE the campaign gate flips FIRST (delivery stops
 immediately). An ACTIVATE with a blank line-item id is refused BEFORE any call — the line
 item would stay PAUSED and nothing would serve. Pausing needs no line-item id.
 
+The account id and both entity ids are validated with `accountIDRe` BEFORE any request, the
+same up-front path-injection guard the create path applies — they interpolate into
+`accountURL` and the request path, so a stored id carrying `/`, `?`, or `#` could redirect a
+signed PUT to a different account or entity.
+
 OUTCOME CLASSIFICATION: once the first entity has been changed, a failure on the second
 returns a `partialCascadeError`, whose `Unconfirmed() bool` reports true — so even a
 DEFINITE 4xx on the child is an ambiguous OVERALL outcome (the parent genuinely changed) and

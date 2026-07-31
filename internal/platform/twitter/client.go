@@ -1797,12 +1797,16 @@ func IsOutcomeUnconfirmed(err error) bool {
 // is still an ambiguous OVERALL outcome, because the parent change did land. Mirrors the
 // reddit client's type of the same name.
 type partialCascadeError struct {
-	stage string
-	err   error
+	// applied is the entity whose status DID change; stage is the one that then failed.
+	applied string
+	stage   string
+	err     error
 }
 
+// applied names the entity that DID change before stage failed. Stating the wrong one
+// misleads an operator reading the log about which half of the tree moved.
 func (e *partialCascadeError) Error() string {
-	return "twitter: campaign status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+	return "twitter: " + e.applied + " status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
 }
 func (e *partialCascadeError) Unwrap() error { return e.err }
 
@@ -1848,6 +1852,19 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if status == StatusActive && strings.TrimSpace(lineItemID) == "" {
 		return fmt.Errorf("twitter: cannot activate campaign %s: its line-item id must be known, so the tree cannot be made servable", campaignID)
 	}
+	// Same up-front path-injection guard the create path applies (see accountIDRe): the
+	// account id interpolates into accountURL and the entity ids into the request path, so a
+	// stored value carrying '/', '?', '#', or whitespace could redirect the signed PUT to a
+	// DIFFERENT account or entity. Validate BEFORE any mutating call.
+	if !accountIDRe.MatchString(c.account.AccountID) {
+		return fmt.Errorf("twitter: account id %q contains characters that are not allowed in a request path", c.account.AccountID)
+	}
+	if !accountIDRe.MatchString(campaignID) {
+		return fmt.Errorf("twitter: campaign id %q contains characters that are not allowed in a request path", campaignID)
+	}
+	if lineItemID != "" && !accountIDRe.MatchString(lineItemID) {
+		return fmt.Errorf("twitter: line item id %q contains characters that are not allowed in a request path", lineItemID)
+	}
 
 	campaignPath := "campaigns/" + url.PathEscape(campaignID)
 	lineItemPath := "line_items/" + url.PathEscape(lineItemID)
@@ -1860,7 +1877,7 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 			// The line item was already flipped to ACTIVE above, so the tree is partially
 			// applied even on a DEFINITE 4xx here: report Unconfirmed so the caller verifies
 			// rather than being told nothing changed.
-			return &partialCascadeError{stage: "campaign", err: err}
+			return &partialCascadeError{applied: "line item", stage: "campaign", err: err}
 		}
 		return nil
 	}
@@ -1876,7 +1893,7 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 		// The campaign gate is ALREADY paused (delivery has stopped), so the cascade is
 		// partially applied. Even a definite 4xx here must NOT be reported as "not modified":
 		// the campaign genuinely changed on X. Unconfirmed → verify before retry.
-		return &partialCascadeError{stage: "line item", err: err}
+		return &partialCascadeError{applied: "campaign", stage: "line item", err: err}
 	}
 	return nil
 }
