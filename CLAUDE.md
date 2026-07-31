@@ -41,10 +41,17 @@ the service.
 
 ## Local work cycle — post-commit and pre-PR review
 
-Run `/lfx-skills:lfx-local-review` **after every normal signed commit** while
-working toward a pull request, and once more in branch mode
-(`/lfx-skills:lfx-local-review branch`) as the last step before you open one. It
-reviews the committed target, so you can keep editing while it runs.
+Run, from this repo, **after every normal signed commit** while working toward a
+pull request:
+
+```text
+/lfx-skills:lfx-local-review
+```
+
+It reviews the **newest commit** — by default the range `HEAD^..HEAD`, the diff
+that commit introduces against its first parent — so you can keep editing while it
+runs. A caller that needs a wider range may supply a direct base parameter; the
+review never derives one, never fetches, and never consults a remote.
 
 Three reviewers run in parallel and each returns an ordinary Markdown review: a
 general reviewer, plus this repo's own two brains —
@@ -55,6 +62,11 @@ repo's written rules and quotes each one) and
 on this repo). The generic `local-code-review` and `local-learnings-review` names in
 `.claude/skills/` are symlinks to those two directories, and `.agents/skills/`
 exposes the same two physical directories — keep exactly one copy of each brain.
+
+When the host reports that Pi is unavailable it runs the trio as Claude subagents
+instead, following `.claude/skills/local-review-fallback` — this repo's launch
+table for exactly those three reviewers, aliased at
+`.agents/skills/local-review-fallback`. It carries no review criteria of its own.
 
 Read the reports in full. **This session — not the reviewers — fixes what they
 find.** Reviewer children never edit source, commit, push, or touch GitHub beyond
@@ -67,8 +79,8 @@ not rescue it: two clean reports next to one incomplete one is not a pass. Resol
 the cause and rerun the complete trio under one harness — never just the failed
 role, and never a mix of Pi and Claude evidence in the same cycle.
 
-Before opening a PR: drain the reviews, run `/lfx-skills:lfx-local-review branch`,
-then the repo's normal readiness and preflight checks.
+Before opening a PR: drain the reviews, then run the repo's normal readiness and
+preflight checks.
 
 This cycle **stops at PR-open.** Pushing and opening the PR happen under the
 coordinator's release instruction, not from the review cycle, which never writes a
