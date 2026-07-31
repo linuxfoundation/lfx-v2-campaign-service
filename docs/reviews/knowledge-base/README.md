@@ -7,9 +7,9 @@ decisions; the reviewer skill holds the review *method* and loads this path, so
 there is deliberately no second copy of the evidence under the skill's own
 directory.
 
-Read by the `campaign-service-learnings-reviewer` brain (role `repo_learnings` of
-`lfx-local-review/v1`) and by humans deciding whether a pattern still earns its
-place. It is plain documentation: nothing here is wired into `.github/**`, and no
+Read by the `campaign-service-learnings-reviewer` brain (the learnings role of the
+local pre-PR reviewer trio) and by humans deciding whether a pattern still earns
+its place. It is plain documentation: nothing here is wired into `.github/**`, and no
 PR-side tooling in this repo consumes it today.
 
 ## Scope

@@ -57,8 +57,8 @@ could otherwise persist an unsupported platform."
 
 **Not a finding when:** the rejection is genuinely dynamic — it depends on
 upstream state, a lookup, or a per-account value Goa cannot express. `gen/` changes
-without `design/` changes are a `repo_code` concern (the generated boundary), not
-this pattern.
+without `design/` changes are a **code**-reviewer concern (the generated
+boundary), not this pattern.
 
 **Also not a finding when the tightened value lives inside
 `CreateCampaigns.config`.** That field is typed `Any`, so **no** `design/`

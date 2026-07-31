@@ -41,34 +41,38 @@ the service.
 
 ## Local work cycle — post-commit and pre-PR review
 
-Run `/lfx-skills:lfx-local-review` **after every commit** while working toward a
-pull request, and once more in branch mode (`branch`) as the last step before you
-open one. It reviews the committed target in a temporary detached worktree, so you
-can keep editing while it runs.
+Run `/lfx-skills:lfx-local-review` **after every normal signed commit** while
+working toward a pull request, and once more in branch mode
+(`/lfx-skills:lfx-local-review branch`) as the last step before you open one. It
+reviews the committed target, so you can keep editing while it runs.
 
-Three reviewers run in parallel: a general reviewer, plus this repo's own two
-brains — `.claude/skills/campaign-service-code-reviewer` (audits the diff against
-this repo's written rules and quotes each one) and
-`.claude/skills/campaign-service-learnings-reviewer` (matches the diff against
+Three reviewers run in parallel and each returns an ordinary Markdown review: a
+general reviewer, plus this repo's own two brains —
+`.claude/skills/campaign-service-code-reviewer` (audits the change against this
+repo's written rules and quotes each one) and
+`.claude/skills/campaign-service-learnings-reviewer` (matches it against
 `docs/reviews/knowledge-base/`, the patterns extracted from past review comments
 on this repo). The generic `local-code-review` and `local-learnings-review` names in
 `.claude/skills/` are symlinks to those two directories, and `.agents/skills/`
 exposes the same two physical directories — keep exactly one copy of each brain.
 
-The foreground summary is the evidence for that commit. It is not a report, is not
-retained, and dies with the session:
+Read the reports in full. **This session — not the reviewers — fixes what they
+find.** Reviewer children never edit source, commit, push, or touch GitHub beyond
+read-only inspection. Land the fixes as normal signed conventional commits with a
+`fix(<scope>): ...` or `fix: ...` prefix, then **rerun the complete trio**.
 
-- Read it in full. Its states are only `COMPLETE_WITH_FINDINGS`,
-  `COMPLETE_NO_FINDINGS` and `INCOMPLETE`.
-- `INCOMPLETE` is **not** a pass. Any incomplete role makes the whole run
-  incomplete, and the only recovery is a complete rerun of the same harness — not
-  a rerun of the failed role, and not a substitution of a different one.
-- If the summary says the run used the Claude fallback because Pi was
-  unavailable, that run is single-model evidence. Say so rather than presenting it
-  as cross-model.
+A review whose first line is `INCOMPLETE — <reason>`, or a role the host reports
+as failed or empty, makes the **whole cycle incomplete**. Successful siblings do
+not rescue it: two clean reports next to one incomplete one is not a pass. Resolve
+the cause and rerun the complete trio under one harness — never just the failed
+role, and never a mix of Pi and Claude evidence in the same cycle.
 
-This cycle **stops at PR-open.** It never touches GitHub and never writes a label,
-status, review or approval.
+Before opening a PR: drain the reviews, run `/lfx-skills:lfx-local-review branch`,
+then the repo's normal readiness and preflight checks.
+
+This cycle **stops at PR-open.** Pushing and opening the PR happen under the
+coordinator's release instruction, not from the review cycle, which never writes a
+label, status, review or approval.
 
 When a review's findings change what the code does, the knowledge-bundle rules
 above still apply to the follow-up commit.
