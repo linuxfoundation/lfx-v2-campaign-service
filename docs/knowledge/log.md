@@ -2,6 +2,25 @@
 
 ## 2026-07-29
 
+**Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
+blocked every open PR (#41, #46, #47, #50, #51 all showed the identical failure).
+Every other check passed; the sole blocking linter was `secretlint`, with five
+false positives in test code: a userinfo URL in `internal/dispatch/creds_test.go`
+asserting the snapshot sanitizer fails closed, two PEM blocks in
+`internal/platform/snowflake/client_test.go` asserting garbage/malformed PKCS8
+bodies error out (real EC keys there are generated at runtime via
+`ecdsa.GenerateKey`), and two userinfo URLs in
+`internal/platform/twitter/client_test.go` asserting they are stripped and
+rejected. Each flagged literal is the *subject* of its assertion, so it cannot be
+removed or obfuscated. Suppressed them with per-line
+`// secretlint-disable-line -- <reason>` directives, matching the existing
+convention in `internal/infrastructure/config/config_test.go`, and updated the
+`megalinter-secrets.md` concept with a Secretlint section. A `.secretlintignore`
+path exclusion was deliberately rejected: unlike the `*_test.go` allowlist in
+`.gitleaks.toml`, it would silence every rule for all current and future test
+files, letting a real credential in a new test bypass both scanners. Also noted
+that `REPOSITORY_SECRETLINT_FILTER_REGEX_EXCLUDE` is inert here because secretlint
+runs in MegaLinter's `project` CLI lint mode.
 **Update** — Added the HubSpot (email channel) PlatformDispatcher (LFXV2-2777, Capability C —
 staging). `registerDispatchers` now wires `model.ProviderHubSpot` →
 `dispatch.NewHubSpotDispatcher`, which — unlike the ad adapters — STAGES a marketing email
