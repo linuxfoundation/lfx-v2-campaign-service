@@ -254,8 +254,11 @@ OpenFGA runs.
 
 **Knowledge-bundle upkeep.** When a patch changes architecture, a Helm manifest,
 a package's role, or fixes a notable bug, expect a matching concept under
-`docs/knowledge/**`, its containing `index.md` bullet, **and** a dated entry in
-`docs/knowledge/log.md`. `.github/workflows/validate-okf.yml` is path-filtered to
+`docs/knowledge/**` **and** a dated entry in `docs/knowledge/log.md`. The
+containing `index.md` bullet is required **only** when a concept was added,
+renamed, or its description changed — `CLAUDE.md` conditions that step, so
+demanding an index edit for an in-place concept body update is a false finding
+and pure churn. `.github/workflows/validate-okf.yml` is path-filtered to
 `docs/knowledge/**` and the okf tooling, so a code-only patch that skips the
 bundle never runs the validator — this is review-only. `go run ./cmd/okfgen`
 must not be re-run to do it: it regenerates the whole bundle and clobbers
