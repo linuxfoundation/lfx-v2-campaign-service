@@ -1,5 +1,19 @@
 # Log
 
+## 2026-07-31
+
+**Update** — Added [Local pre-PR review](architecture/local-pre-pr-review.md)
+(PR #56, LFXV2-2905): the repo-owned local review cycle. Two physical reviewer
+brains under `.claude/skills/` with generic symlink aliases, an empirical knowledge
+base at `docs/reviews/knowledge-base/`, and a `local-review-fallback` launch table
+for three Opus subagents when Pi is unavailable. Reviews exactly
+`git diff <base_sha> <target_sha>` with the target's first parent as the default
+base — no fetch, no remote, no merge-base. The false-positive floor is read at both
+revisions and suppresses only when both agree, so a change cannot waive a finding
+about itself. Ordinary patterns remain target-only; that gap is documented in the
+concept as a deferred, unsolved follow-up rather than presented as handled.
+`local-agents/` is now git-ignored.
+
 ## 2026-07-24
 
 **Update** — Review-hardened the Microsoft campaign contract (PR #44, copilot):
