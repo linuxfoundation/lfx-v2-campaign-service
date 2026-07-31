@@ -61,9 +61,18 @@ renders a static, DSN-free message and keeps the cause only for `Unwrap`.
 
 | Helper | What it does |
 |---|---|
-| `safeTransportCause` (`internal/platform/twitter/client.go:549`) | **redacts** — peels every `*url.Error` layer so the embedded request URL never reaches the rendered cause |
-| `safeCause` (`internal/platform/hubspot/client.go:360`, and `internal/platform/microsoft/client.go:362`) | **redacts** — same `*url.Error` peeling |
+| `safeTransportCause` (`internal/platform/twitter/client.go:549`) | **redacts by peeling** — unwraps every `*url.Error` layer, then renders the inner cause, which carries no URL |
+| `safeCause` (`internal/platform/hubspot/client.go:360`, `internal/platform/microsoft/client.go:362`) | **redacts by allow-list** — maps to a fixed vocabulary (`context canceled`, `context deadline exceeded`, `timeout`, `connection closed`) and collapses everything else to `transport failure`. It **never renders unknown error text at all** |
 | `truncateErr` / `truncate` (`internal/platform/meta/client.go:1353,1364`) | **length only** — clamps to a rune count without splitting a rune. Strips nothing |
+
+**The two mechanisms fail differently, which is why the distinction matters.**
+Peeling fails by depth — an inner error the peel loop stops short of can still embed
+the URL. The allow-list fails by gap — a genuinely useful cause not in the vocabulary
+degrades to `transport failure`. `safeCause`'s own doc comment
+(`internal/platform/hubspot/client.go:352-359`) states that peeling "is NOT sufficient
+on its own", because `WithHTTPClient` accepts a caller-supplied `RoundTripper` whose
+inner error text is caller-controlled and can embed the URL after the wrapper is
+peeled. Do not describe one helper's mechanism when reviewing the other.
 
 `truncateErr`/`truncate` satisfy no part of this pattern's detect condition on
 their own. Applied to an error whose message still embeds a URL or raw upstream
