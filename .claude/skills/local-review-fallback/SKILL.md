@@ -11,26 +11,21 @@ The `lfx-local-review` host has already decided the harness and printed its pins
 
 ## Launch exactly three generic subagents in one parallel batch
 
-| Role | Selected skill file |
+| Role | Skill name it loads |
 |---|---|
-| `general` | the absolute central general-skill path supplied by the caller |
-| `repo_code` | `.claude/skills/local-code-review/SKILL.md` |
-| `repo_learnings` | `.claude/skills/local-learnings-review/SKILL.md` |
+| `general` | `lfx-general-code-review` |
+| `repo_code` | `campaign-service-code-reviewer` |
+| `repo_learnings` | `campaign-service-learnings-reviewer` |
 
-## Give each subagent its exact skill
+## Give each subagent its skill by name
 
-A skill declares its `name:` in YAML frontmatter, which may differ from its alias directory. Resolve each selected `SKILL.md` to an absolute physical path and read only its frontmatter to obtain that declared name.
+Tell each subagent to load its one registered skill by the name above and follow it as its entire rulebook. Those three names are fixed here; do not derive them at runtime.
 
-For each generic subagent:
+Pass no skill path. Do not resolve a `SKILL.md` location, do not parse frontmatter, do not read a skill file as ordinary text, do not paste or restate its rules, and never adopt an ambient substitute.
 
-1. If the harness has the declared skill registered, tell the subagent to load it by that declared name.
-2. Otherwise, tell the subagent to read the exact absolute `SKILL.md` path in full and follow it as its entire rulebook.
+If a named skill is unavailable, that role **fails loudly** and the whole Claude cycle is invalid. The remedy is to relaunch Claude from this repo with the project skills and the `lfx-skills` plugin registered — never to bypass skill loading by reading a path. A developer running this normally starts Claude from the repo with that plugin loaded, so all four skills are registered.
 
-The by-path arm is required for a subagent launched from a session where the plugin or another repo's project skills are not registered. Reading the one selected physical skill is not copying it: never paste its body into the prompt, never restate or summarize its rules, and never discover an ambient substitute.
-
-Fail the role if the selected path is missing, unreadable or empty, or if the subagent cannot load/read that exact skill. Never continue with no rulebook or a different skill.
-
-Forbid ambient instruction discovery, but not evidence reads directed by the selected skill.
+Forbid ambient instruction discovery, but not evidence reads directed by the loaded skill.
 
 Pass unchanged to every subagent: `target repo`, `target_sha`, `base_sha` (or literal `none`), the exact `review exactly:` range, and any `extra` hint. Use the pins from the single harness decision; never rerun the launcher to obtain them.
 
