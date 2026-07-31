@@ -79,6 +79,15 @@ rendered or exported — that is the correct shape. A field carrying a vendor er
 with parsed `Message`/`Type`/`Code`/`FBTraceID` fields deliberately — parsed
 vendor fields are not the raw body.
 
+**But `Message` is only parsed vendor data in one of its two branches.**
+`internal/platform/meta/client.go:887-890` assigns `env.Error.Message` when
+`env.Error != nil && env.Error.Message != ""`; otherwise — a non-Graph or
+malformed error body — it falls back to `truncate(strings.TrimSpace(string(raw)),
+300)`, which is the **raw HTTP response body**, shortened and unparsed. The
+exemption covers the envelope branch only. `Message` reaching a log, error or
+response sink from the fallback branch is a genuine instance of this entry's
+detect condition, not something already covered.
+
 ---
 
 ## caller-url-must-be-redacted-before-errors-steps-and-snapshots
