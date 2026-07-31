@@ -62,7 +62,7 @@ An entry is in this knowledge base only if **all** of these hold:
    fix.
 4. The condition is **still relevant to the current code** at the SHA above.
 5. The condition is **mechanically detectable from a diff** plus a bounded look
-   at the snapshot — not a judgement about design, and not a fact about a
+   at the target commit — not a judgement about design, and not a fact about a
    third-party API.
 6. No deterministic check in this repo already catches it (see
    *Why review-only*).
@@ -109,8 +109,8 @@ race detector exists.
 
 Each entry carries:
 
-- a stable **pattern id** as its heading — this is what a finding's
-  `knowledge_base.pattern` reports;
+- a stable **pattern id** as its heading — this is the pattern name a finding
+  cites;
 - **Severity** guidance;
 - **Detect** — the mechanical condition, phrased so it can be applied literally
   and quoted verbatim into a finding;
@@ -215,24 +215,38 @@ before you weaken an entry: read the file, then decide.
   unreproducible. Both numbers are correct and measure different things; the
   definition is now stated inline. A count is not evidence until the population
   it was drawn from is named.
-- **The false-positive floor is applied as of the base commit.** The learnings
-  reviewer reads this directory from the *post-patch* snapshot, so a patch that
-  added or widened a `known-false-positives.md` entry would have suppressed
-  findings in the review of that same patch — silently, and without ever
-  reaching the human gate this README puts on floor changes. The reviewer skill
-  now ignores floor additions and widenings introduced by the patch under review.
+- **The false-positive floor is applied as of the base commit.** Reading the floor
+  from the reviewed change's own result would let that change suppress findings
+  about itself — silently, and without ever reaching the human gate this README
+  puts on floor changes.
 
-  **Refined 2026-07-30 — the bootstrap case.** The first version of that rule left
-  the "file is new in this patch" case implicit, which risks the opposite failure:
-  a reviewer treating the absent baseline as unreadable and returning `INCOMPLETE`.
-  It is not unreadable — a floor file that is new in the patch has a
-  deterministically **empty** pre-patch baseline, so the reviewer applies **no**
-  waivers and reports the state it actually reached. That is what stops a branch
-  introducing its *first* floor from suppressing findings about itself. This very
-  patch is that case: `known-false-positives.md` is new here. `INCOMPLETE` is
-  reserved for a baseline that genuinely cannot be reconstructed because the
-  floor file's hunks are ambiguous or unreadable — never for an empty one, and
-  never as a fallback to applying the post-patch floor as written.
+  **Superseded 2026-07-31 — the mechanism changed, the property did not.** The two
+  paragraphs below record how this was achieved under the earlier
+  snapshot-and-patch design, and are kept because the reasoning is what justifies
+  the rule. **They no longer describe how the reviewer works.** The reviewer now
+  reads `known-false-positives.md` **directly from `base_sha`**, the pinned
+  pre-change base, with `git show <base_sha>:docs/reviews/knowledge-base/known-false-positives.md`.
+  Nothing is inferred from the diff and no baseline is reconstructed. The
+  consequences are the same and now fall out of the ref itself: a waiver **added**
+  in the reviewed range cannot suppress anything, and one **removed** in the range
+  still applies. A base tree with no floor path — and a root target with no base at
+  all — is a deterministically **empty** floor and a *complete* review, never
+  `INCOMPLETE`. Incompleteness is reserved for a floor that is present at the base
+  but cannot be read honestly: wrong object type, unreadable content, or an
+  absence you cannot distinguish from a read error. The reviewer never falls
+  forward to the target floor.
+
+  *Historical — the snapshot-era mechanism:* the learnings reviewer read this
+  directory from the *post-patch* snapshot, so the skill had to ignore floor
+  additions and widenings introduced by the patch under review.
+
+  *Historical — the bootstrap refinement (2026-07-30).* The first version of that
+  rule left the "file is new in this patch" case implicit, which risked the
+  opposite failure: a reviewer treating the absent baseline as unreadable and
+  returning `INCOMPLETE`. It is not unreadable — a floor file new in the patch has
+  a deterministically empty pre-patch baseline. That reasoning survives intact; only
+  its implementation, which reconstructed the baseline from the floor file's hunks,
+  has been replaced by the direct base read above.
 - **Bare-basename anchors — expanded, not rewritten.** Two prose shorthands were
   expanded to full repo-relative paths (`internal/apivalidation/doc.go`,
   `charts/lfx-v2-campaign-service/parity_test.go`). Basenames appearing *inside a
