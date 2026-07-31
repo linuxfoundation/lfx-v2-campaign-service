@@ -204,5 +204,6 @@ deliberately deferred or accepted, so raising them again adds nothing:
 
 A new floor entry needs the **maintainer's rebuttal thread** and the **present-day
 proof** that the rebuttal still holds. A claim that merely went unfixed is not a
-false positive — plenty of real findings go unfixed. Removing an entry makes the
-reviewer start blocking on that claim again, so it is a human-gated decision.
+false positive — plenty of real findings go unfixed. Removing an entry lets the reviewer
+surface that claim again, so it is a human-gated decision — surfacing it, not
+blocking on it; what blocks is the developer's call.

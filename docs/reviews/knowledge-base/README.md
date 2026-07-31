@@ -261,5 +261,7 @@ Add an entry only with its full provenance chain intact: thread URL, readable
 fixing hunk on a merged PR, present-day confirmation, and a detect condition. Add
 a floor entry only with the maintainer's rebuttal and the current proof intact.
 When an entry stops matching the code, say so in the entry rather than deleting
-its history. Removing a pattern or a floor entry changes what the local reviewer
-blocks on, so it is a human-gated decision.
+its history. Removing a pattern changes which findings the local reviewer can emit, and
+removing a floor entry lets it surface that claim again — so either is a
+human-gated decision. Neither decides what blocks: reviewers describe findings
+and the developer decides what stops a PR.
