@@ -8,7 +8,8 @@ resource: ".claude/skills/local-review-fallback/SKILL.md"
 # Local pre-PR review
 
 A review cycle this repo owns, run from a working copy **after a commit and before
-a pull request exists**. It reviews exactly one commit and returns ordinary Markdown.
+a pull request exists**. It reviews exactly one commit by default — a caller may supply
+a wider base — and returns ordinary Markdown.
 It stops at PR-open: it never writes a GitHub label, status, check, review or
 approval, and it does not touch `.github/**` or the PR-side pipeline.
 
@@ -47,10 +48,12 @@ The host pins the revisions before any reviewer starts:
 - `base_sha` — normally its **first parent**, optionally a wider base the caller
   supplies; absent only for a root commit.
 
-The reviewed range is exactly `git diff <base_sha> <target_sha>`. Nothing fetches,
-nothing consults a remote, and no reviewer derives a base, so the cycle works
-offline. Evidence is read at the pinned revisions — staged, unstaged, untracked and
-later working-tree content are barred as evidence for the target.
+The reviewed range is exactly `git diff <base_sha> <target_sha>`. **Nothing fetches
+or consults a remote to *derive* the range** — no reviewer resolves a base, so what
+gets reviewed is always determined offline. A reviewer may still make optional,
+read-only GitHub calls to inform its judgement, as the reviewer skills permit; those
+never change the range. Evidence is read at the pinned revisions — staged, unstaged,
+untracked and later working-tree content are barred as evidence for the target.
 
 ## The knowledge base and its floor
 

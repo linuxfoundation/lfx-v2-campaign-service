@@ -2,6 +2,15 @@
 
 ## 2026-07-31
 
+**Fix** — Corrected two overstatements in
+[Local pre-PR review](architecture/local-pre-pr-review.md) (PR #56 review,
+LFXV2-2905). "Nothing consults a remote, so the cycle works offline" was broader
+than the reviewer skills actually say: they permit optional read-only GitHub
+inspection to inform judgement. The invariant is narrower and is now stated as such
+— nothing fetches or consults a remote to *derive* the reviewed range. Separately,
+"reviews exactly one commit" is the default, not an invariant; the same concept's
+base-pinning section already documented the caller-supplied wider base.
+
 **Update** — Added [Local pre-PR review](architecture/local-pre-pr-review.md)
 (PR #56, LFXV2-2905): the repo-owned local review cycle. Two physical reviewer
 brains under `.claude/skills/` with generic symlink aliases, an empirical knowledge
