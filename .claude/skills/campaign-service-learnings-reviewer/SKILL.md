@@ -1,6 +1,6 @@
 ---
 name: campaign-service-learnings-reviewer
-description: Repo-owned empirical review brain for lfx-v2-campaign-service, the learnings role of the local pre-PR reviewer trio. Matches one commit or branch range against the repo-owned knowledge base at docs/reviews/knowledge-base/ — patterns extracted from verified past PR review comments on this repo, each with a mechanical detect condition — and returns a Markdown review in which every finding quotes the pattern entry it matched. Applies the known-false-positive floor last, read from the pre-change base. Loaded directly by the launcher; not a skill a developer invokes by hand.
+description: Repo-owned empirical review brain for lfx-v2-campaign-service, the learnings role of the local pre-PR reviewer trio. Matches one commit or branch range against the repo-owned knowledge base at docs/reviews/knowledge-base/ — patterns extracted from verified past PR review comments on this repo, each with a mechanical detect condition — and returns a Markdown review in which every finding quotes the pattern entry it matched. Applies the known-false-positive floor last, read at both the pre-change base and the target, suppressing a finding only when both floors would suppress it. Loaded directly by the launcher; not a skill a developer invokes by hand.
 ---
 
 # Campaign service learnings brain
@@ -42,7 +42,7 @@ base.
   category files. Never resolve it relative to this skill's own directory, and
   never read it from the working tree — that tree may have moved on since the
   commit under review. **The one exception is the false-positive floor, which is
-  read from `base_sha`** (see step 4).
+  read at both `base_sha` and `target_sha`** (see step 4).
 - **If the knowledge-base directory is missing or unreadable at the target, your
   first line is `INCOMPLETE — <reason>`.** Never report no findings — with no
   knowledge base there is nothing to match against, and a clean-looking review
@@ -94,58 +94,105 @@ PR-open.
    matches one, drop it silently. Do not argue with a floor entry, and do not
    re-raise it in a different wording.
 
-   **Read the floor from the pre-change base, never from the target.** Do it in
-   **two steps**. `git show <rev>:<path>` will not tell you what kind of object it
-   handed you: for a symlink it prints the link's *target path* as though that were
-   the file's content, and exits 0. Inspect the tree entry first, then read the
-   object it names:
+   **The floor must suppress at BOTH revisions.** Ordinary pattern files are read
+   at the target as usual. This one file is different: read it at `base_sha`
+   **and** at `target_sha`, and drop a candidate only when **both** floors would
+   suppress that exact finding. Neither revision alone is enough, because each one
+   alone has a hole. Target alone lets a change that *adds* a waiver suppress a
+   finding about itself. Base alone lets a waiver the change *removes* go on
+   suppressing — and in branch mode the base stays the merge-base for the whole
+   life of the branch, so a defect this very range introduces would stay hidden
+   all the way to PR-open.
+
+   | The reviewed range… | base floor | target floor | result |
+   |---|---|---|---|
+   | **adds** a waiver | does not suppress | suppresses | **not suppressed** |
+   | **removes** a waiver | suppresses | does not suppress | **not suppressed** |
+   | leaves it unchanged | suppresses | suppresses | **suppressed** |
+
+   Widened and narrowed coverage behave the same way: neither can hide a candidate
+   unless the unchanged overlap still suppresses it at both revisions.
+
+   **Evaluate per candidate, semantically — never by comparing the two files.**
+   For each candidate finding, ask separately "would the base floor suppress
+   *this finding*?" and "would the target floor suppress *this finding*?", then
+   drop it only if both answers are yes. Do **not** diff the two floors and do not
+   compare their Markdown byte for byte: if the base carries a broad waiver and
+   the target narrows it, a candidate matching the narrow one is genuinely
+   suppressed by both, and a textual comparison would miss that.
+
+   **Read and classify each revision independently, with the same sequence.**
+   `git show <rev>:<path>` cannot do this: it will not tell you what kind of
+   object it handed you — for a symlink it prints the link's *target path* as
+   though that were the file's content, and exits 0 — and it cannot separate a
+   genuine absence from a failed lookup. Inspect the tree entry first, then read
+   the object it names.
+
+   If a revision has no commit — a root target's absent `base_sha` — there is
+   nothing to look up and that floor is **empty**. Do not attempt a lookup, and do
+   not treat it as a problem.
+
+   Otherwise, for each of `base_sha` and `target_sha` in turn:
 
    ```text
-   git ls-tree <base_sha> -- docs/reviews/knowledge-base/known-false-positives.md
+   git ls-tree <rev> -- docs/reviews/knowledge-base/known-false-positives.md
    git cat-file blob <object-id-from-ls-tree>
    ```
 
    Decide from the `ls-tree` result *before* reading any content:
 
-   - **the command fails** — you could not inspect the base at all. First line
-     `INCOMPLETE — <reason>`.
-   - **it succeeds with empty output** — the path is genuinely absent at the base.
-     That is an **empty floor**, not an error; see below.
-   - **it succeeds with an entry** — require mode `100644` and type `blob`.
-     Anything else — a symlink (`120000`), an executable, a directory, a gitlink —
-     is a floor you cannot read honestly: `INCOMPLETE`, and never a fallback to the
-     target.
-   - only then read the **exact object id it returned** with `git cat-file blob`.
+   - **nonzero exit** — `INCOMPLETE — <reason>`. The host verified both revisions
+     before launching you, so a failure here is a real read problem, not absence.
+   - **exit 0, empty output** — that floor is legitimately absent, and therefore
+     **empty**. Normal at the file's first introduction. Not an error.
+   - **exit 0, an entry** — require mode exactly `100644` and type exactly `blob`.
+     Anything else — a symlink (`120000`), an executable (`100755`), a submodule
+     (`160000`), a tree — is `INCOMPLETE — <reason>`. Do not follow a symlink out
+     of the revision you are reading.
 
-   Success-with-empty-output and command failure are different answers, which is
-   why the entry is inspected rather than the content fetched directly: it is the
-   only way to tell a real absence from a failed look.
+   Then read it **by the object id `ls-tree` printed**, not by path: the path was
+   already resolved above, and re-resolving it invites reading a different object
+   than the one you checked. Unreadable content is `INCOMPLETE — <reason>`; empty
+   content is a valid empty floor.
 
-   This is the one knowledge-base file you do *not* read at the target. Reading it
-   post-change would let a change silence findings about itself simply by adding
-   its own waiver, and the human gate the KB README puts on floor changes would
-   never be reached. Two consequences follow directly, and both are intended: a
-   waiver **added** in the reviewed range **cannot suppress** anything in this
-   review, and a waiver **removed** in the range **still applies**, because the
-   base is what counts. **Never fall forward to the target floor** — not as a
-   fallback, not when the base read is inconvenient, not ever.
+   **Name the failing revision** in the `INCOMPLETE` reason, so the developer
+   knows which side to look at. **Never substitute one floor for the other**: if
+   the base floor will not read, do not fall forward to the target floor, or the
+   reverse. An unreadable floor means you cannot apply the rule, not that you
+   should apply half of it.
 
-   **An empty floor is a real, correct floor.** If the base tree resolves but has
-   no `known-false-positives.md` path, the floor is deterministically **empty**:
-   apply **no** waivers and judge every candidate on its pattern entry alone. The
-   same holds when the target is a root commit and there is no `base_sha` at all.
-   Neither case is an incomplete review — an empty baseline is a known baseline,
-   not an unreadable one. This is what stops a branch introducing its *first*
-   floor from suppressing findings about itself. (The incompleteness rule in the
-   previous section is about the knowledge-base **directory** being absent at the
-   target; it does not apply here.)
+   **An empty floor is a real, correct floor**, and it suppresses nothing. By the
+   rule above a candidate is dropped only when *both* floors suppress it, so an
+   empty floor on either side means nothing is dropped there. That is what stops a
+   branch introducing its *first* floor from suppressing findings about itself.
+   Neither an absent path nor a root target with no base is an incomplete review —
+   an empty floor is a known floor, not an unreadable one. (The incompleteness
+   rule in the previous section is about the knowledge-base **directory** being
+   absent at the target; it does not apply here.)
 
-   **When the floor is present but you cannot read it honestly** — the tree entry
-   exists at the base but is not mode `100644` type `blob`, the object will not
-   read, or the `ls-tree` lookup itself failed so you cannot tell a real absence
-   from a failed look — your first line is `INCOMPLETE — <reason>`. That is the
-   *only* floor-related incompleteness. Never guess a baseline, and never
-   substitute the target floor.
+   **When a newly added waiver starts applying.** Recorded precisely, so nobody
+   reads the delay as a defect and "fixes" it, and nobody mistakes the later case
+   for a loophole. The base differs by mode — the first parent post-commit, the
+   merge-base in branch mode — so a waiver added on the branch applies to some
+   reviewed ranges and not others:
+
+   - It **cannot suppress anything in a range whose base predates it.** That
+     covers the commit that adds the waiver, whose first parent lacks it, and the
+     final cumulative branch sweep, whose merge-base predates the branch. This is
+     the property that matters: the cumulative branch range can never approve
+     itself.
+   - It **can apply to a later post-commit review whose first parent already
+     contains it.** That is correct, not a leak: relative to that delta the waiver
+     is pre-existing, both revisions carry it, and it is suppressing a finding
+     about a change other than the one that introduced it. It still cannot
+     suppress anything in the cumulative branch range.
+   - **After merge**, future branches inherit it at both revisions and it applies
+     normally.
+
+   **Superseded.** Earlier revisions of this brain read the floor at the base
+   only, and stated in as many words that a waiver **removed** in the reviewed
+   range **still applies**. That is no longer true, and it was a real hole — see
+   the `removes` row above. Do not reinstate it.
 5. **One finding per distinct defect.** If one entry matches four times in a
    file, that is normally one finding naming the pattern, with evidence at the
    clearest site — unless the sites are genuinely independent defects.
@@ -246,12 +293,13 @@ INCOMPLETE — <reason>
 
 The cases that call for it are: a pinned Git object or required evidence that
 cannot be read unambiguously; the knowledge-base **directory** missing or
-unreadable at the target; or a floor file present at the base that you cannot
-read honestly. Say what you could not read and why. Do not substitute
-working-tree content and do not guess another revision.
+unreadable at the target; or a floor present at **either** revision that you
+cannot read honestly. Say which revision you could not read and why. Do not
+substitute working-tree content, do not substitute the other revision's floor,
+and do not guess another revision.
 
 **Never pair this with a no-findings conclusion** — an incomplete review has not
 established that the range is clean, and a clean-looking result would be a false
 negative. Never use it merely because you found nothing, and never for an **empty
-floor**: a base with no floor path, or a root target with no base at all, is a
-correct empty baseline and a perfectly complete review.
+floor**: a revision with no floor path, or a root target with no base at all, is
+a correct empty floor and a perfectly complete review.

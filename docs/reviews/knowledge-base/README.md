@@ -215,26 +215,46 @@ before you weaken an entry: read the file, then decide.
   unreproducible. Both numbers are correct and measure different things; the
   definition is now stated inline. A count is not evidence until the population
   it was drawn from is named.
-- **The false-positive floor is applied as of the base commit.** Reading the floor
-  from the reviewed change's own result would let that change suppress findings
-  about itself — silently, and without ever reaching the human gate this README
-  puts on floor changes.
+- **The false-positive floor must suppress at both revisions.** The reviewed
+  change must not be able to silence findings about itself by waiving them, and
+  removing a waiver must mean "start flagging this again" straight away. The
+  reviewer reads `known-false-positives.md` at **both** `base_sha` and
+  `target_sha` and drops a candidate only when **both** floors would suppress that
+  exact finding: a waiver the range **adds** is absent at the base and cannot
+  suppress; one the range **removes** is absent at the target and no longer
+  suppresses; unchanged overlap suppresses. The two floors are evaluated per
+  candidate and semantically — never diffed against each other, because a base
+  waiver narrowed at the target still genuinely covers a candidate matching the
+  narrow form.
 
-  **Superseded 2026-07-31 — the mechanism changed, the property did not.** The two
-  paragraphs below record how this was achieved under the earlier
-  snapshot-and-patch design, and are kept because the reasoning is what justifies
-  the rule. **They no longer describe how the reviewer works.** The reviewer now
-  reads `known-false-positives.md` **directly from `base_sha`**, the pinned
-  pre-change base, with `git show <base_sha>:docs/reviews/knowledge-base/known-false-positives.md`.
-  Nothing is inferred from the diff and no baseline is reconstructed. The
-  consequences are the same and now fall out of the ref itself: a waiver **added**
-  in the reviewed range cannot suppress anything, and one **removed** in the range
-  still applies. A base tree with no floor path — and a root target with no base at
-  all — is a deterministically **empty** floor and a *complete* review, never
-  `INCOMPLETE`. Incompleteness is reserved for a floor that is present at the base
-  but cannot be read honestly: wrong object type, unreadable content, or an
-  absence you cannot distinguish from a read error. The reviewer never falls
-  forward to the target floor.
+  Each revision is read independently with `git ls-tree <rev> --
+  docs/reviews/knowledge-base/known-false-positives.md`, requiring mode `100644`
+  and type `blob`, then `git cat-file blob <object-id>`. A revision whose floor
+  path is absent — and a root target with no base at all — is a deterministically
+  **empty** floor and a *complete* review, never `INCOMPLETE`. Incompleteness is
+  reserved for a floor present at a revision but unreadable honestly: wrong object
+  type, unreadable content, or a lookup failure. The reviewer names the failing
+  revision and never substitutes one floor for the other.
+
+  **Superseded 2026-07-31 — the base-only rule was a hole, not just a mechanism.**
+  This entry previously read *"the false-positive floor is applied as of the base
+  commit"*, and stated that a waiver **removed** in the reviewed range **still
+  applies**, because the base is what counts. That is withdrawn. Base-only closes
+  the self-approval hole but opens its mirror: in branch mode the base stays the
+  merge-base for the whole life of the branch, so a range that removes a waiver
+  *and* introduces the defect it covered stays suppressed all the way to PR-open.
+  Requiring both revisions closes each hole with the other. The
+  `git show <base_sha>:…` single-read mechanism that entry prescribed is also
+  withdrawn — `git show` returns blob bytes without the mode, so it cannot reject a
+  symlinked floor and cannot tell a real absence from a failed lookup.
+
+  *Timing, recorded so nobody reads it as a defect:* a waiver added on a branch
+  cannot suppress anything in a range whose base predates it — the commit that
+  adds it, and the final cumulative branch sweep. It **can** apply to a later
+  post-commit review whose first parent already carries it, which is correct
+  rather than a leak: relative to that delta the waiver is pre-existing and
+  suppresses a finding about a different change. The guarantee that matters is
+  that the cumulative branch range can never approve itself.
 
   *Historical — the snapshot-era mechanism:* the learnings reviewer read this
   directory from the *post-patch* snapshot, so the skill had to ignore floor
@@ -244,9 +264,9 @@ before you weaken an entry: read the file, then decide.
   rule left the "file is new in this patch" case implicit, which risked the
   opposite failure: a reviewer treating the absent baseline as unreadable and
   returning `INCOMPLETE`. It is not unreadable — a floor file new in the patch has
-  a deterministically empty pre-patch baseline. That reasoning survives intact; only
-  its implementation, which reconstructed the baseline from the floor file's hunks,
-  has been replaced by the direct base read above.
+  a deterministically empty pre-patch baseline. That reasoning survives intact
+  under the two-revision rule; only its implementation, which reconstructed the
+  baseline from the floor file's hunks, has been replaced.
 - **Bare-basename anchors — expanded, not rewritten.** Two prose shorthands were
   expanded to full repo-relative paths (`internal/apivalidation/doc.go`,
   `charts/lfx-v2-campaign-service/parity_test.go`). Basenames appearing *inside a
