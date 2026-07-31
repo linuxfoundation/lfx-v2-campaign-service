@@ -125,7 +125,19 @@ states the orchestrator half at
 
 **Not a finding when:** the failure is provably pre-create — a
 `preCreateError` / `NoUpstreamCreate()` path, or a `preSendError` — in which case
-`(nil, err)` is correct and the claim *should* be released. Assert the
-orchestrator half against the named predicate `isReusableCampaign`
-(`internal/service/orchestrator.go:86`), not against any inline condition: the
-inline forms are historical and have all been replaced.
+`(nil, err)` is correct and the claim *should* be released.
+
+**Two different predicates, and neither replaced the other.** Assert the
+*reuse/skip* half against the named `isReusableCampaign`
+(`internal/service/orchestrator.go:86`, used at `:537` and `:581`) — that is the
+question "may I skip creating this again?".
+
+The *orphan-persistence* half is a different question — "is there a reconcilable
+artifact worth recording or reporting?" — and it is asked inline, on purpose, at
+`internal/service/orchestrator.go:602` (retained orphan found on retry) and `:676`
+(persist-on-error). Both read
+`PlatformCampaignID != "" || len(Result) > 0`. These are **current, not
+historical**: `isReusableCampaign` would be wrong here because it also requires a
+non-pending status and excludes `partialOrphanStatuses` — exactly the rows the
+orphan paths exist to catch. Do not flag an inline check on those two paths, and do
+not stop auditing them because a named predicate exists elsewhere.
