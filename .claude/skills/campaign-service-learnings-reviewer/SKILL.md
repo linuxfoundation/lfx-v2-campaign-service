@@ -183,7 +183,15 @@ Open by naming what you reviewed: the role, and the target commit plus the range
 Then group the findings you are actually asking someone to act on, most serious
 first, under `## Critical` and `## Important` — mapping the severities above,
 `critical` to Critical and `high` to Important. Put `should-fix` findings under
-`## Should fix`. Each finding gets:
+`## Should fix`.
+
+The three headings are ordered: **Critical is the most serious, then Important,
+then Should fix.** `Should fix` is advisory and non-blocking unless the rule you
+cite says otherwise — real, and worth fixing before the PR, but not a reason to
+stop. State what a finding is, never what it entitles you to; the developer
+decides what blocks.
+
+Each finding gets:
 
 - a one-line title saying what is wrong;
 - the repo-relative **`path:line`** in the reviewed range — real 1-based lines
