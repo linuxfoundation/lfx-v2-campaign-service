@@ -324,8 +324,25 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// This DB-only update MUST NOT be a back door for changing the RUN status
+	// (active/paused): that would persist a run state WITHOUT contacting the ad platform,
+	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists
+	// to prevent. `status` stays in the payload so a client can round-trip the row it read
+	// (a name/config edit re-sends the current status unchanged), but an ATTEMPT to flip the
+	// run state here is rejected and routed to the platform toggle.
+	//
+	// This path NEVER writes status, so ANY mismatch must be refused, not just a run-state one:
+	// returning 200 for a PUT whose required `status` field was not applied would tell the
+	// caller a replacement succeeded when it silently did not. Run-state attempts get the
+	// specific toggle-endpoint message; every other mismatch (a provisioning state, or an
+	// unknown value) is rejected as unsupported on this path.
+	if p.Campaign.Status != existing.Status {
+		if model.IsCampaignRunStatus(p.Campaign.Status) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
+		}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "status cannot be changed via update-campaign; re-send the campaign's current status (it is set by the create/dispatch flow and the status-toggle endpoint)"}
+	}
 	existing.CampaignName = p.Campaign.CampaignName
-	existing.Status = p.Campaign.Status
 	// Only overwrite the stored config when the caller actually supplied one.
 	// config is optional in CampaignUpdateInput, so an omitted value must leave
 	// the existing ConfigSnapshot intact rather than wiping it to NULL on a
@@ -336,6 +353,109 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	}
 	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version)
 	if uerr != nil {
+		return nil, mapBriefErr(uerr)
+	}
+	return campaignResult(updated), nil
+}
+
+// ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
+// status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
+// updated only after the platform confirms, so a persisted "paused" always reflects reality.
+func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.ToggleCampaignStatusPayload) (*briefs.Campaign, error) {
+	_, campaignRepo, _, orch, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	version, err := parseBriefIfMatch(p.IfMatch)
+	if err != nil {
+		return nil, err
+	}
+	// The design enum restricts status to active/paused, but validate defensively so a
+	// direct (non-generated) caller can't push an unsupported value to a platform.
+	if p.Status != model.CampaignRunActive && p.Status != model.CampaignRunPaused {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "status must be 'active' or 'paused'"}
+	}
+
+	existing, gerr := campaignRepo.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	if gerr != nil {
+		return nil, mapBriefErr(gerr)
+	}
+	// Guard optimistic concurrency BEFORE the (side-effecting, paid) platform call, so a
+	// stale If-Match fails fast without touching the ad platform.
+	if existing.Version != version {
+		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "campaign has been modified; reload and retry"}
+	}
+	// Only a fully-created campaign (or one already in a run state) may be toggled. A
+	// "pending" ambiguous orphan or a "created_degraded" campaign (a sub-step still needs
+	// reconciliation) must NOT be toggled: doing so would activate an incomplete campaign
+	// and/or OVERWRITE the reconciliation status with the run state, erasing the signal. A
+	// non-empty PlatformCampaignID alone is not enough — a degraded/partial campaign can
+	// carry an upstream id. Reject with 409 (the state must be reconciled first).
+	if !model.CampaignStatusToggleable(existing.Status) {
+		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not in a toggleable state (it is still provisioning or needs reconciliation); resolve its status before toggling"}
+	}
+
+	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
+	// lie that the campaign is paused when the platform still has it running).
+	if terr := orch.ToggleCampaignStatus(ctx, p.ProjectID, existing.Platform, existing, p.Status); terr != nil {
+		var unconfirmed interface{ Unconfirmed() bool }
+		switch {
+		case errors.Is(terr, ErrToggleUnsupported):
+			// The platform (or its dispatcher) doesn't support toggling — a client error,
+			// the platform was never called.
+			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
+		case errors.Is(terr, ErrCampaignNotProvisioned):
+			// The campaign is not fully provisioned for this toggle — either it has no upstream
+			// platform id yet (still creating / ambiguous create), OR (on ACTIVATE) it lacks the
+			// child entities needed to serve. The specific missing entity is platform-dependent
+			// (Reddit: an ad group/ad; Meta: an ad set; LinkedIn: creatives), so the message stays
+			// platform-NEUTRAL rather than naming one provider's shape for all. A client/state
+			// error, NOT a platform rejection: a retry now would fail the same way, so this is a
+			// 409, not a 503. It avoids "wait" (a campaign missing a child never gains one by
+			// waiting) and points at the actual remedy.
+			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned for activation — it has no platform campaign id yet, or it lacks the child entities needed to serve (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
+		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
+			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
+			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT
+			// blindly write the DB (it might not be) — surface it as UNCONFIRMED so the
+			// caller verifies before retrying (mirrors the creation path's contract), and log
+			// it as a reconcile signal. The row is left at its prior status.
+			slog.WarnContext(ctx, "campaign status toggle outcome is UNCONFIRMED (the platform may or may not reflect the change)",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+				"requested_status", p.Status, "error", terr)
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
+		default:
+			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution
+			// failing: the ad platform was not updated. Log the underlying error (the client
+			// gets only a sanitized message) so an operator has a diagnostic record, then 503.
+			slog.WarnContext(ctx, "campaign status toggle failed on the ad platform",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+				"requested_status", p.Status, "error", terr)
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status could not be changed on the ad platform; the campaign was not modified"}
+		}
+	}
+
+	// The platform change ALREADY committed. The DB row MUST catch up even if the request
+	// context is now cancelled (client disconnect / shutdown) — otherwise the platform is
+	// paused while the row still says active, a silent divergence with no compensating
+	// rollback (the ad platform is the source of truth here). Persist on a cancel-detached
+	// context so the write completes; the read/guard above already ran on the live ctx. The
+	// detached write is BOUNDED by persistResultTimeout (mirrors the orchestrator's
+	// post-provider persists) so a stuck DB can't hang shutdown grace indefinitely.
+	existing.Status = p.Status
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
+	defer cancel()
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version)
+	if uerr != nil {
+		// The platform WAS changed but the row write failed → platform and DB now diverge.
+		// Log it loudly as an operational reconcile signal (the run state on the platform is
+		// authoritative; a monitor/human reconciles the stale row) before surfacing the error.
+		slog.ErrorContext(ctx, "campaign status changed on the platform but the DB row write failed (platform/DB diverged)",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+			"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+			"new_status", p.Status, "error", uerr)
 		return nil, mapBriefErr(uerr)
 	}
 	return campaignResult(updated), nil

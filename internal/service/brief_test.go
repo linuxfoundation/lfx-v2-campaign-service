@@ -5,6 +5,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -495,7 +497,9 @@ func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign,
 	return c, nil
 }
 
-// UpdateCampaign must NOT wipe the stored config when the caller omits config.
+// UpdateCampaign must NOT wipe the stored config when the caller omits config, and it must
+// leave the run status untouched (the caller round-trips the CURRENT status on a name edit;
+// run-state changes go through the toggle, not this DB-only path).
 func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	camps := &campaignEditRepo{cur: &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 2,
@@ -506,7 +510,7 @@ func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	v := "2"
 	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
 		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
-		Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "paused"}, // Config omitted
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "active"}, // status unchanged; Config omitted
 	})
 	if err != nil {
 		t.Fatalf("UpdateCampaign: %v", err)
@@ -514,8 +518,34 @@ func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	if string(camps.got.ConfigSnapshot) != `{"budget":100}` {
 		t.Errorf("config was overwritten: %s, want the stored {\"budget\":100}", camps.got.ConfigSnapshot)
 	}
-	if camps.got.CampaignName != "new" || camps.got.Status != "paused" {
-		t.Errorf("name/status not applied: %q/%q", camps.got.CampaignName, camps.got.Status)
+	if camps.got.CampaignName != "new" {
+		t.Errorf("name not applied: %q", camps.got.CampaignName)
+	}
+	if camps.got.Status != "active" {
+		t.Errorf("status must be preserved verbatim by the DB-only update, got %q want %q", camps.got.Status, "active")
+	}
+}
+
+// UpdateCampaign must REFUSE a run-status change (active<->paused): persisting a run state
+// without contacting the ad platform would recreate the DB/platform divergence the toggle
+// endpoint exists to prevent. The refusal is a 400 that routes the caller to the toggle.
+func TestBriefService_UpdateCampaign_RejectsRunStatusChange(t *testing.T) {
+	camps := &campaignEditRepo{cur: &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 2,
+		CampaignName: "old", Status: "active",
+	}}
+	s := &BriefService{briefs: &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}}, campaigns: camps, jobs: newFakeJobRepo(), orch: NewOrchestrator(camps, newFakeJobRepo(), nil)}
+	v := "2"
+	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "old", Status: "paused"}, // active -> paused via DB path
+	})
+	var badReq *briefs.BadRequestError
+	if !errors.As(err, &badReq) {
+		t.Fatalf("a run-status change via update-campaign must be a 400 BadRequestError, got %T: %v", err, err)
+	}
+	if camps.got != nil {
+		t.Error("ReplaceCampaign must NOT be called when the run-status change is rejected")
 	}
 }
 
@@ -664,5 +694,225 @@ func TestBriefService_GetJob_SkippedSurfacesNonFailure(t *testing.T) {
 	}
 	if li.Error == nil || !strings.Contains(*li.Error, "skipped") || !strings.Contains(*li.Error, "not a failure") {
 		t.Errorf("skipped platform must surface a non-failure 'skipped' message, got %v", li.Error)
+	}
+}
+
+// --- status toggle -----------------------------------------------------------
+
+// toggleCampaignRepo is a minimal CampaignRepository for the toggle handler: it serves one
+// campaign from GetCampaign and records the ReplaceCampaign it receives.
+type toggleCampaignRepo struct {
+	fakeCampaignRepo
+	got      *model.Campaign
+	replaced *model.Campaign
+	getErr   error
+}
+
+func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
+	cp := *r.got
+	return &cp, nil
+}
+func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64) (*model.Campaign, error) {
+	r.replaced = c
+	return c, nil
+}
+
+// stubToggler implements PlatformDispatcher + StatusToggler, recording the toggle call.
+type stubToggler struct {
+	err     error
+	gotID   string
+	gotStat string
+}
+
+func (d *stubToggler) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+func (d *stubToggler) ToggleStatus(_ context.Context, _ string, _ model.Provider, campaign *model.Campaign, status string) error {
+	if campaign != nil {
+		d.gotID = campaign.PlatformCampaignID
+	}
+	d.gotStat = status
+	return d.err
+}
+
+func newToggleService(camp *model.Campaign, tog *stubToggler) (*BriefService, *toggleCampaignRepo) {
+	repo := newFakeBriefRepo()
+	camps := &toggleCampaignRepo{got: camp}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
+	return NewBriefService(repo, camps, jobs, orch), camps
+}
+
+func TestBriefService_ToggleCampaignStatus_PlatformThenPersist(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 3,
+	}
+	tog := &stubToggler{}
+	s, camps := newToggleService(camp, tog)
+	im := "3"
+	res, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	if err != nil {
+		t.Fatalf("ToggleCampaignStatus: %v", err)
+	}
+	// The platform was called with the stored upstream id + requested status.
+	if tog.gotID != "t3_c" || tog.gotStat != model.CampaignRunPaused {
+		t.Errorf("platform toggle got (%q,%q), want (t3_c,paused)", tog.gotID, tog.gotStat)
+	}
+	// The row was persisted with the new status AFTER the platform confirmed.
+	if camps.replaced == nil || camps.replaced.Status != model.CampaignRunPaused {
+		t.Errorf("persisted status = %+v, want paused", camps.replaced)
+	}
+	if res.Status != model.CampaignRunPaused {
+		t.Errorf("result status = %q, want paused", res.Status)
+	}
+}
+
+func TestBriefService_ToggleCampaignStatus_PlatformFailLeavesRowUntouched(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 1,
+	}
+	tog := &stubToggler{err: errors.New("reddit 500")}
+	s, camps := newToggleService(camp, tog)
+	im := "1"
+	if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	}); err == nil {
+		t.Fatal("expected an error when the platform rejects the toggle")
+	}
+	// Critically: the DB row must NOT be updated when the platform call failed.
+	if camps.replaced != nil {
+		t.Errorf("row was persisted despite a platform failure: %+v", camps.replaced)
+	}
+}
+
+func TestBriefService_ToggleCampaignStatus_StaleIfMatchSkipsPlatform(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 5,
+	}
+	tog := &stubToggler{}
+	s, _ := newToggleService(camp, tog)
+	im := "2" // stale (row is version 5)
+	if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunActive,
+	}); err == nil {
+		t.Fatal("expected a precondition error on a stale If-Match")
+	}
+	if tog.gotID != "" {
+		t.Error("a stale If-Match must fail BEFORE the platform is called")
+	}
+}
+
+func TestBriefService_ToggleCampaignStatus_NotProvisionedIs409(t *testing.T) {
+	// A campaign with no upstream platform id (still creating / ambiguous create) must be a
+	// 409 client error, NOT a 503 "platform rejected" — the platform is never called.
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "", Status: "pending", Version: 1,
+	}
+	tog := &stubToggler{}
+	s, camps := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409) for an unprovisioned campaign, got %T: %v", err, err)
+	}
+	if tog.gotID != "" {
+		t.Error("the platform must NOT be called for an unprovisioned campaign")
+	}
+	if camps.replaced != nil {
+		t.Error("the row must not be modified for an unprovisioned campaign")
+	}
+}
+
+// unconfirmedErr implements the Unconfirmed() behavioral interface the toggle handler
+// checks (mirrors the dispatch layer's unconfirmedToggleError).
+type unconfirmedErr struct{}
+
+func (unconfirmedErr) Error() string     { return "unconfirmed" }
+func (unconfirmedErr) Unconfirmed() bool { return true }
+
+func TestBriefService_ToggleCampaignStatus_UnconfirmedIsSurfaced(t *testing.T) {
+	// An UNCONFIRMED platform outcome (the PATCH may have applied) must be reported as
+	// unconfirmed (verify-before-retry), NOT as a flat "not modified", and must NOT write
+	// the DB row (it might already be right, or not).
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 1,
+	}
+	tog := &stubToggler{err: unconfirmedErr{}}
+	s, camps := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	su, ok := err.(*briefs.ConnServiceUnavailableError)
+	if !ok {
+		t.Fatalf("expected a 503 ConnServiceUnavailableError, got %T: %v", err, err)
+	}
+	if !strings.Contains(su.Message, "unconfirmed") {
+		t.Errorf("message = %q, want it to say the change is unconfirmed", su.Message)
+	}
+	if camps.replaced != nil {
+		t.Error("the row must NOT be written on an unconfirmed outcome")
+	}
+}
+
+func TestBriefService_ToggleCampaignStatus_DegradedNotToggleable(t *testing.T) {
+	// A created_degraded campaign WITH a real upstream id must NOT be toggled: toggling
+	// would activate an incomplete campaign and overwrite the reconciliation marker. It is
+	// a 409, the platform is never called, and the row is untouched.
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreatedDegraded, Version: 1,
+	}
+	tog := &stubToggler{}
+	s, camps := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a 409 ConflictError for a degraded campaign, got %T: %v", err, err)
+	}
+	if tog.gotID != "" {
+		t.Error("the platform must NOT be called for a non-toggleable (degraded) campaign")
+	}
+	if camps.replaced != nil {
+		t.Error("the row (and its degraded reconciliation marker) must NOT be overwritten")
+	}
+}
+
+func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing.T) {
+	// A pending ambiguous orphan can carry a non-empty upstream id (campaign POST succeeded,
+	// a later step failed). The toggle must reject it (409), not activate the incomplete
+	// campaign — the empty-id check alone would miss this.
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusPending, Version: 1,
+	}
+	tog := &stubToggler{}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunActive,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a 409 for a pending campaign with an id, got %T: %v", err, err)
+	}
+	if tog.gotID != "" {
+		t.Error("the platform must NOT be called for a pending campaign")
 	}
 }

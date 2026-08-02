@@ -23,6 +23,41 @@ about itself. Ordinary patterns remain target-only; that gap is documented in th
 concept as a deferred, unsolved follow-up rather than presented as handled.
 `local-agents/` is now git-ignored.
 
+## 2026-07-29
+
+**Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
+blocked every open PR (#41, #46, #47, #50, #51 all showed the identical failure).
+Every other check passed; the sole blocking linter was `secretlint`, with five
+false positives in test code: a userinfo URL in `internal/dispatch/creds_test.go`
+asserting the snapshot sanitizer fails closed, two PEM blocks in
+`internal/platform/snowflake/client_test.go` asserting garbage/malformed PKCS8
+bodies error out (real EC keys there are generated at runtime via
+`ecdsa.GenerateKey`), and two userinfo URLs in
+`internal/platform/twitter/client_test.go` asserting they are stripped and
+rejected. Each flagged literal is the *subject* of its assertion, so it cannot be
+removed or obfuscated. Suppressed them with per-line
+`// secretlint-disable-line -- <reason>` directives, matching the existing
+convention in `internal/infrastructure/config/config_test.go`, and updated the
+`megalinter-secrets.md` concept with a Secretlint section. A `.secretlintignore`
+path exclusion was deliberately rejected: unlike the `*_test.go` allowlist in
+`.gitleaks.toml`, it would silence every rule for all current and future test
+files, letting a real credential in a new test bypass both scanners. Also noted
+that `REPOSITORY_SECRETLINT_FILTER_REGEX_EXCLUDE` is inert here because secretlint
+runs in MegaLinter's `project` CLI lint mode.
+**Update** — Added the HubSpot (email channel) PlatformDispatcher (LFXV2-2777, Capability C —
+staging). `registerDispatchers` now wires `model.ProviderHubSpot` →
+`dispatch.NewHubSpotDispatcher`, which — unlike the ad adapters — STAGES a marketing email
+rather than creating a campaign: it resolves the HubSpot connection, fetches the brief's BUILT
+audience from `campaign_audiences` (via a new narrow `audienceReader`, refusing when the newest
+hubspot audience is not `built`), CLONES the caller's template (`hubspotConfig.sourceEmailId`) as
+a DRAFT, and sets the clone's send list to the audience's `PlatformMasterListID` +
+`SuppressionListIDs`. The cloned email id is the campaign's `PlatformCampaignID`. Claim contract:
+UNCONFIRMED clone → name-only partial (claim retained); post-clone send-list failure → partial
+(email exists); definite pre-clone failure → claim released. `registerDispatchers` gained an
+`*postgres.AudienceRepo` arg (both container call sites updated); the container test's
+registered-provider set now includes hubspot. AI body content (LFXV2-2775) and audience building
+(LFXV2-2774) remain separate stories.
+
 ## 2026-07-24
 
 **Update** — Review-hardened the Microsoft campaign contract (PR #44, copilot):
@@ -62,6 +97,98 @@ create) stays UNCONFIRMED — classification reordered so createOutcomeAmbiguous
 a ctx check runs before the ad step so a done context doesn't fire ad HTTP work. (6) Doc fixes:
 `CampaignResult.AdID`/`AlreadyExisted` and `CampaignInput.Headlines/Descriptions` comments
 corrected (RSA, all-three-level AlreadyExisted, width-aware limits).
+**Update** — Registered the Google Ads PlatformDispatcher (LFXV2-2643, PR #41).
+**Update** — Registered the Google Ads PlatformDispatcher (LFXV2-2636, PR #41).
+`registerDispatchers` now wires `model.ProviderGoogleAds` →
+`dispatch.NewGoogleAdsDispatcher`, so Google Ads campaigns dispatch upstream instead of
+recording "no dispatcher registered". The adapter resolves the OAuth2-app + developer-token
+connection (clientId/secret/refreshToken/developerToken, plus AccountID = customer id and
+an optional `login_customer_id` MCC from ProviderConfig), maps the brief + `googleAdsConfig`
+(`budget` in ACCOUNT currency, no FX) onto the client's `CreateCampaign`, and maps the
+result back to a `model.Campaign` (persisting budget/type/config via `applyCampaignConfig`).
+Uses `NameSuffix = brief.ID` for deterministic, at-most-once-retry budget/campaign names.
+Release decision keys on `result == nil` alone so an ambiguous/duplicate-name create (a
+non-nil name-only result) retains the claim; the possibly-orphaned budget is reconcilable by
+`CampaignBudgetName` PRE-attachment, but by `CampaignBudgetID` once the campaign attaches (a
+non-shared budget's name then synchronizes to the campaign name) — the partial carries both.
+
+## 2026-07-23 (6)
+
+
+**Update** — LinkedIn status toggle now CASCADES to creatives (LFXV2-2807, PR #47).
+CreateCampaign leaves the campaign PAUSED and its creatives DRAFT, so activating only the
+campaign would not serve (a DRAFT creative never serves; a creative's effective status is
+gated by its campaign). `linkedin.UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the
+campaign status, DISCOVERS the creatives via the creatives FINDER
+(`GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})`,
+X-RestLi-Method: FINDER — LinkedIn persists only a creative count, not ids), and
+PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE a definite 400 on an in-review
+creative is tolerated (LinkedIn forbids pausing an in-review creative). Verified the finder +
+intendedStatus contracts on learn.microsoft.com.
+
+## 2026-07-23 (5)
+
+
+**Update** — Meta status toggle now CASCADES like Reddit (LFXV2-2807, PR #47 review). Meta's
+CreateCampaign PAUSES the campaign, ad set, AND ads, so toggling only the campaign to ACTIVE
+would not serve. Added `meta.UpdateCampaignAndChildrenStatus`: POST status to the campaign,
+the persisted ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta stores the ad
+set id in CampaignResult but not the individual ad ids). Activate-without-ad-set-id is refused
+before any call; a child failure after the campaign POST is a `partialCascadeError`
+(Unconfirmed → 503-verify). `MetaDispatcher.ToggleStatus` reads the ad set id from the persisted
+`*model.Campaign`. (LinkedIn was single-node at this point; a later entry above adds its
+creative cascade, so all three platforms now cascade.)
+
+## 2026-07-23 (4)
+
+**Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
+CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
+would activate a campaign whose children stayed PAUSED — it would not serve. Added
+`reddit.UpdateCampaignAndChildrenStatus` (status-dependent fail-closed ordering: ACTIVATE
+lifts children first then the campaign gate last, PAUSE flips the campaign gate first then the
+children; skipping empty child ids) alongside the retained single-entity `UpdateCampaignStatus`. The
+`StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
+the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
+(`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
+
+## 2026-07-23 (3)
+
+
+**Update** — Campaign status toggle extended to LinkedIn (LFXV2-2807, on PR #47 with Meta).
+`linkedin.UpdateCampaignStatus` uses LinkedIn's RestLi PARTIAL_UPDATE (POST
+/adAccounts/{acct}/adCampaigns/{id}, header X-Restli-Method: PARTIAL_UPDATE, body
+{"patch":{"$set":{"status": ACTIVE|PAUSED}}}) — VERIFIED against Microsoft Learn LinkedIn
+Marketing API docs. `doRequest` gained an optional per-call headers map to carry the
+X-Restli-Method header (5 existing call sites updated to pass nil). `linkedin.IsOutcomeUnconfirmed`
++ `LinkedInDispatcher.ToggleStatus`. Reddit, Meta, and LinkedIn now implement StatusToggler;
+X/Twitter + GoogleAds follow once their dispatchers land on main (#39/#41). Tests are race-safe
+(channel capture, per the #47 review).
+
+## 2026-07-23 (2)
+
+
+**Update** — Campaign status toggle extended to Meta (LFXV2-2807, follow-up to the Reddit
+toggle #46). `meta.UpdateCampaignStatus` (POST /{campaignID} {"status": ACTIVE|PAUSED} — Meta
+updates a node by POSTing to its id) + `meta.IsOutcomeUnconfirmed` (exposes the shared
+ambiguity classifier) + `MetaDispatcher.ToggleStatus` (resolves creds, wraps an UNCONFIRMED
+outcome in unconfirmedToggleError). Reddit + Meta now implement StatusToggler. X/Twitter's
+toggle is deferred until the TwitterDispatcher lands on main (it's in the unmerged #39) —
+tracked in LFXV2-2807.
+
+## 2026-07-23
+
+**Update** — Campaign status toggle (LFXV2-2806, PR #46). New
+`PATCH /projects/{p}/briefs/{b}/campaigns/{id}/status` {active|paused} that pauses/resumes a
+campaign ON THE AD PLATFORM then persists (previously `update-campaign` only wrote the DB row,
+so a "paused" status didn't actually pause the campaign). Reddit first. Adds
+`reddit.UpdateCampaignStatus` (PATCH `configured_status`), an optional `StatusToggler`
+dispatcher interface + `RedditDispatcher.ToggleStatus` (via a shared `resolveRedditClient`),
+`Orchestrator.ToggleCampaignStatus` (type-asserts the toggler), and
+`BriefService.ToggleCampaignStatus` (platform-first, DB-after-confirm on a WithoutCancel
+context, If-Match guarded, classified errors: 409 not-provisioned / 400 unsupported / 503
+platform-failure). `model.CampaignRunActive/Paused` constants. Meta + X/Twitter toggles are a
+follow-up. Review-hardened per dealako-sim + cursor + copilot (error classification, cancel
+safety, `?`/`#` path-guard, dedup).
 
 ## 2026-07-22
 
@@ -161,7 +288,6 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
-
 ## 2026-07-21
 
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review
