@@ -95,6 +95,10 @@ empty is a host failure, never "no findings". Either way the **whole cycle** is
 incomplete — successful siblings do not rescue it, and the remedy is to rerun the
 complete trio on the same harness.
 
+That rerun is bounded: the Claude fallback reruns the trio **once**, and if the
+rerun also fails it reports the role-labelled failure and stops. A host failure
+never becomes a reviewer `INCOMPLETE` — the two stay separate states.
+
 ## Boundaries
 
 The developer's own session fixes what the reviewers find, landing fixes as separate

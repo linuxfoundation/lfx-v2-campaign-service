@@ -1,5 +1,14 @@
 # Log
 
+## 2026-08-02
+
+**Update** — Bounded the Claude fallback's rerun in
+[Local pre-PR review](architecture/local-pre-pr-review.md) (PR #56 review,
+LFXV2-2905). On a role-level host failure the trio is rerun **once**; if the rerun
+also fails, the role-labelled failure is reported and the launcher stops. The
+reviewer-authored `INCOMPLETE — <reason>` result and a host-side fallback failure
+remain separate states — the bound does not merge them.
+
 ## 2026-07-31
 
 **Fix** — Corrected two overstatements in
