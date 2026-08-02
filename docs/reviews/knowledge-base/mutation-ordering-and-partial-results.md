@@ -115,8 +115,8 @@ so the next retry creates a *second* paid campaign and reports success.
 - Six files, six merged PRs.
 
 **Status on main:** the contract is written into the code —
-`internal/platform/meta/client.go:1462` and
-`internal/platform/reddit/client.go:996` both open with `PARTIAL-RESULT
+`internal/platform/meta/client.go:1761` and
+`internal/platform/reddit/client.go:1014` both open with `PARTIAL-RESULT
 CONTRACT:`, and `internal/platform/googleads/campaign.go:424,480` implement the
 two-stage `campaignNamePartial` / `budgetPartial` closures. The knowledge bundle
 states the orchestrator half at
@@ -129,12 +129,12 @@ states the orchestrator half at
 
 **Two different predicates, and neither replaced the other.** Assert the
 *reuse/skip* half against the named `isReusableCampaign`
-(`internal/service/orchestrator.go:86`, used at `:537` and `:581`) — that is the
+(`internal/service/orchestrator.go:88`, used at `:577` and `:621`) — that is the
 question "may I skip creating this again?".
 
 The *orphan-persistence* half is a different question — "is there a reconcilable
 artifact worth recording or reporting?" — and it is asked inline, on purpose, at
-`internal/service/orchestrator.go:602` (retained orphan found on retry) and `:676`
+`internal/service/orchestrator.go:642` (retained orphan found on retry) and `:716`
 (persist-on-error). Both read
 `PlatformCampaignID != "" || len(Result) > 0`. These are **current, not
 historical**: `isReusableCampaign` would be wrong here because it also requires a

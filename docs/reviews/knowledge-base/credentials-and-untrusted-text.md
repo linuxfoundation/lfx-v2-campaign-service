@@ -5,8 +5,8 @@ stay in memory**. They reach two persisted, unencrypted, API-reachable sinks —
 by **different paths, carrying different things**:
 
 - **`Steps`** — the per-variant failure narrative, persisted inside the campaign's
-  `Result` blob (`internal/platform/meta/client.go:1451`,
-  `internal/dispatch/meta.go:172-184`). This is where a *propagated error string*
+  `Result` blob (`internal/platform/meta/client.go:1750`,
+  `internal/dispatch/meta.go:271-282`). This is where a *propagated error string*
   lands.
 - **`config_snapshot`** — written by `applyCampaignConfig`
   (`internal/dispatch/creds.go:51`) from the **validated per-platform config**, not
@@ -76,7 +76,7 @@ renders a static, DSN-free message and keeps the cause only for `Unwrap`.
 |---|---|
 | `safeTransportCause` (`internal/platform/twitter/client.go:549`) | **redacts by peeling** — unwraps every `*url.Error` layer, then renders the inner cause, which carries no URL |
 | `safeCause` (`internal/platform/hubspot/client.go:360`, `internal/platform/microsoft/client.go:362`) | **redacts by allow-list** — maps to a fixed vocabulary (`context canceled`, `context deadline exceeded`, `timeout`, `connection closed`) and collapses everything else to `transport failure`. It **never renders unknown error text at all** |
-| `truncateErr` / `truncate` (`internal/platform/meta/client.go:1353,1364`) | **length only** — clamps to a rune count without splitting a rune. Strips nothing |
+| `truncateErr` / `truncate` (`internal/platform/meta/client.go:1652,1663`) | **length only** — clamps to a rune count without splitting a rune. Strips nothing |
 
 **The two mechanisms fail differently, which is why the distinction matters.**
 Peeling fails by depth — an inner error the peel loop stops short of can still embed
@@ -102,7 +102,7 @@ with parsed `Message`/`Type`/`Code`/`FBTraceID` fields deliberately — parsed
 vendor fields are not the raw body.
 
 **But `Message` is only parsed vendor data in one of its two branches.**
-`internal/platform/meta/client.go:887-890` assigns `env.Error.Message` when
+`internal/platform/meta/client.go:1184-1189` assigns `env.Error.Message` when
 `env.Error != nil && env.Error.Message != ""`; otherwise — a non-Graph or
 malformed error body — it falls back to `truncate(strings.TrimSpace(string(raw)),
 300)`, which is the **raw HTTP response body**, shortened and unparsed. The
@@ -144,10 +144,10 @@ fallback that echoes the input instead of failing closed.
 
 **Status on main:** the redactors exist and are named — `sanitizeSnapshotURL`
 (`internal/dispatch/creds.go:89`, fail-closed on `@`), `redactURL`
-(`internal/platform/meta/client.go:1328`,
-`internal/platform/reddit/client.go:1978`), `redactURLForError`
+(`internal/platform/meta/client.go:1627`,
+`internal/platform/reddit/client.go:2145`), `redactURLForError`
 (`internal/platform/twitter/client.go:1068`) and `sanitizePath`
-(`internal/platform/reddit/client.go:962`). `config_snapshot` is stored
+(`internal/platform/reddit/client.go:980`). `config_snapshot` is stored
 unencrypted (`internal/domain/model/campaign.go` `ConfigSnapshot`), which is why
 `applyCampaignConfig` scrubs before storing.
 
