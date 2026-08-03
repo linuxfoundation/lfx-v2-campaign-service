@@ -87,6 +87,14 @@ func briefDoc(b *briefs.Brief) indexer.BriefDoc {
 		URL:         derefStr(b.URL),
 		Status:      b.Status,
 		Version:     b.Version,
+
+		// The revisable content: without it a copy-only edit indexes a new version showing
+		// nothing changed, so revision history cannot answer "what was revised?".
+		Platforms:    b.Platforms,
+		EventDetails: b.EventDetails,
+		Copy:         b.Copy,
+		Keywords:     b.Keywords,
+		Targeting:    b.Targeting,
 	}
 }
 

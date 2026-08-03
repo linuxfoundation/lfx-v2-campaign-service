@@ -1142,3 +1142,38 @@ func TestIndexedDocsUseSnakeCase(t *testing.T) {
 		t.Errorf("nil optionals must be omitted, not emitted as null\ngot: %s", raw)
 	}
 }
+
+// TestBriefDoc_CarriesRevisableContent pins that the indexed projection includes the fields an
+// edit actually changes. The Query Service serves revision history from these documents, so a
+// projection limited to identity fields would make a copy-only revision indistinguishable from
+// a no-op: the version increments and nothing visible differs.
+func TestBriefDoc_CarriesRevisableContent(t *testing.T) {
+	doc := briefDoc(&briefs.Brief{
+		ID: "b1", ProjectID: "cncf", ProgramType: "events", EventSlug: "kubecon",
+		Status: "approved", Version: 2,
+		Platforms:    []string{"hubspot"},
+		EventDetails: map[string]any{"eventName": "KubeCon"},
+		Copy:         map[string]any{"headline": "Join us"},
+		Keywords:     []any{"cloud"},
+		Targeting:    map[string]any{"geo": "KR"},
+	})
+
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{"platforms", "event_details", "copy", "keywords", "targeting"} {
+		if !strings.Contains(string(raw), `"`+want+`"`) {
+			t.Errorf("indexed brief is missing %q — revision history would show a new version with nothing changed\ngot: %s", want, raw)
+		}
+	}
+	if !strings.Contains(string(raw), "Join us") {
+		t.Errorf("the revised copy must reach the index\ngot: %s", raw)
+	}
+
+	// Absent optionals stay out of the document rather than appearing as null.
+	raw, _ = json.Marshal(briefDoc(&briefs.Brief{ID: "b2"}))
+	if strings.Contains(string(raw), "null") {
+		t.Errorf("absent optionals must be omitted, not null\ngot: %s", raw)
+	}
+}

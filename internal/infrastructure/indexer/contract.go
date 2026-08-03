@@ -149,6 +149,11 @@ func NewTransaction(action, objectType, objectID, projectID, authorization strin
 // the Query Service, and it should change only when someone edits it here.
 
 // BriefDoc is the indexed representation of a brief.
+// BriefDoc carries the brief's REVISABLE content, not just its identity. The Query Service
+// serves revision history from these documents, so omitting the fields an edit actually changes
+// (platforms, event_details, copy, keywords, targeting) would produce history entries that
+// increment a version while showing nothing different — a copy-only revision would be
+// indistinguishable from a no-op.
 type BriefDoc struct {
 	ID          string `json:"id"`
 	ProjectID   string `json:"project_id"`
@@ -157,6 +162,12 @@ type BriefDoc struct {
 	URL         string `json:"url,omitempty"`
 	Status      string `json:"status"`
 	Version     int64  `json:"version"`
+
+	Platforms    []string `json:"platforms,omitempty"`
+	EventDetails any      `json:"event_details,omitempty"`
+	Copy         any      `json:"copy,omitempty"`
+	Keywords     any      `json:"keywords,omitempty"`
+	Targeting    any      `json:"targeting,omitempty"`
 }
 
 // CampaignDoc is the indexed representation of a campaign.
