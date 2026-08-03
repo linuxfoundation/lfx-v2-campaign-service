@@ -38,9 +38,10 @@ ids (numeric); geo URNs; and the aliased `cloud-native` profile must exist for
 (rather than treating them as "not found") to reduce duplicates, but it is
 best-effort and NOT atomic across calls: `CreateCampaign` re-POSTs every dark
 post and creative on a repeat call, so this package does not itself guarantee
-cross-call idempotency. True single-flight/idempotency is a planned caller-side
-responsibility (the orchestrator's per-(brief, platform) claim), tracked
-separately and not provided here. A 429 (idempotent methods only) is retried
+cross-call idempotency. Single-flight IS provided caller-side by the orchestrator's
+per-(brief, platform) claim — a DB-enforced lease that is reclaimed if its holder
+crashes (see internal-dispatch.md) — but this package guarantees nothing itself.
+Provider-level idempotency KEYS remain unimplemented (LFXV2-2665). A 429 (idempotent methods only) is retried
 with bounded backoff.
 
 ## Campaign status toggle

@@ -26,6 +26,20 @@ type CampaignRepo struct {
 // (possibly-cancelled) request context.
 const claimRollbackTimeout = 5 * time.Second
 
+// claimLeaseTTL is how long a 'pending' dispatch claim stays valid before another
+// dispatcher may RECLAIM it. The claim is a lease, not a permanent lock: a pod that
+// crashes (or is evicted mid-rollout) between claiming and releasing would otherwise
+// leave a 'pending' row that blocks EVERY future dispatch for that (brief, platform)
+// forever, recoverable only by manual SQL.
+//
+// The value is derived, not guessed. A dispatch's provider call is hard-bounded by the
+// orchestrator's providerCallTimeout (2m), so a LIVE claim can never outlive that plus
+// its bounded release. Doubling it leaves a wide margin for clock skew between replicas
+// and for a slow release, while still self-healing within minutes rather than hours.
+// Keep this comfortably ABOVE service.providerCallTimeout if that value ever changes —
+// TestClaimLeaseTTLExceedsProviderCallTimeout guards the relationship.
+const claimLeaseTTL = 4 * time.Minute
+
 // NewCampaignRepo returns a CampaignRepo backed by pool.
 func NewCampaignRepo(pool *Pool) *CampaignRepo { return &CampaignRepo{db: pool} }
 
@@ -34,15 +48,44 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
 // by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
 // unique index makes the claim single-winner across all replicas without holding
-// a connection or a blocking lock: INSERT ... ON CONFLICT DO NOTHING inserts a
-// row (claimed) or does nothing (already claimed/completed). No RETURNING is used
-// because ON CONFLICT DO NOTHING returns no row on conflict, so we detect the
-// winner via RowsAffected and then read the current row to return it.
+// a connection or a blocking lock.
+//
+// The claim is a LEASE, not a permanent lock. INSERT ... ON CONFLICT DO UPDATE either
+// inserts a fresh claim, RECLAIMS an existing 'pending' claim whose lease has expired
+// (claimLeaseTTL — its holder crashed or was evicted before releasing), or affects no row
+// when the pair is already validly claimed or has a real campaign. Without the reclaim a
+// crashed dispatcher would block that (brief, platform) FOREVER, since nothing else deletes
+// a stranded pending row.
+//
+// RowsAffected()==1 therefore means "this caller now owns the claim", covering both the
+// fresh-insert and reclaim cases; 0 means someone else holds a live claim or the campaign
+// already exists. No RETURNING is used because the conflicting row is not returned when the
+// WHERE excludes it, so we detect the winner via RowsAffected and then read the current row.
 func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
+	// The claim is a LEASE. On conflict we do not simply give up: if the existing row is a
+	// 'pending' claim whose lease has EXPIRED, its holder is gone (a crash or eviction
+	// between claiming and releasing), so we take it over.
+	//
+	// Reclaim and insert are ONE statement deliberately. A read-then-delete-then-insert
+	// would let two replicas both observe the same expired lease and both believe they won.
+	// ON CONFLICT ... DO UPDATE is evaluated under the unique index's row lock, so exactly
+	// one concurrent claimer can satisfy the WHERE and the losers see RowsAffected()==0.
+	//
+	// The WHERE is narrow on purpose:
+	//   status = 'pending'  — never touch a real campaign (created/active/paused/degraded).
+	//                          Only a placeholder claim is reclaimable.
+	//   created_at < now() - lease — never touch a claim that may still be in flight.
+	//
+	// job_id is overwritten so the reclaimed row is attributed to the job that now owns it,
+	// and created_at is reset so the new holder gets a full lease rather than inheriting an
+	// already-expired one.
 	q := `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
 		VALUES ($1, $2, $3, $4, '', 'pending')
-		ON CONFLICT (brief_id, platform) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, projectID, briefID, jobID, string(platform))
+		ON CONFLICT (brief_id, platform) DO UPDATE
+		SET job_id = EXCLUDED.job_id, created_at = now(), updated_at = now()
+		WHERE campaigns.status = 'pending'
+		  AND campaigns.created_at < now() - $5::interval`
+	tag, err := r.db.Exec(ctx, q, projectID, briefID, jobID, string(platform), claimLeaseTTL.String())
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}

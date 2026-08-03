@@ -47,6 +47,23 @@ imports) and outside each `platform/*` package (avoiding an import cycle).
 
 ## The claim contract (release vs retain)
 
+The claim is a **LEASE, not a permanent lock** (`claimLeaseTTL`, 4m). `ClaimCampaignDispatch`
+is `INSERT ... ON CONFLICT DO UPDATE`, so a conflicting row that is still `pending` and whose
+lease has EXPIRED is RECLAIMED by the next dispatcher. Without that, a pod crashing or being
+evicted between claiming and releasing would strand a `pending` row that blocks every future
+dispatch for that pair forever — nothing else deletes one, so recovery meant manual SQL.
+
+Reclaim and insert are deliberately ONE statement: a read-then-delete-then-insert would let
+two replicas both observe the same expired lease and both believe they won. `ON CONFLICT ...
+DO UPDATE` is evaluated under the unique index's row lock, so exactly one concurrent claimer
+satisfies the `WHERE` and the losers see `RowsAffected()==0`.
+
+The `WHERE` is narrow by design — `status = 'pending'` (never touch a real campaign) AND
+`created_at < now() - lease` (never touch a possibly-live claim). The TTL is DERIVED, not
+guessed: a provider call is hard-bounded by `providerCallTimeout` (2m), so a live claim cannot
+outlive that; 2x leaves margin for the bounded release and replica clock skew.
+`TestClaimLeaseTTLExceedsProviderCallTimeout` fails if that relationship is ever broken.
+
 The orchestrator single-flight-claims a `(brief, platform)` pair before dispatch and
 decides, from the returned error, whether to RELEASE the claim (retry-safe) or RETAIN
 it (a blind retry could double-create). Adapters drive that decision:

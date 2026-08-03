@@ -1,5 +1,30 @@
 # Log
 
+## 2026-08-03
+
+**Update** — Dispatch claims are now LEASES that self-heal (LFXV2-2665, partial). A pod that
+crashed or was evicted between `ClaimCampaignDispatch` and `releaseClaim` stranded a `pending`
+campaigns row, and because the claim is `ON CONFLICT (brief_id, platform)`, that row blocked
+EVERY future dispatch for the pair permanently — nothing reaps pending rows, so recovery was
+manual SQL. The repo's own comment flagged the blast radius as "total for the pair".
+
+`ClaimCampaignDispatch` is now `INSERT ... ON CONFLICT DO UPDATE`, reclaiming a conflicting row
+only when it is still `pending` AND older than `claimLeaseTTL` (4m). Reclaim and insert are one
+statement on purpose: a read-then-delete-then-insert would let two replicas both observe the
+same expired lease and both believe they won. `ON CONFLICT ... DO UPDATE` evaluates under the
+unique index's row lock, so exactly one concurrent claimer satisfies the WHERE.
+
+The TTL is DERIVED, not guessed: a provider call is hard-bounded by `providerCallTimeout` (2m),
+so a live claim cannot outlive it; 2x absorbs the bounded release and replica clock skew.
+`TestClaimLeaseTTLExceedsProviderCallTimeout` fails if that relationship is ever broken —
+shortening the lease below the call bound would let a LIVE dispatch have its claim stolen and
+duplicate the campaign upstream, the exact failure the claim exists to prevent.
+
+No migration: `created_at` and the unique index already existed. Scope note — this closes the
+single-flight/stuck-claim half of LFXV2-2665. Provider idempotency KEYS and authoritative
+reconcile remain open; the linkedin concept, which described single-flight as merely "planned",
+is corrected to say so.
+
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
