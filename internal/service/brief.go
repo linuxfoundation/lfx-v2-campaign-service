@@ -280,7 +280,24 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	if err != nil {
 		return err
 	}
-	return mapBriefErr(briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID))
+	// Read BEFORE archiving: GetBrief filters out archived rows, so re-reading after
+	// the write would return ErrNotFound and leave nothing to publish. A read failure
+	// must not block the archive — the write is the contract, indexing is best-effort —
+	// so the brief is captured opportunistically and only published if it was found.
+	b, readErr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
+	if err := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID); err != nil {
+		return mapBriefErr(err)
+	}
+	// Archiving is a soft delete that every OTHER write path publishes; without this the
+	// archived brief keeps its stale pre-archive _source and goes on matching searches
+	// forever. Republish it carrying the archived status so consumers can filter it,
+	// mirroring the version bump ArchiveBrief performs.
+	if readErr == nil && b != nil {
+		b.Status = model.BriefArchived
+		b.Version++
+		s.publishIndex(ctx, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefResult(b))
+	}
+	return nil
 }
 
 // ─── Campaigns ───

@@ -975,3 +975,59 @@ func TestBriefService_DefaultsToNoopIndexer(t *testing.T) {
 		t.Fatalf("a service with no indexer configured must still write: %v", err)
 	}
 }
+
+// capturingIndexer records the published bodies so a test can assert WHAT was indexed,
+// not merely that something was.
+type capturingIndexer struct{ bodies []indexer.Body }
+
+func (c *capturingIndexer) Publish(_ context.Context, b indexer.Body) {
+	c.bodies = append(c.bodies, b)
+}
+func (c *capturingIndexer) Close() {}
+
+// TestDeleteBrief_PublishesArchivedState pins the archive path against leaving a stale
+// search document. Archiving is a SOFT delete that every other write path publishes; if
+// it doesn't republish, the brief keeps its pre-archive _source and goes on matching
+// searches forever. The published document must carry the ARCHIVED status (not the
+// pre-archive one), otherwise consumers have no way to filter it out.
+func TestDeleteBrief_PublishesArchivedState(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	// Attach the capturing indexer AFTER the create so only the archive is observed.
+	idx := &capturingIndexer{}
+	s.SetIndexer(idx)
+
+	if err := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); err != nil {
+		t.Fatalf("DeleteBrief: %v", err)
+	}
+
+	if len(idx.bodies) != 1 {
+		t.Fatalf("archiving must publish exactly one index update, got %d (a stale search document survives)", len(idx.bodies))
+	}
+	got := idx.bodies[0]
+	if got.ObjectType != indexer.ObjectTypeBrief {
+		t.Errorf("object_type = %q, want %q", got.ObjectType, indexer.ObjectTypeBrief)
+	}
+	if got.ObjectID != created.ID {
+		t.Errorf("object_id = %q, want %q", got.ObjectID, created.ID)
+	}
+	b, ok := got.Data.(*briefs.Brief)
+	if !ok {
+		t.Fatalf("published data = %T, want *briefs.Brief", got.Data)
+	}
+	if b.Status != string(model.BriefArchived) {
+		t.Errorf("published status = %q, want %q — an archived brief indexed with its old status stays searchable", b.Status, model.BriefArchived)
+	}
+}

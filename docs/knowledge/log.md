@@ -58,6 +58,14 @@ every projection). Caveat kept deliberately: the subscribing indexer service is 
 checkout, so this argues from absence — if that repo is produced, re-verify before trusting the
 flat shape.
 
+**Update** — Archiving now republishes (LFXV2-2814, PR #60 review). `DeleteBrief` soft-archives
+the row and previously published nothing, so an archived brief kept its stale pre-archive
+`_source` and went on matching searches indefinitely — every OTHER write path publishes. The
+brief is read BEFORE the archive (`GetBrief` filters archived rows, so reading after would
+return `ErrNotFound` and leave nothing to publish), then republished carrying the archived
+status and the version bump. A read failure does not block the archive: the write is the
+contract, indexing is best-effort.
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
