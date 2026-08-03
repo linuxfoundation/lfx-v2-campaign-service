@@ -293,9 +293,15 @@ func TestMicrosoft_WhitespaceCredentialsNeverReachTheAPI(t *testing.T) {
 		"refresh token":   `{"ClientID":"cid","ClientSecret":"csec","DeveloperToken":"dev","RefreshToken":"\n"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			var reached bool
+			// Mutex-guarded: the handler goroutine writes this and the test goroutine reads
+			// it, and httptest.Server.Close only synchronizes at the deferred Close — which
+			// runs AFTER the assertion below.
+			var mu sync.Mutex
+			reached := false
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
 				reached = true
+				mu.Unlock()
 				w.WriteHeader(http.StatusOK)
 				_, _ = io.WriteString(w, `{}`)
 			}))
@@ -313,7 +319,10 @@ func TestMicrosoft_WhitespaceCredentialsNeverReachTheAPI(t *testing.T) {
 			if err == nil {
 				t.Fatal("a whitespace-only credential must be rejected")
 			}
-			if reached {
+			mu.Lock()
+			sawRequest := reached
+			mu.Unlock()
+			if sawRequest {
 				t.Error("no upstream request may be made — the credential is rejected locally")
 			}
 			if camp != nil {
