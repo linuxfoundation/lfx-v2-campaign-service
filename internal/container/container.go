@@ -25,6 +25,12 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
+// sweeperStopTimeout bounds how long Close waits for the stuck-claim sweeper to exit after
+// cancellation. Deliberately SMALL: the sweeper is a diagnostic, and this wait precedes the
+// dispatch drain, so any time spent here is taken from the budget that protects in-flight
+// campaign creation. Exceeding it abandons the goroutine rather than delaying shutdown.
+const sweeperStopTimeout = 250 * time.Millisecond
+
 // startupDBTimeout bounds ONE database migration+pool-open attempt. It is a var
 // (not a const) only so tests can shrink it; production never changes it.
 var startupDBTimeout = 15 * time.Second
@@ -680,11 +686,21 @@ func (c *Container) Close(ctx context.Context) error {
 	// above: on the cold-start path the retry goroutine is what assigns cancelSweep, so
 	// reading it earlier would be an unsynchronized read that could also miss a sweeper
 	// started moments later. Waiting first means the assignment happens-before this read.
-	// The sweeper still stops well before the pool closes below, and its own scans are
-	// bounded by stuckClaimScanTimeout.
+	//
+	// The wait is BOUNDED rather than unconditional. Cancelling sweeperCtx interrupts a
+	// scan, but "interrupted" is not "returned": a driver already inside a statement can
+	// take until stuckClaimScanTimeout to unwind, and this wait sits BEFORE the dispatch
+	// drain — so an unbounded wait would spend the drain's budget on a diagnostic and
+	// starve the phase that actually matters. On timeout the goroutine is abandoned; it
+	// holds no pool reference beyond its own bounded scan and only logs.
 	if c.cancelSweep != nil {
 		c.cancelSweep()
-		<-c.sweepDone
+		select {
+		case <-c.sweepDone:
+		case <-time.After(sweeperStopTimeout):
+			slog.Warn("stuck-claim sweeper did not stop promptly; continuing shutdown",
+				"timeout", sweeperStopTimeout)
+		}
 	}
 	// Capture the orchestrator shutdown error but do NOT early-return on it: the
 	// pool must still be closed even if the drain timed out with dispatches still

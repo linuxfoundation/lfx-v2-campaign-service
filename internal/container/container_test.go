@@ -510,3 +510,47 @@ func TestStuckClaimRemediation_NeverSaysSafe(t *testing.T) {
 		})
 	}
 }
+
+// wedgedScanner ignores context cancellation until released, modelling a driver already
+// inside a statement that cannot unwind promptly.
+type wedgedScanner struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w *wedgedScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
+	select {
+	case w.entered <- struct{}{}:
+	default:
+	}
+	<-w.release // deliberately ignores ctx
+	return nil, nil
+}
+
+// TestClose_DoesNotWaitForWedgedSweeper pins the bound on the sweeper stop. Cancelling
+// sweeperCtx interrupts a scan but does not guarantee it RETURNS — a driver mid-statement can
+// take until stuckClaimScanTimeout to unwind. That wait sits before the dispatch drain, so an
+// unbounded one would spend the drain's budget on a diagnostic and starve in-flight campaign
+// creation, the phase that actually matters.
+func TestClose_DoesNotWaitForWedgedSweeper(t *testing.T) {
+	orig := stuckClaimSweepInterval
+	stuckClaimSweepInterval = 10 * time.Millisecond
+	t.Cleanup(func() { stuckClaimSweepInterval = orig })
+
+	ws := &wedgedScanner{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	c := &Container{} // nil pool and orch: isolate the sweeper wait
+	c.startStuckClaimSweeper(ws)
+	<-ws.entered // wedged inside a scan
+	t.Cleanup(func() { close(ws.release) })
+
+	start := time.Now()
+	require.NoError(t, c.Close(context.Background()))
+	elapsed := time.Since(start)
+
+	// Generous slack for scheduling, but far below stuckClaimScanTimeout (5s) — the point
+	// is that Close gave up rather than waiting out the wedged scan.
+	if elapsed > time.Second {
+		t.Fatalf("Close took %s waiting for a wedged sweeper (scan timeout is %s): the dispatch drain's budget was spent on a diagnostic",
+			elapsed, stuckClaimScanTimeout)
+	}
+}

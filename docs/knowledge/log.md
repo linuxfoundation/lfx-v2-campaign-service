@@ -2,6 +2,17 @@
 
 ## 2026-08-03
 
+**Update** — Bounded the sweeper stop in `Close` (LFXV2-2665, PR #59 review). Cancelling
+`sweeperCtx` interrupts a scan but does NOT guarantee it returns: a driver already inside a
+statement can take until `stuckClaimScanTimeout` (5s) to unwind, and a scanner that ignores
+cancellation never returns at all. That wait sat BEFORE the dispatch drain, so it spent the
+drain's budget on a diagnostic — starving the phase that protects in-flight campaign creation.
+
+`Close` now waits at most `sweeperStopTimeout` (250ms) and abandons the goroutine on timeout;
+it holds no pool reference beyond its own bounded scan and only logs. The test wedges a scanner
+that ignores cancellation: with the unbounded wait, `Close` deadlocks (the test times out at
+30s) rather than merely running slow.
+
 **Update** — Two follow-ups on the stuck-claim scan (LFXV2-2665, PR #59 review):
 
 - The COLD-START scan ran on `context.Background()`, so a scan blocked in the database could
