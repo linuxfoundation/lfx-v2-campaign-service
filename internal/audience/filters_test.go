@@ -75,12 +75,14 @@ func TestEventRegisteredFilter_NestsNameInsideUnifiedEvents(t *testing.T) {
 	root := decode(t, raw)
 
 	require.Equal(t, "OR", root["filterBranchType"])
-	perEdition := root["filterBranches"].([]any)
-	require.Len(t, perEdition, 1, "one OR branch per past edition")
-
-	countryOr := perEdition[0].(map[string]any)
-	andBranches := countryOr["filterBranches"].([]any)
-	require.Len(t, andBranches, 2)
+	// FLAT: two AND branches per edition (one per country property), spliced directly under the
+	// single OR root. HubSpot rejects nested ORs, so a per-edition OR wrapper is not allowed.
+	andBranches := root["filterBranches"].([]any)
+	require.Len(t, andBranches, 2, "one AND branch per country property, flattened under the OR root")
+	for _, b := range andBranches {
+		assert.Equal(t, "AND", b.(map[string]any)["filterBranchType"],
+			"the OR root's children must all be ANDs — a nested OR is rejected by HubSpot")
+	}
 
 	ue := andBranches[0].(map[string]any)["filterBranches"].([]any)[0].(map[string]any)
 	assert.Equal(t, "UNIFIED_EVENTS", ue["filterBranchType"])
@@ -107,7 +109,8 @@ func TestEventRegisteredFilter_OneBranchPerEdition(t *testing.T) {
 	require.NoError(t, err)
 
 	root := decode(t, raw)
-	assert.Len(t, root["filterBranches"], len(names), "one OR branch per past edition")
+	// Two AND branches per edition (country + ip_country), all flattened under one OR root.
+	assert.Len(t, root["filterBranches"], len(names)*2, "two AND branches per past edition")
 
 	// Every supplied name must appear verbatim.
 	for _, n := range names {
@@ -159,12 +162,83 @@ func TestRegionEventRegistrantsFilter_UsesIsAnyOfForCountries(t *testing.T) {
 	require.NoError(t, err)
 
 	root := decode(t, raw)
-	countryOr := root["filterBranches"].([]any)[0].(map[string]any)
-	f := countryOr["filterBranches"].([]any)[0].(map[string]any)["filters"].([]any)[0].(map[string]any)
+	andBranch := root["filterBranches"].([]any)[0].(map[string]any)
+	f := andBranch["filters"].([]any)[0].(map[string]any)
 	op := f["operation"].(map[string]any)
 	assert.Equal(t, "IS_ANY_OF", op["operator"])
 	assert.Len(t, op["values"], len(countries), "every country in the region must be listed")
 
 	// Sanity: the emitted JSON is a single object, not an array or a bare value.
 	assert.True(t, strings.HasPrefix(string(raw), "{"))
+}
+
+// TestMasterListFilter_IsAUnionNotAnIntersection pins the shape rules the HubSpot client
+// documents (internal/platform/hubspot/lists.go): an OR root with AND children, no nested ORs,
+// and IN_LIST — not LIST_MEMBERSHIP, which HubSpot rejects.
+//
+// Each list needs its OWN AND branch. Sibling membership filters inside ONE AND branch mean
+// "in list A AND in list B" — an INTERSECTION, typically empty and exactly backwards.
+func TestMasterListFilter_IsAUnionNotAnIntersection(t *testing.T) {
+	raw, err := MasterListFilter([]string{"111", "222", "333"})
+	require.NoError(t, err)
+
+	root := decode(t, raw)
+	assert.Equal(t, "OR", root["filterBranchType"])
+
+	branches, ok := root["filterBranches"].([]any)
+	require.True(t, ok)
+	require.Len(t, branches, 3, "one AND branch PER list: sibling filters in one branch would AND them")
+
+	seen := map[string]bool{}
+	for _, b := range branches {
+		br := b.(map[string]any)
+		assert.Equal(t, "AND", br["filterBranchType"], "no nested ORs — HubSpot rejects them")
+		assert.Empty(t, br["filterBranches"], "a membership branch has no sub-branches")
+
+		filters := br["filters"].([]any)
+		require.Len(t, filters, 1, "exactly one membership filter per branch, or they would AND")
+		f := filters[0].(map[string]any)
+		assert.Equal(t, "IN_LIST", f["filterType"],
+			"the client contract requires IN_LIST; LIST_MEMBERSHIP is rejected")
+		seen[f["listId"].(string)] = true
+	}
+	assert.Equal(t, map[string]bool{"111": true, "222": true, "333": true}, seen,
+		"every inclusion list must appear in the union")
+}
+
+// TestFilters_NeverNestORs pins the invariant across every builder. A nested OR is accepted by
+// json.Marshal and rejected by HubSpot, so it fails at the platform rather than in review.
+func TestFilters_NeverNestORs(t *testing.T) {
+	build := map[string]func() (json.RawMessage, error){
+		"group4": func() (json.RawMessage, error) { return EducationEnrolledFilter("South Korea") },
+		"group5": func() (json.RawMessage, error) {
+			return EventRegisteredFilter("South Korea", []string{"E 2024", "E 2025"})
+		},
+		"group7": func() (json.RawMessage, error) {
+			return RegionEventRegistrantsFilter(CountriesIn(RegionAPAC), []string{"E 2024", "E 2025"})
+		},
+		"master": func() (json.RawMessage, error) { return MasterListFilter([]string{"1", "2"}) },
+	}
+	for name, fn := range build {
+		t.Run(name, func(t *testing.T) {
+			raw, err := fn()
+			require.NoError(t, err)
+			root := decode(t, raw)
+			require.Equal(t, "OR", root["filterBranchType"], "the root must be an OR")
+			assertNoNestedOR(t, root["filterBranches"].([]any))
+		})
+	}
+}
+
+// assertNoNestedOR walks a branch list and fails on any OR below the root.
+func assertNoNestedOR(t *testing.T, branches []any) {
+	t.Helper()
+	for _, b := range branches {
+		br := b.(map[string]any)
+		assert.NotEqual(t, "OR", br["filterBranchType"],
+			"a nested OR marshals fine and is then rejected by HubSpot")
+		if sub, ok := br["filterBranches"].([]any); ok {
+			assertNoNestedOR(t, sub)
+		}
+	}
 }

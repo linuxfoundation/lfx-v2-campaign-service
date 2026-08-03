@@ -42,6 +42,21 @@ is indistinguishable from a correct empty audience:
 - **Country filters OR `country` with `ip_country`.** The two disagree often enough that
   filtering on either alone measurably shrinks the audience.
 
+## Filter-shape invariants (HubSpot rejects violations)
+
+The client documents these on `internal/platform/hubspot/lists.go`, and all three were violated
+in the first cut:
+
+- **OR root, AND children, NO nested ORs.** Each past edition contributes its AND branches
+  DIRECTLY to the single OR root — wrapping each edition in its own OR produced OR-of-OR.
+- **`IN_LIST`, not `LIST_MEMBERSHIP`.** The latter is explicitly rejected.
+- **Sibling filters inside one AND branch are ANDed.** So each list in the master needs its OWN
+  branch; putting them side by side built an INTERSECTION (typically empty) rather than a union.
+
+Country values are also canonicalized through `DisplayName` before reaching a filter: the region
+map keys are lowercase for case-insensitive LOOKUP, but `IS_ANY_OF` is an EXACT match, so raw
+keys build a list matching nobody.
+
 ## The master list is a UNION
 
 The email dispatcher sends to `platform_master_list_id` and nothing else, so the master MUST be

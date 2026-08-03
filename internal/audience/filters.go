@@ -84,16 +84,20 @@ func isAnyOf(property string, values []string) filter {
 	}
 }
 
-// countryOrBranch wraps a per-country-property filter pair in the OR-of-two-ANDs shape the
-// runbook uses everywhere: one AND branch filtering on `country`, a sibling on `ip_country`,
-// so a contact qualifies on either. mkFilter receives the property name.
+// countryAndBranches returns the pair of AND branches a country condition needs: one filtering
+// on `country`, one on `ip_country`, so a contact qualifies on either. mkFilter receives the
+// property name.
+//
+// It returns the BRANCHES rather than an OR wrapping them because HubSpot rejects NESTED ORs:
+// callers splice these directly into a single OR root. Returning a ready-made OR meant a caller
+// building several editions produced OR-of-OR, which HubSpot refuses.
 //
 // inner, when non-empty, is placed inside EACH AND branch's filterBranches — this is how the
 // runbook attaches a UNIFIED_EVENTS qualifier (e.g. "has completed an education enrolment")
 // to the country condition. It must be duplicated into both branches, not hoisted: hoisting
 // it would change the tree from "(enrolled AND country) OR (enrolled AND ip_country)" to
 // "enrolled AND (country OR ip_country)", which HubSpot does not accept at this nesting.
-func countryOrBranch(mkFilter func(property string) filter, inner []filterBranch) filterBranch {
+func countryAndBranches(mkFilter func(property string) filter, inner []filterBranch) []filterBranch {
 	branchFor := func(property string) filterBranch {
 		return filterBranch{
 			FilterBranchType: "AND",
@@ -101,11 +105,7 @@ func countryOrBranch(mkFilter func(property string) filter, inner []filterBranch
 			Filters:          []filter{mkFilter(property)},
 		}
 	}
-	return filterBranch{
-		FilterBranchType: "OR",
-		FilterBranches:   []filterBranch{branchFor(propCountry), branchFor(propIPCountry)},
-		Filters:          []filter{},
-	}
+	return []filterBranch{branchFor(propCountry), branchFor(propIPCountry)}
 }
 
 // educationEnrolled is the UNIFIED_EVENTS qualifier for "has completed an education enrolment".
@@ -125,11 +125,14 @@ func EducationEnrolledFilter(country string) (json.RawMessage, error) {
 	if strings.TrimSpace(country) == "" {
 		return nil, fmt.Errorf("audience: education-enrolled filter requires a country")
 	}
-	branch := countryOrBranch(
-		func(property string) filter { return containsValue(property, country) },
-		[]filterBranch{educationEnrolled()},
-	)
-	return json.Marshal(branch)
+	return json.Marshal(filterBranch{
+		FilterBranchType: "OR",
+		FilterBranches: countryAndBranches(
+			func(property string) filter { return containsValue(property, country) },
+			[]filterBranch{educationEnrolled()},
+		),
+		Filters: []filter{},
+	})
 }
 
 // registeredForEvent is the UNIFIED_EVENTS qualifier for "has registered for this exact past
@@ -179,10 +182,11 @@ func EventRegisteredFilter(country string, eventNames []string) (json.RawMessage
 		if strings.TrimSpace(name) == "" {
 			return nil, fmt.Errorf("audience: event-registered filter got a blank event name")
 		}
-		branches = append(branches, countryOrBranch(
+		// FLATTEN into the single OR root — appending a per-edition OR would nest.
+		branches = append(branches, countryAndBranches(
 			func(property string) filter { return containsValue(property, country) },
 			[]filterBranch{registeredForEvent(name)},
-		))
+		)...)
 	}
 	return json.Marshal(filterBranch{
 		FilterBranchType: "OR",
@@ -205,10 +209,10 @@ func RegionEventRegistrantsFilter(countries, eventNames []string) (json.RawMessa
 		if strings.TrimSpace(name) == "" {
 			return nil, fmt.Errorf("audience: region filter got a blank event name")
 		}
-		branches = append(branches, countryOrBranch(
+		branches = append(branches, countryAndBranches(
 			func(property string) filter { return isAnyOf(property, countries) },
 			[]filterBranch{registeredForEvent(name)},
-		))
+		)...)
 	}
 	return json.Marshal(filterBranch{
 		FilterBranchType: "OR",
@@ -217,38 +221,44 @@ func RegionEventRegistrantsFilter(countries, eventNames []string) (json.RawMessa
 	})
 }
 
-// MasterListFilter builds the union of the inclusion lists: a contact qualifies for the master
+// MasterListFilter builds the UNION of the inclusion lists: a contact qualifies for the master
 // if they are in ANY of them.
 //
 // This is what the email dispatcher actually sends to — it reads only
 // `platform_master_list_id`. Without a union, whichever single list was recorded becomes the
 // entire send audience and every other group is created in the portal and never emailed, which
 // looks like a successful build that silently reaches a fraction of the intended people.
+//
+// Shape rules this must obey (documented on the client, `internal/platform/hubspot/lists.go`):
+// the root is an OR, its children are ANDs, there are NO nested ORs, and membership filters use
+// `IN_LIST` — NOT `LIST_MEMBERSHIP`, which HubSpot rejects.
+//
+// Each list therefore gets its OWN AND branch. Putting all the membership filters as siblings
+// inside ONE AND branch would mean "in list A AND in list B" — an INTERSECTION, typically empty
+// and exactly backwards from the intent.
 func MasterListFilter(listIDs []string) (json.RawMessage, error) {
 	if len(listIDs) == 0 {
 		return nil, fmt.Errorf("audience: a master list requires at least one inclusion list")
 	}
-	filters := make([]filter, 0, len(listIDs))
+	branches := make([]filterBranch, 0, len(listIDs))
 	for _, id := range listIDs {
 		if strings.TrimSpace(id) == "" {
 			// A blank id would silently drop one group from the union.
 			return nil, fmt.Errorf("audience: a master list cannot be built from a blank list id")
 		}
-		filters = append(filters, filter{
-			FilterType: "LIST_MEMBERSHIP",
-			ListID:     id,
-			Operation:  operation{Operator: "IN_LIST"},
-		})
-	}
-	// One AND branch holding OR'd membership filters: HubSpot treats sibling filters inside a
-	// branch as OR when the operators are membership tests, matching the runbook's master shape.
-	return json.Marshal(filterBranch{
-		FilterBranchType: "OR",
-		FilterBranches: []filterBranch{{
+		branches = append(branches, filterBranch{
 			FilterBranchType: "AND",
 			FilterBranches:   []filterBranch{},
-			Filters:          filters,
-		}},
-		Filters: []filter{},
+			Filters: []filter{{
+				FilterType: "IN_LIST",
+				ListID:     id,
+				Operation:  operation{Operator: "IN_LIST", OperationType: "MULTISTRING"},
+			}},
+		})
+	}
+	return json.Marshal(filterBranch{
+		FilterBranchType: "OR",
+		FilterBranches:   branches,
+		Filters:          []filter{},
 	})
 }

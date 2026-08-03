@@ -99,6 +99,12 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 		return nil, fmt.Errorf("audience: cannot plan an audience without the event name")
 	}
 
+	// Canonicalize to the form HubSpot stores BEFORE building any filter. Aliases were
+	// previously resolved only for region lookup, so a brief saying "USA" produced
+	// country-scoped lists filtering on the literal "USA" — which matches nobody in HubSpot,
+	// silently, while group 7 still widened correctly via the mapped region.
+	country = DisplayName(country)
+
 	p := &Plan{Country: country, EventName: eventName}
 
 	// Group 4 — always available: it needs only the country.

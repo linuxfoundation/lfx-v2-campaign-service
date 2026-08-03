@@ -70,13 +70,18 @@ func TestRegionFor_UnknownCountryFailsClosed(t *testing.T) {
 func TestCountriesIn_IsStableAndScoped(t *testing.T) {
 	apac := CountriesIn(RegionAPAC)
 	require.NotEmpty(t, apac)
-	assert.Contains(t, apac, "japan")
-	assert.NotContains(t, apac, "germany")
+	// DISPLAY names, not the lowercase lookup keys: these become exact IS_ANY_OF filter values,
+	// and HubSpot stores countries title-cased — lowercase would match nobody, silently.
+	assert.Contains(t, apac, "Japan")
+	assert.Contains(t, apac, "South Korea")
+	assert.NotContains(t, apac, "japan")
+	assert.NotContains(t, apac, "Germany")
 
 	// Sorted, so the emitted filter (and any snapshot of it) is deterministic.
 	assert.IsIncreasing(t, apac)
 
-	// Every country resolves back to the region it was listed under.
+	// Every country resolves back to the region it was listed under (RegionFor is
+	// case-insensitive, so display names still resolve).
 	for _, c := range apac {
 		r, ok := RegionFor(c)
 		require.True(t, ok)
@@ -84,4 +89,29 @@ func TestCountriesIn_IsStableAndScoped(t *testing.T) {
 	}
 
 	assert.Nil(t, CountriesIn(Region("NOT-A-REGION")))
+}
+
+// TestDisplayName_ProducesExactFilterValues pins the form fed into HubSpot's IS_ANY_OF, which is
+// an EXACT match. The map keys are lowercase for case-insensitive lookup; using them raw as
+// filter values builds a list matching nobody, with no error to notice.
+func TestDisplayName_ProducesExactFilterValues(t *testing.T) {
+	cases := map[string]string{
+		"USA":                  "United States",
+		"usa":                  "United States",
+		"uk":                   "United Kingdom",
+		"Korea":                "South Korea",
+		"south korea":          "South Korea",
+		"united arab emirates": "United Arab Emirates",
+		"japan":                "Japan",
+		"  brazil  ":           "Brazil",
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, DisplayName(in), "input %q", in)
+	}
+
+	// An unknown country is passed through as written rather than mangled — a brief may name a
+	// country this package does not track, and filtering on the operator's own text is the
+	// least-surprising behaviour.
+	assert.Equal(t, "Atlantis", DisplayName("Atlantis"))
+	assert.Equal(t, "Atlantis", DisplayName("  Atlantis  "))
 }

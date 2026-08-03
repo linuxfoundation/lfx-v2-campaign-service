@@ -2,6 +2,21 @@
 
 ## 2026-08-03
 
+**Update** — Four filter-shape fixes on the audience build (LFXV2-2774, PR #61 review). All were
+invariants the HubSpot client ALREADY documented (`internal/platform/hubspot/lists.go:19-23`) and
+the first cut violated — each fails at the platform, not in review:
+
+- **The master was an INTERSECTION.** Sibling membership filters inside one AND branch mean "in
+  list A AND in list B" — typically empty, exactly backwards. Each list now gets its own AND
+  branch under the OR root.
+- **`LIST_MEMBERSHIP` → `IN_LIST`.** The client calls the former out as invalid.
+- **Groups 5 and 7 nested ORs.** `countryOrBranch` returned an OR and callers appended those
+  under another OR. It now returns the AND BRANCHES (`countryAndBranches`) which callers splice
+  flat into one root.
+- **Region countries matched nobody.** `CountriesIn` returned lowercase map keys straight into an
+  exact `IS_ANY_OF`. Added `DisplayName`, and groups 4/5 now canonicalize the brief's country
+  too — a brief saying "USA" was filtering on the literal "USA".
+
 **Update** — Two serious fixes on the audience build (LFXV2-2774, PR #61 review):
 
 **The master list is now a real UNION.** `createPlanLists` recorded the FIRST inclusion list

@@ -81,13 +81,55 @@ func RegionFor(country string) (Region, bool) {
 	return r, ok
 }
 
-// CountriesIn returns the countries in a region, sorted, so a caller can build the
-// region-wide sibling filters. Returns nil for an unknown region.
+// displayNames maps the lowercase lookup keys to the form HubSpot actually stores. The map keys
+// are lowercase for case-insensitive LOOKUP, but IS_ANY_OF is an EXACT match — feeding raw keys
+// into a filter builds a list matching nobody, with no error. Only the entries whose display
+// form differs from a simple title-case need listing.
+var displayNames = map[string]string{
+	"uae":            "United Arab Emirates",
+	"united kingdom": "United Kingdom",
+	"united states":  "United States",
+	"south korea":    "South Korea",
+	"south africa":   "South Africa",
+	"new zealand":    "New Zealand",
+	"hong kong":      "Hong Kong",
+	"saudi arabia":   "Saudi Arabia",
+}
+
+// DisplayName returns the country in the form HubSpot stores it, ready to use as an exact
+// filter value. Unknown input is returned trimmed but otherwise untouched, so a brief carrying
+// a country this package does not know still filters on exactly what the operator wrote.
+func DisplayName(country string) string {
+	key := strings.ToLower(strings.TrimSpace(country))
+	if canonical, ok := countryAliases[key]; ok {
+		key = canonical
+	}
+	if d, ok := displayNames[key]; ok {
+		return d
+	}
+	if _, known := countryToRegion[key]; known {
+		return titleCase(key)
+	}
+	return strings.TrimSpace(country)
+}
+
+// titleCase upper-cases the first letter of each word — sufficient for the single-word and
+// simple two-word names not covered by displayNames.
+func titleCase(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+// CountriesIn returns the countries in a region as HubSpot DISPLAY names, sorted, ready to use
+// as exact filter values. Returns nil for an unknown region.
 func CountriesIn(r Region) []string {
 	var out []string
 	for c, cr := range countryToRegion {
 		if cr == r {
-			out = append(out, c)
+			out = append(out, DisplayName(c))
 		}
 	}
 	sort.Strings(out)
