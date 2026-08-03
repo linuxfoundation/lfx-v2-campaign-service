@@ -330,7 +330,7 @@ func TestParsePrivateKey_ToleratesEnvMangling(t *testing.T) {
 	if _, err := parsePrivateKey(""); err == nil {
 		t.Error("empty key should error")
 	}
-	if _, err := parsePrivateKey("-----BEGIN PRIVATE KEY-----\ngarbage\n-----END PRIVATE KEY-----"); err == nil {
+	if _, err := parsePrivateKey("-----BEGIN PRIVATE KEY-----\ngarbage\n-----END PRIVATE KEY-----"); err == nil { // secretlint-disable-line -- non-key fixture asserting a garbage body errors
 		t.Error("garbage key should error")
 	}
 }
@@ -353,7 +353,7 @@ func TestParsePrivateKey_RejectsNonRSA(t *testing.T) {
 		t.Error("a valid non-RSA (EC) PKCS8 key must be rejected by the RSA-only contract")
 	}
 	// A malformed DER still errors (at the parse step) — keep that covered too.
-	if _, err := parsePrivateKey("-----BEGIN PRIVATE KEY-----\nMEE=\n-----END PRIVATE KEY-----"); err == nil {
+	if _, err := parsePrivateKey("-----BEGIN PRIVATE KEY-----\nMEE=\n-----END PRIVATE KEY-----"); err == nil { // secretlint-disable-line -- non-key fixture asserting a malformed PKCS8 body errors
 		t.Error("a malformed PKCS8 body must error")
 	}
 }

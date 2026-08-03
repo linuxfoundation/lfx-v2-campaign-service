@@ -509,7 +509,9 @@ func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign,
 	return c, nil
 }
 
-// UpdateCampaign must NOT wipe the stored config when the caller omits config.
+// UpdateCampaign must NOT wipe the stored config when the caller omits config, and it must
+// leave the run status untouched (the caller round-trips the CURRENT status on a name edit;
+// run-state changes go through the toggle, not this DB-only path).
 func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	camps := &campaignEditRepo{cur: &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 2,
@@ -520,7 +522,7 @@ func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	v := "2"
 	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
 		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
-		Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "paused"}, // Config omitted
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "active"}, // status unchanged; Config omitted
 	})
 	if err != nil {
 		t.Fatalf("UpdateCampaign: %v", err)
@@ -528,8 +530,34 @@ func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	if string(camps.got.ConfigSnapshot) != `{"budget":100}` {
 		t.Errorf("config was overwritten: %s, want the stored {\"budget\":100}", camps.got.ConfigSnapshot)
 	}
-	if camps.got.CampaignName != "new" || camps.got.Status != "paused" {
-		t.Errorf("name/status not applied: %q/%q", camps.got.CampaignName, camps.got.Status)
+	if camps.got.CampaignName != "new" {
+		t.Errorf("name not applied: %q", camps.got.CampaignName)
+	}
+	if camps.got.Status != "active" {
+		t.Errorf("status must be preserved verbatim by the DB-only update, got %q want %q", camps.got.Status, "active")
+	}
+}
+
+// UpdateCampaign must REFUSE a run-status change (active<->paused): persisting a run state
+// without contacting the ad platform would recreate the DB/platform divergence the toggle
+// endpoint exists to prevent. The refusal is a 400 that routes the caller to the toggle.
+func TestBriefService_UpdateCampaign_RejectsRunStatusChange(t *testing.T) {
+	camps := &campaignEditRepo{cur: &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 2,
+		CampaignName: "old", Status: "active",
+	}}
+	s := &BriefService{briefs: &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}}, campaigns: camps, jobs: newFakeJobRepo(), orch: NewOrchestrator(camps, newFakeJobRepo(), nil)}
+	v := "2"
+	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "old", Status: "paused"}, // active -> paused via DB path
+	})
+	var badReq *briefs.BadRequestError
+	if !errors.As(err, &badReq) {
+		t.Fatalf("a run-status change via update-campaign must be a 400 BadRequestError, got %T: %v", err, err)
+	}
+	if camps.got != nil {
+		t.Error("ReplaceCampaign must NOT be called when the run-status change is rejected")
 	}
 }
 
