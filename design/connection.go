@@ -9,8 +9,10 @@
 // List endpoint — the provider name is the identity within the project). See
 // docs/api-catalog.md and docs/channel-connections-schema.md.
 //
-// All seven paid providers (google-ads, linkedin-ads, meta-ads, reddit-ads,
-// twitter-ads, microsoft-ads, hubspot) are defined here. Each shares the six
+// All seven providers are defined here: the six PAID ad platforms (google-ads,
+// linkedin-ads, meta-ads, reddit-ads, twitter-ads, microsoft-ads) plus hubspot,
+// the EMAIL channel — see model.ChannelKind for why that distinction matters
+// (email has no budget and no run state to pause). Each shares the six
 // endpoint shapes via connectionMethods and carries its own strongly-typed
 // credential/config/result. This file defines the API contract only; the stub
 // service implementation lives in internal/service/connection.go, and

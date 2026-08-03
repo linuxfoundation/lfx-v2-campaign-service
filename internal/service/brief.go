@@ -424,7 +424,14 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		switch {
 		case errors.Is(terr, ErrToggleUnsupported):
 			// The platform (or its dispatcher) doesn't support toggling — a client error,
-			// the platform was never called.
+			// the platform was never called. Distinguish the two reasons: for the EMAIL
+			// channel there is nothing to pause BY DESIGN (it stages a draft a human sends,
+			// with no run state this service controls), so a generic "not supported" reads
+			// as a missing feature and invites someone to "fix" it. For an ad platform it
+			// genuinely means the toggle capability is not wired yet.
+			if existing.Platform.Kind() == model.ChannelEmail {
+				return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle does not apply to the email channel: it stages a draft for a human to send, so there is no running campaign to pause or resume"}
+			}
 			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
 		case errors.Is(terr, ErrCampaignNotProvisioned):
 			// The campaign is not fully provisioned for this toggle — either it has no upstream
