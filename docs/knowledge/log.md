@@ -58,6 +58,28 @@ changed. `twitterChildIDs` reads the persisted `CampaignResult`
 blob, whose shape is pinned by a round-trip test (the blob is `json.Marshal` of an UNTAGGED
 struct, so the field is `LineItemID`; a renamed/nested field would silently yield "" and turn
 every ACTIVATE into a spurious 409).
+**Update** — Google Ads campaign status toggle (LFXV2-2809), stacked on the GA dispatcher
+(PR #41). `GoogleAdsDispatcher` implements `service.StatusToggler`; new client method
+`UpdateCampaignStatus` sends a `campaigns:mutate` UPDATE with `updateMask: "status"`, and a new
+exported `IsOutcomeUnconfirmed` mirrors the reddit/twitter clients for cross-package
+classification.
+
+PAUSE only — ACTIVATE is REFUSED with `ErrCampaignNotProvisioned` (→409, no upstream call),
+because the GA create path provisions only a campaign SHELL (budget → campaign) with no ad
+group, ad, or keywords: enabling the campaign would report success while nothing can serve. No
+cascade for the same reason — there are no children yet. GA-3+ must add both a cascade and a
+real child-id activate guard. Google spells the
+serving state ENABLED, not ACTIVE — `googleAdsRunStatus` maps the service vocabulary across.
+
+`mutateOperation` gained `Update`/`UpdateMask` fields, and `Create` became `omitempty` so an
+update no longer emits `"create":null` alongside its update (a :mutate operation must carry
+exactly ONE of create/update/remove). The create path is unaffected — it always sets Create.
+
+Connection rules are shared via `validateGoogleAdsConnection`, called by BOTH `Dispatch` and
+`ToggleStatus`, so a create and a toggle cannot drift; each caller keeps its own error wrapping
+(`Dispatch` wraps with `notCreated` for claim semantics, the toggle path does not). The
+campaign id is validated digits-only before any request, since it interpolates into a
+resourceName.
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and

@@ -18,6 +18,7 @@ var (
 	_ service.StatusToggler = (*MetaDispatcher)(nil)
 	_ service.StatusToggler = (*LinkedInDispatcher)(nil)
 	_ service.StatusToggler = (*TwitterDispatcher)(nil)
+	_ service.StatusToggler = (*GoogleAdsDispatcher)(nil)
 )
 
 // TestStatusTogglerSatisfied is a no-op runtime anchor for the compile-time assertions
