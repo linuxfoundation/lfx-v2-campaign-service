@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestDrainTimeoutFitsShutdownBudget pins the drain bound against the service's graceful
@@ -73,4 +75,42 @@ func TestFlushBudget_HonoursCallerDeadline(t *testing.T) {
 			t.Fatalf("flushBudget = %s, want <= 0 so Publish skips the flush entirely", got)
 		}
 	})
+}
+
+// TestNewNATSPublisher_DialErrorHidesCredentials pins that a dial failure cannot put the broker
+// password in a log line.
+//
+// Redacting only our own "%s" prefix is NOT enough — the wrapped nats.go error embeds the
+// ORIGINAL url, so the same line printed "nats://***@host" alongside the raw
+// "user:sup3rsecret@host". This asserts on the WHOLE error text for exactly that reason.
+func TestNewNATSPublisher_DialErrorHidesCredentials(t *testing.T) {
+	const password = "sup3r-s3cret" // secretlint-disable-line -- fixture asserting the password is scrubbed
+	// A malformed host forces a parse error, which is the case that quotes the input back.
+	raw := "nats://svcuser:" + password + "@bad host:4222"
+
+	p, err := NewNATSPublisher(raw)
+	require.Error(t, err, "a malformed url must fail the dial")
+	require.NotNil(t, p, "a failed dial still returns a usable Noop")
+
+	assert.NotContains(t, err.Error(), password,
+		"the broker password must not survive anywhere in the error chain")
+	assert.NotContains(t, err.Error(), "svcuser",
+		"the broker username is part of the credential")
+	// The host must survive — it is what makes the failure diagnosable.
+	assert.Contains(t, err.Error(), "bad host:4222")
+}
+
+// TestScrubURL covers the shapes a dependency error can quote back.
+func TestScrubURL(t *testing.T) {
+	raw := "nats://u:p@host:4222" // secretlint-disable-line -- fixture
+	cases := map[string]string{
+		`parse "nats://u:p@host:4222": bad`: `parse "nats://***@host:4222": bad`,
+		`dial failed for u:p@host:4222`:     `dial failed for ***@host:4222`,
+		`nothing sensitive here`:            `nothing sensitive here`,
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, scrubURL(in, raw), "input %q", in)
+	}
+	// A blank url must not turn the text into nonsense.
+	assert.Equal(t, "some error", scrubURL("some error", ""))
 }

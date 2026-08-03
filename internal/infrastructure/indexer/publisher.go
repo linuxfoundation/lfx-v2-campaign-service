@@ -87,7 +87,12 @@ func NewNATSPublisher(url string) (Publisher, error) {
 		nats.RetryOnFailedConnect(true),
 	)
 	if err != nil {
-		return Noop{}, fmt.Errorf("connect to nats at %s: %w", redactURL(url), err)
+		// Redact the URL in BOTH halves. Redacting only our own prefix is not enough: %w
+		// renders nats.go's error, and its URL-parse failures embed the ORIGINAL string —
+		// so a malformed credential-bearing NATS_URL would print "nats://***@host" and the
+		// raw "user:pass@host" in the same log line. The wrapped error is flattened to text
+		// so the credential cannot survive anywhere in the chain.
+		return Noop{}, fmt.Errorf("connect to nats at %s: %s", redactURL(url), scrubURL(err.Error(), url))
 	}
 	return &NATSPublisher{conn: conn}, nil
 }
@@ -154,6 +159,29 @@ func flushBudget(ctx context.Context) time.Duration {
 		return remaining
 	}
 	return publishTimeout
+}
+
+// scrubURL removes every occurrence of a credential-bearing URL from arbitrary error text,
+// replacing it with the redacted form. Used on wrapped dependency errors, whose wording is not
+// ours to control and which are known to embed the input verbatim.
+//
+// It replaces the RAW url first, then the userinfo alone — a parse error may quote a normalised
+// or partial form of the input, so matching the full string alone is not sufficient.
+func scrubURL(text, rawURL string) string {
+	if rawURL == "" {
+		return text
+	}
+	safe := redactURL(rawURL)
+	text = strings.ReplaceAll(text, rawURL, safe)
+	// Also catch the bare userinfo, which survives when the error quotes a rewritten URL.
+	if at := strings.LastIndexByte(rawURL, '@'); at >= 0 {
+		if scheme := strings.Index(rawURL, "://"); scheme >= 0 && scheme+3 <= at {
+			if creds := rawURL[scheme+3 : at]; creds != "" {
+				text = strings.ReplaceAll(text, creds+"@", "***@")
+			}
+		}
+	}
+	return text
 }
 
 // redactURL strips any credentials from a NATS URL before it reaches a log line. A NATS URL

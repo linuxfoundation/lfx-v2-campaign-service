@@ -286,7 +286,7 @@ func (o *Orchestrator) publishCampaignIndex(ctx context.Context, c *model.Campai
 	if p == nil {
 		return
 	}
-	p.Publish(ctx, indexer.NewBody(indexer.ObjectTypeCampaign, c.ID, c.ProjectID, campaignResult(c)))
+	p.Publish(ctx, indexer.NewBody(indexer.ObjectTypeCampaign, c.ID, c.ProjectID, campaignDoc(campaignResult(c))))
 }
 
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {

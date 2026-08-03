@@ -74,3 +74,35 @@ func NewBody(objectType, objectID, projectID string, data any) Body {
 		Data:                 data,
 	}
 }
+
+// The goa service types (briefs.Brief / briefs.Campaign) carry NO json tags, so marshalling
+// them directly emits Go field names — "ProjectID", "EventSlug" — instead of the snake_case
+// the HTTP API uses. Such a document indexes cleanly and then matches nothing for any consumer
+// filtering on the API's field names, which looks exactly like indexing being broken.
+//
+// These types therefore restate the indexed shape EXPLICITLY with tags. They are deliberately
+// hand-written rather than reusing the generated types: the index projection is a contract with
+// the Query Service, and it should change only when someone edits it here.
+
+// BriefDoc is the indexed representation of a brief.
+type BriefDoc struct {
+	ID          string `json:"id"`
+	ProjectID   string `json:"project_id"`
+	ProgramType string `json:"program_type"`
+	EventSlug   string `json:"event_slug"`
+	URL         string `json:"url,omitempty"`
+	Status      string `json:"status"`
+	Version     int64  `json:"version"`
+}
+
+// CampaignDoc is the indexed representation of a campaign.
+type CampaignDoc struct {
+	ID                 string `json:"id"`
+	ProjectID          string `json:"project_id"`
+	BriefID            string `json:"brief_id"`
+	Platform           string `json:"platform"`
+	PlatformCampaignID string `json:"platform_campaign_id,omitempty"`
+	CampaignName       string `json:"campaign_name"`
+	Status             string `json:"status"`
+	Version            int64  `json:"version"`
+}

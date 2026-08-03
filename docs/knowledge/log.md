@@ -2,6 +2,23 @@
 
 ## 2026-08-03
 
+**Update** — Two more indexing fixes (LFXV2-2814, PR #60 review):
+
+**Indexed documents now use snake_case.** The generated goa types (`briefs.Brief`,
+`briefs.Campaign`) carry NO json tags, so publishing them directly emitted Go field names —
+`"ProjectID"`, `"EventSlug"` — instead of the API's `project_id`/`event_slug`. Verified against
+the real payload before fixing. Such a document indexes CLEANLY and then matches nothing for any
+consumer filtering on API field names, which looks exactly like indexing being broken.
+`indexer.BriefDoc` / `indexer.CampaignDoc` now restate the indexed shape explicitly with tags —
+hand-written on purpose, since the projection is a contract with the Query Service and should
+change only when someone edits it deliberately.
+
+**The dial error no longer leaks the broker password.** Redacting our own `%s` prefix was not
+enough: `%w` renders nats.go's error, and its URL-parse failures embed the ORIGINAL string, so a
+malformed credential-bearing `NATS_URL` printed `nats://***@host` and the raw `user:pass@host`
+in the SAME line (reproduced before fixing). `scrubURL` now removes the credential from the
+wrapped text as well.
+
 **Update** — Redacted the broker URL in `Config.String` (LFXV2-2814, PR #60 review). `String()`
 promises a log-safe representation and redacts `DatabaseURL`/`CredentialEncryptionKey`, but
 printed `NATSUrl` VERBATIM. A NATS URL may carry userinfo (`nats://user:pass@host:4222`), and

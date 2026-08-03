@@ -1082,3 +1082,55 @@ func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
 		t.Errorf("second archive = %v, want ErrNotFound (nothing was committed, so nothing to index)", second)
 	}
 }
+
+// TestIndexedDocsUseSnakeCase pins the INDEXED wire shape.
+//
+// The generated goa types carry no json tags, so publishing them directly emitted Go field
+// names ("ProjectID", "EventSlug") instead of the snake_case the HTTP API uses. Such a document
+// indexes cleanly and then matches nothing for a consumer filtering on the API's field names —
+// indistinguishable from indexing being broken.
+func TestIndexedDocsUseSnakeCase(t *testing.T) {
+	url := "https://events.lfx.dev/k"
+	raw, err := json.Marshal(briefDoc(&briefs.Brief{
+		ID: "b1", ProjectID: "cncf", ProgramType: "events",
+		EventSlug: "kubecon-eu-2026", URL: &url, Status: "approved", Version: 3,
+	}))
+	if err != nil {
+		t.Fatalf("marshal brief doc: %v", err)
+	}
+	for _, want := range []string{`"project_id":"cncf"`, `"event_slug":"kubecon-eu-2026"`, `"program_type":"events"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("brief doc missing %s\ngot: %s", want, raw)
+		}
+	}
+	for _, bad := range []string{`"ProjectID"`, `"EventSlug"`, `"ProgramType"`} {
+		if strings.Contains(string(raw), bad) {
+			t.Errorf("brief doc leaks the Go field name %s: consumers filtering on the API shape match nothing\ngot: %s", bad, raw)
+		}
+	}
+
+	pcid := "pc-9"
+	raw, err = json.Marshal(campaignDoc(&briefs.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: "hubspot",
+		PlatformCampaignID: &pcid, CampaignName: "n", Status: "created", Version: 1,
+	}))
+	if err != nil {
+		t.Fatalf("marshal campaign doc: %v", err)
+	}
+	for _, want := range []string{`"project_id":"cncf"`, `"brief_id":"b1"`, `"platform_campaign_id":"pc-9"`, `"campaign_name":"n"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("campaign doc missing %s\ngot: %s", want, raw)
+		}
+	}
+	for _, bad := range []string{`"ProjectID"`, `"BriefID"`, `"PlatformCampaignID"`} {
+		if strings.Contains(string(raw), bad) {
+			t.Errorf("campaign doc leaks the Go field name %s\ngot: %s", bad, raw)
+		}
+	}
+
+	// A nil optional must not become "null" in the document.
+	raw, _ = json.Marshal(campaignDoc(&briefs.Campaign{ID: "c2"}))
+	if strings.Contains(string(raw), "null") {
+		t.Errorf("nil optionals must be omitted, not emitted as null\ngot: %s", raw)
+	}
+}

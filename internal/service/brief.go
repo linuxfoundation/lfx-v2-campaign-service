@@ -68,6 +68,41 @@ func (s *BriefService) IndexerIsNoop() bool {
 	return isNoop
 }
 
+// briefDoc maps a brief response to the INDEXED shape. The generated briefs.Brief has no json
+// tags, so publishing it directly emits PascalCase keys that no API-shaped consumer matches.
+func briefDoc(b *briefs.Brief) indexer.BriefDoc {
+	return indexer.BriefDoc{
+		ID:          b.ID,
+		ProjectID:   b.ProjectID,
+		ProgramType: b.ProgramType,
+		EventSlug:   b.EventSlug,
+		URL:         derefStr(b.URL),
+		Status:      b.Status,
+		Version:     b.Version,
+	}
+}
+
+// campaignDoc maps a campaign response to the INDEXED shape (same reasoning as briefDoc).
+func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
+	return indexer.CampaignDoc{
+		ID:                 c.ID,
+		ProjectID:          c.ProjectID,
+		BriefID:            c.BriefID,
+		Platform:           c.Platform,
+		PlatformCampaignID: derefStr(c.PlatformCampaignID),
+		CampaignName:       c.CampaignName,
+		Status:             c.Status,
+		Version:            c.Version,
+	}
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // publishIndex sends a resource snapshot to the Query Service. Best-effort by contract: the
 // database already committed, so a publish problem must never surface to the caller.
 func (s *BriefService) publishIndex(ctx context.Context, objectType, objectID, projectID string, data any) {
@@ -214,7 +249,7 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 	// events — is a deliberate follow-up (LFXV2-2665), not part of this PR. This
 	// persistence layer is the source of truth the indexer consumes; publishing is
 	// best-effort and never fails the write (see publishIndex).
-	s.publishIndex(ctx, indexer.ObjectTypeBrief, created.ID, created.ProjectID, briefResult(created))
+	s.publishIndex(ctx, indexer.ObjectTypeBrief, created.ID, created.ProjectID, briefDoc(briefResult(created)))
 	return briefResult(created), nil
 }
 
@@ -256,7 +291,7 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ObjectTypeBrief, updated.ID, updated.ProjectID, briefResult(updated))
+	s.publishIndex(ctx, indexer.ObjectTypeBrief, updated.ID, updated.ProjectID, briefDoc(briefResult(updated)))
 	return briefResult(updated), nil
 }
 
@@ -273,7 +308,7 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
-	s.publishIndex(ctx, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefResult(b))
+	s.publishIndex(ctx, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefDoc(briefResult(b)))
 	return briefResult(b), nil
 }
 
@@ -292,7 +327,7 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	}
 	// Archiving is a soft delete that every OTHER write path publishes; without this the
 	// archived brief keeps its stale pre-archive _source and goes on matching searches forever.
-	s.publishIndex(ctx, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefResult(b))
+	s.publishIndex(ctx, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefDoc(briefResult(b)))
 	return nil
 }
 
@@ -412,7 +447,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignResult(updated))
+	s.publishIndex(ctx, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignDoc(campaignResult(updated)))
 	return campaignResult(updated), nil
 }
 
@@ -520,7 +555,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// still records a platform change that already happened. Publishing on ctx would drop
 	// exactly those index updates — the campaign's status would be right in the database and
 	// stale in search, for the requests most likely to need reconciling.
-	s.publishIndex(persistCtx, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignResult(updated))
+	s.publishIndex(persistCtx, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignDoc(campaignResult(updated)))
 	return campaignResult(updated), nil
 }
 
