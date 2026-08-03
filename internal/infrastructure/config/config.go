@@ -29,6 +29,15 @@ type Config struct {
 
 	NATSUrl string
 
+	// Snowflake read-only credentials for audience building. Optional as a GROUP: when
+	// account/user/key are not all present the warehouse is treated as unconfigured and
+	// audience building degrades to country-only rather than failing.
+	SnowflakeAccount    string
+	SnowflakeUser       string
+	SnowflakePrivateKey string
+	SnowflakeWarehouse  string
+	SnowflakeRole       string
+
 	// DatabaseURL is the PostgreSQL DSN. Empty disables the database layer
 	// (e.g. for tests or a metadata-only run). Prefer composing from PG*
 	// fields via loadDatabaseFromEnv so the password is not interpolated by Helm.
@@ -79,6 +88,12 @@ func LoadConfig() *Config {
 		Audience: envOrDefault(constants.EnvAudience, constants.DefaultAudience),
 		Issuer:   envOrDefault(constants.EnvIssuer, constants.DefaultIssuer),
 		NATSUrl:  envOrDefault(constants.EnvNATSURL, constants.DefaultNATSURL),
+
+		SnowflakeAccount:    os.Getenv(constants.EnvSnowflakeAccount),
+		SnowflakeUser:       os.Getenv(constants.EnvSnowflakeUser),
+		SnowflakePrivateKey: os.Getenv(constants.EnvSnowflakePrivateKey),
+		SnowflakeWarehouse:  os.Getenv(constants.EnvSnowflakeWarehouse),
+		SnowflakeRole:       os.Getenv(constants.EnvSnowflakeRole),
 
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
 		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),

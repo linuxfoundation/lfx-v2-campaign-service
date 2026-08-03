@@ -1,5 +1,34 @@
 # Log
 
+## 2026-08-03
+
+**Update** — Wired audience building end to end (LFXV2-2774). This closes the gap that made the
+email channel unusable: `dispatch/hubspot.go` refuses every brief whose audience is not `built`
+with a master list, and nothing could produce one. `hubspot.CreateList`, `UpdateListFilters` and
+`snowflake.ResolvePastEventNames` all already existed with ZERO callers — this is assembly, not
+new capability.
+
+`POST /projects/{id}/briefs/{briefId}/audiences/build` reads the brief's event details, resolves
+past editions from Snowflake, plans the inclusion lists (see
+[internal/audience](code/internal-audience.md)), creates them in HubSpot, and records the master
+list + provenance, flipping the row `building` to `built`.
+
+Ordering and failure handling are the parts worth remembering:
+
+- The audience row is written as BUILDING **before** any HubSpot call, so a crash mid-build
+  leaves a visible reconcilable row rather than an invisible gap plus orphan lists.
+- A partial build (some lists created, then a failure) leaves the row BUILDING with the reason
+  recorded — NOT `failed`, which would overstate what is known, and not `built`, which has no
+  master list. A 2xx with no list id is UNCONFIRMED and says "verify before retrying".
+- Snowflake is OPTIONAL as a group: unconfigured, partially configured, or holding an unusable
+  key all degrade to a country-only audience instead of failing. Guarding this needs care — the
+  nil `*snowflake.Client` must never be assigned into the interface, or `snow == nil` is false
+  and the degrade path panics. There is a test for exactly that.
+- All three `AudienceService` construction sites route through `newAudienceService`, and the
+  builder is asserted via `BuilderIsSet` rather than through a `BuildAudience` error: a nil repo
+  short-circuits before the builder is consulted, so an error-based assertion passes vacuously
+  (the first version of that test did, and stayed green with `SetBuilder` removed).
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in

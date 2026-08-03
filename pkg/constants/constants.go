@@ -20,6 +20,17 @@ const (
 	// to encrypt connection credentials. Sourced from a Kubernetes secret.
 	EnvCredentialEncryptionKey = "CREDENTIAL_ENCRYPTION_KEY"
 
+	// Snowflake (read-only) settings, used ONLY to resolve an event's past editions when
+	// building an audience. All are OPTIONAL: with none set, audience building still works
+	// and produces a country-only audience, recording the narrower scope in its summary.
+	// A partially-configured warehouse is treated as unconfigured rather than failing boot,
+	// since indexing an event's history is an enrichment, not a correctness requirement.
+	EnvSnowflakeAccount    = "SNOWFLAKE_ACCOUNT"
+	EnvSnowflakeUser       = "SNOWFLAKE_USER"
+	EnvSnowflakePrivateKey = "SNOWFLAKE_PRIVATE_KEY"
+	EnvSnowflakeWarehouse  = "SNOWFLAKE_WAREHOUSE"
+	EnvSnowflakeRole       = "SNOWFLAKE_ROLE"
+
 	// PostgreSQL connection settings (composed into a DSN in-process).
 	EnvPGHost     = "PGHOST"
 	EnvPGPort     = "PGPORT"

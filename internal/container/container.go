@@ -21,6 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -126,6 +127,11 @@ type Container struct {
 	pool *postgres.Pool
 	orch *service.Orchestrator
 
+	// audienceBuilder performs the platform side of an audience build (Snowflake lookups +
+	// HubSpot list creation). Nil when neither is configured, in which case the build endpoint
+	// reports a typed 503 and the audience CRUD routes are unaffected.
+	audienceBuilder service.AudienceBuilder
+
 	// cancelInit stops the background DB-init goroutine (nil when none runs).
 	cancelInit context.CancelFunc
 	// initDone is closed when the background goroutine exits, so Close can wait
@@ -170,7 +176,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
 		c.Connections = service.NewConnectionService(nil, nil)
 		c.Briefs = service.NewBriefService(nil, nil, nil, nil)
-		c.Audiences = service.NewAudienceService(nil)
+		c.Audiences = c.newAudienceService(nil, nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
 	}
@@ -222,7 +228,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	campaign := service.NewCampaignService(notReady{})
 	connections := service.NewConnectionService(nil, enc)
 	briefs := service.NewBriefService(nil, nil, nil, nil)
-	auds := service.NewAudienceService(nil)
+	auds := c.newAudienceService(nil, nil)
 	c.Service = campaign
 	c.Connections = connections
 	c.Briefs = briefs
@@ -276,6 +282,58 @@ var adPlatformProviders = []model.Provider{
 	model.ProviderHubSpot,
 }
 
+// newAudienceBuilder builds the platform-side audience builder from config.
+//
+// Snowflake is OPTIONAL and configured as a GROUP: with account/user/key not all present the
+// warehouse is treated as unconfigured and the builder resolves no past editions, so an
+// audience is still built from the event's own country and records the narrower scope. A
+// warehouse misconfiguration must not block the email channel — enriching an audience with
+// past editions is an enrichment, not a correctness requirement.
+//
+// HubSpot needs no config here: its credentials are per-project encrypted connections the
+// builder resolves per call, exactly as the dispatchers do.
+func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg *config.Config) service.AudienceBuilder {
+	var snow dispatch.PastEditionResolver
+	if cfg.SnowflakeAccount != "" && cfg.SnowflakeUser != "" && cfg.SnowflakePrivateKey != "" {
+		client, err := snowflake.NewClient(snowflake.Config{
+			Account:       cfg.SnowflakeAccount,
+			User:          cfg.SnowflakeUser,
+			PrivateKeyPEM: cfg.SnowflakePrivateKey,
+			Warehouse:     cfg.SnowflakeWarehouse,
+			Role:          cfg.SnowflakeRole,
+		})
+		if err != nil {
+			// Log and continue: a bad key is a config error, but failing boot over it would
+			// take down campaign dispatch for a read-only enrichment.
+			slog.Warn("snowflake is configured but unusable; audiences will be built country-only",
+				"error", err)
+		} else {
+			snow = client
+		}
+	} else {
+		slog.Info("snowflake not configured; audiences will be built from the event's country only")
+	}
+	return dispatch.NewAudienceBuilder(repo, enc, snow)
+}
+
+// newAudienceService constructs an AudienceService with the audience-build dependencies
+// injected. EVERY construction in this file goes through it: the builder is opt-in via
+// SetBuilder, so a path that constructs the service directly still compiles and serves — the
+// build endpoint would just return 503 forever, silently.
+//
+// A nil audienceBuilder is normal, not a failure: it means HubSpot/Snowflake are unconfigured,
+// and BuildAudience then returns the contract's typed 503 while the CRUD routes stay usable.
+func (c *Container) newAudienceService(repo domain.AudienceRepository, briefs domain.BriefRepository) *service.AudienceService {
+	s := service.NewAudienceService(repo)
+	if briefs != nil {
+		s.SetBriefRepo(briefs)
+	}
+	if c.audienceBuilder != nil {
+		s.SetBuilder(c.audienceBuilder)
+	}
+	return s
+}
+
 // logMissingDispatchers warns about ad providers that have no adapter yet — those
 // platforms record jobs that finish "failed" with "no dispatcher registered".
 func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispatcher) {
@@ -302,12 +360,14 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// ad-platform + email adapters land incrementally, LFXV2-2636..2642 / 2777);
 	// warn so that gap is visible in production logs.
 	audienceRepo := postgres.NewAudienceRepo(pool)
+	// Must precede newAudienceService below, which reads c.audienceBuilder.
+	c.audienceBuilder = newAudienceBuilder(repo, enc, cfg)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo)
 	logMissingDispatchers(dispatchers)
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
-	c.Audiences = service.NewAudienceService(audienceRepo)
+	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
 	// dispatch goroutine lived only in that process, so fail them forward now
@@ -354,6 +414,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			jobRepo := postgres.NewJobRepo(pool)
 			// Same dispatcher set as the fast path (see registerDispatchers).
 			audienceRepo := postgres.NewAudienceRepo(pool)
+			c.audienceBuilder = newAudienceBuilder(connRepo, enc, cfg)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
 			logMissingDispatchers(dispatchers)
 			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)

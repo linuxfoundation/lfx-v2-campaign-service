@@ -374,3 +374,55 @@ func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.
 func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
 	return a, nil
 }
+
+// TestNewAudienceBuilder_SnowflakeOptional pins that an unconfigured or misconfigured warehouse
+// does NOT block audience building. Snowflake only enriches an audience with past editions; the
+// country-scoped group needs no warehouse, so failing here would take the whole email channel
+// down for a read-only lookup.
+//
+// It also guards the typed-nil trap: assigning a nil *snowflake.Client into the interface would
+// make `snow == nil` false and produce a nil-dereference on first use instead of the intended
+// degrade.
+func TestNewAudienceBuilder_SnowflakeOptional(t *testing.T) {
+	cases := map[string]*config.Config{
+		"nothing configured": {},
+		"partial config":     {SnowflakeAccount: "acct", SnowflakeUser: "usr"}, // no key
+		"unusable key": {
+			SnowflakeAccount: "acct", SnowflakeUser: "usr",
+			SnowflakePrivateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----",
+		},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			b := newAudienceBuilder(nil, nil, cfg)
+			require.NotNil(t, b, "a builder must always be returned: HubSpot list creation does not need Snowflake")
+
+			// The degrade path must yield no editions and NO error — the caller records the
+			// narrower scope rather than failing the build.
+			names, err := b.ResolvePastEditions(context.Background(), "KubeCon", "Korea", "2026")
+			require.NoError(t, err, "an unconfigured warehouse is not an error")
+			assert.Empty(t, names)
+		})
+	}
+}
+
+// TestNewAudienceService_InjectsBuilder pins the wiring guarantee for the audience service, the
+// same one PR #60 had to fix for the indexer: SetBuilder is opt-in, so a construction path that
+// skips it compiles and serves while the build endpoint returns 503 forever.
+//
+// It asserts on the SERVICE's own view (BuilderIsSet) rather than on a BuildAudience error: a
+// nil repo short-circuits before the builder is consulted, so both wired and unwired services
+// return the same typed 503 and an error-based assertion passes vacuously. (Verified: an
+// earlier version of this test did exactly that and stayed green with SetBuilder removed.)
+func TestNewAudienceService_InjectsBuilder(t *testing.T) {
+	c := &Container{audienceBuilder: newAudienceBuilder(nil, nil, &config.Config{})}
+	require.NotNil(t, c.audienceBuilder)
+
+	s := c.newAudienceService(nil, nil)
+	require.NotNil(t, s)
+	assert.True(t, s.BuilderIsSet(),
+		"the container's builder must reach the service; without it BuildAudience returns 503 forever")
+
+	// And a container with no builder must NOT claim one — the degrade is real, not implied.
+	assert.False(t, (&Container{}).newAudienceService(nil, nil).BuilderIsSet())
+}

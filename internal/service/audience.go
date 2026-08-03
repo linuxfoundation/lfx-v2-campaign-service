@@ -24,6 +24,11 @@ import (
 type AudienceService struct {
 	mu   sync.RWMutex
 	repo domain.AudienceRepository
+	// briefs and builder are needed only by BuildAudience (see audience_build.go). They are
+	// late-bound like repo, and BuildAudience returns a typed 503 when either is absent —
+	// so a deployment without Snowflake/HubSpot configured still serves the CRUD routes.
+	briefs  domain.BriefRepository
+	builder AudienceBuilder
 }
 
 var (
@@ -44,6 +49,14 @@ func (s *AudienceService) SetBackend(repo domain.AudienceRepository) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.repo = repo
+}
+
+// SetBriefRepo late-binds the brief repository BuildAudience reads event details from.
+// Separate from SetBackend so the existing single-arg call sites are unaffected.
+func (s *AudienceService) SetBriefRepo(b domain.BriefRepository) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.briefs = b
 }
 
 // ready returns the repo or a typed 503 when the database is not wired yet.
