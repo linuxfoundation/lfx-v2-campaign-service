@@ -57,35 +57,20 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // unique index makes the claim single-winner across all replicas without holding
 // a connection or a blocking lock.
 //
-// The claim is a LEASE, not a permanent lock. INSERT ... ON CONFLICT DO UPDATE either
-// inserts a fresh claim, RECLAIMS an existing 'pending' claim whose lease has expired
-// (claimLeaseTTL — its holder crashed or was evicted before releasing), or affects no row
-// when the pair is already validly claimed or has a real campaign. Without the reclaim a
-// crashed dispatcher would block that (brief, platform) FOREVER, since nothing else deletes
-// a stranded pending row.
+// The claim is held until explicitly released and is NOT reclaimed on a timer — see
+// staleClaimAge for why a time-based takeover would be unsafe. The consequence is that a
+// dispatcher which dies between claiming and releasing strands a 'pending' row that blocks
+// that (brief, platform) until a human intervenes; StuckDispatchClaims surfaces those rows.
 //
-// RowsAffected()==1 therefore means "this caller now owns the claim", covering both the
-// fresh-insert and reclaim cases; 0 means someone else holds a live claim or the campaign
-// already exists. No RETURNING is used because the conflicting row is not returned when the
-// WHERE excludes it, so we detect the winner via RowsAffected and then read the current row.
+// RowsAffected()==1 means this caller won the claim; 0 means the pair is already claimed or
+// already has a campaign. No RETURNING is used because ON CONFLICT DO NOTHING returns no row
+// on conflict, so we detect the winner via RowsAffected and then read the current row.
 func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
-	// The claim is a LEASE. On conflict we do not simply give up: if the existing row is a
-	// 'pending' claim whose lease has EXPIRED, its holder is gone (a crash or eviction
-	// between claiming and releasing), so we take it over.
-	//
-	// Reclaim and insert are ONE statement deliberately. A read-then-delete-then-insert
-	// would let two replicas both observe the same expired lease and both believe they won.
-	// ON CONFLICT ... DO UPDATE is evaluated under the unique index's row lock, so exactly
-	// one concurrent claimer can satisfy the WHERE and the losers see RowsAffected()==0.
-	//
-	// The WHERE is narrow on purpose:
-	//   status = 'pending'  — never touch a real campaign (created/active/paused/degraded).
-	//                          Only a placeholder claim is reclaimable.
-	//   created_at < now() - lease — never touch a claim that may still be in flight.
-	//
-	// job_id is overwritten so the reclaimed row is attributed to the job that now owns it,
-	// and created_at is reset so the new holder gets a full lease rather than inheriting an
-	// already-expired one.
+	// DO NOTHING, deliberately — the claim is NOT auto-reclaimed on a timer. See
+	// staleClaimAge: 'pending' marks both a claim in flight AND an ambiguous dispatch
+	// outcome where a paid campaign may already exist upstream, and nothing distinguishes
+	// them, so a time-based takeover could authorize a duplicate paid create.
+	// StuckDispatchClaims surfaces stranded claims for a human instead.
 	q := `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
 		VALUES ($1, $2, $3, $4, '', 'pending')
 		ON CONFLICT (brief_id, platform) DO NOTHING`

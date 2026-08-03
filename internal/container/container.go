@@ -276,6 +276,45 @@ var adPlatformProviders = []model.Provider{
 	model.ProviderHubSpot,
 }
 
+// stuckClaimScanTimeout bounds the startup stuck-claim scan so a slow or unavailable database
+// cannot delay readiness. The scan is diagnostic only, so timing out is survivable.
+const stuckClaimScanTimeout = 5 * time.Second
+
+// logStuckDispatchClaims reports 'pending' dispatch claims stranded by a previous process at
+// STARTUP — the moment they are most likely to exist, since the usual cause is a pod dying
+// mid-dispatch (a crash, an OOM kill, or an eviction during a rolling deploy).
+//
+// Without this the rows are INVISIBLE: the claim is ON CONFLICT (brief_id, platform), so a
+// stranded row silently blocks every future dispatch for that pair, and an operator finds out
+// only when someone reports a campaign that will not dispatch. Nothing here reclaims or
+// deletes — see staleClaimAge for why a time-based takeover would be unsafe — the point is to
+// turn a silent block into an alertable log line.
+//
+// Runs inline on the wiring path (one bounded query) rather than as a goroutine: with 3
+// replicas a background sweeper would need leader election to avoid triplicate logs, and the
+// scan is cheap enough not to warrant it.
+func logStuckDispatchClaims(repo *postgres.CampaignRepo) {
+	ctx, cancel := context.WithTimeout(context.Background(), stuckClaimScanTimeout)
+	defer cancel()
+
+	stuck, err := repo.StuckDispatchClaims(ctx, 0)
+	if err != nil {
+		// Diagnostic only — never block startup on it.
+		slog.WarnContext(ctx, "could not scan for stuck dispatch claims", "error", err)
+		return
+	}
+	if len(stuck) == 0 {
+		return
+	}
+	for _, c := range stuck {
+		slog.WarnContext(ctx, "stuck dispatch claim blocks future dispatches for this brief+platform; verify on the ad platform whether a campaign was created, then delete the row or reconcile it",
+			"project_id", c.ProjectID, "brief_id", c.BriefID, "platform", c.Platform,
+			"job_id", c.JobID, "claimed_at", c.CreatedAt,
+			"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0)
+	}
+	slog.WarnContext(ctx, "stuck dispatch claims detected at startup", "count", len(stuck))
+}
+
 // logMissingDispatchers warns about ad providers that have no adapter yet — those
 // platforms record jobs that finish "failed" with "no dispatcher registered".
 func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispatcher) {
@@ -304,6 +343,9 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	audienceRepo := postgres.NewAudienceRepo(pool)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo)
 	logMissingDispatchers(dispatchers)
+	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
+	// silently block future dispatches for their (brief, platform) until a human acts.
+	logStuckDispatchClaims(campaignRepo)
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
@@ -356,6 +398,9 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
 			logMissingDispatchers(dispatchers)
+			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
+			// this is the first opportunity to see claims stranded by a previous process.
+			logStuckDispatchClaims(campaignRepo)
 			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
 			// goroutine returns) before it reads c.orch, so this write happens-before
