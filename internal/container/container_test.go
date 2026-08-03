@@ -152,7 +152,8 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 }
 
 // registeredProviders is the set of providers registerDispatchers wires up on this
-// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter, microsoft, hubspot). Each is
+// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter, googleads, microsoft,
+// hubspot). Each is
 // guarded so dropping its map entry — the production wiring each PR adds — fails a test rather
 // than silently restoring "no dispatcher registered" (the adapters are unit-tested by
 // direct instantiation, which bypasses the map).
@@ -161,19 +162,25 @@ var registeredProviders = []model.Provider{
 	model.ProviderLinkedInAds,
 	model.ProviderMetaAds,
 	model.ProviderTwitterAds,
+	model.ProviderGoogleAds,
 	model.ProviderMicrosoftAds,
 	model.ProviderHubSpot,
 }
 
-// TestRegisterDispatchers_RegistersProviders asserts every expected provider maps to a
-// dispatcher. registerDispatchers only stores its args, so nil repo/encryptor build
-// the map without a deref.
+// TestRegisterDispatchers_RegistersProviders asserts EXACTLY the expected providers map to a
+// dispatcher — every one is present AND no extra/fewer. The len(m) equality means dropping a
+// wiring line (or adding an unlisted one) fails this test, not just a missing-key check.
+// registerDispatchers only stores its args, so nil repo/encryptor build the map without a deref.
 func TestRegisterDispatchers_RegistersProviders(t *testing.T) {
 	m := registerDispatchers(nil, nil, nil)
 	for _, p := range registeredProviders {
 		_, ok := m[p]
 		assert.True(t, ok, "%s must be registered — this is the wiring its PR adds", p)
 	}
+	// Exact membership: catches BOTH a dropped wiring (fewer entries) and an unlisted new
+	// wiring (more entries), so registeredProviders stays the single source of truth.
+	assert.Equal(t, len(registeredProviders), len(m),
+		"registerDispatchers must register exactly the expected providers; update registeredProviders when adding/removing a wiring")
 }
 
 // TestLogMissingDispatchers_SurfacesGaps verifies logMissingDispatchers actually
@@ -188,18 +195,34 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	m := registerDispatchers(nil, nil, nil)
-	logMissingDispatchers(m)
+	// EVERY dispatchable provider now has an adapter, so the real map produces no warning at
+	// all (asserted below). To keep proving this function is not a no-op, feed it a map with
+	// one provider deliberately REMOVED and assert that provider is named. Using a synthetic
+	// gap rather than a real one means this test no longer rots each time an adapter lands.
+	full := registerDispatchers(nil, nil, nil)
+	gapped := make(map[model.Provider]service.PlatformDispatcher, len(full))
+	for p, d := range full {
+		if p == model.ProviderGoogleAds {
+			continue // the synthetic gap
+		}
+		gapped[p] = d
+	}
+	logMissingDispatchers(gapped)
 
 	out := buf.String()
-	assert.Contains(t, out, "no dispatcher registered", "the warning must be emitted when providers are missing")
-	// No registered provider may be logged as missing...
-	for _, p := range registeredProviders {
+	assert.Contains(t, out, "no dispatcher registered", "the warning must be emitted when a provider is missing")
+	assert.Contains(t, out, string(model.ProviderGoogleAds), "the missing provider must be named in the log")
+	// No provider that IS registered may be reported as missing.
+	for p := range gapped {
 		assert.NotContains(t, out, string(p), "%s is registered, so it must not be logged as missing", p)
 	}
-	// ...and at least one genuinely-unregistered known provider MUST be named. Microsoft now
-	// has an adapter, so use google-ads (still unregistered on this branch) as the sentinel.
-	assert.Contains(t, out, string(model.ProviderGoogleAds), "an unregistered known provider (google-ads) must be surfaced in the log")
+
+	// With the FULL map nothing is missing, so the function must stay silent — every
+	// dispatchable provider (all six ad platforms + the hubspot email channel) is wired.
+	var quiet bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&quiet, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	logMissingDispatchers(full)
+	assert.Empty(t, quiet.String(), "no warning may be emitted when every provider has a dispatcher")
 }
 
 func TestNewContainer_NoDatabase(t *testing.T) {

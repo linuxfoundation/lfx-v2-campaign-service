@@ -94,7 +94,7 @@ Each optimization action is scoped to a single campaign under its brief and is i
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED. Wired for **Reddit** (this PR); Meta + LinkedIn land in the stacked follow-up. A platform without a status-toggle dispatcher returns 400. |
+| PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED (Reddit, Meta, LinkedIn; adding the toggle to the X/Twitter + Google Ads dispatchers is remaining follow-up work). |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` | `campaign_manager` | JSON | Pause/remove Google Ads keywords for this campaign. |
 
 **Tentative** (later phases, same nesting + `campaign_manager` gating): budget adjust, bid-strategy change, per-keyword bid, ad/creative rotation, ad-copy edit, geo-target edit, audience edit, negative keywords, bid modifiers, scheduling, flight-date change. Cross-platform budget reallocation, if built, is modeled as a first-class per-project resource with its own single-target mutations — not a bulk endpoint.
@@ -269,11 +269,13 @@ geoTargets: string[]            — ISO country codes ['US', 'JP']
 project?: string                — Canonical LFX project slug (e.g. 'cncf', 'tlf'); used verbatim in the campaign-name Project segment. Should be derived from the authenticated {projectId}, not free-typed.
 driveFolderUrl?: string
 platforms?: CampaignPlatform[]
+googleAdsConfig?: object        — Google Ads-specific params (see GoogleAdsConfig below)
 linkedInConfig?: object         — LinkedIn-specific params
 redditConfig?: object           — Reddit-specific params
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
 microsoftConfig?: object        — Microsoft Ads-specific params (see MicrosoftConfig below)
+hubspotConfig?: object          — HubSpot (email channel) params (see HubSpotConfig below)
 ```
 
 #### MicrosoftConfig (the `microsoftConfig` object)
@@ -298,7 +300,18 @@ timeZone?: string               — OPTIONAL Microsoft Campaign.TimeZone enum va
 The connection supplies the ad account id (`account_id`, the digits-only `CustomerAccountId`) and
 an OPTIONAL manager/MCC id (`customer_id`, the `CustomerId` header) via the Microsoft connection
 config — not this campaign config.
-hubspotConfig?: object          — HubSpot (email channel) params (see HubSpotConfig below)
+
+#### GoogleAdsConfig (the `googleAdsConfig` object)
+
+Google Ads per-platform config. Today the dispatcher creates a PAUSED search-campaign shell, so `budget` is the only caller-supplied key here; targeting/keywords land in a later phase (GA-3+). **Budget is in whole units of the ad ACCOUNT's currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
+
+```
+budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
+                                  applied as the campaign's DAILY budget. Must be a finite, POSITIVE
+                                  number; NaN/Inf or a non-positive value is rejected by the client
+                                  during dispatch (a pre-create job failure, since CreateCampaigns is
+                                  async). Omitting it leaves the shell with no budget, which fails the
+                                  platform job asynchronously — supply it explicitly.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)

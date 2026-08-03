@@ -74,7 +74,18 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
 		return nil, notCreated(fmt.Errorf("decode microsoft credentials: %w", err))
 	}
-	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
+	// TRIM before the completeness check, and use the trimmed values downstream (mirrors
+	// meta.go / linkedin.go and the accountID handling just below). Without the trim a
+	// whitespace-only credential passes as "present", so CreateCampaign runs and its first
+	// lookup fails on the bad credential — a failure that returns a non-nil partial and is
+	// therefore classified UNCONFIRMED, RETAINING the claim for what is really a local config
+	// error where nothing was ever created upstream. Trimming keeps it a clean pre-create
+	// failure that releases the claim.
+	clientID := strings.TrimSpace(creds.ClientID)
+	clientSecret := strings.TrimSpace(creds.ClientSecret)
+	developerToken := strings.TrimSpace(creds.DeveloperToken)
+	refreshToken := strings.TrimSpace(creds.RefreshToken)
+	if clientID == "" || clientSecret == "" || developerToken == "" || refreshToken == "" {
 		return nil, notCreated(fmt.Errorf("microsoft credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)"))
 	}
 	// Trim once and use the trimmed value for both the empty check and the CustomerAccountId
@@ -122,10 +133,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// header and break MCC-scoped accounts. Trimmed for the same reason as the account id.
 	client := microsoft.NewClient(
 		microsoft.Credentials{
-			ClientID:       creds.ClientID,
-			ClientSecret:   creds.ClientSecret,
-			DeveloperToken: creds.DeveloperToken,
-			RefreshToken:   creds.RefreshToken,
+			ClientID:       clientID,
+			ClientSecret:   clientSecret,
+			DeveloperToken: developerToken,
+			RefreshToken:   refreshToken,
 		},
 		microsoft.AccountConfig{
 			AccountID:  accountID,
