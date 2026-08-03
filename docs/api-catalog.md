@@ -303,6 +303,12 @@ sourceEmailId: string           — REQUIRED. The HubSpot marketing-email id to 
                                   created as a DRAFT (a human reviews and sends it), so staging is
                                   safe. The AI body content (subject/preheader/body) is applied by
                                   a separate content-generation step.
+utmCampaign: string             — OPTIONAL. Overrides the utm_campaign applied to every link in
+                                  the staged email. When unset the campaign is DERIVED from the
+                                  deterministic email name, so links are always attributable —
+                                  set this only to make several briefs' emails roll up to one
+                                  campaign in reporting. utm_source is always `email` and
+                                  utm_medium always `LF-Events`.
 ```
 
 The connection supplies the HubSpot private-app token (credentials) and `portal_id` (provider

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -169,9 +170,21 @@ func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailNa
 		return
 	}
 
+	// Iterate widgets in a STABLE order and carry the link count across them. Go map order is
+	// randomized, so without sorting the same email would number its links differently on each
+	// run; without carrying the count, every widget would restart at "body-link-1" and a
+	// multi-widget email would emit duplicate utm_content values that no report can tell apart.
+	keys := make([]string, 0, len(widgets))
+	for k := range widgets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	tagged := make(map[string]string, len(widgets))
-	for key, body := range widgets {
-		out, terr := utm.TagHTMLLinks(body, res.Params, "")
+	tagCount := 0
+	for _, key := range keys {
+		body := widgets[key]
+		out, n, terr := utm.TagHTMLLinksFrom(body, res.Params, "", tagCount)
 		if terr != nil {
 			// TagHTMLLinks returns the ORIGINAL body alongside its error, so skipping this
 			// widget leaves it exactly as it was rather than writing back something mangled.
@@ -179,6 +192,7 @@ func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailNa
 				"email_id", emailID, "widget", key, "error", terr)
 			continue
 		}
+		tagCount += n
 		if out != body {
 			tagged[key] = out
 		}

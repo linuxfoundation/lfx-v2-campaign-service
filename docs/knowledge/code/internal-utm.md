@@ -14,7 +14,7 @@ the marketing dashboards could not see the channel at all.
 
 ## The LF Events convention
 
-`utm_source=email`, `utm_medium=**LF-Events**` — medium is NOT `email`. Warehouse channel
+`utm_source=email`, `utm_medium=`**`LF-Events`** — medium is NOT `email`. Warehouse channel
 reporting keys on this exact pair, so changing either silently re-buckets historical
 comparisons instead of failing.
 

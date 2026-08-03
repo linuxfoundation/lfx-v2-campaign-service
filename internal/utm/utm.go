@@ -96,8 +96,14 @@ func Apply(rawURL string, p Params, content string) string {
 		return rawURL
 	}
 	q := u.Query()
-	if strings.TrimSpace(q.Get("utm_campaign")) != "" {
-		return rawURL
+	// Check EVERY utm_campaign value, not just the first. Values.Get returns only the first,
+	// so `?utm_campaign=&utm_campaign=hand-picked` would pass the guard and then Set would
+	// DELETE the author's deliberate campaign — the exact silent overwrite this guard exists
+	// to prevent, hidden behind a leading empty value.
+	for _, v := range q["utm_campaign"] {
+		if strings.TrimSpace(v) != "" {
+			return rawURL
+		}
 	}
 
 	q.Set("utm_source", orDefault(p.Source, DefaultSource))

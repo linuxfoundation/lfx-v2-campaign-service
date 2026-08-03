@@ -2,6 +2,26 @@
 
 ## 2026-08-03
 
+**Update** — Five UTM fixes (LFXV2-2775, PR #62 review):
+
+- **Never-retag was defeatable.** `url.Values.Get` returns only the FIRST value, so
+  `?utm_campaign=&utm_campaign=hand-picked` slipped past the guard and `Set` then DELETED the
+  author's deliberate campaign. Every value is now checked.
+- **Multi-widget emails emitted DUPLICATE `utm_content`.** The counter restarted per widget, so
+  two widgets both produced `body-link-1` and no report could tell those links apart —
+  defeating the point of labelling. `TagHTMLLinksFrom` carries the count across fragments, and
+  the dispatcher iterates widgets in SORTED order (Go map order is randomized, so numbering
+  would otherwise differ run to run).
+- **A no-op tag still rewrote the body.** `html.Render` canonicalizes markup, so re-serializing
+  an untouched widget produced a different string; the caller PATCHed a draft that gained no UTM
+  parameters and logged a successful tag. It now returns the ORIGINAL fragment when nothing was
+  tagged.
+- **Provenance was false.** A brief-config override was recorded as `hubspot_campaign`, which
+  means an upstream campaign's `hs_utm` — not implemented. Added `SourceBriefConfig`.
+- Docs synced: `utmCampaign` added to the API catalog, the hubspot concept no longer says
+  content-setting is deferred, and the `**LF-Events**` asterisks moved outside the code span
+  (they were documenting a literal `**LF-Events**`).
+
 **Update** — Added email UTM tagging (LFXV2-2775). Every PAID platform client already built its
 own UTM parameters; the email channel had NONE, so staged emails sent with bare links and their
 sessions arrived in the warehouse as direct/unattributed traffic — the marketing dashboards

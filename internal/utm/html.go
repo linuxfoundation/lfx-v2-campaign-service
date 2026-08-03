@@ -27,8 +27,19 @@ const DefaultLinkPrefix = "body-link"
 // AND do not consume a number, so the numbering describes the links that were actually tagged
 // rather than counting skipped ones.
 func TagHTMLLinks(fragment string, p Params, prefix string) (string, error) {
+	out, _, err := TagHTMLLinksFrom(fragment, p, prefix, 0)
+	return out, err
+}
+
+// TagHTMLLinksFrom is TagHTMLLinks with an explicit starting count, returning the number of
+// links it tagged so a caller can continue numbering across SEVERAL fragments.
+//
+// An email body is split across rich-text widgets. Tagging each one independently restarts at
+// "<prefix>-1", so a multi-widget email emits duplicate utm_content values and a report cannot
+// tell which link was clicked — defeating the point of labelling them at all.
+func TagHTMLLinksFrom(fragment string, p Params, prefix string, startAt int) (string, int, error) {
 	if strings.TrimSpace(fragment) == "" || strings.TrimSpace(p.Campaign) == "" {
-		return fragment, nil
+		return fragment, 0, nil
 	}
 	if strings.TrimSpace(prefix) == "" {
 		prefix = DefaultLinkPrefix
@@ -44,12 +55,21 @@ func TagHTMLLinks(fragment string, p Params, prefix string) (string, error) {
 		DataAtom: atom.Body,
 	})
 	if err != nil {
-		return fragment, fmt.Errorf("utm: parse email html: %w", err)
+		return fragment, 0, fmt.Errorf("utm: parse email html: %w", err)
 	}
 
-	var n int
+	n := startAt
 	for _, root := range nodes {
 		tagAnchors(root, p, prefix, &n)
+	}
+
+	// Nothing was tagged: return the ORIGINAL fragment rather than the rendered tree.
+	// html.Render canonicalizes markup (attribute order, quoting), so re-serializing an
+	// untouched widget produces a different string — the caller then sees a "change", PATCHes
+	// a draft that gained no UTM parameters, and logs a successful tag. That breaks both the
+	// no-op and the never-mangle contract.
+	if n == startAt {
+		return fragment, 0, nil
 	}
 
 	var b strings.Builder
@@ -57,10 +77,10 @@ func TagHTMLLinks(fragment string, p Params, prefix string) (string, error) {
 		if rerr := html.Render(&b, root); rerr != nil {
 			// Render failing after a successful parse would mean emitting a truncated body;
 			// return the original instead.
-			return fragment, fmt.Errorf("utm: render email html: %w", rerr)
+			return fragment, 0, fmt.Errorf("utm: render email html: %w", rerr)
 		}
 	}
-	return b.String(), nil
+	return b.String(), n - startAt, nil
 }
 
 // tagAnchors walks the tree and rewrites anchor hrefs in place. n is the running count of

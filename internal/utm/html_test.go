@@ -127,3 +127,48 @@ func TestTagHTMLLinks_HandlesAnchorsWithoutHref(t *testing.T) {
 	assert.Contains(t, out, `name="top"`)
 	assert.Contains(t, hrefs(t, out)[0], "utm_content=body-link-1")
 }
+
+// TestTagHTMLLinksFrom_ContinuesNumberingAcrossFragments pins the multi-widget contract. An
+// email body is split across rich-text widgets; tagging each independently restarts at
+// "body-link-1", so a multi-widget email emits DUPLICATE utm_content values and a report cannot
+// tell which link was clicked — which defeats the point of labelling them.
+func TestTagHTMLLinksFrom_ContinuesNumberingAcrossFragments(t *testing.T) {
+	w1 := `<a href="https://events.lfx.dev/a">A</a><a href="https://events.lfx.dev/b">B</a>`
+	w2 := `<a href="https://events.lfx.dev/c">C</a>`
+
+	out1, n1, err := TagHTMLLinksFrom(w1, testParams(), "", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n1, "the count returned must be the number of links TAGGED")
+
+	out2, n2, err := TagHTMLLinksFrom(w2, testParams(), "", n1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n2)
+
+	got := append(hrefs(t, out1), hrefs(t, out2)...)
+	require.Len(t, got, 3)
+	assert.Contains(t, got[0], "utm_content=body-link-1")
+	assert.Contains(t, got[1], "utm_content=body-link-2")
+	assert.Contains(t, got[2], "utm_content=body-link-3",
+		"numbering must CONTINUE across widgets, not restart")
+
+	// Every label must be distinct — that is the property reports depend on.
+	seen := map[string]bool{}
+	for _, h := range got {
+		label := h[strings.Index(h, "utm_content=")+len("utm_content="):]
+		if i := strings.IndexByte(label, '&'); i >= 0 {
+			label = label[:i]
+		}
+		assert.False(t, seen[label], "duplicate utm_content %q: reports cannot distinguish these links", label)
+		seen[label] = true
+	}
+}
+
+// TestTagHTMLLinksFrom_SkippedLinksDoNotConsumeNumbers guards the interaction between the
+// carried count and the skip rules.
+func TestTagHTMLLinksFrom_SkippedLinksDoNotConsumeNumbers(t *testing.T) {
+	in := `<a href="mailto:x@y.z">m</a><a href="https://events.lfx.dev/a">A</a>`
+	out, n, err := TagHTMLLinksFrom(in, testParams(), "", 5)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "only the tagged link counts")
+	assert.Contains(t, hrefs(t, out)[1], "utm_content=body-link-6", "numbering resumes from the carried count")
+}

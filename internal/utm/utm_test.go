@@ -142,14 +142,14 @@ func TestSlugWithSuffix(t *testing.T) {
 	}
 }
 
-// TestResolve_PrefersTheConfiguredCampaign pins the precedence. A campaign configured on the
-// HubSpot campaign is a deliberate operator choice and must win over anything derived from a
+// TestResolve_PrefersTheConfiguredCampaign pins the precedence. An operator-set utmCampaign on
+// the brief config is a deliberate choice and must win over anything derived from a
 // generated name.
 func TestResolve_PrefersTheConfiguredCampaign(t *testing.T) {
 	got := Resolve("kubecon-eu-2026-hs", "KubeCon Korea 2026 — brief-1")
 
 	assert.Equal(t, "kubecon-eu-2026-hs", got.Params.Campaign)
-	assert.Equal(t, SourceHubSpotCampaign, got.Source)
+	assert.Equal(t, SourceBriefConfig, got.Source)
 	assert.Equal(t, DefaultSource, got.Params.Source)
 	assert.Equal(t, DefaultMedium, got.Params.Medium)
 }
@@ -175,4 +175,18 @@ func TestResolve_NeverYieldsAnEmptyCampaign(t *testing.T) {
 	}
 	// Whitespace-only campaign values are not real configuration either.
 	assert.Equal(t, SourceDerived, Resolve("   ", "Some Email").Source)
+}
+
+// TestApply_NeverDoubleTagsWithRepeatedParam pins the multi-VALUE case. url.Values.Get returns
+// only the FIRST value, so `?utm_campaign=&utm_campaign=hand-picked` slipped past the
+// never-retag guard and Set then deleted the author's deliberate campaign — the exact silent
+// overwrite the guard exists to prevent, hidden behind a leading empty value.
+func TestApply_NeverDoubleTagsWithRepeatedParam(t *testing.T) {
+	raw := "https://events.lfx.dev/x?utm_campaign=&utm_campaign=hand-picked"
+	assert.Equal(t, raw, Apply(raw, testParams(), "cta"),
+		"a non-empty campaign in ANY position must protect the link")
+
+	// All-empty values are still not a real tag, so tagging may proceed.
+	blank := "https://events.lfx.dev/x?utm_campaign=&utm_campaign="
+	assert.NotEqual(t, blank, Apply(blank, testParams(), ""))
 }
