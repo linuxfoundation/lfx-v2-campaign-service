@@ -285,16 +285,28 @@ var dispatchableProviders = []model.Provider{
 // platform (no campaigns will run, budget is unspent) from a missing EMAIL channel (no drafts
 // are staged) — different urgency, different remediation.
 func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispatcher) {
-	var missing []string
+	// Split by KIND into separate structured fields rather than formatting the kind into each
+	// string. An operator filtering for "which paid platforms are down" can then match a field
+	// instead of substring-matching "(paid-ads)" — the same brittle string-matching this
+	// change argues against elsewhere. It also keeps the test asserting on data, not on a
+	// format string.
+	var missingPaid, missingEmail []string
 	for _, p := range dispatchableProviders {
-		if _, ok := dispatchers[p]; !ok {
-			missing = append(missing, fmt.Sprintf("%s (%s)", p, p.Kind()))
+		if _, ok := dispatchers[p]; ok {
+			continue
 		}
+		if p.IsPaidAds() {
+			missingPaid = append(missingPaid, string(p))
+			continue
+		}
+		missingEmail = append(missingEmail, string(p))
 	}
-	if len(missing) > 0 {
-		slog.Warn("some channels have no dispatcher registered; campaigns for them record jobs but perform no upstream dispatch",
-			"missing", missing, "registered", len(dispatchers))
+	if len(missingPaid) == 0 && len(missingEmail) == 0 {
+		return
 	}
+	slog.Warn("some channels have no dispatcher registered; campaigns for them record jobs but perform no upstream dispatch",
+		"missing_paid_ads", missingPaid, "missing_email", missingEmail,
+		"registered", len(dispatchers))
 }
 
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {

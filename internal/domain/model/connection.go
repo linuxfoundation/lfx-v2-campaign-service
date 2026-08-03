@@ -97,7 +97,7 @@ func (p Provider) Kind() ChannelKind {
 //
 // The practical effect: adding a provider constant and a Table() case without a Kind() case
 // yields a provider the API rejects outright — a loud, immediate failure at the boundary
-// instead of a subtle misclassification. See TestProviderValidityRequiresClassification.
+// instead of a subtle misclassification. See TestValidFromRequiresBothTableAndKind.
 
 // IsPaidAds reports whether p is a paid ad channel (budgeted, pausable) rather than email.
 func (p Provider) IsPaidAds() bool { return p.Kind() == ChannelPaidAds }
@@ -110,8 +110,11 @@ func (p Provider) IsPaidAds() bool { return p.Kind() == ChannelPaidAds }
 // assert each entry classifies, so adding a provider here (which you must, to make it usable)
 // forces it to be classified too.
 //
-// Keep in sync with the Provider constants above; TestAllProvidersMatchesTableSwitch fails if
-// an entry is missing or spurious.
+// Keep in sync with the Provider constants above. TestAllProvidersAreValidAndUnique catches a
+// DUPLICATE or a table-less entry here, but it cannot prove completeness: Go cannot enumerate
+// a const block, so a provider constant omitted from this list is not detectable by any test.
+// Valid() requiring Kind() is the real backstop — an unclassified provider is invalid whether
+// or not anyone remembered to list it.
 func AllProviders() []Provider {
 	return []Provider{
 		ProviderGoogleAds,

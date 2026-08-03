@@ -18,7 +18,7 @@ versus an ad platform whose toggle is not wired yet. A single generic message re
 feature and invited someone to "fix" the email case.
 
 `Kind()` enumerates providers explicitly rather than defaulting, so an unclassified new provider
-returns `""` and is caught by `TestProviderKind_ClassifiesEveryProvider` instead of silently
+returns `""` and is caught by `TestProviderValidityHoldsForEveryProvider` instead of silently
 inheriting paid-ads behaviour. Also made `TestLogMissingDispatchers_SurfacesGaps` rot-proof: it
 now removes one provider from the real map (a synthetic gap) rather than asserting a specific
 provider is still unregistered, which broke each time an adapter landed.
