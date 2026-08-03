@@ -80,7 +80,10 @@ func LoadConfig() *Config {
 		JWKSUrl:  envOrDefault(constants.EnvJWKSURL, constants.DefaultJWKSURL),
 		Audience: envOrDefault(constants.EnvAudience, constants.DefaultAudience),
 		Issuer:   envOrDefault(constants.EnvIssuer, constants.DefaultIssuer),
-		NATSUrl:  envOrDefault(constants.EnvNATSURL, constants.DefaultNATSURL),
+		// NOT envOrDefault: an explicitly-empty NATS_URL is the documented switch
+		// that disables index publishing, and envOrDefault cannot express it (it
+		// collapses unset and empty into the default).
+		NATSUrl: envOrDefaultUnlessSet(constants.EnvNATSURL, constants.DefaultNATSURL),
 
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
 		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),
@@ -245,6 +248,17 @@ func redactSecret(v string) string {
 		return ""
 	}
 	return "xxxxx"
+}
+
+// envOrDefaultUnlessSet returns def only when key is UNSET. A key that is present
+// but empty returns "" — unlike envOrDefault, which treats empty as absent. Use this
+// for settings where empty is a meaningful operator choice rather than a mistake
+// (NATS_URL="" disables index publishing; see constants.EnvNATSURL).
+func envOrDefaultUnlessSet(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return def
 }
 
 func envOrDefault(key, def string) string {

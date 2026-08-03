@@ -17,6 +17,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
@@ -373,4 +374,80 @@ func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.
 
 func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
 	return a, nil
+}
+
+// TestNewContainer_AllPathsInjectIndexer pins the wiring bug that made PR #60 publish
+// nothing: SetIndexer was called ONLY on the 503-mode path, while the healthy fast path
+// and the no-database path each constructed their own BriefService and silently kept the
+// Noop. Every path must end up with a real publisher, so asserting one path is not enough
+// — the bug lived precisely in the path that wasn't checked.
+//
+// A reachable NATS server is NOT required: newIndexPublisher returns a live *NATSPublisher
+// after a failed dial (it reconnects in the background), so "not Noop" is the correct
+// signal that wiring happened, independent of broker availability.
+func TestNewContainer_AllPathsInjectIndexer(t *testing.T) {
+	const unreachableNATS = "nats://127.0.0.1:14222"
+
+	t.Run("no-database path", func(t *testing.T) {
+		cont, err := NewContainer(&config.Config{Host: "*", Port: "8080", NATSUrl: unreachableNATS})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cont.Close(context.Background()) })
+
+		bs, ok := cont.Briefs.(*service.BriefService)
+		require.True(t, ok, "briefs service must be the concrete *BriefService")
+		assert.False(t, bs.IndexerIsNoop(), "no-database path kept the Noop indexer: it would serve traffic and index nothing")
+	})
+
+	t.Run("503-mode path", func(t *testing.T) {
+		// An unreachable DB boots in 503 mode and takes the background-retry path.
+		shrinkDBTimers(t)
+		cont, err := NewContainer(&config.Config{
+			Host: "*", Port: "8080", NATSUrl: unreachableNATS,
+			// Port 1 has nothing listening → connection refused (transient, retryable).
+			DatabaseURL:             "postgres://app@127.0.0.1:1/campaign?sslmode=disable",
+			CredentialEncryptionKey: validEncryptionKey(),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cont.Close(context.Background()) })
+
+		bs, ok := cont.Briefs.(*service.BriefService)
+		require.True(t, ok, "briefs service must be the concrete *BriefService")
+		assert.False(t, bs.IndexerIsNoop(), "503-mode path kept the Noop indexer")
+	})
+}
+
+// TestNewBriefService_InjectsSharedPublisher covers the live fast path's constructor
+// directly. The fast path needs a real pool, so exercising NewContainer for it would
+// require a database; calling the helper proves the same guarantee — that the helper
+// every path now routes through actually injects — without one.
+func TestNewBriefService_InjectsSharedPublisher(t *testing.T) {
+	c := &Container{indexPublisher: indexer.Noop{}}
+	assert.True(t, c.newBriefService(nil, nil, nil, nil).IndexerIsNoop(),
+		"a Noop publisher must pass through as a Noop")
+
+	live, err := indexer.NewNATSPublisher("nats://127.0.0.1:14222")
+	require.NotNil(t, live)
+	_ = err // a dial failure still yields a usable publisher; that is not what this asserts
+	c = &Container{indexPublisher: live}
+	t.Cleanup(live.Close)
+	assert.False(t, c.newBriefService(nil, nil, nil, nil).IndexerIsNoop(),
+		"the container's real publisher must reach the BriefService")
+}
+
+// TestNewOrchestrator_InjectsSharedPublisher covers the orchestrator half of the same
+// wiring guarantee. Campaign CREATES are persisted by the orchestrator (dispatchOne),
+// so an orchestrator that kept the Noop would leave every newly created campaign
+// unsearchable until a later update republished it — a gap invisible from BriefService.
+func TestNewOrchestrator_InjectsSharedPublisher(t *testing.T) {
+	c := &Container{indexPublisher: indexer.Noop{}}
+	assert.True(t, c.newOrchestrator(nil, nil, nil).IndexerIsNoop(),
+		"a Noop publisher must pass through as a Noop")
+
+	live, err := indexer.NewNATSPublisher("nats://127.0.0.1:14222")
+	require.NotNil(t, live)
+	_ = err // a dial failure still yields a usable publisher; that is not what this asserts
+	t.Cleanup(live.Close)
+	c = &Container{indexPublisher: live}
+	assert.False(t, c.newOrchestrator(nil, nil, nil).IndexerIsNoop(),
+		"the container's real publisher must reach the Orchestrator")
 }

@@ -30,6 +30,34 @@ campaign-service outage. NATS core, not JetStream, for the same reason.
 No chart change was needed: `NATS_URL` was already injected via `app.environment` and already
 read into `config.NATSUrl`. The only thing missing was a consumer.
 
+**Update** — Fixed the indexing WIRING (LFXV2-2814, PR #60 review). Two independent reviewers
+converged on the same defect and both were right: `SetIndexer` was called only on the 503-mode
+path, so a HEALTHY startup — the normal case — kept the `Noop` and published nothing. Worse,
+`SetIndexer` turned out to have zero call sites at all, because `wireLiveBackends` constructs its
+own `BriefService`. The publisher is now built once in `NewContainer` ahead of every branch and
+injected through `newBriefService` / `newOrchestrator`, the single funnels all five construction
+sites now use.
+
+`Orchestrator` needed the publisher too: campaign CREATES are persisted by `dispatchOne`, not by
+`BriefService`, so a newly created campaign was unsearchable until some later update republished
+it. Retained PARTIAL orphans publish as well — those are exactly the rows an operator must find in
+order to reconcile them — and both publish on the detached `persistCtx` so a write completing
+during shutdown grace still reaches the index.
+
+Also made the documented disable switch real: `LoadConfig` resolved `NATS_URL` with
+`envOrDefault`, which treats empty as absent, so `NATS_URL=""` silently became the in-cluster
+default and could never disable anything. Now resolved with `envOrDefaultUnlessSet`
+(`os.LookupEnv`), which distinguishes unset from explicitly empty.
+
+Rejected one finding: a reviewer claimed the indexer requires an `action` / `headers` / `data` /
+`indexing_config` envelope and drops flat messages. An exhaustive search of every local checkout
+found ZERO occurrences of `indexing_config` in any code, test, doc or fixture — including the repo
+that DEFINES `TransactionBodyStub`. The flat shape is corroborated on both the producer and
+consumer sides (`SourceIncludes` projects those keys at the TOP level; an envelope would break
+every projection). Caveat kept deliberately: the subscribing indexer service is not in any local
+checkout, so this argues from absence — if that repo is produced, re-verify before trusting the
+flat shape.
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in

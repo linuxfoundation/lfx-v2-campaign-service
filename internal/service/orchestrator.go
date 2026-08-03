@@ -18,6 +18,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 )
 
 // maxParallelDispatch bounds concurrent per-platform campaign creation.
@@ -205,6 +206,13 @@ type Orchestrator struct {
 	jobs        domain.JobRepository
 	dispatchers map[model.Provider]PlatformDispatcher
 
+	// indexerMu guards indexer, which SetIndexer late-binds from the container.
+	// Campaign CREATES land here (dispatchOne persists them), not in BriefService,
+	// so without this a new campaign would stay invisible to search until some
+	// later update happened to republish it. Never nil: defaults to Noop.
+	indexerMu sync.RWMutex
+	indexer   indexer.Publisher
+
 	// wg tracks in-flight dispatch runs so Shutdown can wait for them before the
 	// process (and the DB pool) goes away. mu guards the shutting-down flag so a
 	// Start racing with Shutdown either registers on wg or is rejected, never
@@ -242,6 +250,45 @@ type Orchestrator struct {
 
 // NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
 // platform with no registered dispatcher is recorded as a failed result.
+// SetIndexer injects the Query Service index publisher. Separate from the constructor
+// so existing NewOrchestrator call sites (mostly tests) are unaffected and default to
+// Noop, mirroring BriefService.SetIndexer.
+func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
+	if p == nil {
+		return
+	}
+	o.indexerMu.Lock()
+	defer o.indexerMu.Unlock()
+	o.indexer = p
+}
+
+// IndexerIsNoop reports whether this orchestrator would publish nothing. Exported for
+// the container's wiring tests — see BriefService.IndexerIsNoop for why this is needed.
+func (o *Orchestrator) IndexerIsNoop() bool {
+	o.indexerMu.RLock()
+	defer o.indexerMu.RUnlock()
+	_, isNoop := o.indexer.(indexer.Noop)
+	return isNoop
+}
+
+// publishCampaignIndex publishes a campaign snapshot after its row is committed.
+// Best-effort by contract: the write already succeeded, so a publish problem must never
+// change the dispatch result. It deliberately takes an explicit ctx because the callers
+// persist on a DETACHED context during shutdown grace — passing the cancelled dispatch
+// ctx here would drop exactly the shutdown-window publishes the detach exists to save.
+func (o *Orchestrator) publishCampaignIndex(ctx context.Context, c *model.Campaign) {
+	if c == nil {
+		return
+	}
+	o.indexerMu.RLock()
+	p := o.indexer
+	o.indexerMu.RUnlock()
+	if p == nil {
+		return
+	}
+	p.Publish(ctx, indexer.NewBody(indexer.ObjectTypeCampaign, c.ID, c.ProjectID, campaignResult(c)))
+}
+
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
 	if dispatchers == nil {
 		dispatchers = map[model.Provider]PlatformDispatcher{}
@@ -252,6 +299,7 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 		campaigns:     campaigns,
 		jobs:          jobs,
 		dispatchers:   dispatchers,
+		indexer:       indexer.Noop{},
 		rootCtx:       rootCtx,
 		rootCancel:    rootCancel,
 		sweeperCtx:    sweeperCtx,
@@ -737,10 +785,15 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 					campaign.Status = campaignStatusPending
 				}
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
-				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
+				if saved, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
 				} else {
+					// Index the RETAINED PARTIAL too: it is a real row an operator must be
+					// able to find in order to reconcile it. Publishing only clean successes
+					// would hide exactly the campaigns that need attention. Uses persistCtx
+					// (detached) so a shutdown-window persist still reaches the index.
+					o.publishCampaignIndex(persistCtx, saved)
 					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 				}
@@ -786,7 +839,8 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// while still bounding it so it can never hang shutdown.
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancelPersist()
-	if _, err := o.campaigns.UpsertCampaign(persistCtx, campaign); err != nil {
+	saved, err := o.campaigns.UpsertCampaign(persistCtx, campaign)
+	if err != nil {
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
@@ -797,6 +851,12 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		res.CampaignID = campaign.PlatformCampaignID
 		return res
 	}
+	// The row is committed; publish it so a newly-created campaign is searchable
+	// immediately rather than only after some later update republishes it. Uses the
+	// DB-returned row (not the input) so the indexed document carries the persisted
+	// id, and persistCtx so a publish during shutdown grace isn't dropped.
+	o.publishCampaignIndex(persistCtx, saved)
+
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID
 	return res

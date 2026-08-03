@@ -127,6 +127,12 @@ type Container struct {
 	pool *postgres.Pool
 	orch *service.Orchestrator
 
+	// indexPublisher is built ONCE in NewContainer, before the fast-path/503-mode
+	// branch, and injected into every BriefService constructed on either path.
+	// Holding it here (rather than building it per-path) is what guarantees the
+	// two paths share one NATS connection and that Close can shut it down.
+	indexPublisher indexer.Publisher
+
 	// cancelInit stops the background DB-init goroutine (nil when none runs).
 	cancelInit context.CancelFunc
 	// initDone is closed when the background goroutine exits, so Close can wait
@@ -163,6 +169,14 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 
 	c := &Container{Config: cfg}
 
+	// Build the index publisher BEFORE any wiring branch. Indexing is independent of
+	// the database (a resource is published after its write commits), and there are
+	// THREE paths that construct a BriefService — no-database mode, the live fast
+	// path, and 503-mode + its background retry. Building it here and injecting the
+	// same instance everywhere is what stops a path from silently keeping the Noop
+	// and publishing nothing. It is a Noop when NATS is unconfigured or unreachable.
+	c.indexPublisher = newIndexPublisher(cfg)
+
 	if cfg.DatabaseURL == "" {
 		slog.Warn("database URL not set; connection and brief/campaign endpoints will return 503 Service Unavailable")
 		c.Service = service.NewCampaignService(nil)
@@ -170,7 +184,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		// still mounted and return the typed 503 ServiceUnavailable advertised by
 		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
 		c.Connections = service.NewConnectionService(nil, nil)
-		c.Briefs = service.NewBriefService(nil, nil, nil, nil)
+		c.Briefs = c.newBriefService(nil, nil, nil, nil)
 		c.Audiences = service.NewAudienceService(nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
@@ -222,11 +236,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	// so brief + job routes go live without a pod restart.
 	campaign := service.NewCampaignService(notReady{})
 	connections := service.NewConnectionService(nil, enc)
-	briefs := service.NewBriefService(nil, nil, nil, nil)
-	// Index publishing is independent of the database: a resource is published after its
-	// write commits, and the publisher is a Noop when NATS is unconfigured. Wiring it here
-	// (rather than on the DB path) means both the fast path and the cold-start retry get it.
-	briefs.SetIndexer(newIndexPublisher(cfg))
+	briefs := c.newBriefService(nil, nil, nil, nil)
 	auds := service.NewAudienceService(nil)
 	c.Service = campaign
 	c.Connections = connections
@@ -309,9 +319,9 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	audienceRepo := postgres.NewAudienceRepo(pool)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo)
 	logMissingDispatchers(dispatchers)
-	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
+	orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
-	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	c.Briefs = c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
 	c.Audiences = service.NewAudienceService(audienceRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
@@ -361,7 +371,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
 			logMissingDispatchers(dispatchers)
-			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
+			orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers)
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
 			// goroutine returns) before it reads c.orch, so this write happens-before
 			// that read.
@@ -518,7 +528,37 @@ func (c *Container) Close(ctx context.Context) error {
 	if pool != nil {
 		pool.Close()
 	}
+	// Close the NATS connection AFTER the dispatch drain: a draining dispatch can
+	// still persist a campaign and publish its index event, and closing earlier
+	// would drop exactly those last writes from the search index.
+	if c.indexPublisher != nil {
+		c.indexPublisher.Close()
+	}
 	return shutdownErr
+}
+
+// newBriefService constructs a BriefService and injects the container's shared index
+// publisher. EVERY BriefService construction in this file must go through it: the
+// publisher is opt-in via SetIndexer (so the ~40 test call sites default to Noop), which
+// means a path that calls service.NewBriefService directly compiles, runs, serves traffic
+// and silently indexes NOTHING. Routing every path through one helper is what makes that
+// failure impossible rather than merely unlikely.
+func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) *service.BriefService {
+	s := service.NewBriefService(briefs, campaigns, jobs, orch)
+	s.SetIndexer(c.indexPublisher)
+	return s
+}
+
+// newOrchestrator constructs an Orchestrator with the container's shared index
+// publisher injected. Campaign CREATES are persisted by the orchestrator (dispatchOne),
+// not by BriefService, so an orchestrator without the publisher leaves every newly
+// created campaign unsearchable until some later update republishes it. Same rationale
+// as newBriefService: route EVERY construction through one helper so a path cannot
+// silently keep the Noop.
+func (c *Container) newOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]service.PlatformDispatcher) *service.Orchestrator {
+	o := service.NewOrchestrator(campaigns, jobs, dispatchers)
+	o.SetIndexer(c.indexPublisher)
+	return o
 }
 
 // newIndexPublisher builds the Query Service index publisher from config.

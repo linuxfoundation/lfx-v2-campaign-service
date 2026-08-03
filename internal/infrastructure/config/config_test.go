@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -267,4 +268,34 @@ func TestConfigString_RedactsKeywordAndMalformedDSN(t *testing.T) {
 		assert.NotContains(t, formatted, "s3cret-value", "dsn=%q", dsn)
 		assert.Contains(t, formatted, "[redacted]", "dsn=%q", dsn)
 	}
+}
+
+// TestEnvOrDefaultUnlessSet_DistinguishesUnsetFromEmpty pins the ONLY behavioural
+// difference from envOrDefault: an explicitly-empty value survives instead of
+// falling through to the default. This is what makes NATS_URL="" a usable
+// disable switch for index publishing.
+func TestEnvOrDefaultUnlessSet_DistinguishesUnsetFromEmpty(t *testing.T) {
+	const key = "LFX_TEST_UNSET_VS_EMPTY"
+
+	t.Run("unset falls back to the default", func(t *testing.T) {
+		os.Unsetenv(key)
+		if got := envOrDefaultUnlessSet(key, "fallback"); got != "fallback" {
+			t.Fatalf("unset: got %q, want %q", got, "fallback")
+		}
+	})
+
+	t.Run("explicitly empty stays empty", func(t *testing.T) {
+		t.Setenv(key, "")
+		// envOrDefault would return "fallback" here — that difference is the point.
+		if got := envOrDefaultUnlessSet(key, "fallback"); got != "" {
+			t.Fatalf("explicit empty: got %q, want %q (the disable switch is unreachable)", got, "")
+		}
+	})
+
+	t.Run("set wins over the default", func(t *testing.T) {
+		t.Setenv(key, "nats://custom:4222")
+		if got := envOrDefaultUnlessSet(key, "fallback"); got != "nats://custom:4222" {
+			t.Fatalf("set: got %q, want %q", got, "nats://custom:4222")
+		}
+	})
 }

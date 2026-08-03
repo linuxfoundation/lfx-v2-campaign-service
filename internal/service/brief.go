@@ -58,6 +58,17 @@ func (s *BriefService) SetIndexer(p indexer.Publisher) {
 	s.indexer = p
 }
 
+// IndexerIsNoop reports whether this service would publish nothing. Exported so the
+// container's wiring tests can assert that EVERY startup path injected a real publisher:
+// SetIndexer is opt-in, so a path that forgets it still compiles, boots and serves — it
+// just silently indexes nothing. That failure is invisible without this accessor.
+func (s *BriefService) IndexerIsNoop() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, isNoop := s.indexer.(indexer.Noop)
+	return isNoop
+}
+
 // publishIndex sends a resource snapshot to the Query Service. Best-effort by contract: the
 // database already committed, so a publish problem must never surface to the caller.
 func (s *BriefService) publishIndex(ctx context.Context, objectType, objectID, projectID string, data any) {

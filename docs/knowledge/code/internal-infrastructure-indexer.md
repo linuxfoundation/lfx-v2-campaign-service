@@ -44,4 +44,32 @@ publish unconditionally instead of nil-checking at each one.
 NATS **core**, not JetStream: the Query Service re-indexes on every write, so a dropped message
 self-heals on the next update.
 
+## Wiring: one publisher, injected everywhere
+
+`SetIndexer` is **opt-in** (so the ~40 existing test call sites default to `Noop`), which makes a
+missed injection silent — the service compiles, boots, serves traffic and indexes *nothing*. That
+is not hypothetical: the first cut of this feature injected only on the 503-mode path, so a
+**healthy** startup published nothing at all.
+
+Two guarantees prevent a repeat:
+
+- The publisher is built **once** in `NewContainer`, before any wiring branch, and held on the
+  `Container`. All three `BriefService` paths (no-database, live fast path, 503-mode + retry) and
+  both `Orchestrator` paths go through `newBriefService` / `newOrchestrator`, which inject it.
+- `BriefService.IndexerIsNoop` / `Orchestrator.IndexerIsNoop` exist **only** so the container's
+  wiring tests can assert every path got a real publisher.
+
+**Both** types need it: `BriefService` publishes brief writes and campaign *updates*, but campaign
+**creates** are persisted by `Orchestrator.dispatchOne`. An orchestrator left on `Noop` leaves every
+newly created campaign unsearchable until some later update happens to republish it.
+
+Retained **partial** orphans are indexed too, not just clean successes — those are precisely the
+rows an operator must be able to find in order to reconcile them. Both publish on the *detached*
+`persistCtx`, so a write completing during shutdown grace still reaches the index.
+
+`NATS_URL` set to the empty string disables publishing outright. That switch is only reachable
+because config resolves it with `envOrDefaultUnlessSet` (`os.LookupEnv`): the ordinary
+`envOrDefault` treats empty as absent and would substitute the in-cluster default, making the
+documented switch a no-op.
+
 See [internal/infrastructure/indexer](../../../internal/infrastructure/indexer).
