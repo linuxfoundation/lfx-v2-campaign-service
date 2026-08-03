@@ -22,6 +22,37 @@ returns `""` and is caught by `TestProviderKind_ClassifiesEveryProvider` instead
 inheriting paid-ads behaviour. Also made `TestLogMissingDispatchers_SurfacesGaps` rot-proof: it
 now removes one provider from the real map (a synthetic gap) rather than asserting a specific
 provider is still unregistered, which broke each time an adapter landed.
+## 2026-08-02
+
+**Update** — Bounded the Claude fallback's rerun in
+[Local pre-PR review](architecture/local-pre-pr-review.md) (PR #56 review,
+LFXV2-2905). On a role-level host failure the trio is rerun **once**; if the rerun
+also fails, the role-labelled failure is reported and the launcher stops. The
+reviewer-authored `INCOMPLETE — <reason>` result and a host-side fallback failure
+remain separate states — the bound does not merge them.
+
+## 2026-07-31
+
+**Fix** — Corrected two overstatements in
+[Local pre-PR review](architecture/local-pre-pr-review.md) (PR #56 review,
+LFXV2-2905). "Nothing consults a remote, so the cycle works offline" was broader
+than the reviewer skills actually say: they permit optional read-only GitHub
+inspection to inform judgement. The invariant is narrower and is now stated as such
+— nothing fetches or consults a remote to *derive* the reviewed range. Separately,
+"reviews exactly one commit" is the default, not an invariant; the same concept's
+base-pinning section already documented the caller-supplied wider base.
+
+**Update** — Added [Local pre-PR review](architecture/local-pre-pr-review.md)
+(PR #56, LFXV2-2905): the repo-owned local review cycle. Two physical reviewer
+brains under `.claude/skills/` with generic symlink aliases, an empirical knowledge
+base at `docs/reviews/knowledge-base/`, and a `local-review-fallback` launch table
+for three Opus subagents when Pi is unavailable. Reviews exactly
+`git diff <base_sha> <target_sha>` with the target's first parent as the default
+base — no fetch, no remote, no merge-base. The false-positive floor is read at both
+revisions and suppresses only when both agree, so a change cannot waive a finding
+about itself. Ordinary patterns remain target-only; that gap is documented in the
+concept as a deferred, unsolved follow-up rather than presented as handled.
+`local-agents/` is now git-ignored.
 
 ## 2026-07-29
 
