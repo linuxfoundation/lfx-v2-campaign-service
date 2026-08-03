@@ -389,7 +389,7 @@ func TestNewAudienceBuilder_SnowflakeOptional(t *testing.T) {
 		"partial config":     {SnowflakeAccount: "acct", SnowflakeUser: "usr"}, // no key
 		"unusable key": {
 			SnowflakeAccount: "acct", SnowflakeUser: "usr",
-			SnowflakePrivateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----",
+			SnowflakePrivateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----", // secretlint-disable-line -- non-key fixture asserting an unusable key degrades
 		},
 	}
 	for name, cfg := range cases {
