@@ -21,13 +21,15 @@ const publishTimeout = 3 * time.Second
 // connectTimeout bounds the initial dial at startup.
 const connectTimeout = 5 * time.Second
 
-// drainTimeout bounds the shutdown drain. The nats.go DEFAULT is 30s, which alone exceeds the
+// DrainTimeout bounds the shutdown drain. EXPORTED because the container must budget for it
+// in ContainerCloseTimeout — Close really does spend this long draining, so a private constant
+// would let the shutdown arithmetic silently understate the phase. The nats.go DEFAULT is 30s, which alone exceeds the
 // service's entire graceful-shutdown budget (constants.DefaultShutdownTimeout, 25s) — a wedged
 // broker would hold Container.Close past the budget and get the pod SIGKILLed mid-shutdown,
 // defeating the very budget ContainerCloseTimeout exists to enforce. Indexing is best-effort,
 // so a small fixed slice is the right trade: buffered publishes get a chance to flush, and an
 // unreachable broker costs 2s of shutdown instead of 30.
-const drainTimeout = 2 * time.Second
+const DrainTimeout = 2 * time.Second
 
 // Publisher publishes index documents. Implementations MUST be non-fatal: the database is the
 // source of truth, and a failed publish costs discoverability (the Query Service re-indexes on
@@ -66,7 +68,7 @@ func NewNATSPublisher(url string) (Publisher, error) {
 	}
 	conn, err := nats.Connect(url,
 		nats.Timeout(connectTimeout),
-		nats.DrainTimeout(drainTimeout),
+		nats.DrainTimeout(DrainTimeout),
 		nats.MaxReconnects(-1), // reconnect forever; a broker restart must not permanently mute indexing
 		nats.RetryOnFailedConnect(true),
 	)

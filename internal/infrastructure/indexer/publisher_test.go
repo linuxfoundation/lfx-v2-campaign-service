@@ -17,16 +17,16 @@ import (
 // budget and get the pod SIGKILLed mid-shutdown. This asserts the relationship, not the
 // literal, so raising either constant re-checks the invariant instead of silently breaking it.
 func TestDrainTimeoutFitsShutdownBudget(t *testing.T) {
-	if drainTimeout >= constants.DefaultShutdownTimeout {
-		t.Fatalf("drainTimeout (%s) must be well under DefaultShutdownTimeout (%s): a wedged broker would overrun the shutdown budget",
-			drainTimeout, constants.DefaultShutdownTimeout)
+	if DrainTimeout >= constants.DefaultShutdownTimeout {
+		t.Fatalf("DrainTimeout (%s) must be well under DefaultShutdownTimeout (%s): a wedged broker would overrun the shutdown budget",
+			DrainTimeout, constants.DefaultShutdownTimeout)
 	}
 	// It must also leave room for the phases that actually matter (dispatch drain, pool
 	// close), not merely fit. A quarter of the budget is a generous ceiling for a
 	// best-effort convenience.
-	if drainTimeout > constants.DefaultShutdownTimeout/4 {
-		t.Errorf("drainTimeout (%s) takes more than a quarter of the shutdown budget (%s) for a best-effort concern",
-			drainTimeout, constants.DefaultShutdownTimeout)
+	if DrainTimeout > constants.DefaultShutdownTimeout/4 {
+		t.Errorf("DrainTimeout (%s) takes more than a quarter of the shutdown budget (%s) for a best-effort concern",
+			DrainTimeout, constants.DefaultShutdownTimeout)
 	}
 }
 

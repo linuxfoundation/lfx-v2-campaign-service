@@ -2,6 +2,18 @@
 
 ## 2026-08-03
 
+**Update** — Budgeted the index drain into shutdown (LFXV2-2814, PR #60 review follow-up).
+Bounding `nats.DrainTimeout` to 2s was necessary but NOT sufficient: `Container.Close` really
+does spend those 2s draining after the pool closes, and `ContainerCloseTimeout` did not count
+them. The two shutdown phases already consumed all 25s of `DefaultShutdownTimeout` with ZERO
+headroom, so the unbudgeted drain pushed the real total to 27s — the SIGKILL-mid-drain the
+budget exists to prevent.
+
+`indexer.DrainTimeout` is now exported and folded into `ContainerCloseTimeout`, and
+`dispatchDrainTimeout` trimmed 6s → 4s so the HTTP phase keeps a positive budget. The `init()`
+guard now asserts the composed `ContainerCloseTimeout` rather than re-deriving two of its three
+terms, so a future term added to Close cannot escape the check.
+
 **Update** — Bounded indexing's shutdown cost (LFXV2-2814, PR #60 review). Both findings were
 consequences of wiring the publisher into the shutdown path without checking its budget:
 
