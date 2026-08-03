@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -709,4 +710,226 @@ func firstCreate(t *testing.T, body map[string]any) map[string]any {
 		t.Fatalf("operation[0].create not an object: %v", op)
 	}
 	return create
+}
+
+// TestUpdateCampaignStatus_SendsUpdateMask verifies the mutate carries an UPDATE operation
+// with an updateMask of "status" — and no create payload, since a :mutate operation must
+// carry exactly one of create/update/remove.
+func TestUpdateCampaignStatus_SendsUpdateMask(t *testing.T) {
+	// Guarded: the handler runs on the server goroutine and the assertions read on the test
+	// goroutine BEFORE the deferred Close() that would supply a happens-before edge.
+	var mu sync.Mutex
+	var body string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = string(b)
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "222", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignStatus: %v", err)
+	}
+	mu.Lock()
+	got := body
+	mu.Unlock()
+	for _, want := range []string{`"updateMask":"status"`, `"status":"PAUSED"`, `campaigns/222`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("body missing %s: %s", want, got)
+		}
+	}
+	if strings.Contains(got, `"create"`) {
+		t.Errorf("an update operation must not carry a create: %s", got)
+	}
+}
+
+// TestUpdateCampaignStatus_RejectsBadInput guards the input contract BEFORE any request. The
+// campaign id interpolates into a resourceName, so a non-numeric id could alter the resource
+// path — reject it rather than send it.
+func TestUpdateCampaignStatus_RejectsBadInput(t *testing.T) {
+	var mu sync.Mutex
+	var reached bool
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		reached = true
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	defer apiSrv.Close()
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+
+	cases := []struct {
+		name       string
+		campaignID string
+		status     string
+	}{
+		{"unsupported status", "222", "ACTIVE"}, // Google spells it ENABLED
+		{"empty campaign id", "  ", StatusPaused},
+		{"non-numeric campaign id", "222/../333", StatusPaused},
+		{"campaign id with a query delimiter", "222?x=1", StatusPaused},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			reached = false
+			mu.Unlock()
+			if err := c.UpdateCampaignStatus(context.Background(), tc.campaignID, tc.status); err == nil {
+				t.Fatal("expected a rejection")
+			}
+			mu.Lock()
+			sawCall := reached
+			mu.Unlock()
+			if sawCall {
+				t.Error("no API call should be made — the guard is up front")
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignStatus_RetriesThrottle pins the idempotent=true choice, which is the
+// OPPOSITE of the create path's. A status flip has no idempotency key problem — re-applying
+// the same ENABLED/PAUSED converges on identical state — so a throttled attempt must be
+// retried rather than surfaced as an avoidable UNCONFIRMED failure under ordinary Google
+// throttling. Without this test, flipping the flag back to false would silently remove
+// throttle resilience.
+func TestUpdateCampaignStatus_RetriesThrottle(t *testing.T) {
+	var mu sync.Mutex
+	var attempts int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		attempts++
+		n := attempts
+		mu.Unlock()
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	if err := c.UpdateCampaignStatus(context.Background(), "222", StatusPaused); err != nil {
+		t.Fatalf("a throttled status update must be retried, not failed: %v", err)
+	}
+	mu.Lock()
+	total := attempts
+	mu.Unlock()
+	if total < 2 {
+		t.Errorf("attempts = %d, want >1 (the 429 must be retried; idempotent=false would abort)", total)
+	}
+}
+
+// TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed pins the ambiguity of a
+// cancellation that lands WHILE waiting to retry a 429. A request has already been sent (the
+// 429 proves Google received it), so the outcome is AMBIGUOUS — not "not applied". Returning
+// the bare context error would match neither transportError nor apiError, so the caller would
+// be told the mutation definitely did not apply and would get no reconcile signal.
+//
+// This path is reachable in production without any user cancellation: the orchestrator wraps
+// every toggle in context.WithTimeout(toggleCallTimeout), so a 429 followed by a deadline
+// mid-backoff lands here.
+func TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	var hits int
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("Retry-After", "2") // long enough to cancel mid-backoff
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+
+	err := c.UpdateCampaignStatus(ctx, "222", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when the context is cancelled during the retry backoff")
+	}
+	if hits == 0 {
+		t.Fatal("fixture did not send a request, so there is no ambiguity to classify")
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("a cancellation AFTER a request was sent must stay UNCONFIRMED (verify before retry), got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignStatus_AlreadyCanceledContextWithCachedToken exercises the path the
+// dispatcher-level test cannot reach: a client whose OAuth token is ALREADY CACHED, with a
+// context that is done before the call.
+//
+// This is the only case where the guard could matter. With a cold cache the token fetch
+// surfaces the context error pre-send anyway; only with a warm cache does doRequest reach
+// httpClient.Do, where an immediate context.Canceled would otherwise be wrapped as a
+// transportError and misreported as an AMBIGUOUS upstream mutation. Priming here works because
+// the same *Client is reused, unlike the dispatcher which builds a fresh client per call.
+func TestUpdateCampaignStatus_AlreadyCanceledContextWithCachedToken(t *testing.T) {
+	var mu sync.Mutex
+	var apiCalls int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		apiCalls++
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+
+	// Prime: this succeeds and leaves a valid token cached on THIS client.
+	if err := c.UpdateCampaignStatus(context.Background(), "222", StatusPaused); err != nil {
+		t.Fatalf("priming call should succeed: %v", err)
+	}
+	mu.Lock()
+	primed := apiCalls
+	mu.Unlock()
+	if primed != 1 {
+		t.Fatalf("priming call should have hit the API once, got %d", primed)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := c.UpdateCampaignStatus(ctx, "222", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error for an already-cancelled context")
+	}
+	mu.Lock()
+	after := apiCalls
+	mu.Unlock()
+	if after != primed {
+		t.Errorf("no request may be sent on an already-done context, but api calls went %d -> %d", primed, after)
+	}
+	// Nothing was sent, so the outcome is NOT ambiguous — reporting it as such would tell the
+	// caller to go verify a mutation that never left the process.
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("nothing was sent, so the outcome must not be UNCONFIRMED: %v", err)
+	}
 }
