@@ -228,8 +228,11 @@ func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID 
 			AccessToken:       creds.AccessToken,
 			AccessTokenSecret: creds.AccessTokenSecret,
 		},
-		// FundingInstrumentID is a create-time field; a toggle only PUTs entity_status on
-		// entities that already exist, so it is deliberately left empty here.
+		// FundingInstrumentID is populated for consistency with the create path, but is INERT
+		// on the toggle path: UpdateCampaignAndChildrenStatus only PUTs entity_status on
+		// entities that already exist, so the field never reaches the wire here. It is
+		// deliberately NOT required by validateTwitterConnection for the same reason —
+		// demanding a create-time field would refuse an otherwise-valid pause.
 		twitter.AccountConfig{AccountID: accountID, FundingInstrumentID: strings.TrimSpace(res.providerConfig["funding_instrument_id"])},
 		d.opts...,
 	), nil
