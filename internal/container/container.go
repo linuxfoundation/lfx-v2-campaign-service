@@ -126,6 +126,14 @@ type Container struct {
 	pool *postgres.Pool
 	orch *service.Orchestrator
 
+	// cancelSweep stops the periodic stuck-claim sweeper, and sweepDone is closed when
+	// it exits so Close can wait for it (both nil when no sweeper runs — i.e. when there
+	// is no database). Kept SEPARATE from cancelInit: the sweeper starts once a live pool
+	// exists, which happens on either the fast path or the cold-start retry, so it does
+	// not share the init goroutine's lifetime.
+	cancelSweep context.CancelFunc
+	sweepDone   chan struct{}
+
 	// cancelInit stops the background DB-init goroutine (nil when none runs).
 	cancelInit context.CancelFunc
 	// initDone is closed when the background goroutine exits, so Close can wait
@@ -306,15 +314,22 @@ const maxStuckClaimDetailLogs = 10
 // The per-row lines are therefore kept few and the SUMMARY is the line to alert on: it is
 // low-cardinality and identical across replicas, so an alert built on it dedups naturally. A
 // gauge would be better still, but this service exposes no metrics endpoint today.
-func logStuckDispatchClaims(repo *postgres.CampaignRepo) {
-	ctx, cancel := context.WithTimeout(context.Background(), stuckClaimScanTimeout)
+func logStuckDispatchClaims(repo stuckClaimScanner) {
+	scanStuckDispatchClaims(context.Background(), repo, "at startup")
+}
+
+// scanStuckDispatchClaims performs ONE bounded scan and logs what it finds. phase names the
+// caller ("at startup" / "by periodic sweep") so an operator can tell a claim stranded by the
+// deploy that just happened from one the running process has been watching.
+func scanStuckDispatchClaims(parent context.Context, repo stuckClaimScanner, phase string) {
+	ctx, cancel := context.WithTimeout(parent, stuckClaimScanTimeout)
 	defer cancel()
 
 	// 0 = the repo's defaultStuckClaimLimit (100).
 	stuck, err := repo.StuckDispatchClaims(ctx, 0)
 	if err != nil {
 		// Diagnostic only — never block startup on it.
-		slog.WarnContext(ctx, "could not scan for stuck dispatch claims", "error", err)
+		slog.WarnContext(ctx, "could not scan for stuck dispatch claims", "phase", phase, "error", err)
 		return
 	}
 	if len(stuck) == 0 {
@@ -329,7 +344,7 @@ func logStuckDispatchClaims(repo *postgres.CampaignRepo) {
 	if truncated {
 		stuck = stuck[:postgres.DefaultStuckClaimLimit]
 	}
-	slog.WarnContext(ctx, "stuck dispatch claims detected at startup",
+	slog.WarnContext(ctx, "stuck dispatch claims detected "+phase,
 		"count", len(stuck), "truncated", truncated,
 		"reported", min(len(stuck), maxStuckClaimDetailLogs),
 		"runbook", "docs/knowledge/code/internal-dispatch.md")
@@ -353,6 +368,57 @@ func logStuckDispatchClaims(repo *postgres.CampaignRepo) {
 			"version", c.Version, "upserted_after_claim", c.Version > 1,
 			"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0)
 	}
+}
+
+// stuckClaimScanner is the one method the stuck-claim scan needs. Declared as an
+// interface (rather than taking *postgres.CampaignRepo) so the sweeper's re-scan
+// behaviour is testable without a live database — the property under test is that a
+// SECOND scan happens at all, which a startup-only implementation would never do.
+type stuckClaimScanner interface {
+	StuckDispatchClaims(ctx context.Context, limit int) ([]*model.Campaign, error)
+}
+
+// stuckClaimSweepInterval is how often the background sweeper re-scans for stranded
+// dispatch claims. Matches the orchestrator's recoverySweepInterval: the two solve the
+// same problem (a startup-only scan cannot see work stranded AFTER this pod booted) and
+// a shared cadence keeps the operational picture uniform.
+// A var, not a const, only so tests can shrink it; production never changes it.
+var stuckClaimSweepInterval = 5 * time.Minute
+
+// startStuckClaimSweeper re-runs the stuck-claim scan periodically.
+//
+// The startup scan alone is NOT sufficient, and the gap is exactly the common case: a claim
+// stranded seconds before a rolling deploy or crash-restart is YOUNGER than
+// stuckClaimReportAge (4m), so the replacement pod's boot scan skips it — and without a
+// periodic re-scan nothing ever looks again, leaving the row silently blocking every future
+// dispatch for its (brief_id, platform). This is the same reasoning that gave
+// Orchestrator.StartRecoverySweeper its sweep, applied to claims instead of jobs.
+//
+// Still REPORT-ONLY: nothing here reclaims or deletes (see stuckClaimReportAge for why a
+// time-based takeover would be unsafe — 'pending' cannot distinguish a claim in flight from
+// an ambiguous outcome where a paid campaign may already exist upstream).
+//
+// Like the startup scan this runs on every replica without leader election, so a stuck row is
+// logged once per replica per interval. That is accepted for the same reason: the summary line
+// is low-cardinality and identical across replicas, so an alert built on it dedups naturally.
+func (c *Container) startStuckClaimSweeper(repo stuckClaimScanner) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	c.cancelSweep = cancel
+	c.sweepDone = done
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(stuckClaimSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				scanStuckDispatchClaims(ctx, repo, "by periodic sweep")
+			}
+		}
+	}()
 }
 
 // logMissingDispatchers warns about ad providers that have no adapter yet — those
@@ -386,6 +452,9 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
 	// silently block future dispatches for their (brief, platform) until a human acts.
 	logStuckDispatchClaims(campaignRepo)
+	// The startup scan can't see a claim stranded younger than the report age (the
+	// rolling-deploy case); a periodic sweep catches those. Stopped by Close.
+	c.startStuckClaimSweeper(campaignRepo)
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
@@ -441,6 +510,9 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.
 			logStuckDispatchClaims(campaignRepo)
+			// Start the periodic sweep here too. Safe without a lock for the same reason
+			// as c.orch below: Close waits on <-c.initDone before reading these fields.
+			c.startStuckClaimSweeper(campaignRepo)
 			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
 			// goroutine returns) before it reads c.orch, so this write happens-before
@@ -579,6 +651,16 @@ func (c *Container) Close(ctx context.Context) error {
 	if c.cancelInit != nil {
 		c.cancelInit()
 		<-c.initDone
+	}
+	// Stop the periodic stuck-claim sweeper. This MUST come after the <-c.initDone wait
+	// above: on the cold-start path the retry goroutine is what assigns cancelSweep, so
+	// reading it earlier would be an unsynchronized read that could also miss a sweeper
+	// started moments later. Waiting first means the assignment happens-before this read.
+	// The sweeper still stops well before the pool closes below, and its own scans are
+	// bounded by stuckClaimScanTimeout.
+	if c.cancelSweep != nil {
+		c.cancelSweep()
+		<-c.sweepDone
 	}
 	// Capture the orchestrator shutdown error but do NOT early-return on it: the
 	// pool must still be closed even if the drain timed out with dispatches still

@@ -2,6 +2,22 @@
 
 ## 2026-08-03
 
+**Update** — Added a periodic stuck-claim sweep (LFXV2-2665, PR #59 review). The startup scan
+alone left a real gap, and it is the COMMON case: a claim stranded seconds before a rolling
+deploy or crash-restart is YOUNGER than `stuckClaimReportAge` (4m), so the replacement pod's
+boot scan skips it — and nothing ever looked again, leaving the row silently blocking every
+future dispatch for its `(brief_id, platform)`. `startStuckClaimSweeper` re-scans every
+`stuckClaimSweepInterval` (5m, matching the orchestrator's `recoverySweepInterval`, which
+exists for the same reason applied to jobs).
+
+Still REPORT-ONLY — nothing reclaims or deletes. `pending` cannot distinguish a claim in
+flight from an ambiguous outcome where a paid campaign may already exist upstream, so a
+time-based takeover could authorize a duplicate paid create. That reasoning is unchanged.
+
+The sweeper is stopped by `Close`, deliberately AFTER the `<-c.initDone` wait: on the
+cold-start path the retry goroutine is what assigns `cancelSweep`, so reading it earlier
+would be an unsynchronized read that could also miss a sweeper started moments later.
+
 **Update** — Made stuck dispatch claims VISIBLE (LFXV2-2665, partial). A pod crashing between
 `ClaimCampaignDispatch` and `releaseClaim` strands a `pending` campaigns row which, because the
 claim is `ON CONFLICT (brief_id, platform)`, blocks EVERY future dispatch for the pair — with no

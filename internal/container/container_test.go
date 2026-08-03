@@ -374,3 +374,77 @@ func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.
 func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
 	return a, nil
 }
+
+// countingScanner records how many scans ran, and can report a claim that only becomes
+// visible AFTER the first scan — modelling the exact gap this sweeper exists to close.
+type countingScanner struct {
+	mu      sync.Mutex
+	calls   int
+	scanned chan struct{}
+}
+
+func (s *countingScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	select {
+	case s.scanned <- struct{}{}:
+	default:
+	}
+	return nil, nil
+}
+
+func (s *countingScanner) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// TestStuckClaimSweeper_RescansAfterStartup pins the fix for the startup-only gap: a claim
+// stranded seconds before a rolling deploy is YOUNGER than stuckClaimReportAge, so the new
+// pod's boot scan skips it. Without a periodic re-scan nothing ever looks again and the row
+// silently blocks every future dispatch for its (brief_id, platform).
+//
+// The assertion is deliberately "a scan happened that the startup path did not perform" —
+// that is the whole behavioural difference, and a startup-only implementation can never
+// satisfy it no matter how long the test waits.
+func TestStuckClaimSweeper_RescansAfterStartup(t *testing.T) {
+	orig := stuckClaimSweepInterval
+	stuckClaimSweepInterval = 10 * time.Millisecond
+	t.Cleanup(func() { stuckClaimSweepInterval = orig })
+
+	sc := &countingScanner{scanned: make(chan struct{}, 1)}
+	c := &Container{}
+	c.startStuckClaimSweeper(sc)
+	t.Cleanup(func() {
+		c.cancelSweep()
+		<-c.sweepDone
+	})
+
+	select {
+	case <-sc.scanned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sweeper never re-scanned: a claim stranded after startup would stay invisible forever")
+	}
+	assert.Positive(t, sc.count(), "expected at least one periodic scan")
+}
+
+// TestStuckClaimSweeper_StopsOnCancel proves the sweeper is bounded by the container's
+// lifecycle: Close must not hang waiting for it, and it must not keep querying a closing pool.
+func TestStuckClaimSweeper_StopsOnCancel(t *testing.T) {
+	orig := stuckClaimSweepInterval
+	stuckClaimSweepInterval = 10 * time.Millisecond
+	t.Cleanup(func() { stuckClaimSweepInterval = orig })
+
+	sc := &countingScanner{scanned: make(chan struct{}, 1)}
+	c := &Container{}
+	c.startStuckClaimSweeper(sc)
+	<-sc.scanned // it is running
+
+	c.cancelSweep()
+	select {
+	case <-c.sweepDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sweeper did not exit on cancel; Container.Close would hang")
+	}
+}
