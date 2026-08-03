@@ -15,6 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 )
 
 // AudienceBuilder performs the platform-side half of a build: resolving an event's past
@@ -33,6 +34,13 @@ type AudienceBuilder interface {
 	// stored per project, so building in the wrong portal is a silent, damaging failure.
 	CreateList(ctx context.Context, projectID, name string, filter json.RawMessage) (string, error)
 }
+
+// errUnconfirmedCreate marks a create whose outcome is genuinely UNKNOWN — a 2xx carrying no
+// list id. It is a SENTINEL rather than a message convention because the failed-vs-building
+// decision depends on it: hubspot.IsUnconfirmed cannot classify this case (the client returned
+// no typed error at all), so without it a list that MAY exist upstream would be recorded as
+// "nothing was created" and an operator would skip reconciling it.
+var errUnconfirmedCreate = errors.New("the create returned no list id")
 
 // audienceUnavailableErr is the typed 503 returned when the pieces BuildAudience needs (the
 // brief repository, the Snowflake/HubSpot builder) are not wired. Mirrors the CRUD routes'
@@ -162,13 +170,24 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	summary := plan.InclusionSummary()
 
 	if buildErr != nil {
-		// Leave the row BUILDING and surface the error. Marking it failed would be a stronger
-		// claim than the evidence supports: some lists may have been created upstream, and the
-		// summary below records which, so a retry can reconcile rather than duplicate.
-		created.InclusionSummary = summary + "\nBuild incomplete: " + buildErr.Error()
+		// Two DIFFERENT outcomes, and telling an operator the wrong one costs real time:
+		//
+		//   - Nothing was created and the failure is DEFINITE (bad credentials, a plain 4xx):
+		//     there is no upstream state, so mark it FAILED. Leaving it building would send
+		//     someone hunting for portal orphans that do not exist.
+		//   - Anything was created, or the outcome is UNCONFIRMED: keep it BUILDING, because a
+		//     list may exist upstream and a blind retry would duplicate it.
+		//
+		// Either way the created ids are RECORDED. They are the only confirmed handles to the
+		// lists that do exist; discarding them (as this originally did) makes the row
+		// unreconcilable — the operator knows a build broke but not what it left behind.
+		created.InclusionSummary = partialSummary(summary, ids, buildErr)
+		if len(ids) == 0 && !hubspot.IsUnconfirmed(buildErr) && !errors.Is(buildErr, errUnconfirmedCreate) {
+			created.Status = model.AudienceFailed
+		}
 		if _, uerr := repo.UpdateAudience(ctx, created, created.Version); uerr != nil {
 			slog.ErrorContext(ctx, "failed to record a partial audience build",
-				"audience_id", created.ID, "error", uerr)
+				"audience_id", created.ID, "created_lists", strings.Join(ids, ","), "error", uerr)
 		}
 		return nil, audienceBuildErr(buildErr)
 	}
@@ -193,6 +212,23 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	return audienceResult(updated), nil
 }
 
+// partialSummary records what a failed build actually left upstream. The plan summary alone
+// describes what was INTENDED, which is misleading after a failure — an operator needs the ids
+// of the lists that exist in order to reconcile them before retrying.
+func partialSummary(planSummary string, ids []string, buildErr error) string {
+	var b strings.Builder
+	b.WriteString(planSummary)
+	b.WriteString("\nBuild incomplete: ")
+	b.WriteString(buildErr.Error())
+	if len(ids) == 0 {
+		b.WriteString("\nNo HubSpot lists were created.")
+		return b.String()
+	}
+	b.WriteString("\nHubSpot lists ALREADY CREATED (reconcile these before retrying): ")
+	b.WriteString(strings.Join(ids, ", "))
+	return b.String()
+}
+
 // createPlanLists creates every planned inclusion list, then creates the MASTER list as their
 // union and returns its id.
 //
@@ -212,7 +248,7 @@ func createPlanLists(ctx context.Context, b AudienceBuilder, projectID string, p
 		if strings.TrimSpace(id) == "" {
 			// A 2xx with no id is UNCONFIRMED, not success: the list may exist. Fail here so a
 			// retry verifies by name rather than blind-creating a duplicate.
-			return "", ids, fmt.Errorf("create list %q returned no list id (UNCONFIRMED: verify before retrying)", l.Name)
+			return "", ids, fmt.Errorf("create list %q %w (UNCONFIRMED: verify before retrying)", l.Name, errUnconfirmedCreate)
 		}
 		ids = append(ids, id)
 	}
@@ -230,7 +266,7 @@ func createPlanLists(ctx context.Context, b AudienceBuilder, projectID string, p
 		return "", ids, fmt.Errorf("create master list %q: %w", masterName, merr)
 	}
 	if strings.TrimSpace(masterID) == "" {
-		return "", ids, fmt.Errorf("create master list %q returned no list id (UNCONFIRMED: verify before retrying)", masterName)
+		return "", ids, fmt.Errorf("create master list %q %w (UNCONFIRMED: verify before retrying)", masterName, errUnconfirmedCreate)
 	}
 	return masterID, append(ids, masterID), nil
 }

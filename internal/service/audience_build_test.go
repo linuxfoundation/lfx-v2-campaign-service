@@ -198,6 +198,11 @@ func TestBuildAudience_PartialBuildLeavesRowBuilding(t *testing.T) {
 		"a partial build must stay BUILDING: it has no master list, and lists exist upstream to reconcile")
 	assert.Empty(t, rows[0].PlatformMasterListID)
 	assert.Contains(t, rows[0].InclusionSummary, "Build incomplete")
+	// The ids of lists that DO exist upstream must be recorded — they are the only handles an
+	// operator has to reconcile them, and a retry without them would duplicate.
+	assert.Contains(t, rows[0].InclusionSummary, "ALREADY CREATED",
+		"a partial build must record what it left in the portal")
+	assert.Contains(t, rows[0].InclusionSummary, "list-"+b.names()[0])
 
 	// It must stop at the failure rather than creating more unrecordable portal state.
 	assert.Len(t, b.names(), 2)
@@ -294,4 +299,42 @@ func TestBuildAudience_RequiresAnApprovedBrief(t *testing.T) {
 			assert.Empty(t, arepo.rows(), "no audience row may be recorded either")
 		})
 	}
+}
+
+// TestBuildAudience_DefiniteFailureMarksFailed pins the failed-vs-building distinction. When
+// NOTHING was created and the failure is definite (bad credentials, a plain 4xx), the row must
+// be FAILED: leaving it building tells an operator to hunt for portal orphans that do not exist.
+func TestBuildAudience_DefiniteFailureMarksFailed(t *testing.T) {
+	b := &fakeBuilder{createErr: errors.New("hubspot 401 unauthorized"), failOnNth: 1}
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	rows := arepo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, model.AudienceFailed, rows[0].Status,
+		"nothing was created and the failure is definite: FAILED, not building")
+	assert.Contains(t, rows[0].InclusionSummary, "No HubSpot lists were created.")
+}
+
+// TestBuildAudience_UnconfirmedFirstCreateStaysBuilding pins the opposite case. A 2xx with no
+// list id on the FIRST create means a list may exist upstream even though `ids` is empty — so
+// the row must stay BUILDING. hubspot.IsUnconfirmed cannot classify this (the client returned
+// no typed error), which is why the sentinel exists.
+func TestBuildAudience_UnconfirmedFirstCreateStaysBuilding(t *testing.T) {
+	b := &fakeBuilder{emptyIDOnNth: 1}
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	rows := arepo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, model.AudienceBuilding, rows[0].Status,
+		"an unconfirmed create may have made a list: BUILDING, so the operator verifies before retrying")
 }
