@@ -190,3 +190,41 @@ func TestApply_NeverDoubleTagsWithRepeatedParam(t *testing.T) {
 	blank := "https://events.lfx.dev/x?utm_campaign=&utm_campaign="
 	assert.NotEqual(t, blank, Apply(blank, testParams(), ""))
 }
+
+// TestApply_PreservesTemplateTokens pins that tagging never breaks HubSpot personalization.
+//
+// HubSpot substitutes {{...}} at SEND time. url.Parse/String percent-encodes the braces (and any
+// spaces inside), so a tagged link would carry %7B%7B…%7D%7D, HubSpot would never recognise the
+// token, and every personalized link in the email would break. Tagging must not change where a
+// link goes.
+func TestApply_PreservesTemplateTokens(t *testing.T) {
+	cases := []struct{ name, raw, mustContain string }{
+		{"query position", "https://events.lfx.dev/r?id={{contact.hs_object_id}}", "id={{contact.hs_object_id}}"},
+		{"path position", "https://events.lfx.dev/{{event.slug}}/register", "/{{event.slug}}/register"},
+		{"token with spaces", "https://events.lfx.dev/{{ event.slug }}/r", "{{ event.slug }}"},
+		{"several tokens", "https://events.lfx.dev/{{a}}/x?u={{b}}", "{{a}}"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Apply(c.raw, testParams(), "cta")
+			assert.Contains(t, got, c.mustContain, "the token must survive tagging")
+			assert.NotContains(t, got, "%7B", "no brace may remain percent-encoded")
+			assert.NotContains(t, got, "%7D")
+			// The tag must still have been applied.
+			assert.Contains(t, got, "utm_campaign=kubecon-korea-2026")
+		})
+	}
+}
+
+// TestRestoreTemplateTokens_OnlyRestoresWhatWasThere guards against inventing a token the
+// author did not write — the restore is driven by the ORIGINAL url, not by pattern-matching the
+// tagged output.
+func TestRestoreTemplateTokens_OnlyRestoresWhatWasThere(t *testing.T) {
+	// An escaped sequence that was never a token in the original must be left alone.
+	tagged := "https://events.lfx.dev/x?q=%7B%7Bnot-a-token%7D%7D"
+	assert.Equal(t, tagged, restoreTemplateTokens(tagged, "https://events.lfx.dev/x?q=literal"))
+
+	// A URL with no tokens is returned untouched.
+	plain := "https://events.lfx.dev/x?a=1"
+	assert.Equal(t, plain, restoreTemplateTokens(plain, plain))
+}

@@ -33,6 +33,11 @@ invisible.
   looks tagged while attributing to nothing. Without a campaign, `Apply` returns the URL
   unchanged.
 - **Never tag `mailto:`/`tel:`/`#anchor`.** Appending a query string breaks the link.
+- **Never break personalization.** HubSpot substitutes `{{contact.firstname}}` at SEND time, but
+  `url.Parse`/`String` percent-encodes the braces — a tagged link would carry `%7B%7B…%7D%7D`,
+  HubSpot would not recognise the token, and every personalized link would break. Tokens present
+  in the ORIGINAL url are restored after tagging (`restoreTemplateTokens`), in both path and
+  query positions.
 - **Never mangle.** An unparseable URL, or HTML that fails to parse or render, is returned
   UNCHANGED. A broken link in a sent email is far worse than an untagged one.
 - **`ParseFragment`, not `Parse`.** Email bodies are fragments; `Parse` would wrap them in a

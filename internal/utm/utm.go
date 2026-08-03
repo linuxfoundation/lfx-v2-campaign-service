@@ -116,7 +116,34 @@ func Apply(rawURL string, p Params, content string) string {
 		q.Set("utm_term", p.Term)
 	}
 	u.RawQuery = q.Encode()
-	return u.String()
+	return restoreTemplateTokens(u.String(), rawURL)
+}
+
+// templateToken matches a HubSpot personalization token: {{contact.firstname}}, {{ event.slug }}.
+var templateToken = regexp.MustCompile(`\{\{[^{}]*\}\}`)
+
+// restoreTemplateTokens undoes url.URL's percent-encoding of personalization tokens.
+//
+// HubSpot substitutes {{...}} at SEND time. url.Parse/String escapes the braces (and any spaces
+// inside), so a tagged link carries %7B%7B…%7D%7D — HubSpot then never recognises the token and
+// every personalized link in the email is broken. Tagging a link must not change where it goes.
+//
+// Only tokens PRESENT IN THE ORIGINAL are restored, and each is restored once per occurrence, so
+// this cannot introduce a token the author did not write.
+func restoreTemplateTokens(tagged, original string) string {
+	tokens := templateToken.FindAllString(original, -1)
+	for _, tok := range tokens {
+		escaped := (&url.URL{Path: tok}).EscapedPath()
+		if escaped != tok && strings.Contains(tagged, escaped) {
+			tagged = strings.Replace(tagged, escaped, tok, 1)
+			continue
+		}
+		// Query-position escaping differs from path escaping; try that form too.
+		if q := url.QueryEscape(tok); q != tok && strings.Contains(tagged, q) {
+			tagged = strings.Replace(tagged, q, tok, 1)
+		}
+	}
+	return tagged
 }
 
 // hasSkipPrefix reports whether a link is one of the non-web targets that must not be tagged.
