@@ -193,17 +193,49 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	m := registerDispatchers(nil, nil, nil)
-	logMissingDispatchers(m)
+	// Feed a map with one provider deliberately REMOVED rather than relying on a real gap:
+	// adapters keep landing, so a test that asserts "provider X is still unregistered" rots
+	// the moment X ships. A synthetic gap keeps proving the function is not a no-op forever.
+	full := registerDispatchers(nil, nil, nil)
+	gapped := make(map[model.Provider]service.PlatformDispatcher, len(full))
+	for p, d := range full {
+		if p == model.ProviderRedditAds {
+			continue // the synthetic gap
+		}
+		gapped[p] = d
+	}
+	logMissingDispatchers(gapped)
 
 	out := buf.String()
-	assert.Contains(t, out, "no dispatcher registered", "the warning must be emitted when providers are missing")
-	// No registered provider may be logged as missing...
-	for _, p := range registeredProviders {
-		assert.NotContains(t, out, string(p), "%s is registered, so it must not be logged as missing", p)
+	assert.Contains(t, out, "no dispatcher registered", "the warning must be emitted when a provider is missing")
+	assert.Contains(t, out, string(model.ProviderRedditAds), "the missing provider must be named in the log")
+	// The CHANNEL KIND must be logged too, so an operator can tell a missing paid platform
+	// (budget unspent) from a missing email channel (no drafts staged).
+	assert.Contains(t, out, string(model.ChannelPaidAds), "the missing provider's channel kind must be logged")
+	for p := range gapped {
+		assert.NotContains(t, out, string(p)+" (", "%s is registered, so it must not be logged as missing", p)
 	}
-	// ...and at least one genuinely-unregistered known provider MUST be named.
-	assert.Contains(t, out, string(model.ProviderMicrosoftAds), "an unregistered known provider (microsoft-ads) must be surfaced in the log")
+}
+
+// TestLogMissingDispatchers_SilentWhenComplete is the counterpart: with every dispatchable
+// provider wired, the startup path must emit NOTHING. A warning that fires on a healthy boot
+// is noise operators learn to ignore.
+func TestLogMissingDispatchers_SilentWhenComplete(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	full := registerDispatchers(nil, nil, nil)
+	// Only meaningful once every dispatchableProviders entry has an adapter; until then this
+	// documents the intent and the assertion below is skipped rather than silently inverted.
+	for _, p := range dispatchableProviders {
+		if _, ok := full[p]; !ok {
+			t.Skipf("%s has no adapter yet — silence is not expected until every provider is wired", p)
+		}
+	}
+	logMissingDispatchers(full)
+	assert.Empty(t, buf.String(), "no warning may be emitted when every provider has a dispatcher")
 }
 
 func TestNewContainer_NoDatabase(t *testing.T) {

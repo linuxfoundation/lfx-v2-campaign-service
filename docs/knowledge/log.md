@@ -1,5 +1,28 @@
 # Log
 
+## 2026-08-03
+
+**Update** — Modelled the paid-ads vs email channel distinction (LFXV2-2813). `model.ChannelKind`
+(`paid-ads` / `email`) with `Provider.Kind()` and `Provider.IsPaidAds()`. Previously the split
+existed only implicitly: `adPlatformProviders` was named for ad platforms but CONTAINED hubspot,
+the email channel, and any code needing the distinction had to compare against `ProviderHubSpot`
+directly.
+
+Renamed that roster to `dispatchableProviders` — it gates DISPATCH, and email is dispatchable
+(it stages a draft) even though it is not an ad platform. `logMissingDispatchers` now logs each
+missing provider's channel kind, so a missing paid platform (budget unspent) is
+distinguishable from a missing email channel (no drafts staged).
+
+The `ErrToggleUnsupported` 400 now explains WHY: for email there is nothing to pause by design,
+versus an ad platform whose toggle is not wired yet. A single generic message read as a missing
+feature and invited someone to "fix" the email case.
+
+`Kind()` enumerates providers explicitly rather than defaulting, so an unclassified new provider
+returns `""` and is caught by `TestProviderKind_ClassifiesEveryProvider` instead of silently
+inheriting paid-ads behaviour. Also made `TestLogMissingDispatchers_SurfacesGaps` rot-proof: it
+now removes one provider from the real map (a synthetic gap) rather than asserting a specific
+provider is still unregistered, which broke each time an adapter landed.
+
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and

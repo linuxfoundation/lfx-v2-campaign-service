@@ -916,3 +916,27 @@ func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing
 		t.Error("the platform must NOT be called for a pending campaign")
 	}
 }
+
+// TestToggleUnsupportedMessageDistinguishesEmail pins the user-facing half of the
+// paid-vs-email split. Both cases are a 400, but they mean different things: for the EMAIL
+// channel there is nothing to pause BY DESIGN (it stages a draft a human sends), whereas for
+// an ad platform the toggle capability simply is not wired yet. A single generic message
+// reads as a missing feature and invites someone to "fix" the email case.
+//
+// This asserts the branch predicate the handler uses, so it stays honest even though the
+// full handler path needs a live orchestrator.
+func TestToggleUnsupportedMessageDistinguishesEmail(t *testing.T) {
+	if model.ProviderHubSpot.Kind() != model.ChannelEmail {
+		t.Fatalf("hubspot must classify as the email channel, got %q", model.ProviderHubSpot.Kind())
+	}
+	// Every paid ad platform must take the OTHER branch — otherwise a genuinely unwired ad
+	// platform would be explained away as "email has no run state".
+	for _, p := range []model.Provider{
+		model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds,
+		model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds,
+	} {
+		if p.Kind() == model.ChannelEmail {
+			t.Errorf("%s must not take the email-channel message branch", p)
+		}
+	}
+}

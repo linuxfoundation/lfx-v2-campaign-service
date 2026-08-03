@@ -47,6 +47,42 @@ func (p Provider) Table() string {
 // Valid reports whether p is a known provider.
 func (p Provider) Valid() bool { return p.Table() != "" }
 
+// ChannelKind classifies what KIND of marketing channel a provider is. The distinction is
+// BEHAVIOURAL, not cosmetic: a paid ad channel CREATES a campaign that spends budget and can
+// be paused/resumed mid-flight, whereas the email channel STAGES a draft a human sends — it
+// has no budget, no delivery this service controls, and nothing to pause. Code that branches
+// on "is this an ad platform?" should ask here rather than comparing against ProviderHubSpot,
+// so adding a second email provider does not mean hunting down every hardcoded check.
+type ChannelKind string
+
+// Channel kinds.
+const (
+	// ChannelPaidAds is an ad platform: budgeted, dispatchable, and pausable.
+	ChannelPaidAds ChannelKind = "paid-ads"
+	// ChannelEmail is the email channel: stages a draft, no budget, not pausable.
+	ChannelEmail ChannelKind = "email"
+)
+
+// Kind reports the channel kind of p. An unknown provider returns "" (mirroring Table()).
+//
+// This deliberately enumerates each provider rather than defaulting: a NEW provider added to
+// the Provider list will return "" here until it is classified, which surfaces the omission
+// instead of silently inheriting the wrong behaviour.
+func (p Provider) Kind() ChannelKind {
+	switch p {
+	case ProviderGoogleAds, ProviderLinkedInAds, ProviderMetaAds,
+		ProviderRedditAds, ProviderTwitterAds, ProviderMicrosoftAds:
+		return ChannelPaidAds
+	case ProviderHubSpot:
+		return ChannelEmail
+	default:
+		return ""
+	}
+}
+
+// IsPaidAds reports whether p is a paid ad channel (budgeted, pausable) rather than email.
+func (p Provider) IsPaidAds() bool { return p.Kind() == ChannelPaidAds }
+
 // ConnectionStatus is the lifecycle status of a connection.
 type ConnectionStatus string
 
