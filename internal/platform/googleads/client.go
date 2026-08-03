@@ -597,7 +597,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 				}
 			}
 			if err := sleepCtx(ctx, wait); err != nil {
-				return nil, err
+				// A request HAS already been sent (the 429 proves Google received it), so a
+				// cancellation/deadline while waiting to retry leaves the outcome AMBIGUOUS,
+				// not "not applied". Returning the bare ctx.Err() here would match neither
+				// transportError nor apiError, so createOutcomeAmbiguous would report false
+				// and the caller would be told the mutation definitely did not apply. Wrap it
+				// so the ambiguity survives. (Harmless on the idempotent GAQL :search path —
+				// a read has no commit to be ambiguous about.)
+				return nil, &transportError{Method: method, Path: path, Err: err}
 			}
 			continue
 		}

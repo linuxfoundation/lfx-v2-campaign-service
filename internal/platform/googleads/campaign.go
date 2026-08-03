@@ -270,8 +270,9 @@ func (e *apiError) hasErrorCode(code string) bool {
 
 // isDefiniteClientError reports whether ae is a definite 4xx client-error rejection
 // that is NOT ambiguous — i.e. a 4xx EXCEPT 429. A 429 is excluded because
-// createOutcomeAmbiguous classifies a mutating 429 as possibly-committed (doRequest
-// does not retry a non-idempotent 429), so a duplicate-name code carried on a 429
+// createOutcomeAmbiguous classifies a mutating 429 as possibly-committed regardless of
+// whether it was retried (the create path never retries one; the toggle path's bounded
+// retries can still EXHAUST after a request was received), so a duplicate-name code on a 429
 // must NOT be read as a known prior create — the throttled request itself may be
 // the one that created it. Keeping this exclusion here (the duplicate predicates run
 // BEFORE createOutcomeAmbiguous on the create path) preserves the ambiguity contract.
@@ -306,10 +307,11 @@ func isDuplicateCampaignNameErr(err error) bool {
 // committed upstream (so a caller must reconcile/verify before retrying, to avoid a
 // duplicate — :mutate has no idempotency key). A 5xx apiError or any transportError
 // is ambiguous regardless of method; a 3xx is ambiguous only on a mutating method
-// (a GET redirect is not a create). A 429 on a mutating call is ALSO ambiguous:
-// doRequest deliberately does NOT retry a non-idempotent 429 (idempotent=false)
-// precisely because the throttled request may already have committed upstream, so
-// the caller must reconcile rather than blind-retry. A definite 4xx (Google
+// (a GET redirect is not a create). A 429 on a mutating call is ALSO ambiguous,
+// whether or not doRequest retried it: the CREATE path passes idempotent=false and
+// never retries (a throttled create may already have committed), while the status
+// TOGGLE passes true and its bounded retries can still EXHAUST — in both cases a
+// request reached Google, so the caller must reconcile rather than blind-retry. A definite 4xx (Google
 // rejected it) and a pre-send error are NOT ambiguous. Mirrors the sibling clients.
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
@@ -689,8 +691,10 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// attempt may have committed would DOUBLE-CREATE) does not apply here: re-applying the
 	// same ENABLED/PAUSED value converges on the identical state. Passing false would turn
 	// ordinary Google throttling into an avoidable UNCONFIRMED failure. A cancellation while
-	// waiting to retry still surfaces as a transportError and stays UNCONFIRMED, which is
-	// correct — by then a mutation HAS been sent.
+	// waiting to retry is WRAPPED by doRequest as a transportError and stays UNCONFIRMED,
+	// which is correct: by then a mutation HAS been sent. That path is reachable without any
+	// user cancellation, since the orchestrator wraps every toggle in a toggleCallTimeout —
+	// pinned by TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed.
 	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true); err != nil {
 		return fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err)
 	}

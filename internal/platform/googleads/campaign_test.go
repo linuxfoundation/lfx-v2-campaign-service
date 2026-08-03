@@ -814,3 +814,42 @@ func TestUpdateCampaignStatus_RetriesThrottle(t *testing.T) {
 		t.Errorf("attempts = %d, want >1 (the 429 must be retried; idempotent=false would abort)", attempts)
 	}
 }
+
+// TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed pins the ambiguity of a
+// cancellation that lands WHILE waiting to retry a 429. A request has already been sent (the
+// 429 proves Google received it), so the outcome is AMBIGUOUS — not "not applied". Returning
+// the bare context error would match neither transportError nor apiError, so the caller would
+// be told the mutation definitely did not apply and would get no reconcile signal.
+//
+// This path is reachable in production without any user cancellation: the orchestrator wraps
+// every toggle in context.WithTimeout(toggleCallTimeout), so a 429 followed by a deadline
+// mid-backoff lands here.
+func TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	var hits int
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("Retry-After", "2") // long enough to cancel mid-backoff
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+
+	err := c.UpdateCampaignStatus(ctx, "222", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when the context is cancelled during the retry backoff")
+	}
+	if hits == 0 {
+		t.Fatal("fixture did not send a request, so there is no ambiguity to classify")
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("a cancellation AFTER a request was sent must stay UNCONFIRMED (verify before retry), got %T: %v", err, err)
+	}
+}
