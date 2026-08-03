@@ -47,7 +47,14 @@ func (p Provider) Table() string {
 
 // Valid reports whether p is a known, CLASSIFIED provider (see the note on Kind() below for
 // why classification is the gate rather than Table()).
-func (p Provider) Valid() bool { return p.Table() != "" && p.Kind() != "" }
+func (p Provider) Valid() bool { return validFrom(p.Table(), p.Kind()) }
+
+// validFrom is the validity PREDICATE, split out so it is testable on its own. No real
+// provider has a table without a kind — that is the invariant Valid() enforces — so a test
+// written against the constants can never exercise the table-but-unclassified case, and would
+// silently pass even if Valid() stopped consulting Kind(). Feeding the predicate directly is
+// the only way to pin the coupling. See TestValidFromRequiresBothTableAndKind.
+func validFrom(table string, kind ChannelKind) bool { return table != "" && kind != "" }
 
 // ChannelKind classifies what KIND of marketing channel a provider is. The distinction is
 // BEHAVIOURAL, not cosmetic: a paid ad channel CREATES a campaign that spends budget and can

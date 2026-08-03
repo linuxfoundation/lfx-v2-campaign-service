@@ -46,24 +46,42 @@ func TestConnection_HasCredentials(t *testing.T) {
 	}
 }
 
-// TestProviderValidityRequiresClassification is the real enforcement, and it does not depend
-// on any hand-maintained list being correct.
+// TestValidFromRequiresBothTableAndKind pins the coupling that the whole ChannelKind safety
+// claim rests on: an unclassified provider must be INVALID, so it is rejected at the API
+// boundary instead of silently taking a default branch.
 //
-// Go cannot enumerate a const block, so a test that walks a literal slice can never prove
-// exhaustiveness — a provider omitted from BOTH Kind() and the slice passes silently. (My
-// first attempt at this test had exactly that hole.) Instead, Valid() is defined as
-// "has a Table() AND has a Kind()", so an unclassified provider is INVALID by construction
-// and gets rejected at the API boundary rather than misclassified deep in the service.
-//
-// This test pins that coupling: break it (make Valid() ignore Kind()) and the assertion
-// below fails.
-func TestProviderValidityRequiresClassification(t *testing.T) {
-	// A provider with a table but no classification must NOT be valid. "" is not a real
-	// provider, but it exercises the same predicate a future unclassified provider would.
-	classifiedButNoTable := Provider("hubspot")
-	if !classifiedButNoTable.Valid() {
-		t.Fatalf("%s should be valid: it has both a table and a kind", classifiedButNoTable)
+// It drives the predicate directly rather than through a Provider constant. That is not
+// indirection for its own sake — no real provider has a table without a kind (that is exactly
+// the invariant being enforced), so a test written against the constants cannot construct the
+// failing case and would still pass if Valid() stopped consulting Kind(). An earlier version
+// of this test did precisely that and was vacuous.
+func TestValidFromRequiresBothTableAndKind(t *testing.T) {
+	cases := []struct {
+		name  string
+		table string
+		kind  ChannelKind
+		want  bool
+	}{
+		{"table and kind", "reddit_ads_connections", ChannelPaidAds, true},
+		{"table and email kind", "hubspot_connections", ChannelEmail, true},
+		// The case that matters: a provider was added with a Table() case but never
+		// classified in Kind(). It must NOT be valid.
+		{"table but unclassified", "brave_ads_connections", "", false},
+		{"kind but no table", "", ChannelPaidAds, false},
+		{"neither", "", "", false},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validFrom(tc.table, tc.kind); got != tc.want {
+				t.Errorf("validFrom(%q, %q) = %v, want %v", tc.table, tc.kind, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestProviderValidityHoldsForEveryProvider checks the invariant end-to-end for the providers
+// that actually exist: each is classified, and therefore valid.
+func TestProviderValidityHoldsForEveryProvider(t *testing.T) {
 	for _, p := range AllProviders() {
 		if p.Kind() == "" {
 			t.Errorf("%s has no ChannelKind — classify it in Provider.Kind()", p)
