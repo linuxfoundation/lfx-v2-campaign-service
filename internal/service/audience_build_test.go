@@ -338,3 +338,58 @@ func TestBuildAudience_UnconfirmedFirstCreateStaysBuilding(t *testing.T) {
 	assert.Equal(t, model.AudienceBuilding, rows[0].Status,
 		"an unconfirmed create may have made a list: BUILDING, so the operator verifies before retrying")
 }
+
+// TestBuildAudience_SendsAYearFreeSearchTerm pins the fix at the SERVICE boundary. The warehouse
+// query matches the term AND excludes the year, so passing the full event name ("KubeCon Korea
+// 2026") asks for rows containing 2026 that do not contain 2026 — unsatisfiable. Every returning
+// event then degraded to a country-only audience while reporting success.
+//
+// The concrete builder also strips the year, but the INTERFACE is what matters: relying on an
+// implementation to undo a bad argument means the next implementation reinherits the bug.
+func TestBuildAudience_SendsAYearFreeSearchTerm(t *testing.T) {
+	rb := &recordingBuilder{editions: []string{"KubeCon Korea 2025"}}
+	s, _, _ := newBuildService(t, &fakeBuilder{}, `{"eventName":"KubeCon Korea 2026","country":"South Korea","year":"2026"}`)
+	s.SetBuilder(rb)
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "KubeCon Korea", rb.term,
+		"the search term must be the year-free family, or the warehouse query matches nothing")
+	assert.NotContains(t, rb.term, "2026")
+	assert.Equal(t, "2026", rb.year)
+}
+
+// TestEventFamily covers the year sources and the degrade.
+func TestEventFamily(t *testing.T) {
+	cases := []struct{ name, detailYear, wantFamily, wantYear string }{
+		{"KubeCon Korea 2026", "2026", "KubeCon Korea", "2026"},
+		{"KubeCon Korea 2026", "", "KubeCon Korea", "2026"},    // derived from the name
+		{"KubeCon Korea 2026", "bad", "KubeCon Korea", "2026"}, // malformed detail year ignored
+		{"Open Summit", "2027", "Open Summit", "2027"},         // year not in the name
+		{"Open Summit", "", "Open Summit", ""},                 // no year anywhere: degrade
+		{"2026", "2026", "2026", "2026"},                       // stripping would empty it
+	}
+	for _, c := range cases {
+		f, y := eventFamily(c.name, c.detailYear)
+		assert.Equal(t, c.wantFamily, f, "family for %q/%q", c.name, c.detailYear)
+		assert.Equal(t, c.wantYear, y, "year for %q/%q", c.name, c.detailYear)
+	}
+}
+
+// recordingBuilder captures what the service passed across the AudienceBuilder interface.
+type recordingBuilder struct {
+	term, location, year string
+	editions             []string
+}
+
+func (r *recordingBuilder) ResolvePastEditions(_ context.Context, eventTerm, locationTerm, currentYear string) ([]string, error) {
+	r.term, r.location, r.year = eventTerm, locationTerm, currentYear
+	return r.editions, nil
+}
+
+func (r *recordingBuilder) CreateList(_ context.Context, _, name string, _ json.RawMessage) (string, error) {
+	return "list-" + name, nil
+}

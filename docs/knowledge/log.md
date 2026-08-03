@@ -2,6 +2,15 @@
 
 ## 2026-08-03
 
+**Update** — Moved the year-stripping to the SERVICE boundary (LFXV2-2774, PR #61 review).
+`BuildAudience` passed the brief's full `eventName` across the `AudienceBuilder` interface, and
+the concrete builder happened to strip the year — so the shipped path worked, but the CONTRACT
+did not require it and any other implementation would reinherit the unsatisfiable
+`ILIKE '%…2026%' AND NOT ILIKE '%2026%'` query.
+
+`eventFamily()` now splits the name before the call and the interface documents that `eventTerm`
+must be year-free. Relying on an implementation to undo a bad argument is not a contract.
+
 **Update** — Sibling discovery never worked (LFXV2-2774, PR #61 review). `ResolvePastEditions`
 passed the full event name as the search term while ALSO excluding that name's year, so the
 query was `ILIKE '%KubeCon Korea 2026%' AND NOT ILIKE '%2026%'` — unsatisfiable. Every returning

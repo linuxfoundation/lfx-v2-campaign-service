@@ -27,6 +27,11 @@ type AudienceBuilder interface {
 	// ResolvePastEditions returns the VERBATIM names of this event's past editions. The names
 	// are used as exact HubSpot filter values, so an implementation must not guess or
 	// normalise them. Returning an empty slice is valid: a first-time event has none.
+	//
+	// eventTerm must be the year-FREE event family ("KubeCon Korea", not "KubeCon Korea 2026").
+	// The warehouse query matches the term and EXCLUDES currentYear, so a term containing that
+	// year is unsatisfiable and silently returns nothing. Callers use eventFamily() rather than
+	// relying on an implementation to strip it.
 	ResolvePastEditions(ctx context.Context, eventTerm, locationTerm, currentYear string) ([]string, error)
 	// CreateList creates one DYNAMIC contact list and returns its platform id.
 	// CreateList creates one DYNAMIC contact list in the PROJECT's portal and returns its
@@ -139,7 +144,12 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	// Resolve past editions BEFORE creating anything. A warehouse failure here must not leave
 	// half-built lists in the portal, and the names it returns are the only acceptable source
 	// for the group-5/7 filters.
-	editions, rerr := builder.ResolvePastEditions(ctx, details.EventName, details.Location, details.Year)
+	// Pass the year-FREE family term. The event name normally carries its year, and the
+	// warehouse both matches the term and excludes the year — so sending the full name asks for
+	// rows containing 2026 that do not contain 2026, which matches nothing and degrades every
+	// returning event to a country-only audience while reporting success.
+	family, year := eventFamily(details.EventName, details.Year)
+	editions, rerr := builder.ResolvePastEditions(ctx, family, details.Location, year)
 	if rerr != nil {
 		// Degrade rather than fail: group 4 needs no editions, so a warehouse outage still
 		// yields a usable (narrower) audience. The gap is recorded in the plan's notes.
@@ -274,6 +284,54 @@ func createPlanLists(ctx context.Context, b AudienceBuilder, projectID string, p
 		return "", ids, fmt.Errorf("create master list %q %w (UNCONFIRMED: verify before retrying)", masterName, errUnconfirmedCreate)
 	}
 	return masterID, append(ids, masterID), nil
+}
+
+// eventFamily splits an event name into its year-free family term and the edition year.
+//
+// The year is taken from the brief's details when present, otherwise derived from the name
+// itself (event names normally carry it). When neither yields a 4-digit year the family is
+// returned unchanged with an empty year — the builder then resolves no editions rather than
+// guessing, since a wrong year excludes the wrong edition.
+func eventFamily(eventName, detailYear string) (family, year string) {
+	year = strings.TrimSpace(detailYear)
+	if !isFourDigitYear(year) {
+		year = yearInName(eventName)
+	}
+	if year == "" {
+		return strings.TrimSpace(eventName), ""
+	}
+	family = strings.TrimSpace(strings.ReplaceAll(eventName, year, ""))
+	if family == "" {
+		family = strings.TrimSpace(eventName)
+	}
+	return family, year
+}
+
+// yearInName extracts a standalone 4-digit 19xx/20xx year from an event name.
+func yearInName(s string) string {
+	for i := 0; i+4 <= len(s); i++ {
+		c := s[i : i+4]
+		if !isFourDigitYear(c) || (c[0] != '1' && c[0] != '2') {
+			continue
+		}
+		// Reject a longer digit run (e.g. an id) that merely contains four digits.
+		if (i == 0 || s[i-1] < '0' || s[i-1] > '9') && (i+4 == len(s) || s[i+4] < '0' || s[i+4] > '9') {
+			return c
+		}
+	}
+	return ""
+}
+
+func isFourDigitYear(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // decodeEventDetails pulls the fields the build needs out of the brief's opaque blobs. It
