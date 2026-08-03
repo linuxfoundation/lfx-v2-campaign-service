@@ -95,3 +95,27 @@ func TestTransaction_DeleteCarriesTheBareID(t *testing.T) {
 		BriefDoc{ID: "b1", ProjectID: "cncf"})
 	assert.IsType(t, BriefDoc{}, tx.Data)
 }
+
+// TestTransaction_CarriesSearchableNames pins the name metadata. The Query Service applies
+// `name=` against top-level `name_and_aliases` and sorts on `sort_name` — a name nested inside
+// `data` is never consulted — so leaving these empty makes a resource index cleanly and then be
+// unfindable by name, which looks exactly like indexing being broken.
+func TestTransaction_CarriesSearchableNames(t *testing.T) {
+	tx := NewTransaction(ActionCreated, ObjectTypeBrief, "b1", "cncf", "Bearer t", nil,
+		"kubecon-eu-2026", "KubeCon EU 2026")
+
+	require.NotNil(t, tx.IndexingConfig)
+	assert.Equal(t, "kubecon-eu-2026", tx.IndexingConfig.SortName, "the first name sorts")
+	assert.Equal(t, []string{"kubecon-eu-2026", "KubeCon EU 2026"}, tx.IndexingConfig.NameAndAliases)
+
+	// Blanks and duplicates are dropped rather than indexed as empty aliases.
+	tx = NewTransaction(ActionCreated, ObjectTypeBrief, "b1", "cncf", "Bearer t", nil,
+		"", "  ", "kubecon", "kubecon")
+	assert.Equal(t, "kubecon", tx.IndexingConfig.SortName)
+	assert.Equal(t, []string{"kubecon"}, tx.IndexingConfig.NameAndAliases)
+
+	// A resource with no meaningful name omits both rather than emitting empties.
+	tx = NewTransaction(ActionCreated, ObjectTypeBrief, "b1", "cncf", "Bearer t", nil)
+	assert.Empty(t, tx.IndexingConfig.SortName)
+	assert.Empty(t, tx.IndexingConfig.NameAndAliases)
+}

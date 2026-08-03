@@ -124,14 +124,14 @@ func derefStr(s *string) string {
 // publishIndex sends a resource snapshot to the indexer. bearer is the caller's token: the
 // indexer REQUIRES a non-empty authorization header on every message and silently drops those
 // without one, so this must be threaded from the request rather than left empty.
-func (s *BriefService) publishIndex(ctx context.Context, action, objectType, objectID, projectID, bearer string, data any) {
+func (s *BriefService) publishIndex(ctx context.Context, action, objectType, objectID, projectID, bearer string, data any, names ...string) {
 	s.mu.RLock()
 	p := s.indexer
 	s.mu.RUnlock()
 	if p == nil {
 		return
 	}
-	p.Publish(ctx, indexer.NewTransaction(action, objectType, objectID, projectID, bearer, data))
+	p.Publish(ctx, indexer.NewTransaction(action, objectType, objectID, projectID, bearer, data, names...))
 }
 
 // NewBriefService constructs a BriefService. The index publisher is NOT a parameter: it is
@@ -268,7 +268,7 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 	// events — is a deliberate follow-up (LFXV2-2665), not part of this PR. This
 	// persistence layer is the source of truth the indexer consumes; publishing is
 	// best-effort and never fails the write (see publishIndex).
-	s.publishIndex(ctx, indexer.ActionCreated, indexer.ObjectTypeBrief, created.ID, created.ProjectID, deref(p.BearerToken), briefDoc(briefResult(created)))
+	s.publishIndex(ctx, indexer.ActionCreated, indexer.ObjectTypeBrief, created.ID, created.ProjectID, deref(p.BearerToken), briefDoc(briefResult(created)), created.EventSlug)
 	return briefResult(created), nil
 }
 
@@ -310,7 +310,7 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeBrief, updated.ID, updated.ProjectID, deref(p.BearerToken), briefDoc(briefResult(updated)))
+	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeBrief, updated.ID, updated.ProjectID, deref(p.BearerToken), briefDoc(briefResult(updated)), updated.EventSlug)
 	return briefResult(updated), nil
 }
 
@@ -327,7 +327,7 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeBrief, b.ID, b.ProjectID, deref(p.BearerToken), briefDoc(briefResult(b)))
+	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeBrief, b.ID, b.ProjectID, deref(p.BearerToken), briefDoc(briefResult(b)), b.EventSlug)
 	return briefResult(b), nil
 }
 
@@ -348,7 +348,7 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// archived brief keeps its stale pre-archive _source and goes on matching searches forever.
 	// Archiving is a SOFT delete, and the indexer's delete action is what removes the
 	// document from search — republishing it as an update would leave it findable.
-	s.publishIndex(ctx, indexer.ActionDeleted, indexer.ObjectTypeBrief, b.ID, b.ProjectID, deref(p.BearerToken), briefDoc(briefResult(b)))
+	s.publishIndex(ctx, indexer.ActionDeleted, indexer.ObjectTypeBrief, b.ID, b.ProjectID, deref(p.BearerToken), briefDoc(briefResult(b)), b.EventSlug)
 	return nil
 }
 
@@ -468,7 +468,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, deref(p.BearerToken), campaignDoc(campaignResult(updated)))
+	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, deref(p.BearerToken), campaignDoc(campaignResult(updated)), updated.CampaignName)
 	return campaignResult(updated), nil
 }
 
@@ -583,7 +583,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// still records a platform change that already happened. Publishing on ctx would drop
 	// exactly those index updates — the campaign's status would be right in the database and
 	// stale in search, for the requests most likely to need reconciling.
-	s.publishIndex(persistCtx, indexer.ActionUpdated, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, deref(p.BearerToken), campaignDoc(campaignResult(updated)))
+	s.publishIndex(persistCtx, indexer.ActionUpdated, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, deref(p.BearerToken), campaignDoc(campaignResult(updated)), updated.CampaignName)
 	return campaignResult(updated), nil
 }
 

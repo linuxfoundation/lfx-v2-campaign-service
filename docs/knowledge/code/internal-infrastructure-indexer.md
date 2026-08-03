@@ -20,7 +20,7 @@ The message is `lfx-v2-indexer-service`'s `LFXTransaction`
 | `action` | **Past tense only**: `created` / `updated` / `deleted`. The V2 validator REJECTS the imperative forms, so `create` would discard every message. |
 | `headers` | Must carry a NON-EMPTY lower-case `authorization`. `validateV2Headers` drops any V2 message without it, so the caller's bearer token is threaded from the request — including through async dispatch, where it is captured at `Orchestrator.Start`. |
 | `data` | The resource snapshot for created/updated. For **deleted** it must be the bare object-id STRING — the indexer type-asserts it and rejects an object with "expected string", so a document there means the resource is never removed from search. |
-| `indexing_config` | `object_id` plus the FGA fields. Without it the resource cannot be authorized or found. |
+| `indexing_config` | `object_id` plus the FGA fields. Without it the resource cannot be authorized or found. Also carries the SEARCH metadata: the Query Service applies `name=` against top-level `name_and_aliases` and `parent=` against `parent_refs` — a value nested in `data` is NEVER consulted, so a resource with empty name metadata indexes cleanly and is then unfindable by name. Briefs publish their event slug; campaigns their campaign name. |
 
 **`object_type` is NOT in the payload.** The indexer derives it from the SUBJECT
 (`lfx.index.<object_type>`) — a service can only publish to subjects for its own resource types,

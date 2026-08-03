@@ -16,6 +16,8 @@
 // service looked fully wired and indexed nothing.
 package indexer
 
+import "strings"
+
 // Object types this service indexes. The type becomes the last token of the NATS subject, and
 // the indexer derives it FROM the subject rather than the payload — a service can only publish
 // to subjects for its own resource types, which is how that boundary is enforced.
@@ -103,6 +105,12 @@ type IndexingConfig struct {
 
 	// ParentRefs lets the Query Service find a resource by its parents.
 	ParentRefs []string `json:"parent_refs,omitempty"`
+
+	// SortName and NameAndAliases drive sorting and name SEARCH. The Query Service applies
+	// `name=` against name_and_aliases ONLY — a name nested in `data` is never consulted — so
+	// leaving these empty makes the resource unfindable by name even though it indexes fine.
+	SortName       string   `json:"sort_name,omitempty"`
+	NameAndAliases []string `json:"name_and_aliases,omitempty"`
 }
 
 // NewTransaction builds an indexer message for one resource.
@@ -116,7 +124,10 @@ type IndexingConfig struct {
 // For a DELETE, data must be the bare object id STRING — the indexer rejects an object payload
 // with "expected string", so passing a document there means an archived resource is never
 // removed from search.
-func NewTransaction(action, objectType, objectID, projectID, authorization string, data any) Transaction {
+// names supplies the searchable names for a resource: the first is the sort name, and all of
+// them (deduped, blanks dropped) become name_and_aliases. Pass none for a resource with no
+// meaningful name.
+func NewTransaction(action, objectType, objectID, projectID, authorization string, data any, names ...string) Transaction {
 	public := false
 	object := "project:" + projectID
 	if action == ActionDeleted {
@@ -135,6 +146,8 @@ func NewTransaction(action, objectType, objectID, projectID, authorization strin
 			HistoryCheckObject:   object,
 			HistoryCheckRelation: fgaRelation,
 			ParentRefs:           []string{object},
+			SortName:             firstNonBlank(names),
+			NameAndAliases:       dedupeNonBlank(names),
 		},
 	}
 }
@@ -149,6 +162,31 @@ func NewTransaction(action, objectType, objectID, projectID, authorization strin
 // the Query Service, and it should change only when someone edits it here.
 
 // BriefDoc is the indexed representation of a brief.
+// firstNonBlank returns the first usable name, or "".
+func firstNonBlank(in []string) string {
+	for _, n := range in {
+		if t := strings.TrimSpace(n); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// dedupeNonBlank returns the distinct non-blank names, preserving order.
+func dedupeNonBlank(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range in {
+		t := strings.TrimSpace(n)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
 // BriefDoc carries the brief's REVISABLE content, not just its identity. The Query Service
 // serves revision history from these documents, so omitting the fields an edit actually changes
 // (platforms, event_details, copy, keywords, targeting) would produce history entries that
