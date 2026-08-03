@@ -404,9 +404,15 @@ func TestTwitter_ToggleStatus_PutsEntityStatus(t *testing.T) {
 // ACTIVATE guard: with no line-item id nothing could serve, so the dispatcher refuses with
 // ErrCampaignNotProvisioned (a 409 state error) WITHOUT calling X.
 func TestTwitter_ToggleStatus_ActivateWithoutLineItemIsNotProvisioned(t *testing.T) {
-	var reached bool
+	// Mutex-guarded: the handler goroutine writes this and the test goroutine reads it, and
+	// httptest.Server.Close only synchronizes at the deferred Close — which runs AFTER the
+	// assertion below.
+	var mu sync.Mutex
+	reached := false
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		reached = true
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer api.Close()
@@ -420,7 +426,10 @@ func TestTwitter_ToggleStatus_ActivateWithoutLineItemIsNotProvisioned(t *testing
 	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Fatalf("want ErrCampaignNotProvisioned, got %T: %v", err, err)
 	}
-	if reached {
+	mu.Lock()
+	sawRequest := reached
+	mu.Unlock()
+	if sawRequest {
 		t.Error("no API call should be made — the refusal is a local state check")
 	}
 }
