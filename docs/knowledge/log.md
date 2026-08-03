@@ -2,6 +2,16 @@
 
 ## 2026-08-03
 
+**Update** — Redacted the broker URL in `Config.String` (LFXV2-2814, PR #60 review). `String()`
+promises a log-safe representation and redacts `DatabaseURL`/`CredentialEncryptionKey`, but
+printed `NATSUrl` VERBATIM. A NATS URL may carry userinfo (`nats://user:pass@host:4222`), and
+this PR is what made that field live — so anything logging the config would have put the broker
+password in the pod logs.
+
+`redactNATSURL` strips the credential but KEEPS the host, unlike `redactDatabaseURL` which masks
+wholesale: the broker host is what makes an indexing outage diagnosable, and a NATS URL is always
+a parseable URL (no keyword-DSN form), so the credential portion can be removed precisely.
+
 **Update** — Toggle publish now uses the DETACHED context (LFXV2-2814, PR #60 review).
 `ToggleCampaignStatus` writes on `persistCtx` (`context.WithoutCancel`) on purpose — the platform
 status has already changed, so a cancelled request must still record it — but the index publish

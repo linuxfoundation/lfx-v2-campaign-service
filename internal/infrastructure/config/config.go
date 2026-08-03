@@ -218,7 +218,7 @@ func (c *Config) String() string {
 		c.JWKSUrl,
 		c.Audience,
 		c.Issuer,
-		c.NATSUrl,
+		redactNATSURL(c.NATSUrl),
 		redactDatabaseURL(c.DatabaseURL),
 		redactSecret(c.CredentialEncryptionKey),
 		c.PGHost,
@@ -241,6 +241,25 @@ func redactDatabaseURL(dsn string) string {
 	// Always mask: keyword DSNs, malformed URLs, and query-embedded
 	// passwords are not safely parseable as userinfo (FR-008).
 	return "[redacted]"
+}
+
+// redactNATSURL strips any credentials from a NATS URL while KEEPING the host.
+//
+// A NATS URL may carry userinfo (nats://user:pass@host:4222), and String() promises a
+// log-safe representation — so printing it verbatim would put the broker password in the
+// pod logs of anything that logs the config. Unlike redactDatabaseURL this does not mask
+// wholesale: the broker host is genuinely useful when diagnosing an indexing outage, and
+// a NATS URL is always a parseable URL (there is no keyword-DSN form to worry about), so
+// the credential portion can be removed precisely.
+func redactNATSURL(u string) string {
+	at := strings.LastIndexByte(u, '@')
+	if at < 0 {
+		return u // no userinfo: nothing to redact
+	}
+	if scheme := strings.Index(u, "://"); scheme >= 0 && scheme+3 <= at {
+		return u[:scheme+3] + "***@" + u[at+1:]
+	}
+	return "***@" + u[at+1:]
 }
 
 func redactSecret(v string) string {
