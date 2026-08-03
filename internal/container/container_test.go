@@ -554,3 +554,50 @@ func TestClose_DoesNotWaitForWedgedSweeper(t *testing.T) {
 			elapsed, stuckClaimScanTimeout)
 	}
 }
+
+// TestClose_CancelsSweeperBeforeClosingPool pins the ORDERING that makes the bounded wait
+// safe. StuckDispatchClaims runs a pgxpool.Query, which holds a pooled CONNECTION until its
+// rows close, and pgxpool.Close "blocks until all connections are returned to pool and
+// closed". So merely giving up on <-sweepDone does not bound shutdown: pool.Close() would
+// block on the very same scan, just later.
+//
+// What actually releases the connection is cancelling sweeperCtx — pgx aborts the in-flight
+// statement on cancellation and returns the connection. This test asserts the sweeper's
+// context is already cancelled by the time Close reaches the pool, which is the property the
+// bounded wait depends on. (It cannot use a real pool: postgres.Pool embeds a concrete
+// *pgxpool.Pool, so there is no seam to substitute one.)
+func TestClose_CancelsSweeperBeforeClosingPool(t *testing.T) {
+	orig := stuckClaimSweepInterval
+	stuckClaimSweepInterval = 10 * time.Millisecond
+	t.Cleanup(func() { stuckClaimSweepInterval = orig })
+
+	observed := make(chan context.Context, 1)
+	sc := &ctxCapturingScanner{seen: observed}
+
+	c := &Container{}
+	c.startStuckClaimSweeper(sc)
+
+	scanCtx := <-observed // the ctx a real query would be running under
+	require.NoError(t, scanCtx.Err(), "precondition: the scan context starts live")
+
+	require.NoError(t, c.Close(context.Background()))
+
+	// After Close returns, the scan's context MUST be cancelled — that cancellation is what
+	// aborts the statement and returns the connection, so pool.Close() cannot deadlock on it.
+	require.Error(t, scanCtx.Err(),
+		"Close must cancel the sweeper's context: without it the scan keeps a pooled connection and pool.Close() blocks")
+	assert.ErrorIs(t, scanCtx.Err(), context.Canceled)
+}
+
+// ctxCapturingScanner hands the caller the context its "query" would run under, so a test can
+// assert that context is cancelled by shutdown.
+type ctxCapturingScanner struct{ seen chan context.Context }
+
+func (s *ctxCapturingScanner) StuckDispatchClaims(ctx context.Context, _ int) ([]*model.Campaign, error) {
+	select {
+	case s.seen <- ctx:
+	default:
+	}
+	<-ctx.Done() // model a query that unwinds only when its context is cancelled
+	return nil, ctx.Err()
+}

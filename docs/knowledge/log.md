@@ -2,6 +2,19 @@
 
 ## 2026-08-03
 
+**Update** — Corrected the sweeper-stop reasoning (LFXV2-2665, PR #59 review). The bounded wait
+was right but its justification was WRONG: the comment claimed an abandoned sweeper "holds no
+pool reference". It does — `StuckDispatchClaims` runs a `pgxpool.Query`, which holds a pooled
+CONNECTION until its rows close, and pgxpool's `Close` is documented as blocking "until all
+connections are returned to pool and closed". So giving up on `<-sweepDone` does not bound
+shutdown on its own; `pool.Close()` would block on the same scan, just later and less visibly.
+
+What actually releases the connection is CANCELLING the sweeper context — pgx aborts the
+in-flight statement on cancellation and returns the connection. The wait exists only to let
+that release complete in the common case. The new test asserts the ordering invariant (the
+scan's context is cancelled by the time `Close` returns) rather than a nil-pool no-op; the
+previous test passed for the wrong reason because it deliberately used a nil pool.
+
 **Update** — Bounded the sweeper stop in `Close` (LFXV2-2665, PR #59 review). Cancelling
 `sweeperCtx` interrupts a scan but does NOT guarantee it returns: a driver already inside a
 statement can take until `stuckClaimScanTimeout` (5s) to unwind, and a scanner that ignores

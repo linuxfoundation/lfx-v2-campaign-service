@@ -687,18 +687,26 @@ func (c *Container) Close(ctx context.Context) error {
 	// reading it earlier would be an unsynchronized read that could also miss a sweeper
 	// started moments later. Waiting first means the assignment happens-before this read.
 	//
-	// The wait is BOUNDED rather than unconditional. Cancelling sweeperCtx interrupts a
-	// scan, but "interrupted" is not "returned": a driver already inside a statement can
-	// take until stuckClaimScanTimeout to unwind, and this wait sits BEFORE the dispatch
-	// drain — so an unbounded wait would spend the drain's budget on a diagnostic and
-	// starve the phase that actually matters. On timeout the goroutine is abandoned; it
-	// holds no pool reference beyond its own bounded scan and only logs.
+	// The wait is bounded so a wedged sweeper cannot spend the dispatch drain's budget on a
+	// diagnostic. But giving up on the wait is NOT sufficient on its own: the scan runs a
+	// pgxpool.Query, which holds a pooled CONNECTION until its rows are closed, and
+	// pgxpool.Close "blocks until all connections are returned to pool and closed" — so an
+	// abandoned sweeper still stalls pool.Close() below, just later and less visibly.
+	//
+	// Cancelling sweeperCtx is what actually releases the connection: pgx aborts the
+	// in-flight statement on context cancellation and returns the connection to the pool.
+	// The wait below therefore exists to give that release a moment to complete in the
+	// common case; the timeout only stops us blocking on a driver that is slow to unwind,
+	// and the release still happens before pool.Close() can finish.
 	if c.cancelSweep != nil {
 		c.cancelSweep()
 		select {
 		case <-c.sweepDone:
 		case <-time.After(sweeperStopTimeout):
-			slog.Warn("stuck-claim sweeper did not stop promptly; continuing shutdown",
+			// Not merely cosmetic: if this fires, pool.Close() below will wait for the same
+			// connection, so the delay is deferred rather than avoided. Log it so a shutdown
+			// that overruns its budget is attributable rather than mysterious.
+			slog.Warn("stuck-claim sweeper did not stop promptly; pool close may block until its scan unwinds",
 				"timeout", sweeperStopTimeout)
 		}
 	}
