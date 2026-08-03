@@ -4,7 +4,6 @@
 package postgres
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -29,9 +28,12 @@ func TestStaleClaimAgeExceedsProviderCallTimeout(t *testing.T) {
 		t.Errorf("stuckClaimReportAge (%s) should be at least 2x providerCallTimeout (%s) to absorb release time and replica clock skew",
 			stuckClaimReportAge, min)
 	}
-	// Passed to Postgres as an interval string; make sure it is a parseable one.
-	if s := stuckClaimReportAge.String(); !strings.HasSuffix(s, "m") && !strings.HasSuffix(s, "s") {
-		t.Errorf("stuckClaimReportAge.String() = %q, which Postgres may not parse as an interval", s)
+	// The value reaches Postgres as NUMERIC SECONDS via make_interval, not as a duration
+	// string. That matters: Go renders this duration as "4m0s", which Postgres REJECTS as
+	// interval input — an earlier version bound it as $1::interval and would have errored on
+	// every scan. Assert a positive, whole-second value, which make_interval always accepts.
+	if secs := stuckClaimReportAge.Seconds(); secs <= 0 || secs != float64(int64(secs)) {
+		t.Errorf("stuckClaimReportAge.Seconds() = %v; make_interval(secs =>) wants a positive whole number", secs)
 	}
 }
 

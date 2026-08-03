@@ -143,11 +143,15 @@ func (r *CampaignRepo) StuckDispatchClaims(ctx context.Context, limit int) ([]*m
 	// limit+1 so the caller can tell "exactly limit rows" from "at least limit, truncated".
 	// A bad deploy that crash-loops mid-dispatch is exactly the incident where reporting a
 	// flat count=100 would understate a possibly-thousands-row outage.
+	// make_interval(secs => $1), NOT $1::interval with a Go duration string: Go renders
+	// 4 * time.Minute as "4m0s", which Postgres REJECTS as interval input (it accepts "4m",
+	// but not the compound "4m0s"). Binding numeric seconds sidesteps the format entirely and
+	// matches JobRepo.FailStuckJobs, which had this same requirement.
 	q := `SELECT ` + campaignCols + ` FROM campaigns
-		WHERE status = 'pending' AND created_at < now() - $1::interval
+		WHERE status = 'pending' AND created_at < now() - make_interval(secs => $1)
 		ORDER BY created_at ASC
 		LIMIT $2`
-	rows, err := r.db.Query(ctx, q, stuckClaimReportAge.String(), limit+1)
+	rows, err := r.db.Query(ctx, q, stuckClaimReportAge.Seconds(), limit+1)
 	if err != nil {
 		return nil, fmt.Errorf("list stuck dispatch claims: %w", err)
 	}
