@@ -26,8 +26,12 @@ type BriefWriter interface {
 	// expectedVersion (optimistic concurrency): approving a stale version returns
 	// ErrPreconditionFailed so a concurrent replace can't be approved by accident.
 	Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64) (*model.CampaignBrief, error)
-	// ArchiveBrief soft-archives a brief (status = archived).
-	ArchiveBrief(ctx context.Context, projectID, id string) error
+	// ArchiveBrief soft-archives a brief (status = archived) and RETURNS the archived row.
+	// Returning it (rather than just an error) is what lets the caller index the state that
+	// was actually committed: a concurrent ReplaceBrief/Approve can commit between a
+	// read-then-archive pair, so a separately-read snapshot would publish stale content and a
+	// version that never existed.
+	ArchiveBrief(ctx context.Context, projectID, id string) (*model.CampaignBrief, error)
 }
 
 // BriefRepository is the full persistence port for briefs.

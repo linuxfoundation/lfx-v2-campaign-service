@@ -2,6 +2,22 @@
 
 ## 2026-08-03
 
+**Update** — Closed a read-then-archive race in `DeleteBrief` (LFXV2-2814, PR #60 review). The
+archive-republish fix read the brief, archived it, then published the SNAPSHOT with a
+hand-incremented version. A concurrent `ReplaceBrief`/`Approve` committing in that window would
+make the archive apply to the newer row while the index received the older content, at a version
+that never existed in the table.
+
+`ArchiveBrief` now RETURNS the archived row (`UPDATE ... RETURNING`), making the write and the
+read of its result one statement; the port signature no longer permits a separate read. A second
+archive is `ErrNotFound`, since the `status <> 'archived'` guard commits nothing.
+
+Testing note: an in-memory fake hands back the SAME pointer for the read and the archive, so
+racy and correct implementations publish identical version numbers — a version-based assertion
+passes either way (verified: the first version of this test stayed green against a deliberately
+racy DeleteBrief). The test therefore asserts the repository CONTRACT; the real guarantee lives
+in the SQL and the port signature.
+
 **Update** — Retracted the "self-healing" claim for indexing (LFXV2-2814, PR #60 review). Core
 NATS is at-most-once, and this bundle plus `publisher.go` both asserted that a dropped message
 "self-heals on the next update". That is FALSE for terminal writes: archiving a brief has no

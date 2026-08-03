@@ -140,17 +140,22 @@ func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model
 }
 
 // ArchiveBrief soft-archives a brief.
-func (r *BriefRepo) ArchiveBrief(ctx context.Context, projectID, id string) error {
+func (r *BriefRepo) ArchiveBrief(ctx context.Context, projectID, id string) (*model.CampaignBrief, error) {
+	// RETURNING the updated row makes the archive and the read of its result ONE statement, so
+	// the caller indexes exactly what was committed. A separate read-then-archive would race a
+	// concurrent ReplaceBrief/Approve and publish a snapshot that never existed in the table.
 	q := `UPDATE campaign_briefs SET status='archived', version=version+1, updated_at=now()
-		WHERE id=$1 AND project_id=$2 AND status <> 'archived'`
-	tag, err := r.db.Exec(ctx, q, id, projectID)
+		WHERE id=$1 AND project_id=$2 AND status <> 'archived'
+		RETURNING ` + briefCols
+	b, err := scanBrief(r.db.QueryRow(ctx, q, id, projectID))
 	if err != nil {
-		return fmt.Errorf("archive brief: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No row updated: absent, cross-project, or ALREADY archived (the status guard).
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("archive brief: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
+	return b, nil
 }
 
 func scanBrief(row pgx.Row) (*model.CampaignBrief, error) {

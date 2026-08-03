@@ -73,11 +73,18 @@ func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *mode
 	return b, nil
 }
 
-func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string) error {
-	if _, ok := r.briefs[briefKey(projectID, id)]; !ok {
-		return domain.ErrNotFound
+// ArchiveBrief mirrors the real repo's single-statement semantics: it applies the archive AND
+// returns the committed row. Modelling the mutation (status + version bump) matters — a fake
+// that only reported success would let a caller publishing a stale snapshot pass.
+func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
+	b, ok := r.briefs[briefKey(projectID, id)]
+	if !ok || b.Status == model.BriefArchived {
+		// The real query guards on status <> 'archived', so a second archive is ErrNotFound.
+		return nil, domain.ErrNotFound
 	}
-	return nil
+	b.Status = model.BriefArchived
+	b.Version++
+	return b, nil
 }
 
 // A BriefService built with nil repos (DATABASE_URL unset) must return the typed
@@ -1029,5 +1036,49 @@ func TestDeleteBrief_PublishesArchivedState(t *testing.T) {
 	}
 	if b.Status != string(model.BriefArchived) {
 		t.Errorf("published status = %q, want %q — an archived brief indexed with its old status stays searchable", b.Status, model.BriefArchived)
+	}
+}
+
+// TestDeleteBrief_ArchiveReturnsTheCommittedRow pins that the archive and the read of its
+// result are ONE statement. That is what closes the read-then-archive race: a concurrent
+// ReplaceBrief/Approve committing between a separate read and the archive would make the
+// archive apply to the newer row while the index received the older snapshot.
+//
+// It asserts on the REPOSITORY CONTRACT (ArchiveBrief returns the row it committed) rather
+// than on published version numbers. An in-memory fake hands back the same pointer for both
+// the read and the archive, so racy and correct implementations produce identical published
+// versions — a version-based assertion passes either way. (Verified: an earlier version of
+// this test did exactly that and stayed green against a deliberately racy DeleteBrief.) The
+// real guarantee lives in the SQL — UPDATE ... RETURNING — and in the port's signature, which
+// no longer makes a separate read possible.
+func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	// The port returns the archived row, so a caller cannot publish a separately-read snapshot.
+	archived, aerr := repo.ArchiveBrief(ctx, "cncf", created.ID)
+	if aerr != nil {
+		t.Fatalf("ArchiveBrief: %v", aerr)
+	}
+	if archived == nil {
+		t.Fatal("ArchiveBrief must return the committed row, not just an error")
+	}
+	if archived.Status != model.BriefArchived {
+		t.Errorf("returned status = %q, want %q", archived.Status, model.BriefArchived)
+	}
+
+	// Archiving twice must be ErrNotFound: the real query guards on status <> 'archived', so a
+	// second archive commits nothing and therefore has no row to return.
+	if _, second := repo.ArchiveBrief(ctx, "cncf", created.ID); !errors.Is(second, domain.ErrNotFound) {
+		t.Errorf("second archive = %v, want ErrNotFound (nothing was committed, so nothing to index)", second)
 	}
 }

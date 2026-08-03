@@ -46,7 +46,6 @@ var (
 	_ briefs.Auther  = (*BriefService)(nil)
 )
 
-// NewBriefService constructs a BriefService.
 // SetIndexer injects the Query Service index publisher. Separate from the constructor so the
 // ~40 existing NewBriefService call sites (mostly tests) are unaffected and default to Noop.
 func (s *BriefService) SetIndexer(p indexer.Publisher) {
@@ -81,6 +80,9 @@ func (s *BriefService) publishIndex(ctx context.Context, objectType, objectID, p
 	p.Publish(ctx, indexer.NewBody(objectType, objectID, projectID, data))
 }
 
+// NewBriefService constructs a BriefService. The index publisher is NOT a parameter: it is
+// injected via SetIndexer so the many existing call sites (mostly tests) are unaffected and
+// default to a Noop publisher.
 func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j domain.JobRepository, orch *Orchestrator) *BriefService {
 	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch,
 		indexer: indexer.Noop{},
@@ -280,23 +282,17 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	if err != nil {
 		return err
 	}
-	// Read BEFORE archiving: GetBrief filters out archived rows, so re-reading after
-	// the write would return ErrNotFound and leave nothing to publish. A read failure
-	// must not block the archive — the write is the contract, indexing is best-effort —
-	// so the brief is captured opportunistically and only published if it was found.
-	b, readErr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
-	if err := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID); err != nil {
-		return mapBriefErr(err)
+	// ArchiveBrief RETURNS the archived row, so the published document is exactly what was
+	// committed. Reading separately would race a concurrent ReplaceBrief/Approve landing
+	// between the read and the archive: the archive would apply to the newer row while the
+	// index received the older snapshot, with a hand-incremented version that never existed.
+	b, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID)
+	if aerr != nil {
+		return mapBriefErr(aerr)
 	}
 	// Archiving is a soft delete that every OTHER write path publishes; without this the
-	// archived brief keeps its stale pre-archive _source and goes on matching searches
-	// forever. Republish it carrying the archived status so consumers can filter it,
-	// mirroring the version bump ArchiveBrief performs.
-	if readErr == nil && b != nil {
-		b.Status = model.BriefArchived
-		b.Version++
-		s.publishIndex(ctx, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefResult(b))
-	}
+	// archived brief keeps its stale pre-archive _source and goes on matching searches forever.
+	s.publishIndex(ctx, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefResult(b))
 	return nil
 }
 
