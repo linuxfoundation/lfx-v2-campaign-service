@@ -406,3 +406,92 @@ func TestGoogleAds_ToggleStatus_RejectsUnsupportedStatus(t *testing.T) {
 		t.Fatal("an unsupported run status must be rejected")
 	}
 }
+
+// TestGoogleAds_ToggleStatus_ClassifiesOutcome pins the ambiguity contract that drives the
+// API's verify-before-retry response: a 5xx MAY have applied upstream, so it must report
+// Unconfirmed; a definite 4xx did NOT apply and must stay definite. Without both halves the
+// service either tells a caller "not modified" when Google did change the campaign, or
+// nags "verify" after every clean rejection.
+func TestGoogleAds_ToggleStatus_ClassifiesOutcome(t *testing.T) {
+	cases := []struct {
+		name            string
+		status          int
+		wantUnconfirmed bool
+	}{
+		{"5xx may have applied -> unconfirmed", http.StatusBadGateway, true},
+		{"definite 4xx did not apply -> definite", http.StatusBadRequest, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			}))
+			defer tokenSrv.Close()
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, `{"error":{"message":"boom"}}`)
+			}))
+			defer apiSrv.Close()
+
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			var unconf interface{ Unconfirmed() bool }
+			got := errors.As(err, &unconf) && unconf.Unconfirmed()
+			if got != tc.wantUnconfirmed {
+				t.Errorf("Unconfirmed() = %v, want %v (err %T: %v)", got, tc.wantUnconfirmed, err, err)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing pins the pre-send guard: an
+// already-done context must NOT be reported as an ambiguous upstream mutation, because
+// nothing was sent. With a cached token the request would otherwise reach httpClient.Do and
+// surface as a transportError that IsOutcomeUnconfirmed calls ambiguous.
+func TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing(t *testing.T) {
+	var reached bool
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	// PRIME the OAuth token cache first. The guard is only observable on the cached-token
+	// path: with no cached token the token fetch surfaces the context error pre-send anyway,
+	// so the test would pass without the guard and prove nothing.
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused); err != nil {
+		t.Fatalf("priming call should succeed: %v", err)
+	}
+	reached = false
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already done before the call
+
+	err := d.ToggleStatus(ctx, "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error for an already-cancelled context")
+	}
+	if reached {
+		t.Error("no mutate may be sent when the context is already done")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("nothing was sent, so the outcome must NOT be ambiguous: %v", err)
+	}
+}

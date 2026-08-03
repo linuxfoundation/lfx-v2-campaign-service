@@ -665,6 +665,14 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 		return fmt.Errorf("google-ads: campaign id %q is not numeric", campaignID)
 	}
 
+	// NOTE on an already-done context: no explicit guard is needed here. doRequest ->
+	// accessTokenValue checks ctx.Err() FIRST, before the cached-token fast path, so a
+	// cancelled caller never reaches httpClient.Do and the error surfaces as a clean
+	// context error rather than an ambiguous transportError. (CreateCampaign's own guard
+	// predates that check and is now belt-and-braces.) Pinned by
+	// TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing, which primes the token
+	// cache so it exercises exactly the cached path this note describes.
+
 	req := mutateRequest{Operations: []mutateOperation{{
 		Update: campaignStatusUpdate{
 			ResourceName: "customers/" + c.account.CustomerID + "/campaigns/" + id,
@@ -672,7 +680,14 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 		},
 		UpdateMask: "status",
 	}}}
-	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, false); err != nil {
+	// idempotent=TRUE, unlike the create path. That flag gates ONLY bounded 429 retries, and
+	// the create path's reason for declining them (no idempotency key, so a 429 whose first
+	// attempt may have committed would DOUBLE-CREATE) does not apply here: re-applying the
+	// same ENABLED/PAUSED value converges on the identical state. Passing false would turn
+	// ordinary Google throttling into an avoidable UNCONFIRMED failure. A cancellation while
+	// waiting to retry still surfaces as a transportError and stays UNCONFIRMED, which is
+	// correct — by then a mutation HAS been sent.
+	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true); err != nil {
 		return fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err)
 	}
 	return nil
