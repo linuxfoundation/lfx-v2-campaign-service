@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -748,11 +749,11 @@ func TestCreateCampaign_DisplayDomainWideCapDecodesPunycodeHost(t *testing.T) {
 	if strings.EqualFold(asciiHost, unicodeHost) {
 		t.Fatal("test host did not punycode-encode; fixture is not exercising the xn-- path")
 	}
-	var reached bool
+	var reached reachFlag
 	api := &campaignsAPI{}
 	base := api.handler(t)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		reached = true
+		reached.mark()
 		base(w, r)
 	})
 	in := validInput()
@@ -767,7 +768,7 @@ func TestCreateCampaign_DisplayDomainWideCapDecodesPunycodeHost(t *testing.T) {
 	if res != nil {
 		t.Errorf("a bad display domain must fail cleanly (nil result), got %+v", res)
 	}
-	if reached {
+	if reached.hit() {
 		t.Error("no API call should be made — the punycode display domain is invalid up front")
 	}
 }
@@ -785,11 +786,11 @@ func TestCreateCampaign_DisplayDomainRejectsUndecodableIDNAHost(t *testing.T) {
 	if len(badHost) >= maxDisplayDomainRunes {
 		t.Fatalf("fixture host must be UNDER the %d-rune cap to prove the length check alone would pass it", maxDisplayDomainRunes)
 	}
-	var reached bool
+	var reached reachFlag
 	api := &campaignsAPI{}
 	base := api.handler(t)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		reached = true
+		reached.mark()
 		base(w, r)
 	})
 	in := validInput()
@@ -805,7 +806,7 @@ func TestCreateCampaign_DisplayDomainRejectsUndecodableIDNAHost(t *testing.T) {
 	if res != nil {
 		t.Errorf("an undecodable host must fail cleanly (nil result, claim released), got %+v", res)
 	}
-	if reached {
+	if reached.hit() {
 		t.Error("no API call should be made — the host is rejected before any campaign is created")
 	}
 }
@@ -856,11 +857,11 @@ func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
 	}
 	for name, badURL := range cases {
 		t.Run(name, func(t *testing.T) {
-			var reached bool
+			var reached reachFlag
 			api := &campaignsAPI{}
 			base := api.handler(t)
 			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-				reached = true // any API call means we failed to validate up front
+				reached.mark() // any API call means we failed to validate up front
 				base(w, r)
 			})
 			in := validInput()
@@ -872,7 +873,7 @@ func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
 			if res != nil {
 				t.Errorf("%s: a bad URL must fail cleanly (nil result), got %+v", name, res)
 			}
-			if reached {
+			if reached.hit() {
 				t.Errorf("%s: no API call should be made — the URL is invalid up front", name)
 			}
 			// A userinfo URL error must not echo the password.
@@ -887,11 +888,11 @@ func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
 	// A registration URL whose HOST exceeds the 67-char display-domain limit passes the
 	// 2,048-char FinalUrls check but Microsoft rejects the display domain at AddAds. It must
 	// fail UP FRONT (nil, err, no API call) so a PAUSED campaign/ad group is never orphaned.
-	var reached bool
+	var reached reachFlag
 	api := &campaignsAPI{}
 	base := api.handler(t)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		reached = true
+		reached.mark()
 		base(w, r)
 	})
 	in := validInput()
@@ -906,7 +907,7 @@ func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
 	if res != nil {
 		t.Errorf("an over-long display domain must fail cleanly (nil result), got %+v", res)
 	}
-	if reached {
+	if reached.hit() {
 		t.Error("no API call should be made — the display domain is invalid up front")
 	}
 }
@@ -917,11 +918,11 @@ func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
 // after the PAUSED campaign/ad group already exist (orphaning them). Guards the 2,048-char
 // composed-URL check (which the raw-URL validation alone does not enforce).
 func TestCreateCampaign_RejectsOverLongComposedFinalURL(t *testing.T) {
-	var reached bool
+	var reached reachFlag
 	api := &campaignsAPI{}
 	base := api.handler(t)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		reached = true
+		reached.mark()
 		base(w, r)
 	})
 	in := validInput()
@@ -943,7 +944,7 @@ func TestCreateCampaign_RejectsOverLongComposedFinalURL(t *testing.T) {
 	if res != nil {
 		t.Errorf("an over-long composed final URL must fail cleanly (nil result), got %+v", res)
 	}
-	if reached {
+	if reached.hit() {
 		t.Error("no API call should be made — the composed URL is invalid up front")
 	}
 }
@@ -961,11 +962,11 @@ func TestCreateCampaign_DisplayDomainCountsNonDefaultPort(t *testing.T) {
 	}
 
 	t.Run("non-default port pushes over the cap -> rejected up front", func(t *testing.T) {
-		var reached bool
+		var reached reachFlag
 		api := &campaignsAPI{}
 		base := api.handler(t)
 		c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-			reached = true
+			reached.mark()
 			base(w, r)
 		})
 		in := validInput()
@@ -977,7 +978,7 @@ func TestCreateCampaign_DisplayDomainCountsNonDefaultPort(t *testing.T) {
 		if res != nil {
 			t.Errorf("must fail cleanly (nil result), got %+v", res)
 		}
-		if reached {
+		if reached.hit() {
 			t.Error("no API call should be made — the authority is over the cap up front")
 		}
 	})
@@ -1022,11 +1023,11 @@ func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			var reached bool
+			var reached reachFlag
 			api := &campaignsAPI{}
 			base := api.handler(t)
 			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-				reached = true
+				reached.mark()
 				base(w, r)
 			})
 			in := validInput()
@@ -1034,7 +1035,7 @@ func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
 			if _, err := c.CreateCampaign(context.Background(), in); err == nil {
 				t.Fatalf("%s: expected an ad-copy validation error", name)
 			}
-			if reached {
+			if reached.hit() {
 				t.Errorf("%s: no API call should be made — copy is invalid up front", name)
 			}
 		})
@@ -1668,4 +1669,24 @@ func TestCreateCampaign_DisplayDomainAcceptsIPv6Host(t *testing.T) {
 	if res == nil || res.CampaignID == "" {
 		t.Errorf("expected a created campaign for a valid IPv6 destination, got %+v", res)
 	}
+}
+
+// reachFlag records whether the fake server was called. The handler goroutine writes it and the
+// test goroutine reads it, and httptest.Server.Close only synchronizes at the deferred Close —
+// which runs AFTER the assertions — so both sides are mutex-guarded.
+type reachFlag struct {
+	mu  sync.Mutex
+	set bool
+}
+
+func (r *reachFlag) mark() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.set = true
+}
+
+func (r *reachFlag) hit() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.set
 }
