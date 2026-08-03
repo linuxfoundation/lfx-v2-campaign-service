@@ -330,6 +330,10 @@ func TestGoogleAds_AmbiguousCreateRetainsClaim(t *testing.T) {
 // there is no cascade, because the create path provisions only a campaign shell and no child
 // entities exist to flip.
 func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
+	// Guarded: the handler runs on the server's goroutine while the assertions below run on
+	// the test goroutine, and the reads happen BEFORE the deferred Close() that would
+	// otherwise supply the happens-before edge. Mirrors meta_test.go's mutex pattern.
+	var mu sync.Mutex
 	var gotBody string
 	var paths []string
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -338,8 +342,10 @@ func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		gotBody = string(b)
 		paths = append(paths, r.URL.Path)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
 	}))
@@ -353,20 +359,23 @@ func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
-	if len(paths) != 1 {
-		t.Fatalf("issued %d API calls, want exactly 1 (no cascade): %v", len(paths), paths)
+	mu.Lock()
+	gotPaths, body := append([]string(nil), paths...), gotBody
+	mu.Unlock()
+	if len(gotPaths) != 1 {
+		t.Fatalf("issued %d API calls, want exactly 1 (no cascade): %v", len(gotPaths), gotPaths)
 	}
-	if !strings.HasSuffix(paths[0], "campaigns:mutate") {
-		t.Errorf("path = %q, want a campaigns:mutate", paths[0])
+	if !strings.HasSuffix(gotPaths[0], "campaigns:mutate") {
+		t.Errorf("path = %q, want a campaigns:mutate", gotPaths[0])
 	}
 	for _, want := range []string{`"status":"PAUSED"`, `"updateMask":"status"`, `campaigns/777`} {
-		if !strings.Contains(gotBody, want) {
-			t.Errorf("mutate body missing %s: %s", want, gotBody)
+		if !strings.Contains(body, want) {
+			t.Errorf("mutate body missing %s: %s", want, body)
 		}
 	}
 	// An update must NOT carry a create payload.
-	if strings.Contains(gotBody, `"create"`) {
-		t.Errorf("a status update must not send a create operation: %s", gotBody)
+	if strings.Contains(body, `"create"`) {
+		t.Errorf("a status update must not send a create operation: %s", body)
 	}
 }
 
@@ -375,13 +384,16 @@ func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
 // campaign to ENABLED would report success while nothing can serve. That must be
 // ErrCampaignNotProvisioned (a 409 state error) raised locally, without calling Google.
 func TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned(t *testing.T) {
+	var mu sync.Mutex
 	var reached bool
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		reached = true
+		mu.Unlock()
 		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
@@ -395,7 +407,10 @@ func TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned(t *testing.T) {
 	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Fatalf("want ErrCampaignNotProvisioned, got %T: %v", err, err)
 	}
-	if reached {
+	mu.Lock()
+	sawCall := reached
+	mu.Unlock()
+	if sawCall {
 		t.Error("no API call should be made — the refusal is a local state check")
 	}
 }
@@ -453,18 +468,27 @@ func TestGoogleAds_ToggleStatus_ClassifiesOutcome(t *testing.T) {
 	}
 }
 
-// TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing pins the pre-send guard: an
-// already-done context must NOT be reported as an ambiguous upstream mutation, because
-// nothing was sent. With a cached token the request would otherwise reach httpClient.Do and
-// surface as a transportError that IsOutcomeUnconfirmed calls ambiguous.
+// TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing pins the dispatcher-level
+// behaviour: an already-done context must send nothing and must NOT be reported as an
+// ambiguous upstream mutation, since nothing reached Google.
+//
+// NOTE on scope: this exercises the COLD-cache path only. resolveGoogleAdsClient builds a
+// fresh googleads.Client per call, so a token cached by an earlier ToggleStatus is discarded
+// and cannot be primed from here — an earlier version of this test claimed to prime it and
+// silently proved nothing. The cached-token path, where the guard actually matters, is
+// covered at the client level by
+// TestUpdateCampaignStatus_AlreadyCanceledContextWithCachedToken.
 func TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing(t *testing.T) {
+	var mu sync.Mutex
 	var reached bool
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		reached = true
+		mu.Unlock()
 		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
@@ -474,13 +498,6 @@ func TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing(t *testing.T)
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 	)
 	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
-	// PRIME the OAuth token cache first. The guard is only observable on the cached-token
-	// path: with no cached token the token fetch surfaces the context error pre-send anyway,
-	// so the test would pass without the guard and prove nothing.
-	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused); err != nil {
-		t.Fatalf("priming call should succeed: %v", err)
-	}
-	reached = false
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already done before the call
@@ -489,7 +506,10 @@ func TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing(t *testing.T)
 	if err == nil {
 		t.Fatal("expected an error for an already-cancelled context")
 	}
-	if reached {
+	mu.Lock()
+	sawCall := reached
+	mu.Unlock()
+	if sawCall {
 		t.Error("no mutate may be sent when the context is already done")
 	}
 	var unconf interface{ Unconfirmed() bool }
