@@ -45,6 +45,7 @@ Manifest-only (`go.mod`/`go.sum`); no source changes. All four are RUNTIME scope
 are patched rather than added to `.grype.yaml` — that ignore list is reserved for the
 test-only `docker/docker` transitives (via migrate/dktest) and must not grow to cover
 shipping code. Recorded in the Grype section of `megalinter-secrets.md`.
+
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
@@ -90,6 +91,7 @@ a live caller context is a FAILED lookup (UNCONFIRMED), not a clean abort. Also,
 duplicate-name self-heal whose reconciliation re-lookup errors now surfaces that
 cause. Aligned the `internal-platform-microsoft` concept + the older log entry to
 the corrected `ctx.Err()` distinction and the duplicate-name-REJECTED contract.
+
 ## 2026-07-23
 
 **Update** — Microsoft Ads MS-2.5 PR #45 review follow-up (copilot + cursor). (1) The ≥1-word
@@ -310,6 +312,7 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
+
 ## 2026-07-21
 
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review
