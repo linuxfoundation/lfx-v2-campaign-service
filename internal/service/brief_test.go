@@ -1030,9 +1030,11 @@ func TestDeleteBrief_PublishesArchivedState(t *testing.T) {
 	if got.ObjectID != created.ID {
 		t.Errorf("object_id = %q, want %q", got.ObjectID, created.ID)
 	}
-	b, ok := got.Data.(*briefs.Brief)
+	// The published payload is the INDEXED doc (snake_case json tags), not the goa response
+	// type — see indexer.BriefDoc for why the two are deliberately different.
+	b, ok := got.Data.(indexer.BriefDoc)
 	if !ok {
-		t.Fatalf("published data = %T, want *briefs.Brief", got.Data)
+		t.Fatalf("published data = %T, want indexer.BriefDoc", got.Data)
 	}
 	if b.Status != string(model.BriefArchived) {
 		t.Errorf("published status = %q, want %q — an archived brief indexed with its old status stays searchable", b.Status, model.BriefArchived)
