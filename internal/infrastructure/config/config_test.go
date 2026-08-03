@@ -278,7 +278,7 @@ func TestEnvOrDefaultUnlessSet_DistinguishesUnsetFromEmpty(t *testing.T) {
 	const key = "LFX_TEST_UNSET_VS_EMPTY"
 
 	t.Run("unset falls back to the default", func(t *testing.T) {
-		os.Unsetenv(key)
+		require.NoError(t, os.Unsetenv(key))
 		if got := envOrDefaultUnlessSet(key, "fallback"); got != "fallback" {
 			t.Fatalf("unset: got %q, want %q", got, "fallback")
 		}
