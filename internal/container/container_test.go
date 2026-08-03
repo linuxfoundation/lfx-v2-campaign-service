@@ -152,7 +152,7 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 }
 
 // registeredProviders is the set of providers registerDispatchers wires up on this
-// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter, hubspot). Each is
+// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter, googleads, hubspot). Each is
 // guarded so dropping its map entry — the production wiring each PR adds — fails a test rather
 // than silently restoring "no dispatcher registered" (the adapters are unit-tested by
 // direct instantiation, which bypasses the map).
@@ -161,18 +161,24 @@ var registeredProviders = []model.Provider{
 	model.ProviderLinkedInAds,
 	model.ProviderMetaAds,
 	model.ProviderTwitterAds,
+	model.ProviderGoogleAds,
 	model.ProviderHubSpot,
 }
 
-// TestRegisterDispatchers_RegistersProviders asserts every expected provider maps to a
-// dispatcher. registerDispatchers only stores its args, so nil repo/encryptor build
-// the map without a deref.
+// TestRegisterDispatchers_RegistersProviders asserts EXACTLY the expected providers map to a
+// dispatcher — every one is present AND no extra/fewer. The len(m) equality means dropping a
+// wiring line (or adding an unlisted one) fails this test, not just a missing-key check.
+// registerDispatchers only stores its args, so nil repo/encryptor build the map without a deref.
 func TestRegisterDispatchers_RegistersProviders(t *testing.T) {
 	m := registerDispatchers(nil, nil, nil)
 	for _, p := range registeredProviders {
 		_, ok := m[p]
 		assert.True(t, ok, "%s must be registered — this is the wiring its PR adds", p)
 	}
+	// Exact membership: catches BOTH a dropped wiring (fewer entries) and an unlisted new
+	// wiring (more entries), so registeredProviders stays the single source of truth.
+	assert.Equal(t, len(registeredProviders), len(m),
+		"registerDispatchers must register exactly the expected providers; update registeredProviders when adding/removing a wiring")
 }
 
 // TestLogMissingDispatchers_SurfacesGaps verifies logMissingDispatchers actually

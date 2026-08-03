@@ -427,7 +427,7 @@ func TestBuildTwitterCampaignName(t *testing.T) {
 func TestDisplayTwitterUtmURL(t *testing.T) {
 	got := displayTwitterUtmURL(CampaignInput{
 		EventName:       "Open Source Summit",
-		RegistrationURL: "https://user:pass@events.lf.org/oss/?token=SECRET&ref=1#frag-SECRET",
+		RegistrationURL: "https://user:pass@events.lf.org/oss/?token=SECRET&ref=1#frag-SECRET", // secretlint-disable-line -- fixture asserting userinfo/query are stripped
 	})
 	if strings.Contains(got, "SECRET") || strings.Contains(got, "user:pass") || strings.Contains(got, "ref=1") || strings.Contains(got, "#") {
 		t.Errorf("display URL must drop userinfo/original-query/fragment secrets, got: %s", got)
@@ -3399,7 +3399,7 @@ func TestValidateRegistrationURL_ErrorDoesNotLeakSecrets(t *testing.T) {
 	}
 	// An absolute HTTPS URL with embedded userinfo must be REJECTED (credentials never
 	// belong in an ad destination), and the error must not leak them.
-	uerr := validateRegistrationURL("https://user:pass@events.lf.org/reg")
+	uerr := validateRegistrationURL("https://user:pass@events.lf.org/reg") // secretlint-disable-line -- fixture asserting embedded userinfo is rejected
 	if uerr == nil || !strings.Contains(uerr.Error(), "credentials") {
 		t.Errorf("a URL with embedded userinfo must be rejected, got: %v", uerr)
 	}

@@ -161,6 +161,104 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	return camp, nil
 }
 
+// ToggleStatus pauses or resumes an existing Meta campaign on the platform. It resolves the
+// connection (an inactive/undecryptable/incomplete connection is a clean error), builds the
+// client, and CASCADES the status to the campaign, its ad set, and every ad — Meta's create
+// PAUSES all three, so toggling only the campaign to ACTIVE would not serve. campaign is the
+// persisted row; the ad set id is read from its CampaignResult (Meta persists the ad set id
+// but not the individual ad ids, which the client discovers via GET /{adSetID}/ads). status
+// is model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when the platform
+// confirms; an UNCONFIRMED outcome (including a partial cascade) is wrapped so the caller
+// reports "verify before retry" (via the Unconfirmed() behavioral interface).
+func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
+	metaStatus, err := metaRunStatus(status)
+	if err != nil {
+		return err
+	}
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	if res.status != model.StatusActive {
+		return fmt.Errorf("meta connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds metaCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return fmt.Errorf("decode meta credentials: %w", err)
+	}
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return fmt.Errorf("meta credentials are incomplete (need accessToken)")
+	}
+	// A status update targets the campaign node by id (POST /{campaignID}); it needs no
+	// account id or page id, so those are not required here (unlike Dispatch).
+	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	// Cascade to the ad set (and its ads) as well as the campaign: CreateCampaign PAUSES the
+	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
+	// The ad set id is read from the persisted CampaignResult (Meta stores it, but not the
+	// individual ad ids — the client discovers those via GET /{adSetID}/ads).
+	adSetID := metaAdSetID(campaign)
+	// ACTIVATE requires a servable tree. A legacy/incomplete "created" row can lack the ad
+	// set id (absent/unparseable Result), so activating would fail without ever serving.
+	// Refuse before any HTTP call and return ErrCampaignNotProvisioned so the service maps it
+	// to a 409 state error (the platform is never contacted), not the default 503 — matching
+	// the reddit path. Pausing needs no child id (pausing the parent stops delivery).
+	if metaStatus == meta.StatusActive && strings.TrimSpace(adSetID) == "" {
+		return fmt.Errorf("%w: meta campaign %s cannot be activated because it has no ad set to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus); uerr != nil {
+		// An activate refused up front because the ad set has zero ads is a local/state error
+		// (the platform mutation never ran), so classify it as ErrCampaignNotProvisioned → 409,
+		// not the default 503 — deterministic "reprovision", not a transient "verify/retry".
+		// Mirrors the LinkedIn dispatcher's zero-creatives handling.
+		if meta.IsNotServable(uerr) {
+			return fmt.Errorf("%w: %s", domain.ErrCampaignNotProvisioned, uerr.Error())
+		}
+		if meta.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
+}
+
+// metaAdSetID pulls the ad set id the create path stored in the persisted CampaignResult
+// blob. A missing/unparseable blob yields "" (the campaign is toggled alone — the service
+// already blocks toggling a degraded campaign, and on Meta the CAMPAIGN status is the
+// effective delivery gate, so a PAUSE without the ad set id still stops serving; only an
+// ACTIVATE requires it, and ToggleStatus refuses that up front — see the guard above).
+//
+// It unmarshals into the SAME meta.CampaignResult type the create path marshals into Result
+// (campaignFromMeta), rather than a private struct with a hardcoded "AdSetID" key. This keeps
+// ONE definition of the persisted wire shape: if the CampaignResult field/tag is ever renamed,
+// reader and writer move together instead of silently desyncing (the previous inline struct
+// matched only by coincidence of Go's default field-name marshaling). Making the dependency on
+// the create-path result explicit was the intent behind the review note; a dedicated
+// model.Campaign.PlatformAdSetID column was considered but is Meta-specific (no other platform
+// has an ad set) and would need a schema migration on the shared campaigns table — this keeps
+// the fix proportional to a status-toggle PR while removing the fragility.
+func metaAdSetID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob meta.CampaignResult
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	return blob.AdSetID
+}
+
+// metaRunStatus maps the service run state (active/paused) to Meta's status enum.
+func metaRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return meta.StatusActive, nil
+	case model.CampaignRunPaused:
+		return meta.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
+}
+
 // campaignFromMeta maps the client result to the persistence model.
 func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfig) *model.Campaign {
 	c := &model.Campaign{
