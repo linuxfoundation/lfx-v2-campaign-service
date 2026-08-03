@@ -1,18 +1,5 @@
 # Log
 
-## 2026-07-30
-
-**Update** — Patched four indirect-dependency CVEs flagged by Dependabot on main
-(LFXV2-2811): `google.golang.org/grpc` 1.82.0→1.82.1 (HIGH, xDS RBAC + HTTP/2, reached via
-`goa.design/clue/debug`), `github.com/apache/thrift` 0.22.0→0.23.0 (HIGH,
-`TFramedTransport` integer overflow, via `gosnowflake`→`arrow-go`),
-`aws-sdk-go-v2/service/s3` 1.53.1→1.97.3 and `aws-sdk-go-v2/aws/protocol/eventstream`
-1.6.2→1.7.8 (MEDIUM, EventStream decoder panic/DoS, via `gosnowflake`).
-
-Manifest-only (`go.mod`/`go.sum`); no source changes. All four are RUNTIME scope, so they
-are patched rather than added to `.grype.yaml` — that ignore list is reserved for the
-test-only `docker/docker` transitives (via migrate/dktest) and must not grow to cover
-shipping code. Recorded in the Grype section of `megalinter-secrets.md`.
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
@@ -45,6 +32,19 @@ about itself. Ordinary patterns remain target-only; that gap is documented in th
 concept as a deferred, unsolved follow-up rather than presented as handled.
 `local-agents/` is now git-ignored.
 
+## 2026-07-30
+
+**Update** — Patched four indirect-dependency CVEs flagged by Dependabot on main
+(LFXV2-2811): `google.golang.org/grpc` 1.82.0→1.82.1 (HIGH, xDS RBAC + HTTP/2, reached via
+`goa.design/clue/debug`), `github.com/apache/thrift` 0.22.0→0.23.0 (HIGH,
+`TFramedTransport` integer overflow, via `gosnowflake`→`arrow-go`),
+`aws-sdk-go-v2/service/s3` 1.53.1→1.97.3 and `aws-sdk-go-v2/aws/protocol/eventstream`
+1.6.2→1.7.8 (MEDIUM, EventStream decoder panic/DoS, via `gosnowflake`).
+
+Manifest-only (`go.mod`/`go.sum`); no source changes. All four are RUNTIME scope, so they
+are patched rather than added to `.grype.yaml` — that ignore list is reserved for the
+test-only `docker/docker` transitives (via migrate/dktest) and must not grow to cover
+shipping code. Recorded in the Grype section of `megalinter-secrets.md`.
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
