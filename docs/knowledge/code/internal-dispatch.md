@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/dispatch"
-description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the ad-platform API clients."
+description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the ad-platform API clients, plus the HubSpot audience builder."
 resource: "internal/dispatch"
 ---
 
@@ -15,6 +15,18 @@ orchestrator (`internal/service`) to the ad-platform API clients
 is the only place that knows both the orchestrator's contract and the concrete
 clients, which is why it lives outside `service` (keeping `service` free of platform
 imports) and outside each `platform/*` package (avoiding an import cycle).
+
+## Also here: the audience builder
+
+`AudienceBuilder` (`audience_builder.go`) is NOT a `PlatformDispatcher` — it implements
+`service.AudienceBuilder` for the audience build (LFXV2-2774). It lives in this package for the
+same reason the adapters do: HubSpot credentials are stored per project as encrypted
+connections, so it needs the same `credsSource` resolution, and putting it in `service` would
+drag platform clients back into the orchestrator's package.
+
+It resolves its HubSpot client ONCE per build (cached by project): one build creates several
+lists, and re-resolving per list could scatter them across different portals if the connection
+were replaced mid-build.
 
 ## What each adapter does
 

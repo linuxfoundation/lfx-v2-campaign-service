@@ -2,6 +2,22 @@
 
 ## 2026-08-03
 
+**Update** — Sibling discovery never worked (LFXV2-2774, PR #61 review). `ResolvePastEditions`
+passed the full event name as the search term while ALSO excluding that name's year, so the
+query was `ILIKE '%KubeCon Korea 2026%' AND NOT ILIKE '%2026%'` — unsatisfiable. Every returning
+event silently degraded to a country-only audience. The year is now stripped from the term.
+
+Related, same area: the wall-clock year fallback was WRONG in both directions (it dropped the
+2026 edition for a 2027 brief read in 2026, and admitted a brief's own edition for an older
+one), so a missing year now yields NO editions and the caller records the gap. The year is
+derived from the event name when the details omit it. Warehouse names are no longer trimmed —
+they are exact HubSpot filter values, so normalizing them could match nothing.
+
+Also: the HubSpot client is resolved ONCE per build (cached by project) so a connection replaced
+mid-build cannot scatter lists across portals; `audienceBuildErr` reports Code "500" to match the
+status Goa actually encodes (it claimed 502 while Goa sent 500); and the kodata OpenAPI specs,
+api-catalog, README env contract and dispatch package concept are synced.
+
 **Update** — Four filter-shape fixes on the audience build (LFXV2-2774, PR #61 review). All were
 invariants the HubSpot client ALREADY documented (`internal/platform/hubspot/lists.go:19-23`) and
 the first cut violated — each fails at the platform, not in review:

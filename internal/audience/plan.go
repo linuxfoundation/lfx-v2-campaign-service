@@ -205,12 +205,16 @@ func listName(group, scope, eventName string) string {
 	return fmt.Sprintf("%s %s — %s", group, scope, eventName)
 }
 
-// nonBlank drops blank entries, preserving order.
+// nonBlank drops blank entries, preserving order AND the original strings.
+//
+// It trims only to TEST emptiness. The values are authoritative Snowflake event names used
+// VERBATIM as exact HubSpot filter values, so returning the trimmed form would silently alter
+// the name — and a warehouse value with surrounding whitespace would then match nothing.
 func nonBlank(in []string) []string {
 	var out []string
 	for _, s := range in {
-		if t := strings.TrimSpace(s); t != "" {
-			out = append(out, t)
+		if strings.TrimSpace(s) != "" {
+			out = append(out, s)
 		}
 	}
 	return out

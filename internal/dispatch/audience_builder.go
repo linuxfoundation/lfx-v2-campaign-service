@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -30,6 +30,11 @@ type AudienceBuilder struct {
 	creds     *credsSource
 	snowflake PastEditionResolver
 	opts      []hubspot.Option
+
+	// mu guards clients, the per-project client cache. One build creates several lists and must
+	// use ONE portal for all of them (see CreateList).
+	mu      sync.Mutex
+	clients map[string]*hubspot.Client
 }
 
 // NewAudienceBuilder builds the audience builder. snow may be nil: the warehouse is used only
@@ -49,29 +54,51 @@ func (b *AudienceBuilder) ResolvePastEditions(ctx context.Context, eventTerm, lo
 		// Not an error: the caller degrades to a country-only audience and records the gap.
 		return nil, nil
 	}
-	// ResolvePastEventNames REQUIRES a 4-digit year to guarantee "past editions only". When the
-	// brief carries none, fall back to the current year rather than passing a blank — a blank is
-	// rejected outright, and the fallback keeps the exclusion honest.
+	// The year must come from the EVENT, not the wall clock. ResolvePastEventNames excludes
+	// names containing the supplied year, so a wall-clock fallback omits the wrong edition: on
+	// a 2027 brief read in 2026 it drops the 2026 edition, and on an older brief it lets that
+	// brief's OWN edition through as a "past" one. Without a real year, return no editions —
+	// the caller degrades to a country-only audience and records the gap.
 	year := strings.TrimSpace(currentYear)
 	if !isFourDigitYear(year) {
-		year = fmt.Sprintf("%d", time.Now().UTC().Year())
+		year = yearIn(eventTerm)
 	}
-	events, err := b.snowflake.ResolvePastEventNames(ctx, eventTerm, locationTerm, year)
+	if year == "" {
+		return nil, nil
+	}
+
+	// Strip the year from the search term. The event name normally CONTAINS its year
+	// ("KubeCon Korea 2026"), and the query is `ILIKE '%term%' AND NOT ILIKE '%year%'` — so
+	// passing the full name asks for rows containing 2026 that do not contain 2026, which
+	// matches nothing. Sibling discovery silently returned zero for every returning event.
+	family := strings.TrimSpace(strings.ReplaceAll(eventTerm, year, ""))
+	if family == "" {
+		family = eventTerm
+	}
+
+	events, err := b.snowflake.ResolvePastEventNames(ctx, family, locationTerm, year)
 	if err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(events))
 	for _, e := range events {
-		if n := strings.TrimSpace(e.EventName); n != "" {
-			names = append(names, n)
+		// Trim ONLY to test emptiness — the stored value is used VERBATIM as an exact HubSpot
+		// filter, so trimming it would change the authoritative name and could match nothing.
+		if strings.TrimSpace(e.EventName) != "" {
+			names = append(names, e.EventName)
 		}
 	}
 	return names, nil
 }
 
 // CreateList creates one DYNAMIC contact list in the project's HubSpot portal.
+//
+// The resolved client is CACHED per build (keyed by project): a build creates several lists, and
+// re-resolving per call would decrypt the connection repeatedly and — if the connection were
+// replaced or deactivated mid-build — scatter the lists across DIFFERENT portals, leaving a
+// master list pointing at ids that do not all exist in one place.
 func (b *AudienceBuilder) CreateList(ctx context.Context, projectID, name string, filter json.RawMessage) (string, error) {
-	client, err := b.client(ctx, projectID)
+	client, err := b.cachedClient(ctx, projectID)
 	if err != nil {
 		return "", err
 	}
@@ -86,6 +113,24 @@ func (b *AudienceBuilder) CreateList(ctx context.Context, projectID, name string
 		return "", fmt.Errorf("hubspot: create list %q returned no list", name)
 	}
 	return l.ListID, nil
+}
+
+// cachedClient returns the client for a project, resolving it at most once per builder.
+func (b *AudienceBuilder) cachedClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if c, ok := b.clients[projectID]; ok {
+		return c, nil
+	}
+	c, err := b.client(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if b.clients == nil {
+		b.clients = map[string]*hubspot.Client{}
+	}
+	b.clients[projectID] = c
+	return c, nil
 }
 
 // client resolves the project's HubSpot connection and builds a client from it, mirroring
@@ -115,6 +160,21 @@ func (b *AudienceBuilder) client(ctx context.Context, projectID string) (*hubspo
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		b.opts...,
 	), nil
+}
+
+// yearIn extracts a 4-digit year (19xx/20xx) from an event name, so a brief whose details omit
+// the year can still derive it from the name it already carries.
+func yearIn(s string) string {
+	for i := 0; i+4 <= len(s); i++ {
+		c := s[i : i+4]
+		if isFourDigitYear(c) && (c[0] == '1' || c[0] == '2') {
+			// Reject a longer digit run (e.g. a 6-digit id) that merely contains 4 digits.
+			if (i == 0 || s[i-1] < '0' || s[i-1] > '9') && (i+4 == len(s) || s[i+4] < '0' || s[i+4] > '9') {
+				return c
+			}
+		}
+	}
+	return ""
 }
 
 // isFourDigitYear mirrors the warehouse client's own guard so the fallback above produces a

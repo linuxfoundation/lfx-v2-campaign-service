@@ -53,13 +53,18 @@ func audienceUnavailableErr() error {
 	}
 }
 
-// audienceBuildErr maps a platform-side build failure to a typed 502. It is deliberately NOT a
-// 500: the failure is upstream (HubSpot rejected a create, or Snowflake was unreachable), and
-// the message is the operator-facing reason. Upstream error text can carry request ids but not
-// credentials — the clients redact those before returning.
+// audienceBuildErr maps a platform-side build failure to the typed InternalServerError.
+//
+// The Code is "500", matching the status Goa actually encodes for this type. An earlier version
+// set "502" to signal an upstream failure, but Goa maps InternalServerError to
+// StatusInternalServerError regardless of the string — so clients got a 500 carrying a body
+// claiming 502, which is worse than either alone. The upstream nature of the failure is carried
+// in the MESSAGE, where it does not contradict the status line.
+//
+// Upstream error text can carry request ids but not credentials — the clients redact those.
 func audienceBuildErr(err error) error {
 	return &audiences.InternalServerError{
-		Code:    "502",
+		Code:    "500",
 		Message: "the audience build failed upstream: " + err.Error(),
 	}
 }
