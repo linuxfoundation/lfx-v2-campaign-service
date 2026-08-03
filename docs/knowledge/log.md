@@ -1,26 +1,5 @@
 # Log
 
-## 2026-07-30
-
-**Update** — Added `find-brief` (LFXV2-2812): `GET /projects/{project_id}/briefs?event_slug=`
-returns the saved brief for an event, or 404 when none exists. This closes the
-generate-once/recall-later loop for the Campaigns Planning tab: the AI brief generation lives
-in the UI's Express BFF (`POST /brief/generate`), and this service persists the result — but
-nothing mapped an event URL back to the stored brief, because `get-brief` needs a brief id the
-caller does not have when pasting a URL.
-
-A 404 is an ORDINARY outcome, not a failure: first-time generation is the common case, and the
-caller generates then POSTs to `create-brief`. The endpoint never generates or mutates —
-regeneration stays an explicit `update-brief`, so a marketer's edits to the AI copy are never
-silently clobbered (the existing `version`/`If-Match` gate protects them).
-
-No migration: the lookup reuses `uq_campaign_briefs_project_event`, the partial unique index on
-`(project_id, event_slug) WHERE status <> 'archived'`. Archiving therefore frees the slug and a
-re-paste correctly 404s into a fresh generation.
-
-On D5 (Query Service owns lists): this is a KEYED item read, not a list — the unique index
-means it matches at most one brief, returning the same one-item-plus-ETag shape as
-`GET /briefs/{id}`, which D5 retains. Recorded in api-catalog.md next to the rule.
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
@@ -53,6 +32,27 @@ about itself. Ordinary patterns remain target-only; that gap is documented in th
 concept as a deferred, unsolved follow-up rather than presented as handled.
 `local-agents/` is now git-ignored.
 
+## 2026-07-30
+
+**Update** — Added `find-brief` (LFXV2-2812): `GET /projects/{project_id}/briefs?event_slug=`
+returns the saved brief for an event, or 404 when none exists. This closes the
+generate-once/recall-later loop for the Campaigns Planning tab: the AI brief generation lives
+in the UI's Express BFF (`POST /brief/generate`), and this service persists the result — but
+nothing mapped an event URL back to the stored brief, because `get-brief` needs a brief id the
+caller does not have when pasting a URL.
+
+A 404 is an ORDINARY outcome, not a failure: first-time generation is the common case, and the
+caller generates then POSTs to `create-brief`. The endpoint never generates or mutates —
+regeneration stays an explicit `update-brief`, so a marketer's edits to the AI copy are never
+silently clobbered (the existing `version`/`If-Match` gate protects them).
+
+No migration: the lookup reuses `uq_campaign_briefs_project_event`, the partial unique index on
+`(project_id, event_slug) WHERE status <> 'archived'`. Archiving therefore frees the slug and a
+re-paste correctly 404s into a fresh generation.
+
+On D5 (Query Service owns lists): this is a KEYED item read, not a list — the unique index
+means it matches at most one brief, returning the same one-item-plus-ETag shape as
+`GET /briefs/{id}`, which D5 retains. Recorded in api-catalog.md next to the rule.
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
