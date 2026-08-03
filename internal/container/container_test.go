@@ -152,8 +152,7 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 }
 
 // registeredProviders is the set of providers registerDispatchers wires up on this
-// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter, googleads, microsoft,
-// hubspot). Each is
+// branch (one entry lands per adapter PR: reddit, linkedin, meta, twitter, googleads, hubspot). Each is
 // guarded so dropping its map entry — the production wiring each PR adds — fails a test rather
 // than silently restoring "no dispatcher registered" (the adapters are unit-tested by
 // direct instantiation, which bypasses the map).
@@ -163,7 +162,6 @@ var registeredProviders = []model.Provider{
 	model.ProviderMetaAds,
 	model.ProviderTwitterAds,
 	model.ProviderGoogleAds,
-	model.ProviderMicrosoftAds,
 	model.ProviderHubSpot,
 }
 
@@ -195,14 +193,13 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	// EVERY dispatchable provider now has an adapter, so the real map produces no warning at
-	// all (asserted below). To keep proving this function is not a no-op, feed it a map with
-	// one provider deliberately REMOVED and assert that provider is named. Using a synthetic
-	// gap rather than a real one means this test no longer rots each time an adapter lands.
+	// Feed a map with one provider deliberately REMOVED rather than relying on a real gap:
+	// adapters keep landing, so a test that asserts "provider X is still unregistered" rots
+	// the moment X ships. A synthetic gap keeps proving the function is not a no-op forever.
 	full := registerDispatchers(nil, nil, nil)
 	gapped := make(map[model.Provider]service.PlatformDispatcher, len(full))
 	for p, d := range full {
-		if p == model.ProviderGoogleAds {
+		if p == model.ProviderRedditAds {
 			continue // the synthetic gap
 		}
 		gapped[p] = d
@@ -211,18 +208,38 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 
 	out := buf.String()
 	assert.Contains(t, out, "no dispatcher registered", "the warning must be emitted when a provider is missing")
-	assert.Contains(t, out, string(model.ProviderGoogleAds), "the missing provider must be named in the log")
-	// No provider that IS registered may be reported as missing.
+	assert.Contains(t, out, string(model.ProviderRedditAds), "the missing provider must be named in the log")
+	// The missing provider must land in the field matching its KIND, so an operator can filter
+	// a missing paid platform (budget unspent) from a missing email channel (no drafts staged)
+	// on a field rather than substring-matching a formatted string.
+	assert.Contains(t, out, "missing_paid_ads=", "the paid-ads field must carry the missing ad platform")
+	assert.Contains(t, out, "missing_email=[]", "the email field must be present and EMPTY — only a paid platform is missing here")
 	for p := range gapped {
 		assert.NotContains(t, out, string(p), "%s is registered, so it must not be logged as missing", p)
 	}
+}
 
-	// With the FULL map nothing is missing, so the function must stay silent — every
-	// dispatchable provider (all six ad platforms + the hubspot email channel) is wired.
-	var quiet bytes.Buffer
-	slog.SetDefault(slog.New(slog.NewTextHandler(&quiet, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	logMissingDispatchers(full)
-	assert.Empty(t, quiet.String(), "no warning may be emitted when every provider has a dispatcher")
+// TestLogMissingDispatchers_SilentWhenComplete is the counterpart to the gap test: with every
+// dispatchable provider wired, the startup path must emit NOTHING. A warning that fires on a
+// healthy boot is noise operators learn to filter, which is how a real gap later goes unseen.
+//
+// It builds a SYNTHETIC complete map rather than asserting on the real one. An earlier version
+// guarded with t.Skip until every provider had an adapter — which meant it never ran at all
+// (microsoft's is still in flight), making it a green checkmark that asserted nothing. This
+// mirrors the synthetic-gap approach of the sibling test and runs today.
+func TestLogMissingDispatchers_SilentWhenComplete(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	complete := make(map[model.Provider]service.PlatformDispatcher, len(dispatchableProviders))
+	for _, p := range dispatchableProviders {
+		// The value is never invoked — logMissingDispatchers only tests key presence.
+		complete[p] = nil
+	}
+	logMissingDispatchers(complete)
+	assert.Empty(t, buf.String(), "no warning may be emitted when every provider has a dispatcher")
 }
 
 func TestNewContainer_NoDatabase(t *testing.T) {

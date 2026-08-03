@@ -1,5 +1,83 @@
 # Log
 
+## 2026-08-03
+
+**Update** — Modelled the paid-ads vs email channel distinction (LFXV2-2813). `model.ChannelKind`
+(`paid-ads` / `email`) with `Provider.Kind()` and `Provider.IsPaidAds()`. Previously the split
+existed only implicitly: `adPlatformProviders` was named for ad platforms but CONTAINED hubspot,
+the email channel, and any code needing the distinction had to compare against `ProviderHubSpot`
+directly.
+
+Renamed that roster to `dispatchableProviders` — it gates DISPATCH, and email is dispatchable
+(it stages a draft) even though it is not an ad platform. `logMissingDispatchers` now logs each
+missing provider's channel kind, so a missing paid platform (budget unspent) is
+distinguishable from a missing email channel (no drafts staged).
+
+The `ErrToggleUnsupported` 400 now explains WHY: for email there is nothing to pause by design,
+versus an ad platform whose toggle is not wired yet. A single generic message read as a missing
+feature and invited someone to "fix" the email case.
+
+`Kind()` enumerates providers explicitly rather than defaulting, so an unclassified new provider
+returns `""` and is caught by `TestProviderValidityHoldsForEveryProvider` instead of silently
+inheriting paid-ads behaviour. Also made `TestLogMissingDispatchers_SurfacesGaps` rot-proof: it
+now removes one provider from the real map (a synthetic gap) rather than asserting a specific
+provider is still unregistered, which broke each time an adapter landed.
+## 2026-08-02
+
+**Update** — Bounded the Claude fallback's rerun in
+[Local pre-PR review](architecture/local-pre-pr-review.md) (PR #56 review,
+LFXV2-2905). On a role-level host failure the trio is rerun **once**; if the rerun
+also fails, the role-labelled failure is reported and the launcher stops. The
+reviewer-authored `INCOMPLETE — <reason>` result and a host-side fallback failure
+remain separate states — the bound does not merge them.
+
+## 2026-07-31
+
+**Fix** — Corrected two overstatements in
+[Local pre-PR review](architecture/local-pre-pr-review.md) (PR #56 review,
+LFXV2-2905). "Nothing consults a remote, so the cycle works offline" was broader
+than the reviewer skills actually say: they permit optional read-only GitHub
+inspection to inform judgement. The invariant is narrower and is now stated as such
+— nothing fetches or consults a remote to *derive* the reviewed range. Separately,
+"reviews exactly one commit" is the default, not an invariant; the same concept's
+base-pinning section already documented the caller-supplied wider base.
+
+**Update** — Added [Local pre-PR review](architecture/local-pre-pr-review.md)
+(PR #56, LFXV2-2905): the repo-owned local review cycle. Two physical reviewer
+brains under `.claude/skills/` with generic symlink aliases, an empirical knowledge
+base at `docs/reviews/knowledge-base/`, and a `local-review-fallback` launch table
+for three Opus subagents when Pi is unavailable. Reviews exactly
+`git diff <base_sha> <target_sha>` with the target's first parent as the default
+base — no fetch, no remote, no merge-base. The false-positive floor is read at both
+revisions and suppresses only when both agree, so a change cannot waive a finding
+about itself. Ordinary patterns remain target-only; that gap is documented in the
+concept as a deferred, unsolved follow-up rather than presented as handled.
+`local-agents/` is now git-ignored.
+
+## 2026-07-30
+
+**Update** — Google Ads campaign status toggle (LFXV2-2809), stacked on the GA dispatcher
+(PR #41). `GoogleAdsDispatcher` implements `service.StatusToggler`; new client method
+`UpdateCampaignStatus` sends a `campaigns:mutate` UPDATE with `updateMask: "status"`, and a new
+exported `IsOutcomeUnconfirmed` mirrors the reddit/twitter clients for cross-package
+classification.
+
+PAUSE only — ACTIVATE is REFUSED with `ErrCampaignNotProvisioned` (→409, no upstream call),
+because the GA create path provisions only a campaign SHELL (budget → campaign) with no ad
+group, ad, or keywords: enabling the campaign would report success while nothing can serve. No
+cascade for the same reason — there are no children yet. GA-3+ must add both a cascade and a
+real child-id activate guard. Google spells the
+serving state ENABLED, not ACTIVE — `googleAdsRunStatus` maps the service vocabulary across.
+
+`mutateOperation` gained `Update`/`UpdateMask` fields, and `Create` became `omitempty` so an
+update no longer emits `"create":null` alongside its update (a :mutate operation must carry
+exactly ONE of create/update/remove). The create path is unaffected — it always sets Create.
+
+Connection rules are shared via `validateGoogleAdsConnection`, called by BOTH `Dispatch` and
+`ToggleStatus`, so a create and a toggle cannot drift; each caller keeps its own error wrapping
+(`Dispatch` wraps with `notCreated` for claim semantics, the toggle path does not). The
+campaign id is validated digits-only before any request, since it interpolates into a
+resourceName.
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and

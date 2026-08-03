@@ -38,3 +38,53 @@ The current active speckit feature spec/plan/tasks live under
 
 See `README.md` for the `make` targets used to build, test, lint, and run
 the service.
+
+## Local work cycle — post-commit and pre-PR review
+
+Run, from this repo, **after every normal signed commit** while working toward a
+pull request:
+
+```text
+/lfx-skills:lfx-local-review
+```
+
+It reviews the **newest commit** — by default the range `HEAD^..HEAD`, the diff
+that commit introduces against its first parent — so you can keep editing while it
+runs. A caller that needs a wider range may supply a direct base parameter; the
+review never derives one, never fetches, and never consults a remote.
+
+Three reviewers run in parallel and each returns an ordinary Markdown review: a
+general reviewer, plus this repo's own two brains —
+`.claude/skills/campaign-service-code-reviewer` (audits the change against this
+repo's written rules and quotes each one) and
+`.claude/skills/campaign-service-learnings-reviewer` (matches it against
+`docs/reviews/knowledge-base/`, the patterns extracted from past review comments
+on this repo). The generic `local-code-review` and `local-learnings-review` names in
+`.claude/skills/` are symlinks to those two directories, and `.agents/skills/`
+exposes the same two physical directories — keep exactly one copy of each brain.
+
+When the host reports that Pi is unavailable it runs the trio as Claude subagents
+instead, following `.claude/skills/local-review-fallback` — this repo's launch
+table for exactly those three reviewers, aliased at
+`.agents/skills/local-review-fallback`. It carries no review criteria of its own.
+
+Read the reports in full. **This session — not the reviewers — fixes what they
+find.** Reviewer children never edit source, commit, push, or touch GitHub beyond
+read-only inspection. Land the fixes as normal signed conventional commits with a
+`fix(<scope>): ...` or `fix: ...` prefix, then **rerun the complete trio**.
+
+A review whose first line is `INCOMPLETE — <reason>`, or a role the host reports
+as failed or empty, makes the **whole cycle incomplete**. Successful siblings do
+not rescue it: two clean reports next to one incomplete one is not a pass. Resolve
+the cause and rerun the complete trio under one harness — never just the failed
+role, and never a mix of Pi and Claude evidence in the same cycle.
+
+Before opening a PR: drain the reviews, then run the repo's normal readiness and
+preflight checks.
+
+This cycle **stops at PR-open.** Pushing and opening the PR happen under the
+coordinator's release instruction, not from the review cycle, which never writes a
+label, status, review or approval.
+
+When a review's findings change what the code does, the knowledge-bundle rules
+above still apply to the follow-up commit.

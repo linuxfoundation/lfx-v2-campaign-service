@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/dispatch"
-description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the ad-platform API clients."
+description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel)."
 resource: "internal/dispatch"
 ---
 
@@ -151,8 +151,41 @@ count, not ids), and PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUS
 400 on an in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) —
 the campaign is already the effective gate. An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`)
 is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
-package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). The X/Twitter and
-Google Ads DISPATCHERS already exist (creation); adding the status-TOGGLE capability to them is
-remaining follow-up work.
+package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). 
+
+**Google Ads** implements PAUSE only; **ACTIVATE is refused** with `ErrCampaignNotProvisioned`
+(→409, raised locally without calling Google). The create path provisions only a PAUSED search
+campaign SHELL (budget → campaign) with no ad group, ad, or keywords, so flipping the campaign
+to ENABLED would report success while nothing can serve — the exact lie that sentinel exists to
+prevent. There is no cascade for the same reason: there are no children to cascade to.
+`UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE with `updateMask: "status"`.
+Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE. When GA-3+ adds
+ad groups/ads/keywords, this must grow BOTH a cascade and a real child-id-based activate guard,
+matching the reddit shape.
+
+X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
+separately.
+
+## Channel kinds: paid ads vs email
+
+`model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,
+with `Provider.IsPaidAds()` as the common shorthand). The distinction is BEHAVIOURAL, not
+cosmetic: a paid ad channel CREATES a campaign that spends budget and can be paused/resumed
+mid-flight, whereas the email channel STAGES a draft a human sends — no budget, no delivery
+this service controls, nothing to pause.
+
+HubSpot is the only email provider today. Branch on `Kind()` rather than comparing against
+`ProviderHubSpot`, so a second email provider does not require hunting down every hardcoded
+check. `Kind()` enumerates providers explicitly and returns `""` for an unclassified one, so a
+newly added provider surfaces the omission instead of silently inheriting paid-ads behaviour.
+
+Two places this shows up today:
+
+- `dispatchableProviders` (container) spans BOTH kinds — email is dispatchable even though it
+  is not an ad platform — which is why it is named for dispatch rather than "ad platforms".
+  `logMissingDispatchers` logs each missing provider's kind so an operator can tell a missing
+  paid platform (budget unspent) from a missing email channel (no drafts staged).
+- The `ErrToggleUnsupported` 400 distinguishes the two reasons: email has no run state BY
+  DESIGN, while an ad platform's toggle may simply not be wired yet.
 
 See [internal/dispatch](../../../internal/dispatch).
