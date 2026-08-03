@@ -2,6 +2,19 @@
 
 ## 2026-08-03
 
+**Update** — Retracted the "self-healing" claim for indexing (LFXV2-2814, PR #60 review). Core
+NATS is at-most-once, and this bundle plus `publisher.go` both asserted that a dropped message
+"self-heals on the next update". That is FALSE for terminal writes: archiving a brief has no
+successor write, and a created-then-never-edited campaign may never be written again — so the
+index can be permanently stale or missing the only document backing lists/history.
+
+No code fix here beyond the retraction: bounding the flush narrows the window but cannot close
+the commit-to-publish gap (the process can die between the two regardless). Closing it needs
+delivery recoverable independently of the write — a transactional outbox with a relay, or a
+periodic database-to-index reconciliation sweep. Recorded as a KNOWN GAP rather than
+implemented, because it is a design decision with operational weight and belongs in its own
+change, not a review round.
+
 **Update** — Budgeted the index drain into shutdown (LFXV2-2814, PR #60 review follow-up).
 Bounding `nats.DrainTimeout` to 2s was necessary but NOT sufficient: `Container.Close` really
 does spend those 2s draining after the pool closes, and `ContainerCloseTimeout` did not count

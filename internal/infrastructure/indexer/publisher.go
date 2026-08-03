@@ -49,9 +49,23 @@ func (Noop) Publish(context.Context, Body) {}
 // Close does nothing.
 func (Noop) Close() {}
 
-// NATSPublisher publishes over NATS core (not JetStream): the Query Service re-indexes on every
-// write, so an at-most-once delivery that drops a message self-heals on the next update, and
-// persistence would add operational weight for no correctness gain.
+// NATSPublisher publishes over NATS core (not JetStream), which is AT-MOST-ONCE: a dropped
+// message is simply lost.
+//
+// Do NOT read that as self-healing. A resource whose document is dropped is repaired only if
+// something writes it AGAIN, and several writes have no successor: archiving a brief is
+// terminal, and a created-then-never-edited campaign may never be written again. For those the
+// index can stay permanently stale or missing — and because the Query Service serves lists and
+// history FROM the index, that is user-visible, not merely a cache miss.
+//
+// This is a known gap, not a claim of correctness. Closing it properly needs delivery to be
+// recoverable independently of the write — a transactional outbox with a relay, or a periodic
+// database-to-index reconciliation sweep. Neither belongs behind a Publish() call: bounding the
+// flush (see Publish) reduces the window but cannot close the commit-to-publish gap, since the
+// process can die between the two no matter how the publish is bounded.
+//
+// What core NATS DOES buy is that indexing can never fail a write, which is the property this
+// service actually depends on (the database is the source of truth).
 type NATSPublisher struct {
 	conn *nats.Conn
 }

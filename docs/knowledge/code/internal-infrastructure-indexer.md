@@ -41,8 +41,22 @@ The same reasoning applies at startup: an unreachable broker logs and returns a 
 than blocking boot. `Noop` also stands in when `NATS_URL` is empty, so the five write paths
 publish unconditionally instead of nil-checking at each one.
 
-NATS **core**, not JetStream: the Query Service re-indexes on every write, so a dropped message
-self-heals on the next update.
+NATS **core**, not JetStream — which is **at-most-once**. A dropped message is lost.
+
+**This does not self-heal**, and an earlier version of this document wrongly said it did. A
+dropped document is repaired only by a SUBSEQUENT write, and several writes have no successor:
+archiving a brief is terminal, and a created-then-never-edited campaign may never be written
+again. Since the Query Service serves lists and history FROM the index, the result is
+user-visible staleness, not a cache miss.
+
+Bounding the publish flush narrows the window but cannot close it: the process can die between
+the commit and the publish regardless. Closing it properly requires delivery to be recoverable
+independently of the write — a transactional outbox with a relay, or a periodic
+database-to-index reconciliation sweep. That is **not implemented**; it is tracked as a known
+gap rather than claimed as handled.
+
+What core NATS does buy is that indexing can never fail a write — the property the service
+actually depends on, since the database is the source of truth.
 
 ## Wiring: one publisher, injected everywhere
 
