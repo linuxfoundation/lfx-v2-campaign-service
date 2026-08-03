@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -51,24 +52,55 @@ func builtHubSpotAudience(masterList string, suppression []string) []*model.Camp
 
 // hubspotServer fakes the HubSpot API for the clone + set-send-list flow. It records the
 // send-list payload so a test can assert the master/suppression ids reached the wire.
-func hubspotServer(t *testing.T) (*httptest.Server, *struct {
+// hubspotRec captures what the fake server saw. Every field is written by the HANDLER goroutine
+// and read by the TEST goroutine, so all access is mutex-guarded: httptest.Server.Close only
+// synchronizes at the deferred Close, which runs AFTER the assertions (same guard as
+// meta_test.go).
+type hubspotRec struct {
+	mu           sync.Mutex
 	sendListBody map[string]any
 	sawClone     bool
 	sawSendList  bool
 	taggedHTML   string
-}) {
+}
+
+func (r *hubspotRec) markClone() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sawClone = true
+}
+
+func (r *hubspotRec) markSendList(body map[string]any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sawSendList = true
+	r.sendListBody = body
+}
+
+func (r *hubspotRec) markTagged(raw string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.taggedHTML = raw
+}
+
+// SawClone / SawSendList / SendListBody / TaggedHTML read the captures under the lock.
+func (r *hubspotRec) SawClone() bool    { r.mu.Lock(); defer r.mu.Unlock(); return r.sawClone }
+func (r *hubspotRec) SawSendList() bool { r.mu.Lock(); defer r.mu.Unlock(); return r.sawSendList }
+func (r *hubspotRec) SendListBody() map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sendListBody
+}
+func (r *hubspotRec) TaggedHTML() string { r.mu.Lock(); defer r.mu.Unlock(); return r.taggedHTML }
+
+func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 	t.Helper()
-	rec := &struct {
-		sendListBody map[string]any
-		sawClone     bool
-		sawSendList  bool
-		taggedHTML   string
-	}{}
+	rec := &hubspotRec{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
-			rec.sawClone = true
+			rec.markClone()
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
 			// The draft body the UTM tagger reads: one rich-text widget with a bare link.
@@ -80,10 +112,9 @@ func hubspotServer(t *testing.T) (*httptest.Server, *struct {
 			// The send-list PATCH and the UTM PATCH hit the same path; tell them apart by
 			// which key the payload carries rather than by call order.
 			if _, isContent := body["content"]; isContent {
-				rec.taggedHTML = string(raw)
+				rec.markTagged(string(raw))
 			} else {
-				rec.sawSendList = true
-				rec.sendListBody = body
+				rec.markSendList(body)
 			}
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
 		default:
@@ -152,12 +183,12 @@ func TestHubSpot_DispatchClonesAndSetsSendList(t *testing.T) {
 	if len(camp.Result) == 0 {
 		t.Error("result blob should be populated with the cloned email")
 	}
-	if !rec.sawClone || !rec.sawSendList {
-		t.Fatalf("expected both a clone (%v) and a set-send-list (%v) call", rec.sawClone, rec.sawSendList)
+	if !rec.SawClone() || !rec.SawSendList() {
+		t.Fatalf("expected both a clone (%v) and a set-send-list (%v) call", rec.SawClone(), rec.SawSendList())
 	}
 	// The master list id must reach the send-list payload (the field name is the client's, so
 	// assert the value is present somewhere in the recorded body).
-	body, _ := json.Marshal(rec.sendListBody)
+	body, _ := json.Marshal(rec.SendListBody())
 	if !strings.Contains(string(body), "26724") {
 		t.Errorf("send-list payload must carry the audience master list id 26724, got %s", body)
 	}
@@ -176,8 +207,8 @@ func TestHubSpot_StagesWithoutEventName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("staging must succeed without an eventName: %v", err)
 	}
-	if camp == nil || camp.PlatformCampaignID != "999" || !rec.sawClone {
-		t.Fatalf("expected a cloned email, got %+v (sawClone=%v)", camp, rec.sawClone)
+	if camp == nil || camp.PlatformCampaignID != "999" || !rec.SawClone() {
+		t.Fatalf("expected a cloned email, got %+v (sawClone=%v)", camp, rec.SawClone())
 	}
 }
 
@@ -285,18 +316,18 @@ func TestHubSpot_TagsEmailLinksWithUTM(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 
-	if rec.taggedHTML == "" {
+	if rec.TaggedHTML() == "" {
 		t.Fatal("the draft's links were never written back tagged: the email would send unattributed")
 	}
 	for _, want := range []string{"utm_source=email", "utm_medium=LF-Events", "utm_campaign="} {
-		if !strings.Contains(rec.taggedHTML, want) {
-			t.Errorf("tagged body missing %q\ngot: %s", want, rec.taggedHTML)
+		if !strings.Contains(rec.TaggedHTML(), want) {
+			t.Errorf("tagged body missing %q\ngot: %s", want, rec.TaggedHTML())
 		}
 	}
 	// The original destination must survive tagging — a rewritten link that loses its target
 	// is far worse than an untagged one.
-	if !strings.Contains(rec.taggedHTML, "events.lfx.dev/reg") {
-		t.Errorf("the link destination was lost\ngot: %s", rec.taggedHTML)
+	if !strings.Contains(rec.TaggedHTML(), "events.lfx.dev/reg") {
+		t.Errorf("the link destination was lost\ngot: %s", rec.TaggedHTML())
 	}
 }
 
@@ -311,8 +342,8 @@ func TestHubSpot_UTMCampaignOverrideReachesTheLinks(t *testing.T) {
 		json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","utmCampaign":"q1-events-push"}}`)); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	if !strings.Contains(rec.taggedHTML, "utm_campaign=q1-events-push") {
-		t.Errorf("the configured campaign must win over the derived one\ngot: %s", rec.taggedHTML)
+	if !strings.Contains(rec.TaggedHTML(), "utm_campaign=q1-events-push") {
+		t.Errorf("the configured campaign must win over the derived one\ngot: %s", rec.TaggedHTML())
 	}
 }
 
