@@ -638,16 +638,20 @@ func IsOutcomeUnconfirmed(err error) bool {
 // UpdateCampaignStatus toggles a campaign between ENABLED and PAUSED via campaigns:mutate
 // with an updateMask of "status".
 //
-// NO CASCADE, unlike reddit/twitter/microsoft: CreateCampaign builds only a PAUSED campaign
-// shell (budget -> campaign) with no ad group or ad, so the campaign IS the whole tree and
-// there are no children to flip. If a later phase (GA-3+) adds ad groups/ads, this must grow
-// a cascade with the same children-first-on-activate ordering the other adapters use.
+// NO CASCADE, unlike reddit/twitter/microsoft — but not because the tree is complete: the
+// create path provisions only a PAUSED campaign SHELL (budget -> campaign) with no ad group,
+// ad, or keywords, so there are no children to flip YET. That incompleteness is also why
+// GoogleAdsDispatcher.ToggleStatus refuses ACTIVATE outright (ErrCampaignNotProvisioned):
+// enabling a shell would report success while nothing can serve. This method still accepts
+// StatusEnabled so it stays a faithful wrapper over campaigns:mutate for a future caller
+// operating on a fully-provisioned campaign; the serving decision belongs to the dispatcher.
+// When GA-3+ adds ad groups/ads/keywords, this must grow a cascade with the same
+// children-first-on-activate ordering the other adapters use.
 //
-// The mutate is NOT treated as idempotent-retryable for the same reason the create path
-// isn't: doRequest's idempotent=false keeps an ambiguous 5xx from being blind-retried. A
-// status flip is in fact idempotent, but the ambiguity classification below is what the
-// caller needs, and re-sending adds nothing when the outcome is already reported as
-// UNCONFIRMED.
+// The mutate IS sent as idempotent (doRequest's last arg), unlike the create path. That flag
+// gates only bounded 429 retries, and the create path's reason for declining them (no
+// idempotency key, so a throttled retry could DOUBLE-CREATE) does not apply to a status flip:
+// re-applying the same ENABLED/PAUSED converges on identical state. See the call site below.
 func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
 	if err := c.validateAccountIDs(); err != nil {
 		return err

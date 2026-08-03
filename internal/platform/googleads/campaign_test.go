@@ -779,3 +779,38 @@ func TestUpdateCampaignStatus_RejectsBadInput(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateCampaignStatus_RetriesThrottle pins the idempotent=true choice, which is the
+// OPPOSITE of the create path's. A status flip has no idempotency key problem — re-applying
+// the same ENABLED/PAUSED converges on identical state — so a throttled attempt must be
+// retried rather than surfaced as an avoidable UNCONFIRMED failure under ordinary Google
+// throttling. Without this test, flipping the flag back to false would silently remove
+// throttle resilience.
+func TestUpdateCampaignStatus_RetriesThrottle(t *testing.T) {
+	var attempts int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	if err := c.UpdateCampaignStatus(context.Background(), "222", StatusPaused); err != nil {
+		t.Fatalf("a throttled status update must be retried, not failed: %v", err)
+	}
+	if attempts < 2 {
+		t.Errorf("attempts = %d, want >1 (the 429 must be retried; idempotent=false would abort)", attempts)
+	}
+}

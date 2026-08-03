@@ -326,8 +326,9 @@ func TestGoogleAds_AmbiguousCreateRetainsClaim(t *testing.T) {
 // ---- status toggle --------------------------------------------------------
 
 // TestGoogleAds_ToggleStatus_MutatesCampaignStatus verifies the dispatcher resolves creds and
-// sends a campaigns:mutate UPDATE carrying status + updateMask. There is deliberately no
-// cascade: the create path builds only a campaign shell, so the campaign IS the whole tree.
+// sends a campaigns:mutate UPDATE carrying status + updateMask. Exactly ONE call is expected:
+// there is no cascade, because the create path provisions only a campaign shell and no child
+// entities exist to flip.
 func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
 	var gotBody string
 	var paths []string
