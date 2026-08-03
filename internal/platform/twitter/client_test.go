@@ -3649,3 +3649,30 @@ func TestPartialCascadeError_NamesTheAppliedEntity(t *testing.T) {
 		t.Errorf("pause message must say the CAMPAIGN changed and the LINE ITEM failed, got: %s", pause.Error())
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_WhitespaceLineItemStillPauses pins the pause contract
+// against the path-injection guard. A whitespace-only line-item id means ABSENT; treating it
+// as present made the guard reject the call before the campaign gate could pause, which
+// contradicts "pausing needs no child id" — the gate alone stops delivery.
+func TestUpdateCampaignAndChildrenStatus_WhitespaceLineItemStillPauses(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "   ", StatusPaused); err != nil {
+		t.Fatalf("a whitespace-only line-item id must not block a pause: %v", err)
+	}
+	// Only the campaign gate is touched — there is no line item to pause.
+	if len(paths) != 1 || !strings.Contains(paths[0], "/campaigns/cmp1") {
+		t.Errorf("want exactly one campaign PUT, got %v", paths)
+	}
+	// ACTIVATE with the same input must still be refused: nothing would serve.
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "   ", StatusActive); err == nil {
+		t.Error("activating with a whitespace-only line-item id must be refused")
+	}
+}

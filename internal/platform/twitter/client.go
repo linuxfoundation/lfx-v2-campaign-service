@@ -1849,7 +1849,14 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if strings.TrimSpace(campaignID) == "" {
 		return fmt.Errorf("twitter: cannot update status: campaign id is empty")
 	}
-	if status == StatusActive && strings.TrimSpace(lineItemID) == "" {
+
+	// TRIM ONCE and use the trimmed value throughout. A whitespace-only line-item id means
+	// "absent", and treating it as present below would reject a PAUSE at the path-injection
+	// guard — contradicting the contract that pausing needs no child id, since the campaign
+	// gate alone stops delivery. Mirrors the trim-then-validate order the sibling adapters use.
+	campaignID = strings.TrimSpace(campaignID)
+	lineItemID = strings.TrimSpace(lineItemID)
+	if status == StatusActive && lineItemID == "" {
 		return fmt.Errorf("twitter: cannot activate campaign %s: its line-item id must be known, so the tree cannot be made servable", campaignID)
 	}
 	// Same up-front path-injection guard the create path applies (see accountIDRe): the
