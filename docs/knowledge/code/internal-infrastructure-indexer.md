@@ -31,6 +31,20 @@ both the access and history checks are `campaign_manager` on `project:<projectId
 service has no read-only audience that would justify separate relations. `public` is always
 false: every resource is project-scoped.
 
+## Same-resource publishes are serialized
+
+The indexer does NO version comparison — it overwrites the current document with whatever
+arrives last. Two writers committing v2 then v3 can reach `Publish` in the reverse order, and
+the index then holds v2 permanently: both writers believe they succeeded, so no later write
+repairs it.
+
+`NATSPublisher` therefore holds a per-object-id lock across marshal+publish+flush. Different
+resources never contend.
+
+This orders the PUBLISH, not the commit — two writers that commit in one order and call
+`Publish` in the other are still mis-ordered. Closing that needs the outbox pattern (tracked
+separately); this removes the far more common in-process reordering.
+
 ### The mistake worth remembering
 
 An earlier version published a FLAT body copied from `lfx-v2-query-service`'s

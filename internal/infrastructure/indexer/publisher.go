@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -68,6 +69,27 @@ func (Noop) Close() {}
 // service actually depends on (the database is the source of truth).
 type NATSPublisher struct {
 	conn *nats.Conn
+
+	// perResource serializes publishes for the SAME object id.
+	//
+	// The indexer does no version comparison — it overwrites the current document with
+	// whatever arrives last. Two concurrent writers can commit v2 then v3 and reach Publish in
+	// the reverse order, leaving the index holding v2 permanently: a stale document that no
+	// later write repairs, because both writers think they succeeded.
+	//
+	// Holding a per-object lock across marshal+publish+flush keeps same-resource messages in
+	// the order their callers reached this point. Different resources never contend.
+	//
+	// NOTE this orders the PUBLISH, not the commit. Two writers that commit in one order and
+	// call Publish in the other are still mis-ordered — closing that needs the outbox pattern
+	// (tracked separately). This removes the far more common in-process reordering.
+	perResource sync.Map // objectID -> *sync.Mutex
+}
+
+// resourceLock returns the mutex guarding one object id, creating it on first use.
+func (p *NATSPublisher) resourceLock(objectID string) *sync.Mutex {
+	m, _ := p.perResource.LoadOrStore(objectID, &sync.Mutex{})
+	return m.(*sync.Mutex)
 }
 
 // NewNATSPublisher dials url and returns a Publisher.
@@ -100,6 +122,11 @@ func NewNATSPublisher(url string) (Publisher, error) {
 // Publish sends one index document. It never returns an error by design — see Publisher.
 func (p *NATSPublisher) Publish(ctx context.Context, msg Transaction) {
 	subject := Subject(msg.ObjectType())
+	if id := msg.objectID(); id != "" {
+		lock := p.resourceLock(id)
+		lock.Lock()
+		defer lock.Unlock()
+	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		// Near-impossible for this struct, but do not swallow it: a silent marshal failure

@@ -5,6 +5,7 @@ package indexer
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,4 +114,50 @@ func TestScrubURL(t *testing.T) {
 	}
 	// A blank url must not turn the text into nonsense.
 	assert.Equal(t, "some error", scrubURL("some error", ""))
+}
+
+// TestNATSPublisher_SerializesPerResource pins that concurrent publishes for the SAME object id
+// do not interleave.
+//
+// The indexer does no version comparison — it overwrites the current document with whatever
+// arrives last. Two writers committing v2 then v3 but publishing in reverse order leave the
+// index holding v2 permanently, since both writers think they succeeded and no later write
+// repairs it.
+func TestNATSPublisher_SerializesPerResource(t *testing.T) {
+	p := &NATSPublisher{} // no conn: Publish fails fast, which is enough to exercise the lock
+
+	const goroutines = 16
+	var (
+		mu       sync.Mutex
+		inFlight int
+		maxSeen  int
+	)
+
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lock := p.resourceLock("same-id")
+			lock.Lock()
+			mu.Lock()
+			inFlight++
+			if inFlight > maxSeen {
+				maxSeen = inFlight
+			}
+			mu.Unlock()
+
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+			lock.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, 1, maxSeen, "publishes for one resource must not overlap, or a stale version can win")
+
+	// Different resources must NOT contend — that would serialize the whole service.
+	assert.NotSame(t, p.resourceLock("a"), p.resourceLock("b"))
+	assert.Same(t, p.resourceLock("a"), p.resourceLock("a"))
 }
