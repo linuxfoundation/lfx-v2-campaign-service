@@ -35,7 +35,7 @@ const DrainTimeout = 2 * time.Second
 // source of truth, and a failed publish costs discoverability (the Query Service re-indexes on
 // the next write), never correctness. It must therefore never fail the caller's operation.
 type Publisher interface {
-	Publish(ctx context.Context, body Body)
+	Publish(ctx context.Context, msg Transaction)
 	Close()
 }
 
@@ -44,7 +44,7 @@ type Publisher interface {
 type Noop struct{}
 
 // Publish does nothing.
-func (Noop) Publish(context.Context, Body) {}
+func (Noop) Publish(context.Context, Transaction) {}
 
 // Close does nothing.
 func (Noop) Close() {}
@@ -98,19 +98,19 @@ func NewNATSPublisher(url string) (Publisher, error) {
 }
 
 // Publish sends one index document. It never returns an error by design — see Publisher.
-func (p *NATSPublisher) Publish(ctx context.Context, body Body) {
-	subject := Subject(body.ObjectType)
-	payload, err := json.Marshal(body)
+func (p *NATSPublisher) Publish(ctx context.Context, msg Transaction) {
+	subject := Subject(msg.ObjectType())
+	payload, err := json.Marshal(msg)
 	if err != nil {
 		// Near-impossible for this struct, but do not swallow it: a silent marshal failure
 		// would make the resource permanently invisible to search with no signal.
 		slog.ErrorContext(ctx, "failed to marshal index document (resource will not be indexed)",
-			"subject", subject, "object_ref", body.ObjectRef, "error", err)
+			"subject", subject, "object_id", msg.objectID(), "error", err)
 		return
 	}
 	if err := p.conn.Publish(subject, payload); err != nil {
 		slog.WarnContext(ctx, "failed to publish index document (resource may not appear in search until its next write)",
-			"subject", subject, "object_ref", body.ObjectRef, "error", err)
+			"subject", subject, "object_id", msg.objectID(), "error", err)
 		return
 	}
 	// Flush with a bound so a wedged broker cannot hold the caller. Publish() alone only
@@ -130,7 +130,7 @@ func (p *NATSPublisher) Publish(ctx context.Context, body Body) {
 	}
 	if err := p.conn.FlushTimeout(flushWait); err != nil {
 		slog.WarnContext(ctx, "index document published but not flushed (delivery unconfirmed)",
-			"subject", subject, "object_ref", body.ObjectRef, "error", err)
+			"subject", subject, "object_id", msg.objectID(), "error", err)
 	}
 }
 

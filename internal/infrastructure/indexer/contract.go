@@ -1,77 +1,129 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Package indexer publishes resource snapshots to NATS for the platform's Query Service,
-// which consumes them into OpenSearch and serves the lists and revision history this service
-// deliberately does not implement (architecture D5).
+// Package indexer publishes resource snapshots to NATS for lfx-v2-indexer-service, which
+// indexes them into OpenSearch so the Query Service can serve the lists and revision history
+// this service deliberately does not implement (architecture D5).
 //
-// The contract here is DERIVED from the platform, not invented:
+// The message shape is taken from the INDEXER's own contract
+// (lfx-v2-indexer-service: internal/domain/contracts/transaction.go, pkg/types), not inferred
+// from the OpenSearch document shape.
 //
-//   - Subject `lfx.index.<object_type>` matches the four types already in use elsewhere
-//     (committee_document, project_document, individual_vote, vote_response).
-//   - The message body mirrors lfx-v2-query-service's TransactionBodyStub, whose own comment
-//     marks it as the shape the indexed `_source` must have. The searcher reads `object_type`
-//     and `public` directly out of `_source`, so those two must be right or a document indexes
-//     successfully and then matches nothing.
-//   - access_check_relation is `campaign_manager` on `project:<projectId>`, per architecture
-//     D2 ("no new FGA object types; only relations on project") and the deployed
-//     charts/.../ruleset.yaml, which gates every route on exactly that relation+object.
-//
-// D2 also explains why the HISTORY check equals the ACCESS check: this service has no
-// read-only audience, so the same relation governs reads and writes.
+// That distinction matters and cost a review round: lfx-v2-query-service's
+// `TransactionBodyStub` is the `_source` shape the indexer PRODUCES after processing a message
+// — NOT the shape a producer sends. An earlier version of this file published that flat body,
+// which the indexer rejects before indexing ("missing or invalid action in message data"). The
+// service looked fully wired and indexed nothing.
 package indexer
 
-import "fmt"
-
-// Object types this service indexes. Connections are deliberately absent — D5 excludes them
-// (singleton per project, no listing consumer).
+// Object types this service indexes. The type becomes the last token of the NATS subject, and
+// the indexer derives it FROM the subject rather than the payload — a service can only publish
+// to subjects for its own resource types, which is how that boundary is enforced.
+//
+// Connections are deliberately absent: D5 excludes them (singleton per project, no listing
+// consumer).
 const (
 	ObjectTypeBrief    = "campaign_brief"
 	ObjectTypeCampaign = "campaign"
 )
 
-// fgaRelation is the single OpenFGA relation gating this service. Every endpoint uses it for
-// both reads and writes (architecture D2), so access and history checks share it.
+// fgaRelation is the single OpenFGA relation gating this service. Architecture D2 forbids new
+// FGA object types, so both the access and history checks use this relation on the owning
+// project — there is no read-only audience that would justify separate relations.
 const fgaRelation = "campaign_manager"
 
-// subjectPrefix is the platform's indexing subject namespace.
+// subjectPrefix is the indexer's subscription root (its NATS_INDEXING_SUBJECT defaults to
+// "lfx.index.>").
 const subjectPrefix = "lfx.index."
+
+// Message actions the indexer accepts. It also accepts the past-tense spellings
+// ("created"/"updated"/"deleted"); the imperative forms are the v2 path.
+const (
+	ActionCreate = "create"
+	ActionUpdate = "update"
+	ActionDelete = "delete"
+)
 
 // Subject returns the NATS subject for an object type.
 func Subject(objectType string) string { return subjectPrefix + objectType }
 
-// Body is the indexed document envelope. Field names and JSON tags mirror the Query Service's
-// TransactionBodyStub exactly; changing one without the other silently breaks indexing.
-type Body struct {
-	ObjectRef            string `json:"object_ref"`
-	ObjectType           string `json:"object_type"`
-	ObjectID             string `json:"object_id"`
-	Public               bool   `json:"public"`
+// Transaction is the envelope the indexer consumes (its LFXTransaction).
+//
+// Every field below is required for a create/update to be indexed: a message with no `action`
+// is REJECTED outright, and without `indexing_config` the resource carries no object id and no
+// FGA metadata, so it can be neither authorized nor found.
+type Transaction struct {
+	// Action is create/update/delete.
+	Action string `json:"action"`
+	// Headers carries the authenticated-principal HTTP headers from the originating request.
+	// The indexer reads them from the PAYLOAD, not from native NATS headers.
+	Headers map[string]string `json:"headers"`
+	// Data is the resource snapshot for create/update; a delete passes only the resource id.
+	Data any `json:"data"`
+	// IndexingConfig carries the object id plus the FGA and search metadata.
+	IndexingConfig *IndexingConfig `json:"indexing_config,omitempty"`
+
+	// objectType is NOT serialized: the indexer derives the object type from the SUBJECT, and
+	// including it in the payload would be ignored at best. It is carried here so the publisher
+	// can route the message without the caller passing the type twice.
+	objectType string
+}
+
+// ObjectType returns the type this message routes to.
+func (t Transaction) ObjectType() string { return t.objectType }
+
+// objectID returns the resource id for logging, tolerating a nil config.
+func (t Transaction) objectID() string {
+	if t.IndexingConfig == nil {
+		return ""
+	}
+	return t.IndexingConfig.ObjectID
+}
+
+// IndexingConfig is the indexer's per-resource indexing configuration (its types.IndexingConfig).
+type IndexingConfig struct {
+	// ObjectID is the resource's unique id (required).
+	ObjectID string `json:"object_id"`
+	// Public indicates public accessibility. Always FALSE here: every resource this service
+	// owns is project-scoped and gated on campaign_manager, so a public document would be
+	// visible to anonymous callers — a data-exposure bug, not a cosmetic one.
+	Public *bool `json:"public,omitempty"`
+
+	// FGA fields, required for access control. Access and history are identical (see
+	// fgaRelation).
 	AccessCheckObject    string `json:"access_check_object"`
 	AccessCheckRelation  string `json:"access_check_relation"`
 	HistoryCheckObject   string `json:"history_check_object"`
 	HistoryCheckRelation string `json:"history_check_relation"`
-	Data                 any    `json:"data,omitempty"`
+
+	// ParentRefs lets the Query Service find a resource by its parents.
+	ParentRefs []string `json:"parent_refs,omitempty"`
 }
 
-// NewBody builds an index document for a project-scoped resource.
+// NewTransaction builds an indexer message for one resource.
 //
-// Public is always FALSE: every resource this service owns is scoped to a project and gated on
-// campaign_manager, so a public document would be visible to anonymous callers — the searcher
-// filters on that field directly (`"term": {"public": true}`), making a wrong value an
-// immediate data-exposure bug rather than a cosmetic one.
-func NewBody(objectType, objectID, projectID string, data any) Body {
-	fgaObject := "project:" + projectID
-	return Body{
-		ObjectRef:            fmt.Sprintf("%s:%s", objectType, objectID),
-		ObjectType:           objectType,
-		ObjectID:             objectID,
-		Public:               false,
-		AccessCheckObject:    fgaObject,
-		AccessCheckRelation:  fgaRelation,
-		HistoryCheckObject:   fgaObject,
-		HistoryCheckRelation: fgaRelation,
-		Data:                 data,
+// projectID is the OWNING project: both FGA checks are `project:<projectID>` per D2, so a
+// resource is visible to exactly the people who can manage its project.
+func NewTransaction(action, objectType, objectID, projectID string, data any) Transaction {
+	public := false
+	object := "project:" + projectID
+	return Transaction{
+		objectType: objectType,
+		Action:     action,
+		// No request headers are propagated: these publishes happen AFTER the write commits,
+		// often on a context detached for shutdown, so the originating principal is not
+		// reliably available. The map is non-nil because the indexer type-asserts it.
+		Headers: map[string]string{},
+		Data:    data,
+		IndexingConfig: &IndexingConfig{
+			ObjectID:             objectID,
+			Public:               &public,
+			AccessCheckObject:    object,
+			AccessCheckRelation:  fgaRelation,
+			HistoryCheckObject:   object,
+			HistoryCheckRelation: fgaRelation,
+			ParentRefs:           []string{object},
+		},
 	}
 }
 

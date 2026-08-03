@@ -10,25 +10,35 @@ resource: "internal/infrastructure/indexer"
 Publishes resource snapshots so the Query Service can serve the lists and revision history this
 service deliberately does not implement (architecture **D5**).
 
-## The contract is derived, not invented
+## The contract comes from the INDEXER, not the query service
 
-Every field was traced to an existing platform source rather than chosen:
+The message is `lfx-v2-indexer-service`'s `LFXTransaction`
+(`internal/domain/contracts/transaction.go`, `pkg/types`):
 
-| Element | Value | Derived from |
-|---|---|---|
-| Subject | `lfx.index.<object_type>` | the four subjects already in use (`committee_document`, `project_document`, `individual_vote`, `vote_response`) |
-| Body | `TransactionBodyStub` fields | `lfx-v2-query-service/internal/domain/model/resource.go`, whose comment marks it as the `_source` shape |
-| `access_check_relation` | `campaign_manager` | architecture **D2** and `charts/…/ruleset.yaml`, which gates every route on it |
-| `access_check_object` | `project:<projectId>` | same ruleset — D2 forbids new FGA object types |
-| `public` | always `false` | every resource is project-scoped |
+| Field | Notes |
+|---|---|
+| `action` | `create` / `update` / `delete`. **Required** — a message without it is rejected with "missing or invalid action in message data". |
+| `headers` | Authenticated-principal headers, read from the PAYLOAD (not native NATS headers). Marshalled as `{}` here: publishes happen after the write commits, often on a detached shutdown context, so the principal is not reliably available. |
+| `data` | The resource snapshot. Deletes pass only the id. |
+| `indexing_config` | `object_id` plus the FGA fields. Without it the resource cannot be authorized or found. |
 
-Two consequences worth knowing:
+**`object_type` is NOT in the payload.** The indexer derives it from the SUBJECT
+(`lfx.index.<object_type>`) — a service can only publish to subjects for its own resource types,
+which is how that boundary is enforced.
 
-- **History check == access check.** D2 gives this service one relation for reads AND writes
-  (there is no read-only campaigns audience), so the two checks are deliberately identical.
-- **`object_type` and `public` are read straight out of `_source`** by the Query Service's
-  searcher. A wrong value there indexes cleanly and then matches nothing — a failure that looks
-  exactly like indexing being broken.
+FGA values come from architecture **D2** (no new object types; only relations on `project`), so
+both the access and history checks are `campaign_manager` on `project:<projectId>` — this
+service has no read-only audience that would justify separate relations. `public` is always
+false: every resource is project-scoped.
+
+### The mistake worth remembering
+
+An earlier version published a FLAT body copied from `lfx-v2-query-service`'s
+`TransactionBodyStub`. That type is the `_source` shape the indexer **produces** after
+processing a message — not what a producer sends. Publishing it meant every message was dropped
+before indexing, and nothing in this service errored: it looked fully wired and indexed nothing.
+
+When in doubt, read the CONSUMER's contract. `TransactionBodyStub` describes the output.
 
 ## Best-effort by design
 

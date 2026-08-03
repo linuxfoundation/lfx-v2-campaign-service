@@ -2,6 +2,26 @@
 
 ## 2026-08-03
 
+**Update** — Rebuilt the indexing contract against the REAL indexer (LFXV2-2814, PR #60 review).
+**A reviewer was right and I was wrong, three times.** The flat body this PR published would
+have been REJECTED before indexing — the service would have looked fully wired and indexed
+nothing.
+
+Root cause of my error: I treated `lfx-v2-query-service`'s `TransactionBodyStub` as the producer
+contract. It is the `_source` shape the indexer PRODUCES after processing a message. The actual
+consumer is `lfx-v2-indexer-service` (a separate repo, not checked out locally), whose
+`LFXTransaction` requires `action` + `headers` + `data` + `indexing_config`, and rejects a
+message with no action outright.
+
+I searched only local checkouts, stated the caveat "the subscriber isn't in any local checkout",
+and then failed to do the obvious next thing — search GitHub, where the repo exists. **Absence of
+evidence in the repos you happen to have is not evidence of absence.**
+
+The contract now mirrors the indexer: FGA metadata moved under `indexing_config`, `object_type`
+removed from the payload (the indexer derives it from the SUBJECT), and create/update/delete
+threaded per operation — archiving publishes `delete`, since republishing it as an update would
+leave the document findable.
+
 **Update** — Two more indexing fixes (LFXV2-2814, PR #60 review):
 
 **Indexed documents now use snake_case.** The generated goa types (`briefs.Brief`,

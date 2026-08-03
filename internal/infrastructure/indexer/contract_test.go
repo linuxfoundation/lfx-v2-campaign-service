@@ -6,89 +6,75 @@ package indexer
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// TestSubjectMatchesPlatformConvention pins the subject namespace. The Query Service side
-// subscribes to `lfx.index.<object_type>` — the same shape as the platform's existing
-// committee_document / project_document / individual_vote / vote_response subjects. A typo
-// here publishes into the void: NATS core has no subscriber-required error, so the write
-// succeeds and the resource simply never appears in search.
-func TestSubjectMatchesPlatformConvention(t *testing.T) {
-	if got, want := Subject(ObjectTypeBrief), "lfx.index.campaign_brief"; got != want {
-		t.Errorf("Subject(brief) = %q, want %q", got, want)
-	}
-	if got, want := Subject(ObjectTypeCampaign), "lfx.index.campaign"; got != want {
-		t.Errorf("Subject(campaign) = %q, want %q", got, want)
-	}
+func TestSubject(t *testing.T) {
+	assert.Equal(t, "lfx.index.campaign_brief", Subject(ObjectTypeBrief))
+	assert.Equal(t, "lfx.index.campaign", Subject(ObjectTypeCampaign))
 }
 
-// TestNewBodyMatchesQueryServiceContract pins every field against
-// lfx-v2-query-service's TransactionBodyStub. The JSON tags are the actual wire contract —
-// the Query Service decodes `_source` into that struct and its searcher reads `object_type`
-// and `public` directly, so a renamed tag yields a document that indexes cleanly and then
-// matches nothing.
-func TestNewBodyMatchesQueryServiceContract(t *testing.T) {
-	b := NewBody(ObjectTypeBrief, "brief-1", "cncf", nil)
+// TestTransaction_MatchesTheIndexerEnvelope pins the wire shape against
+// lfx-v2-indexer-service's LFXTransaction. Getting this wrong does not error anywhere in this
+// service: the indexer REJECTS the message ("missing or invalid action in message data") and
+// indexing silently does nothing, which is exactly what an earlier flat-body version did.
+func TestTransaction_MatchesTheIndexerEnvelope(t *testing.T) {
+	raw, err := json.Marshal(NewTransaction(ActionCreate, ObjectTypeBrief, "b1", "cncf", map[string]any{"id": "b1"}))
+	require.NoError(t, err)
 
-	raw, err := json.Marshal(b)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
 	var got map[string]any
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(raw, &got))
 
-	want := map[string]any{
-		"object_ref":             "campaign_brief:brief-1",
-		"object_type":            "campaign_brief",
-		"object_id":              "brief-1",
-		"public":                 false,
-		"access_check_object":    "project:cncf",
-		"access_check_relation":  "campaign_manager",
-		"history_check_object":   "project:cncf",
-		"history_check_relation": "campaign_manager",
-	}
-	for k, w := range want {
-		if got[k] != w {
-			t.Errorf("%s = %v, want %v", k, got[k], w)
-		}
-	}
-	// No stray fields: an unexpected key means the struct drifted from the contract.
-	for k := range got {
-		if _, ok := want[k]; !ok && k != "data" {
-			t.Errorf("unexpected field %q in the index document", k)
-		}
-	}
+	// The four top-level fields the indexer requires.
+	assert.Equal(t, "create", got["action"], "a message with no/invalid action is rejected outright")
+	require.Contains(t, got, "headers", "headers are read from the PAYLOAD, not native NATS headers")
+	require.Contains(t, got, "data")
+	require.Contains(t, got, "indexing_config", "without it the resource has no id and no FGA metadata")
+
+	// object_type must NOT be in the payload: the indexer derives it from the SUBJECT.
+	assert.NotContains(t, got, "object_type",
+		"the object type travels in the subject; a payload copy is ignored")
+
+	cfg := got["indexing_config"].(map[string]any)
+	assert.Equal(t, "b1", cfg["object_id"])
+	assert.Equal(t, false, cfg["public"], "every resource here is project-scoped")
+	// D2: one relation, on the owning project, for both access and history.
+	assert.Equal(t, "project:cncf", cfg["access_check_object"])
+	assert.Equal(t, "campaign_manager", cfg["access_check_relation"])
+	assert.Equal(t, "project:cncf", cfg["history_check_object"])
+	assert.Equal(t, "campaign_manager", cfg["history_check_relation"])
+	assert.Equal(t, []any{"project:cncf"}, cfg["parent_refs"])
 }
 
-// TestNewBodyIsNeverPublic is called out separately because it is a data-exposure guard, not a
-// formatting one. Every resource this service owns is project-scoped and gated on
-// campaign_manager; the Query Service's searcher applies `"term": {"public": true}` to serve
-// anonymous callers, so publishing public=true would expose campaign data to unauthenticated
-// search.
-func TestNewBodyIsNeverPublic(t *testing.T) {
-	for _, ot := range []string{ObjectTypeBrief, ObjectTypeCampaign} {
-		if NewBody(ot, "id", "proj", nil).Public {
-			t.Errorf("%s documents must never be public — they are project-scoped", ot)
-		}
-	}
+// TestTransaction_RoutesByObjectType pins that the object type reaches the SUBJECT even though
+// it is not serialized into the payload.
+func TestTransaction_RoutesByObjectType(t *testing.T) {
+	tx := NewTransaction(ActionUpdate, ObjectTypeCampaign, "c1", "cncf", nil)
+	assert.Equal(t, ObjectTypeCampaign, tx.ObjectType())
+	assert.Equal(t, "lfx.index.campaign", Subject(tx.ObjectType()))
+
+	raw, err := json.Marshal(tx)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(raw, &got))
+	// Assert on the KEY, not a substring: "campaign" also occurs inside "campaign_manager".
+	assert.NotContains(t, got, "object_type",
+		"the type must not leak into the payload — it is subject-derived")
 }
 
-// TestNewBodyUsesTheGatingRelation pins the FGA values to what the deployed ruleset enforces
-// (charts/.../ruleset.yaml: relation campaign_manager on project:{projectId}). Publishing a
-// relation the authz model does not grant makes every document invisible to every user —
-// indistinguishable, from the outside, from indexing being broken entirely.
-func TestNewBodyUsesTheGatingRelation(t *testing.T) {
-	b := NewBody(ObjectTypeCampaign, "c1", "linux-foundation", nil)
-	if b.AccessCheckObject != "project:linux-foundation" {
-		t.Errorf("access_check_object = %q, want project:linux-foundation", b.AccessCheckObject)
-	}
-	// This service has no read-only audience (architecture D2), so history and access share
-	// the relation. If a marketing_auditor-style read role is ever added, this is the
-	// assertion that should force the split to be deliberate.
-	if b.HistoryCheckRelation != b.AccessCheckRelation {
-		t.Errorf("history (%q) and access (%q) relations must match: D2 gives this service one relation for reads and writes",
-			b.HistoryCheckRelation, b.AccessCheckRelation)
-	}
+// TestTransaction_ActionsAreTheIndexersVocabulary guards the exact strings.
+func TestTransaction_ActionsAreTheIndexersVocabulary(t *testing.T) {
+	assert.Equal(t, "create", ActionCreate)
+	assert.Equal(t, "update", ActionUpdate)
+	assert.Equal(t, "delete", ActionDelete)
+}
+
+// TestTransaction_HeadersAreNonNil pins that headers marshal as an object, not null: the
+// indexer type-asserts the value, so a null would fail the assertion.
+func TestTransaction_HeadersAreNonNil(t *testing.T) {
+	raw, err := json.Marshal(NewTransaction(ActionCreate, ObjectTypeBrief, "b1", "cncf", nil))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"headers":{}`)
 }

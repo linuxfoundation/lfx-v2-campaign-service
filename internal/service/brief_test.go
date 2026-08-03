@@ -939,8 +939,8 @@ func newIndexTestBriefService(repo *fakeBriefRepo) *BriefService {
 // the property under test.
 type failingIndexer struct{ calls int }
 
-func (f *failingIndexer) Publish(context.Context, indexer.Body) { f.calls++ }
-func (f *failingIndexer) Close()                                {}
+func (f *failingIndexer) Publish(context.Context, indexer.Transaction) { f.calls++ }
+func (f *failingIndexer) Close()                                       {}
 
 // TestCreateBrief_IndexPublishNeverFailsTheWrite pins the fire-and-forget contract. The
 // database is the source of truth; a broker problem costs discoverability (the Query Service
@@ -985,10 +985,10 @@ func TestBriefService_DefaultsToNoopIndexer(t *testing.T) {
 
 // capturingIndexer records the published bodies so a test can assert WHAT was indexed,
 // not merely that something was.
-type capturingIndexer struct{ bodies []indexer.Body }
+type capturingIndexer struct{ bodies []indexer.Transaction }
 
-func (c *capturingIndexer) Publish(_ context.Context, b indexer.Body) {
-	c.bodies = append(c.bodies, b)
+func (c *capturingIndexer) Publish(_ context.Context, m indexer.Transaction) {
+	c.bodies = append(c.bodies, m)
 }
 func (c *capturingIndexer) Close() {}
 
@@ -1024,11 +1024,16 @@ func TestDeleteBrief_PublishesArchivedState(t *testing.T) {
 		t.Fatalf("archiving must publish exactly one index update, got %d (a stale search document survives)", len(idx.bodies))
 	}
 	got := idx.bodies[0]
-	if got.ObjectType != indexer.ObjectTypeBrief {
-		t.Errorf("object_type = %q, want %q", got.ObjectType, indexer.ObjectTypeBrief)
+	if got.ObjectType() != indexer.ObjectTypeBrief {
+		t.Errorf("object type = %q, want %q", got.ObjectType(), indexer.ObjectTypeBrief)
 	}
-	if got.ObjectID != created.ID {
-		t.Errorf("object_id = %q, want %q", got.ObjectID, created.ID)
+	// Archiving is a soft DELETE: republishing it as an update would leave the document
+	// findable, which is the whole failure this test guards.
+	if got.Action != indexer.ActionDelete {
+		t.Errorf("action = %q, want %q — an archived brief must be removed from the index", got.Action, indexer.ActionDelete)
+	}
+	if got.IndexingConfig == nil || got.IndexingConfig.ObjectID != created.ID {
+		t.Errorf("indexing_config.object_id = %+v, want %q", got.IndexingConfig, created.ID)
 	}
 	// The published payload is the INDEXED doc (snake_case json tags), not the goa response
 	// type — see indexer.BriefDoc for why the two are deliberately different.
