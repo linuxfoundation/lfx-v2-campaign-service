@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/dispatch"
-description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the ad-platform API clients."
+description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel)."
 resource: "internal/dispatch"
 ---
 
@@ -155,5 +155,27 @@ matching the reddit shape.
 
 X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
 separately.
+
+## Channel kinds: paid ads vs email
+
+`model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,
+with `Provider.IsPaidAds()` as the common shorthand). The distinction is BEHAVIOURAL, not
+cosmetic: a paid ad channel CREATES a campaign that spends budget and can be paused/resumed
+mid-flight, whereas the email channel STAGES a draft a human sends — no budget, no delivery
+this service controls, nothing to pause.
+
+HubSpot is the only email provider today. Branch on `Kind()` rather than comparing against
+`ProviderHubSpot`, so a second email provider does not require hunting down every hardcoded
+check. `Kind()` enumerates providers explicitly and returns `""` for an unclassified one, so a
+newly added provider surfaces the omission instead of silently inheriting paid-ads behaviour.
+
+Two places this shows up today:
+
+- `dispatchableProviders` (container) spans BOTH kinds — email is dispatchable even though it
+  is not an ad platform — which is why it is named for dispatch rather than "ad platforms".
+  `logMissingDispatchers` logs each missing provider's kind so an operator can tell a missing
+  paid platform (budget unspent) from a missing email channel (no drafts staged).
+- The `ErrToggleUnsupported` 400 distinguishes the two reasons: email has no run state BY
+  DESIGN, while an ad platform's toggle may simply not be wired yet.
 
 See [internal/dispatch](../../../internal/dispatch).
