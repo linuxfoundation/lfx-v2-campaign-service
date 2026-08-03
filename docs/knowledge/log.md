@@ -2,6 +2,18 @@
 
 ## 2026-08-03
 
+**Update** — Two serious fixes on the audience build (LFXV2-2774, PR #61 review):
+
+**The master list is now a real UNION.** `createPlanLists` recorded the FIRST inclusion list
+(group 4) as the master, and the dispatcher sends to `platform_master_list_id` and nothing else
+— so groups 5 and 7 were created in the portal and NEVER emailed. A build that reported success
+while reaching a fraction of the intended audience. `MasterListFilter` builds a
+`LIST_MEMBERSHIP`/`IN_LIST` OR over every created list, and the master is created last.
+
+**Only approved briefs build.** `BuildAudience` did not check brief status, so a DRAFT brief
+could create real HubSpot lists and become sendable while its event details were still being
+edited. It now applies the same guard the campaign-creation path uses.
+
 **Update** — Cold start now binds ALL audience-build dependencies (LFXV2-2774, PR #61 review).
 The retry path called `ab.SetBackend(audienceRepo)` only, but the audience service is built in
 503 mode with NO brief repo and NO builder — so after a cold start `BuildAudience` returned 503

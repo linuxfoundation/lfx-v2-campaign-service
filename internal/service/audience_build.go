@@ -111,6 +111,13 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, mapAudienceErr(berr)
 	}
 
+	// Same lifecycle guard the campaign-creation path applies (brief.go). Building creates
+	// REAL HubSpot lists and makes the brief sendable, so a draft must not reach it — the
+	// event details it would be built from are still being edited.
+	if brief.Status != model.BriefApproved {
+		return nil, audienceValidationErr(fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status))
+	}
+
 	details, derr := decodeEventDetails(brief)
 	if derr != nil {
 		return nil, audienceValidationErr(derr)
@@ -186,11 +193,16 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	return audienceResult(updated), nil
 }
 
-// createPlanLists creates every planned list, returning the master list id (the first list,
-// which the runbook treats as the send target) and all created ids.
+// createPlanLists creates every planned inclusion list, then creates the MASTER list as their
+// union and returns its id.
 //
-// It stops at the FIRST failure and returns the ids created so far. Continuing would create
-// more portal state that the failed build cannot record, making reconciliation harder.
+// The master is what the email dispatcher sends to — it reads only platform_master_list_id — so
+// it MUST be a union. Recording one inclusion list as the master would create the others in the
+// portal and never email them: a build that reports success while reaching a fraction of the
+// intended people.
+//
+// It stops at the FIRST failure and returns the ids created so far, so a partial build records
+// what exists upstream instead of creating more state it cannot recover.
 func createPlanLists(ctx context.Context, b AudienceBuilder, projectID string, plan *audience.Plan) (master string, ids []string, err error) {
 	for _, l := range plan.Lists {
 		id, cerr := b.CreateList(ctx, projectID, l.Name, l.Filter)
@@ -203,14 +215,24 @@ func createPlanLists(ctx context.Context, b AudienceBuilder, projectID string, p
 			return "", ids, fmt.Errorf("create list %q returned no list id (UNCONFIRMED: verify before retrying)", l.Name)
 		}
 		ids = append(ids, id)
-		if master == "" {
-			master = id
-		}
 	}
-	if master == "" {
+	if len(ids) == 0 {
 		return "", nil, errors.New("the plan produced no lists")
 	}
-	return master, ids, nil
+
+	masterFilter, ferr := audience.MasterListFilter(ids)
+	if ferr != nil {
+		return "", ids, ferr
+	}
+	masterName := fmt.Sprintf("%s — Master", plan.EventName)
+	masterID, merr := b.CreateList(ctx, projectID, masterName, masterFilter)
+	if merr != nil {
+		return "", ids, fmt.Errorf("create master list %q: %w", masterName, merr)
+	}
+	if strings.TrimSpace(masterID) == "" {
+		return "", ids, fmt.Errorf("create master list %q returned no list id (UNCONFIRMED: verify before retrying)", masterName)
+	}
+	return masterID, append(ids, masterID), nil
 }
 
 // decodeEventDetails pulls the fields the build needs out of the brief's opaque blobs. It

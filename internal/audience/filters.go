@@ -39,16 +39,18 @@ type filterBranch struct {
 }
 
 type filter struct {
-	FilterType string    `json:"filterType"`
-	Property   string    `json:"property,omitempty"`
-	Operation  operation `json:"operation"`
+	FilterType string `json:"filterType"`
+	Property   string `json:"property,omitempty"`
+	// ListID is set only for LIST_MEMBERSHIP filters (the master list's union members).
+	ListID    string    `json:"listId,omitempty"`
+	Operation operation `json:"operation"`
 }
 
 type operation struct {
 	Operator                     string   `json:"operator"`
 	IncludeObjectsWithNoValueSet bool     `json:"includeObjectsWithNoValueSet"`
 	Values                       []string `json:"values,omitempty"`
-	OperationType                string   `json:"operationType"`
+	OperationType                string   `json:"operationType,omitempty"`
 }
 
 // containsValue builds a CONTAINS property operation. MULTISTRING is HubSpot's operation type
@@ -212,5 +214,41 @@ func RegionEventRegistrantsFilter(countries, eventNames []string) (json.RawMessa
 		FilterBranchType: "OR",
 		FilterBranches:   branches,
 		Filters:          []filter{},
+	})
+}
+
+// MasterListFilter builds the union of the inclusion lists: a contact qualifies for the master
+// if they are in ANY of them.
+//
+// This is what the email dispatcher actually sends to — it reads only
+// `platform_master_list_id`. Without a union, whichever single list was recorded becomes the
+// entire send audience and every other group is created in the portal and never emailed, which
+// looks like a successful build that silently reaches a fraction of the intended people.
+func MasterListFilter(listIDs []string) (json.RawMessage, error) {
+	if len(listIDs) == 0 {
+		return nil, fmt.Errorf("audience: a master list requires at least one inclusion list")
+	}
+	filters := make([]filter, 0, len(listIDs))
+	for _, id := range listIDs {
+		if strings.TrimSpace(id) == "" {
+			// A blank id would silently drop one group from the union.
+			return nil, fmt.Errorf("audience: a master list cannot be built from a blank list id")
+		}
+		filters = append(filters, filter{
+			FilterType: "LIST_MEMBERSHIP",
+			ListID:     id,
+			Operation:  operation{Operator: "IN_LIST"},
+		})
+	}
+	// One AND branch holding OR'd membership filters: HubSpot treats sibling filters inside a
+	// branch as OR when the operators are membership tests, matching the runbook's master shape.
+	return json.Marshal(filterBranch{
+		FilterBranchType: "OR",
+		FilterBranches: []filterBranch{{
+			FilterBranchType: "AND",
+			FilterBranches:   []filterBranch{},
+			Filters:          filters,
+		}},
+		Filters: []filter{},
 	})
 }

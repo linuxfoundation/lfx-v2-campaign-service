@@ -25,7 +25,8 @@ type fakeBuilder struct {
 	editions    []string
 	editionsErr error
 
-	created   []string // list names, in creation order
+	created   []string          // list names, in creation order
+	filters   map[string][]byte // name -> filter, so a test can assert the master's union
 	createErr error
 	// failOnNth makes the Nth CreateList call fail (1-based), modelling a partial build.
 	failOnNth int
@@ -45,6 +46,10 @@ func (f *fakeBuilder) CreateList(_ context.Context, projectID, name string, filt
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.created = append(f.created, name)
+	if f.filters == nil {
+		f.filters = map[string][]byte{}
+	}
+	f.filters[name] = append([]byte(nil), filter...)
 	n := len(f.created)
 	if f.createErr != nil && (f.failOnNth == 0 || f.failOnNth == n) {
 		return "", f.createErr
@@ -62,6 +67,13 @@ func (f *fakeBuilder) CreateList(_ context.Context, projectID, name string, filt
 	return "list-" + name, nil
 }
 
+// filterFor returns the filter a list was created with.
+func (f *fakeBuilder) filterFor(name string) []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.filters[name]
+}
+
 func (f *fakeBuilder) names() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -69,7 +81,7 @@ func (f *fakeBuilder) names() []string {
 }
 
 // newBuildService wires an AudienceService with all three dependencies plus a brief.
-func newBuildService(t *testing.T, b *fakeBuilder, details string) (*AudienceService, *fakeAudienceRepo) {
+func newBuildService(t *testing.T, b *fakeBuilder, details string) (*AudienceService, *fakeAudienceRepo, *fakeBriefRepo) {
 	t.Helper()
 	arepo := newFakeAudienceRepo()
 	brepo := newFakeBriefRepo()
@@ -86,7 +98,7 @@ func newBuildService(t *testing.T, b *fakeBuilder, details string) (*AudienceSer
 	s := NewAudienceService(arepo)
 	s.SetBriefRepo(brepo)
 	s.SetBuilder(b)
-	return s, arepo
+	return s, arepo, brepo
 }
 
 // TestBuildAudience_HappyPath covers the whole point of the endpoint: an approved brief becomes
@@ -94,7 +106,7 @@ func newBuildService(t *testing.T, b *fakeBuilder, details string) (*AudienceSer
 // refuses any brief whose audience is unbuilt or carries no master list).
 func TestBuildAudience_HappyPath(t *testing.T) {
 	b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}}
-	s, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+	s, _, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
 
 	res, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
 		ProjectID: "cncf", BriefID: "brief-1",
@@ -106,8 +118,23 @@ func TestBuildAudience_HappyPath(t *testing.T) {
 	require.NotNil(t, res.PlatformMasterListID)
 	assert.NotEmpty(t, *res.PlatformMasterListID, "a built audience MUST carry its master list id")
 
-	// All three deterministic groups: education + past-edition registrants + region-wide.
-	assert.Len(t, b.names(), 3)
+	// Three inclusion groups (education + past-edition registrants + region-wide) PLUS the
+	// master. The master must be a real union: the dispatcher sends only to
+	// platform_master_list_id, so recording one inclusion list as the master would create the
+	// others and never email them.
+	names := b.names()
+	require.Len(t, names, 4, "three inclusion lists plus a master")
+	assert.Contains(t, names[3], "Master", "the LAST list created must be the master union")
+	assert.NotEqual(t, "list-"+names[0], *res.PlatformMasterListID,
+		"the master must not be the first inclusion list")
+	assert.Equal(t, "list-"+names[3], *res.PlatformMasterListID)
+
+	// The master's filter must reference every inclusion list created before it.
+	masterFilter := b.filterFor(names[3])
+	for _, inc := range names[:3] {
+		assert.Contains(t, string(masterFilter), "list-"+inc,
+			"the master union must include every inclusion list")
+	}
 
 	// The provenance must record what was and was not built.
 	require.NotNil(t, res.InclusionSummary)
@@ -121,14 +148,14 @@ func TestBuildAudience_HappyPath(t *testing.T) {
 // send for any new event.
 func TestBuildAudience_FirstTimeEventStillBuilds(t *testing.T) {
 	b := &fakeBuilder{} // no editions
-	s, _ := newBuildService(t, b, `{"eventName":"Brand New Summit 2026","country":"Japan"}`)
+	s, _, _ := newBuildService(t, b, `{"eventName":"Brand New Summit 2026","country":"Japan"}`)
 
 	res, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
 		ProjectID: "cncf", BriefID: "brief-1",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, string(model.AudienceBuilt), res.Status)
-	assert.Len(t, b.names(), 1, "only the education-enrolled group is derivable without past editions")
+	assert.Len(t, b.names(), 2, "the education-enrolled group plus its master")
 	assert.Contains(t, *res.InclusionSummary, "No past editions resolved")
 }
 
@@ -137,14 +164,14 @@ func TestBuildAudience_FirstTimeEventStillBuilds(t *testing.T) {
 // produced and the gap is recorded.
 func TestBuildAudience_WarehouseOutageDegrades(t *testing.T) {
 	b := &fakeBuilder{editionsErr: errors.New("snowflake unreachable")}
-	s, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+	s, _, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
 
 	res, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
 		ProjectID: "cncf", BriefID: "brief-1",
 	})
 	require.NoError(t, err, "a warehouse outage must not fail the whole build")
 	assert.Equal(t, string(model.AudienceBuilt), res.Status)
-	assert.Len(t, b.names(), 1)
+	assert.Len(t, b.names(), 2, "the education-enrolled group plus its master")
 	assert.Contains(t, *res.InclusionSummary, "No past editions resolved")
 }
 
@@ -158,7 +185,7 @@ func TestBuildAudience_PartialBuildLeavesRowBuilding(t *testing.T) {
 		createErr: errors.New("hubspot 429"),
 		failOnNth: 2, // the first list succeeds, the second fails
 	}
-	s, arepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
 
 	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
 		ProjectID: "cncf", BriefID: "brief-1",
@@ -182,7 +209,7 @@ func TestBuildAudience_PartialBuildLeavesRowBuilding(t *testing.T) {
 // duplicates the list. It must error and say so.
 func TestBuildAudience_UnconfirmedCreateFailsClosed(t *testing.T) {
 	b := &fakeBuilder{emptyIDOnNth: 1}
-	s, arepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
 
 	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
 		ProjectID: "cncf", BriefID: "brief-1",
@@ -211,7 +238,7 @@ func TestBuildAudience_RequiresEventDetails(t *testing.T) {
 	}
 	for name, details := range cases {
 		t.Run(name, func(t *testing.T) {
-			s, arepo := newBuildService(t, &fakeBuilder{}, details)
+			s, arepo, _ := newBuildService(t, &fakeBuilder{}, details)
 			_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
 				ProjectID: "cncf", BriefID: "brief-1",
 			})
@@ -243,4 +270,28 @@ func (r *fakeAudienceRepo) rows() []*model.CampaignAudience {
 		out = append(out, a)
 	}
 	return out
+}
+
+// TestBuildAudience_RequiresAnApprovedBrief pins the lifecycle guard. Building creates REAL
+// HubSpot lists and makes the brief sendable, so a draft must not reach it — its event details
+// are still being edited, and the campaign-creation path applies the same guard.
+func TestBuildAudience_RequiresAnApprovedBrief(t *testing.T) {
+	for _, status := range []model.BriefStatus{model.BriefDraft, model.BriefArchived} {
+		t.Run(string(status), func(t *testing.T) {
+			b := &fakeBuilder{}
+			s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+			// Move the seeded brief out of the approved state.
+			brepo.briefs[briefKey("cncf", "brief-1")].Status = status
+
+			_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+				ProjectID: "cncf", BriefID: "brief-1",
+			})
+			require.Error(t, err, "a %s brief must not be buildable", status)
+			var badReq *audiences.BadRequestError
+			assert.ErrorAs(t, err, &badReq)
+
+			assert.Empty(t, b.names(), "no HubSpot list may be created for an unapproved brief")
+			assert.Empty(t, arepo.rows(), "no audience row may be recorded either")
+		})
+	}
 }

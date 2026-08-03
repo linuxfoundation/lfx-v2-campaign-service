@@ -42,6 +42,20 @@ is indistinguishable from a correct empty audience:
 - **Country filters OR `country` with `ip_country`.** The two disagree often enough that
   filtering on either alone measurably shrinks the audience.
 
+## The master list is a UNION
+
+The email dispatcher sends to `platform_master_list_id` and nothing else, so the master MUST be
+the union of the inclusion lists (`MasterListFilter`, a `LIST_MEMBERSHIP`/`IN_LIST` OR). An
+earlier cut recorded the FIRST inclusion list as the master — groups 5 and 7 were then created
+in the portal and never emailed, a build reporting success while reaching a fraction of the
+intended people.
+
+## Only approved briefs
+
+Building creates real HubSpot lists and makes a brief sendable, so `BuildAudience` applies the
+same lifecycle guard as campaign creation: a draft or archived brief is rejected before anything
+is resolved or created.
+
 ## Fail closed vs fail soft
 
 - **Closed** where an empty result is dangerous: an empty event-name set would emit a filter
