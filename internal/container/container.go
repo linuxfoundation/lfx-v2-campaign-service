@@ -288,31 +288,49 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	}
 }
 
-// adPlatformProviders is the full set of providers a brief can select (per the
-// CreateCampaigns contract); any without a registered dispatcher is logged at startup
-// so the gap is visible in production. GoogleAds and MicrosoftAds are included even
-// though their adapters aren't on main yet — CreateCampaigns accepts them, so a
-// selection would otherwise fail silently with "no dispatcher registered" and never be
-// surfaced here. (HubSpot is the email channel; its adapter now exists, LFXV2-2777.)
-var adPlatformProviders = []model.Provider{
+// dispatchableProviders is the full set of providers a brief can select (per the
+// CreateCampaigns contract); any without a registered dispatcher is logged at startup so the
+// gap is visible in production.
+//
+// Named for what it gates — DISPATCH — not "ad platforms". It deliberately spans BOTH channel
+// kinds (see model.ChannelKind): the six paid ad platforms AND the hubspot email channel.
+// Email is dispatchable (it stages a draft) even though it is not an ad platform and has no
+// run state to pause, so folding it under an "adPlatform" name misdescribed it.
+var dispatchableProviders = []model.Provider{
 	model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds,
 	model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds,
 	model.ProviderHubSpot,
 }
 
-// logMissingDispatchers warns about ad providers that have no adapter yet — those
-// platforms record jobs that finish "failed" with "no dispatcher registered".
+// logMissingDispatchers warns about providers that have no adapter yet — those channels
+// record jobs that finish "failed" with "no dispatcher registered".
+//
+// The channel KIND is logged alongside each provider so an operator can tell a missing PAID
+// platform (no campaigns will run, budget is unspent) from a missing EMAIL channel (no drafts
+// are staged) — different urgency, different remediation.
 func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispatcher) {
-	var missing []string
-	for _, p := range adPlatformProviders {
-		if _, ok := dispatchers[p]; !ok {
-			missing = append(missing, string(p))
+	// Split by KIND into separate structured fields rather than formatting the kind into each
+	// string. An operator filtering for "which paid platforms are down" can then match a field
+	// instead of substring-matching "(paid-ads)" — the same brittle string-matching this
+	// change argues against elsewhere. It also keeps the test asserting on data, not on a
+	// format string.
+	var missingPaid, missingEmail []string
+	for _, p := range dispatchableProviders {
+		if _, ok := dispatchers[p]; ok {
+			continue
 		}
+		if p.IsPaidAds() {
+			missingPaid = append(missingPaid, string(p))
+			continue
+		}
+		missingEmail = append(missingEmail, string(p))
 	}
-	if len(missing) > 0 {
-		slog.Warn("some ad platforms have no dispatcher registered; campaigns for them record jobs but perform no upstream dispatch",
-			"missing", missing, "registered", len(dispatchers))
+	if len(missingPaid) == 0 && len(missingEmail) == 0 {
+		return
 	}
+	slog.Warn("some channels have no dispatcher registered; campaigns for them record jobs but perform no upstream dispatch",
+		"missing_paid_ads", missingPaid, "missing_email", missingEmail,
+		"registered", len(dispatchers))
 }
 
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {

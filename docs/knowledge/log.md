@@ -181,6 +181,26 @@ return `ErrNotFound` and leave nothing to publish), then republished carrying th
 status and the version bump. A read failure does not block the archive: the write is the
 contract, indexing is best-effort.
 
+**Update** — Modelled the paid-ads vs email channel distinction (LFXV2-2813). `model.ChannelKind`
+(`paid-ads` / `email`) with `Provider.Kind()` and `Provider.IsPaidAds()`. Previously the split
+existed only implicitly: `adPlatformProviders` was named for ad platforms but CONTAINED hubspot,
+the email channel, and any code needing the distinction had to compare against `ProviderHubSpot`
+directly.
+
+Renamed that roster to `dispatchableProviders` — it gates DISPATCH, and email is dispatchable
+(it stages a draft) even though it is not an ad platform. `logMissingDispatchers` now logs each
+missing provider's channel kind, so a missing paid platform (budget unspent) is
+distinguishable from a missing email channel (no drafts staged).
+
+The `ErrToggleUnsupported` 400 now explains WHY: for email there is nothing to pause by design,
+versus an ad platform whose toggle is not wired yet. A single generic message read as a missing
+feature and invited someone to "fix" the email case.
+
+`Kind()` enumerates providers explicitly rather than defaulting, so an unclassified new provider
+returns `""` and is caught by `TestProviderValidityHoldsForEveryProvider` instead of silently
+inheriting paid-ads behaviour. Also made `TestLogMissingDispatchers_SurfacesGaps` rot-proof: it
+now removes one provider from the real map (a synthetic gap) rather than asserting a specific
+provider is still unregistered, which broke each time an adapter landed.
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
@@ -213,6 +233,30 @@ about itself. Ordinary patterns remain target-only; that gap is documented in th
 concept as a deferred, unsolved follow-up rather than presented as handled.
 `local-agents/` is now git-ignored.
 
+## 2026-07-30
+
+**Update** — Google Ads campaign status toggle (LFXV2-2809), stacked on the GA dispatcher
+(PR #41). `GoogleAdsDispatcher` implements `service.StatusToggler`; new client method
+`UpdateCampaignStatus` sends a `campaigns:mutate` UPDATE with `updateMask: "status"`, and a new
+exported `IsOutcomeUnconfirmed` mirrors the reddit/twitter clients for cross-package
+classification.
+
+PAUSE only — ACTIVATE is REFUSED with `ErrCampaignNotProvisioned` (→409, no upstream call),
+because the GA create path provisions only a campaign SHELL (budget → campaign) with no ad
+group, ad, or keywords: enabling the campaign would report success while nothing can serve. No
+cascade for the same reason — there are no children yet. GA-3+ must add both a cascade and a
+real child-id activate guard. Google spells the
+serving state ENABLED, not ACTIVE — `googleAdsRunStatus` maps the service vocabulary across.
+
+`mutateOperation` gained `Update`/`UpdateMask` fields, and `Create` became `omitempty` so an
+update no longer emits `"create":null` alongside its update (a :mutate operation must carry
+exactly ONE of create/update/remove). The create path is unaffected — it always sets Create.
+
+Connection rules are shared via `validateGoogleAdsConnection`, called by BOTH `Dispatch` and
+`ToggleStatus`, so a create and a toggle cannot drift; each caller keeps its own error wrapping
+(`Dispatch` wraps with `notCreated` for claim semantics, the toggle path does not). The
+campaign id is validated digits-only before any request, since it interpolates into a
+resourceName.
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
