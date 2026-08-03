@@ -57,7 +57,7 @@ an authoritative reconcile first (LFXV2-2665).
 
 The cost is that a pod crashing between claim and release strands a `pending` row that blocks
 every future dispatch for that pair, recoverable only by a human. `StuckDispatchClaims` makes
-those rows VISIBLE (read-only, `staleClaimAge` = 4m, bounded by `providerCallTimeout` so a
+those rows VISIBLE (read-only, `stuckClaimReportAge` = 4m, bounded by `providerCallTimeout` so a
 healthy in-flight claim is never reported) instead of leaving them silently invisible until
 someone notices a campaign will not dispatch.
 

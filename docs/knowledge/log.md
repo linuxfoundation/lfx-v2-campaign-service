@@ -70,7 +70,7 @@ would be an unsynchronized read that could also miss a sweeper started moments l
 `ClaimCampaignDispatch` and `releaseClaim` strands a `pending` campaigns row which, because the
 claim is `ON CONFLICT (brief_id, platform)`, blocks EVERY future dispatch for the pair — with no
 signal anywhere. Operators discovered it only when someone reported a campaign not dispatching.
-`StuckDispatchClaims` reports `pending` rows older than `staleClaimAge` (4m, above
+`StuckDispatchClaims` reports `pending` rows older than `stuckClaimReportAge` (4m, above
 `providerCallTimeout` so healthy in-flight work is never flagged), bounded by a row limit.
 
 **Attempted and REVERTED before merge**: auto-reclaiming an expired claim via

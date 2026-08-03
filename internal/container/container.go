@@ -307,7 +307,7 @@ const maxStuckClaimDetailLogs = 10
 // Without this the rows are INVISIBLE: the claim is ON CONFLICT (brief_id, platform), so a
 // stranded row silently blocks every future dispatch for that pair, and an operator finds out
 // only when someone reports a campaign that will not dispatch. Nothing here reclaims or
-// deletes — see staleClaimAge for why a time-based takeover would be unsafe — the point is to
+// deletes — see stuckClaimReportAge for why a time-based takeover would be unsafe — the point is to
 // turn a silent block into an alertable log line.
 //
 // Runs inline on the wiring path (one bounded query) rather than as a background goroutine.
