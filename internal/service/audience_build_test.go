@@ -74,6 +74,10 @@ func (f *fakeBuilder) filterFor(name string) []byte {
 	return f.filters[name]
 }
 
+// BeginBuild is a no-op in the fake: the scope only affects client caching, which the fake
+// does not do.
+func (f *fakeBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }
+
 func (f *fakeBuilder) names() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -393,3 +397,5 @@ func (r *recordingBuilder) ResolvePastEditions(_ context.Context, eventTerm, loc
 func (r *recordingBuilder) CreateList(_ context.Context, _, name string, _ json.RawMessage) (string, error) {
 	return "list-" + name, nil
 }
+
+func (r *recordingBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }

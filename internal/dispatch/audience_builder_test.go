@@ -97,3 +97,27 @@ func TestYearIn(t *testing.T) {
 		assert.Equal(t, want, yearIn(in), "input %q", in)
 	}
 }
+
+// TestBeginBuild_ScopesTheClientCacheToOneBuild pins the cache LIFETIME. The builder is a
+// container singleton, so caching on it would pin a credential for the life of the process — a
+// HubSpot connection that is rotated, revoked or deactivated would keep being used by every
+// later build, and a deleted connection would still "work".
+//
+// Scoping to the context means: shared within one build (all its lists land in one portal), and
+// re-resolved on the next.
+func TestBeginBuild_ScopesTheClientCacheToOneBuild(t *testing.T) {
+	b := NewAudienceBuilder(nil, nil, nil)
+
+	c1 := b.BeginBuild(context.Background())
+	c2 := b.BeginBuild(context.Background())
+
+	s1, ok1 := c1.Value(scopeKey{}).(*buildScope)
+	s2, ok2 := c2.Value(scopeKey{}).(*buildScope)
+	require.True(t, ok1)
+	require.True(t, ok2)
+	assert.NotSame(t, s1, s2, "each build must get its OWN scope, or a rotated credential is pinned")
+
+	// A context with no scope must not share one either.
+	_, ok := context.Background().Value(scopeKey{}).(*buildScope)
+	assert.False(t, ok, "an unscoped context resolves fresh rather than reusing a cached client")
+}

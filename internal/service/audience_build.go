@@ -38,6 +38,13 @@ type AudienceBuilder interface {
 	// platform id. projectID is explicit rather than context-carried: HubSpot credentials are
 	// stored per project, so building in the wrong portal is a silent, damaging failure.
 	CreateList(ctx context.Context, projectID, name string, filter json.RawMessage) (string, error)
+	// BeginBuild returns a context scoped to ONE build. Every CreateList made with it shares
+	// one resolved platform client per project — a build creates several lists and they must
+	// all land in the same portal, or the master references ids that do not exist together.
+	//
+	// Scoping to the build (rather than caching on the implementation) is deliberate: a
+	// long-lived cache would pin a credential that has since been rotated or revoked.
+	BeginBuild(ctx context.Context) context.Context
 }
 
 // errUnconfirmedCreate marks a create whose outcome is genuinely UNKNOWN — a 2xx carrying no
@@ -181,7 +188,10 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, mapAudienceErr(cerr)
 	}
 
-	master, ids, buildErr := createPlanLists(ctx, builder, p.ProjectID, plan)
+	// Scope the builder's client cache to THIS build (see dispatch.BeginBuild): all of a
+	// build's lists must land in one portal, but a credential rotated between builds must be
+	// picked up by the next one.
+	master, ids, buildErr := createPlanLists(builder.BeginBuild(ctx), builder, p.ProjectID, plan)
 	summary := plan.InclusionSummary()
 
 	if buildErr != nil {

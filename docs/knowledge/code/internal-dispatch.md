@@ -24,9 +24,12 @@ same reason the adapters do: HubSpot credentials are stored per project as encry
 connections, so it needs the same `credsSource` resolution, and putting it in `service` would
 drag platform clients back into the orchestrator's package.
 
-It resolves its HubSpot client ONCE per build (cached by project): one build creates several
-lists, and re-resolving per list could scatter them across different portals if the connection
-were replaced mid-build.
+It resolves its HubSpot client once per BUILD, cached on a context scope created by
+`BeginBuild` — not on the builder. The distinction matters in both directions: one build creates
+several lists which must all land in the same portal (or the master references ids that do not
+exist together), but the builder is a container SINGLETON, so caching on it would pin a
+credential for the life of the process and keep using a connection that had since been rotated,
+revoked or deleted.
 
 ## What each adapter does
 

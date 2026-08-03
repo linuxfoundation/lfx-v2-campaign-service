@@ -30,9 +30,13 @@ type AudienceBuilder struct {
 	creds     *credsSource
 	snowflake PastEditionResolver
 	opts      []hubspot.Option
+}
 
-	// mu guards clients, the per-project client cache. One build creates several lists and must
-	// use ONE portal for all of them (see CreateList).
+// buildScope caches the resolved client for the duration of ONE build. It is created by
+// BeginBuild and discarded when that build ends, so a credential rotated between builds is
+// picked up by the next one — a builder-lifetime cache would pin a stale (or revoked)
+// credential for the life of the process.
+type buildScope struct {
 	mu      sync.Mutex
 	clients map[string]*hubspot.Client
 }
@@ -115,21 +119,41 @@ func (b *AudienceBuilder) CreateList(ctx context.Context, projectID, name string
 	return l.ListID, nil
 }
 
-// cachedClient returns the client for a project, resolving it at most once per builder.
+// scopeKey carries the per-build client cache. Using the context rather than builder state
+// keeps the cache's lifetime tied to the build that created it, and keeps concurrent builds
+// from sharing (or invalidating) each other's clients.
+type scopeKey struct{}
+
+// BeginBuild returns a context scoped to one audience build. All CreateList calls made with it
+// share ONE resolved client per project — a build creates several lists and they must all land
+// in the same portal, or the master list references ids that do not all exist together.
+//
+// Outside a build scope each call resolves its own client, which is correct-but-slower rather
+// than wrong.
+func (b *AudienceBuilder) BeginBuild(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scopeKey{}, &buildScope{})
+}
+
+// cachedClient returns the client for a project, resolving it at most once per BUILD.
 func (b *AudienceBuilder) cachedClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if c, ok := b.clients[projectID]; ok {
+	scope, ok := ctx.Value(scopeKey{}).(*buildScope)
+	if !ok {
+		// No build scope: resolve fresh. Never reuse across builds.
+		return b.client(ctx, projectID)
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if c, cached := scope.clients[projectID]; cached {
 		return c, nil
 	}
 	c, err := b.client(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	if b.clients == nil {
-		b.clients = map[string]*hubspot.Client{}
+	if scope.clients == nil {
+		scope.clients = map[string]*hubspot.Client{}
 	}
-	b.clients[projectID] = c
+	scope.clients[projectID] = c
 	return c, nil
 }
 
