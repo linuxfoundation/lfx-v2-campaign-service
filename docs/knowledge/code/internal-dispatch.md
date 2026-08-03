@@ -143,13 +143,15 @@ the campaign is already the effective gate. An UNCONFIRMED client outcome (via `
 is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
 package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). 
 
-**Google Ads** implements it with NO cascade and no not-provisioned guard, because the create
-path builds only a PAUSED campaign shell (budget → campaign) with no ad group or ad — the
-campaign IS the whole tree, so there is no child whose absence could make an ACTIVATE
-non-serving. `UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE operation with
-`updateMask: "status"`. Note the vocabulary: Google spells the serving state **ENABLED**, not
-ACTIVE. If a later phase (GA-3+) adds ad groups/ads, this must grow both a cascade and the
-guard, matching the reddit shape.
+**Google Ads** implements PAUSE only; **ACTIVATE is refused** with `ErrCampaignNotProvisioned`
+(→409, raised locally without calling Google). The create path provisions only a PAUSED search
+campaign SHELL (budget → campaign) with no ad group, ad, or keywords, so flipping the campaign
+to ENABLED would report success while nothing can serve — the exact lie that sentinel exists to
+prevent. There is no cascade for the same reason: there are no children to cascade to.
+`UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE with `updateMask: "status"`.
+Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE. When GA-3+ adds
+ad groups/ads/keywords, this must grow BOTH a cascade and a real child-id-based activate guard,
+matching the reddit shape.
 
 X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
 separately.

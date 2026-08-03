@@ -369,18 +369,18 @@ func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
 	}
 }
 
-// TestGoogleAds_ToggleStatus_ActivateUsesEnabled pins the vocabulary mapping: Google spells
-// the serving state ENABLED, not ACTIVE, so a naive pass-through would be rejected upstream.
-func TestGoogleAds_ToggleStatus_ActivateUsesEnabled(t *testing.T) {
-	var gotBody string
+// TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned pins the ACTIVATE refusal. The create
+// path provisions only a campaign shell — no ad group, ad, or keywords — so flipping the
+// campaign to ENABLED would report success while nothing can serve. That must be
+// ErrCampaignNotProvisioned (a 409 state error) raised locally, without calling Google.
+func TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned(t *testing.T) {
+	var reached bool
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		gotBody = string(b)
-		w.Header().Set("Content-Type", "application/json")
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
 		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
@@ -390,11 +390,12 @@ func TestGoogleAds_ToggleStatus_ActivateUsesEnabled(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 	)
 	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
-	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive); err != nil {
-		t.Fatalf("ToggleStatus: %v", err)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Fatalf("want ErrCampaignNotProvisioned, got %T: %v", err, err)
 	}
-	if !strings.Contains(gotBody, `"status":"ENABLED"`) {
-		t.Errorf("activate must send ENABLED (Google's spelling), got: %s", gotBody)
+	if reached {
+		t.Error("no API call should be made — the refusal is a local state check")
 	}
 }
 

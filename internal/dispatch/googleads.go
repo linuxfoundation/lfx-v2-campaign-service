@@ -239,14 +239,26 @@ func googleAdsRunStatus(status string) (string, error) {
 
 // ToggleStatus implements service.StatusToggler for Google Ads.
 //
-// NO CASCADE and no not-provisioned guard, unlike reddit/twitter: the create path builds only
-// a PAUSED campaign shell (budget -> campaign) with no ad group or ad, so the campaign IS the
-// whole tree — there is no child whose absence could make an ACTIVATE non-serving. If a later
-// phase (GA-3+) adds ad groups/ads, this must grow both, matching the reddit shape.
+// PAUSE works today; ACTIVATE is REFUSED. The create path provisions only a PAUSED search
+// campaign shell (budget -> campaign) with no ad group, ad, or keywords, so flipping the
+// campaign to ENABLED would report success while NOTHING can serve. That is exactly the lie
+// ErrCampaignNotProvisioned exists to prevent (the service maps it to a 409 without calling
+// Google), and it matches the activate guards the sibling adapters apply when a child is
+// missing — the difference is that here the children are not yet built at all.
+//
+// There is no cascade for the same reason: there are no children to cascade to. When GA-3+
+// adds ad groups/ads/keywords, this must grow BOTH a cascade and a real
+// child-id-based activate guard, matching the reddit shape.
 func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	gaStatus, err := googleAdsRunStatus(status)
 	if err != nil {
 		return err
+	}
+	// Refuse ACTIVATE up front, BEFORE resolving credentials or calling Google: a campaign
+	// with no ad group/ad cannot serve no matter what its status says, so this is a local
+	// state error (409), not a platform failure (503).
+	if gaStatus == googleads.StatusEnabled {
+		return fmt.Errorf("%w: google ads campaign %s cannot be activated because the create path provisions only a campaign shell (no ad group, ad, or keywords) — nothing would serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
 	if err != nil {

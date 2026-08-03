@@ -8,9 +8,11 @@
 exported `IsOutcomeUnconfirmed` mirrors the reddit/twitter clients for cross-package
 classification.
 
-NO CASCADE and no not-provisioned guard, unlike reddit/twitter/microsoft: the GA create path
-builds only a PAUSED campaign shell (budget → campaign), so the campaign IS the whole tree.
-Documented so a GA-3+ phase that adds ad groups/ads knows to grow both. Google spells the
+PAUSE only — ACTIVATE is REFUSED with `ErrCampaignNotProvisioned` (→409, no upstream call),
+because the GA create path provisions only a campaign SHELL (budget → campaign) with no ad
+group, ad, or keywords: enabling the campaign would report success while nothing can serve. No
+cascade for the same reason — there are no children yet. GA-3+ must add both a cascade and a
+real child-id activate guard. Google spells the
 serving state ENABLED, not ACTIVE — `googleAdsRunStatus` maps the service vocabulary across.
 
 `mutateOperation` gained `Update`/`UpdateMask` fields, and `Create` became `omitempty` so an
