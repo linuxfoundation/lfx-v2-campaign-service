@@ -1,5 +1,34 @@
 # Log
 
+## 2026-08-03
+
+**Update** — Added email UTM tagging (LFXV2-2775). Every PAID platform client already built its
+own UTM parameters; the email channel had NONE, so staged emails sent with bare links and their
+sessions arrived in the warehouse as direct/unattributed traffic — the marketing dashboards
+could not see email at all.
+
+`internal/utm` ports the tagging rules (see [internal/utm](code/internal-utm.md)) and
+`dispatch.tagEmailLinks` applies them to the cloned draft. Two new client methods,
+`GetEmailHTMLWidgets` / `SetEmailHTMLWidgets`, read and patch the draft's rich-text widgets;
+the patch touches only `body.html` per named widget, so template configuration this client
+never modelled is preserved.
+
+Design points worth keeping:
+
+- Tagging runs LAST and is BEST-EFFORT. By then the email is cloned and pointed at the right
+  audience — a working campaign. Failing the dispatch would convert a reporting gap into a
+  failed send and leave the configured draft behind regardless.
+- `utm_medium` is **LF-Events**, not `email`. Warehouse channel reporting keys on the exact
+  source/medium pair.
+- A link that already carries a non-empty `utm_campaign` is never re-tagged: overwriting an
+  author's deliberate campaign yields a URL that still works but reports to the wrong campaign.
+- An empty `utm_campaign` is never emitted — that looks tagged while attributing nothing, which
+  is the exact failure this feature exists to fix.
+
+Bug found by its own test: `html.ParseFragment`'s context node must have `DataAtom` matching
+`Data` (`atom.Body`). With `DataAtom: 0` it returns "inconsistent Node" and EVERY call silently
+returned the fragment untagged — a feature that appears wired and does nothing.
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in

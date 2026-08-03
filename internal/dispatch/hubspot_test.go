@@ -55,12 +55,14 @@ func hubspotServer(t *testing.T) (*httptest.Server, *struct {
 	sendListBody map[string]any
 	sawClone     bool
 	sawSendList  bool
+	taggedHTML   string
 }) {
 	t.Helper()
 	rec := &struct {
 		sendListBody map[string]any
 		sawClone     bool
 		sawSendList  bool
+		taggedHTML   string
 	}{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -68,9 +70,21 @@ func hubspotServer(t *testing.T) (*httptest.Server, *struct {
 		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
 			rec.sawClone = true
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
+			// The draft body the UTM tagger reads: one rich-text widget with a bare link.
+			_, _ = io.WriteString(w, `{"content":{"widgets":{"module_1":{"body":{"html":"<a href=\"https://events.lfx.dev/reg\">Register</a>"}}}}}`)
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
-			rec.sawSendList = true
-			_ = json.NewDecoder(r.Body).Decode(&rec.sendListBody)
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			// The send-list PATCH and the UTM PATCH hit the same path; tell them apart by
+			// which key the payload carries rather than by call order.
+			if _, isContent := body["content"]; isContent {
+				rec.taggedHTML = string(raw)
+			} else {
+				rec.sawSendList = true
+				rec.sendListBody = body
+			}
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -254,5 +268,87 @@ func TestHubSpot_SendListFailureIsPartial(t *testing.T) {
 	var nuc interface{ NoUpstreamCreate() bool }
 	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
 		t.Errorf("a post-clone failure must NOT be NoUpstreamCreate (the email exists): %v", err)
+	}
+}
+
+// TestHubSpot_TagsEmailLinksWithUTM pins that the staged email's links reach HubSpot TAGGED.
+// Without this the email sends with bare links, so its sessions land in the warehouse as
+// direct/unattributed traffic and the marketing dashboards cannot see the email channel at all
+// — the gap this feature exists to close.
+func TestHubSpot_TagsEmailLinksWithUTM(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+		json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if rec.taggedHTML == "" {
+		t.Fatal("the draft's links were never written back tagged: the email would send unattributed")
+	}
+	for _, want := range []string{"utm_source=email", "utm_medium=LF-Events", "utm_campaign="} {
+		if !strings.Contains(rec.taggedHTML, want) {
+			t.Errorf("tagged body missing %q\ngot: %s", want, rec.taggedHTML)
+		}
+	}
+	// The original destination must survive tagging — a rewritten link that loses its target
+	// is far worse than an untagged one.
+	if !strings.Contains(rec.taggedHTML, "events.lfx.dev/reg") {
+		t.Errorf("the link destination was lost\ngot: %s", rec.taggedHTML)
+	}
+}
+
+// TestHubSpot_UTMCampaignOverrideReachesTheLinks pins the config override, which lets several
+// briefs' emails roll up to one campaign in reporting.
+func TestHubSpot_UTMCampaignOverrideReachesTheLinks(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+		json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","utmCampaign":"q1-events-push"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !strings.Contains(rec.taggedHTML, "utm_campaign=q1-events-push") {
+		t.Errorf("the configured campaign must win over the derived one\ngot: %s", rec.taggedHTML)
+	}
+}
+
+// TestHubSpot_TaggingFailureDoesNotFailTheDispatch pins the best-effort contract. By the time
+// tagging runs the email is cloned AND pointed at the right audience — a working campaign.
+// Failing the dispatch would turn a reporting gap into a failed send and still leave the
+// configured draft behind.
+func TestHubSpot_TaggingFailureDoesNotFailTheDispatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
+			_, _ = io.WriteString(w, `{"id":"999","name":"n","state":"DRAFT"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/draft"):
+			// The draft read fails: tagging cannot proceed.
+			w.WriteHeader(http.StatusInternalServerError)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/draft"):
+			_, _ = io.WriteString(w, `{"id":"999","name":"n","state":"DRAFT"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+		json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err != nil {
+		t.Fatalf("a tagging failure must NOT fail the dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "999" {
+		t.Fatalf("the staged email must still be returned, got %+v", camp)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("status = %q, want %q — the campaign is complete without tagging", camp.Status, campaignStatusCreated)
 	}
 }
