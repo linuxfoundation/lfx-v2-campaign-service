@@ -52,6 +52,13 @@ const (
 	CampaignRunPaused = "paused"
 )
 
+// IsCampaignRunStatus reports whether status is one of the two RUN states (active/paused) a
+// caller sets via the platform status toggle — as opposed to a provisioning state. The DB-only
+// update path uses it to refuse a run-state change that would bypass the ad platform.
+func IsCampaignRunStatus(status string) bool {
+	return status == CampaignRunActive || status == CampaignRunPaused
+}
+
 // Provisioning states — stamped during creation. Mirrors the dispatch package's
 // campaignStatusCreated/CreatedDegraded and the orchestrator's "pending" placeholder. The
 // status toggle keys off these: it is safe to toggle a fully-created campaign, but a

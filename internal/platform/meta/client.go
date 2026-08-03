@@ -703,6 +703,292 @@ func createOutcomeAmbiguous(err error) bool {
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
 }
 
+// ErrCampaignNotServable marks an ACTIVATE refused BEFORE any mutating call because the
+// campaign cannot serve (e.g. its ad set has zero ads). It is a local/state condition, not a
+// platform failure — the dispatcher maps it to a client 409, not a 503. Exposed as a sentinel
+// so the dispatcher can classify it across the package boundary via IsNotServable. Mirrors the
+// LinkedIn client's sentinel of the same name.
+var ErrCampaignNotServable = errors.New("campaign cannot be made servable")
+
+// IsNotServable reports whether err is (or wraps) ErrCampaignNotServable — an activate refused
+// up front because the campaign has nothing to serve.
+func IsNotServable(err error) bool { return errors.Is(err, ErrCampaignNotServable) }
+
+// IsOutcomeUnconfirmed reports whether a mutating-request error (e.g. from
+// UpdateCampaignStatus) leaves the outcome UNKNOWABLE — the request may have been applied by
+// Meta even though it errored (a transportError, a 5xx, or a 3xx on a mutating method). A
+// definite 4xx or a proven pre-send failure returns false. Exposes the same classifier the
+// create paths use so a toggle caller can distinguish "may already reflect the change" from
+// "definitely not applied". It also honors any error reporting Unconfirmed() bool — a
+// partialCascadeError (campaign applied, a child then failed) is partially applied and must be
+// treated as unconfirmed even if its underlying child error is a definite 4xx. Mirrors
+// reddit.IsOutcomeUnconfirmed.
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
+
+// Campaign run states for UpdateCampaignStatus (Meta's Campaign.status enum values).
+const (
+	StatusActive = "ACTIVE"
+	StatusPaused = "PAUSED"
+
+	// adDiscoveryPageSize is the per-page limit for GET /{adSetID}/ads when discovering ads
+	// to cascade a status change to. A broker ad set holds only a handful of ads, so one page
+	// almost always suffices; the value is a comfortable upper bound.
+	adDiscoveryPageSize = 100
+	// adDiscoveryMaxPages bounds the paging loop as a runaway guard (a pathological ad set or
+	// a paging cursor that never terminates can't spin forever). 100 pages × 100 ads is far
+	// beyond any real broker-created ad set.
+	adDiscoveryMaxPages = 100
+)
+
+// UpdateCampaignStatus sets an existing campaign's status to ACTIVE or PAUSED. Meta's Graph
+// API updates a node via POST to the node id itself with the changed field, so this POSTs
+// /{campaignID} with {"status": ...} (the same status enum the create path sets). campaignID
+// is validated numeric (numericIDRE) before interpolation to prevent path/query injection.
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	campaignID = strings.TrimSpace(campaignID)
+	if campaignID == "" {
+		return fmt.Errorf("meta: campaign id is required")
+	}
+	if !numericIDRE.MatchString(campaignID) {
+		return fmt.Errorf("meta: invalid campaign id %q: must be numeric", campaignID)
+	}
+	if status != StatusActive && status != StatusPaused {
+		return fmt.Errorf("meta: status must be %q or %q, got %q", StatusActive, StatusPaused, status)
+	}
+	if err := c.doRequest(ctx, http.MethodPost, "/"+campaignID, map[string]any{"status": status}, nil); err != nil {
+		return fmt.Errorf("meta: update campaign %s status to %s: %w", campaignID, status, err)
+	}
+	return nil
+}
+
+// UpdateCampaignAndChildrenStatus sets status on the campaign and, when an ad set id is
+// supplied, on the ad set AND each ad under it — the platform side of the campaign status
+// toggle. CreateCampaign PAUSES the campaign, ad set, and every ad, so toggling only the
+// campaign to ACTIVE would leave the ad set/ads PAUSED and the campaign would not serve.
+//
+// Meta persists the ad set id (in the campaign result) but NOT the individual ad ids, so the
+// ads are DISCOVERED via GET /{adSetID}/ads and each is POSTed to ACTIVE/PAUSED. Meta gates a
+// child's serving by its parent's status ("all the objects below it automatically inherit"
+// a paused/archived parent), so ordering is STATUS-DEPENDENT to avoid a partial activation
+// leaving paid delivery running:
+//   - ACTIVATE: the ad-set-and-ads step FIRST (the ad set, THEN each discovered ad), and the
+//     campaign flipped ACTIVE LAST — the still-paused campaign gates every child until that
+//     final flip, so a failure BEFORE any child mutation leaves NOTHING serving (a clean,
+//     definite failure). But once the FIRST child mutation may have landed (the ad set POST, or
+//     a later ad), the outcome is Unconfirmed even though the paused campaign still prevents
+//     serving — a reconciler cannot assume the change was rolled back. classifyCascadeErr
+//     encodes exactly this: mutatedBefore || ambiguous → partial/Unconfirmed.
+//   - PAUSE: campaign FIRST (delivery stops at the gate immediately), then the ad set, then ads.
+//
+// An empty adSetID toggles the campaign alone — but this is allowed only on PAUSE (a degraded
+// create can still be paused); ACTIVATE with no ad set id is REJECTED, since a campaign with no
+// ad set cannot serve.
+func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adSetID, status string) error {
+	if status == StatusActive && strings.TrimSpace(adSetID) == "" {
+		return fmt.Errorf("meta: cannot activate campaign %s: no ad set id is known, so the tree cannot be made servable", campaignID)
+	}
+	// Validate ids BEFORE any HTTP (pre-flight): a malformed persisted id is a definite,
+	// retry-won't-help failure, so fail cleanly with NOTHING applied.
+	campaignID = strings.TrimSpace(campaignID)
+	if !numericIDRE.MatchString(campaignID) {
+		return fmt.Errorf("meta: invalid campaign id %q: must be numeric", campaignID)
+	}
+	adSetID = strings.TrimSpace(adSetID)
+	if adSetID != "" && !numericIDRE.MatchString(adSetID) {
+		return fmt.Errorf("meta: invalid ad set id %q: must be numeric", adSetID)
+	}
+	if status == StatusActive {
+		// Children first (still gated by the paused campaign), campaign last.
+		if err := c.updateAdSetAndAds(ctx, adSetID, status, false); err != nil {
+			return err
+		}
+		if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
+			return &partialCascadeError{stage: "campaign activate", err: err}
+		}
+		return nil
+	}
+	// PAUSE: campaign gate first (stops delivery now), then the children.
+	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
+		return err
+	}
+	return c.updateAdSetAndAds(ctx, adSetID, status, true)
+}
+
+// updateAdSetAndAds POSTs the status to the ad set and each discovered ad. mutatedBefore says
+// whether an upstream change has already committed (the PAUSE path flips the campaign first):
+// when false (the ACTIVATE path, before the campaign flip), a DEFINITE 4xx or a discovery
+// failure is a CLEAN error (nothing serving yet); an ambiguous failure (5xx/transport) is
+// Unconfirmed. When true, any failure is Unconfirmed. An empty adSetID is a no-op.
+func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, mutatedBefore bool) error {
+	if adSetID == "" {
+		return nil
+	}
+	activating := !mutatedBefore && status == StatusActive
+	// DISCOVER-FIRST: list the ads BEFORE mutating anything. Discovery is a GET (no side
+	// effect), so on the activate path (mutatedBefore==false) a discovery failure or the
+	// zero-ads guard below is still a CLEAN, nothing-mutated error — matching the LinkedIn
+	// sibling (discover creatives, refuse zero before touching the campaign). The previous
+	// order (ad set POST first, then discover) turned a legitimately-degraded zero-ads campaign
+	// into a non-converging 503 loop: it re-POSTed the ad set ACTIVE and then returned an
+	// Unconfirmed partial every retry. Discovering first lets zero ads return a deterministic
+	// not-servable error the dispatcher maps to 409 ("reprovision"), and re-POSTs nothing.
+	adIDs, err := c.listAdIDs(ctx, adSetID)
+	if err != nil {
+		// Discovery is a READ that runs before any mutation on the activate path, so it is NOT
+		// classified through createOutcomeAmbiguous (which treats every 5xx/transport as
+		// ambiguous — correct only for a MUTATING call that may have committed). A pre-mutation
+		// read failure applied nothing, so it is CLEAN; it is only a partial (Unconfirmed) when a
+		// prior mutation already landed (mutatedBefore — e.g. the PAUSE path flipped the campaign
+		// first). Mirrors the LinkedIn finder path exactly.
+		if mutatedBefore {
+			return &partialCascadeError{stage: "ad discovery", err: err}
+		}
+		// Render the cause with %v, NOT %w: a pre-mutation READ failure is CLEAN, but the
+		// underlying error is often a transportError/5xx that createOutcomeAmbiguous (which
+		// unwraps via errors.As) would treat as ambiguous → IsOutcomeUnconfirmed → a spurious
+		// 503. Stringizing the cause breaks the unwrap chain so this stays a clean, definite
+		// failure. (The mutatedBefore branch above intentionally KEEPS it ambiguous/partial.)
+		return fmt.Errorf("meta: ad discovery for ad set %s failed (nothing was mutated): %v", adSetID, err)
+	}
+	// On ACTIVATE, a tree with ZERO ads can never serve — Meta creation treats per-variant ad
+	// failures as non-fatal, so a degraded broker campaign can legitimately have an ad set but
+	// no ads. Refuse BEFORE any mutation so this is a clean not-servable error (nothing changed
+	// upstream → the dispatcher returns a deterministic 409, not a transient 503). PAUSE with
+	// zero ads is fine (nothing to pause) and passes through.
+	if activating && len(adIDs) == 0 {
+		return fmt.Errorf("%w: meta ad set %s has no ads, so the campaign cannot serve", ErrCampaignNotServable, adSetID)
+	}
+	// Mutate BOTTOM-UP: ads first, then the ad set. Every child stays gated by the still-paused
+	// campaign on the activate path, so the ordering contract ("children before the campaign
+	// flip") holds. Once the FIRST ad POST may have committed, subsequent failures are partial
+	// applications (mutatedBefore=true).
+	for _, adID := range adIDs {
+		if err := c.doRequest(ctx, http.MethodPost, "/"+adID, map[string]any{"status": status}, nil); err != nil {
+			return classifyCascadeErr("ad", err, mutatedBefore)
+		}
+		mutatedBefore = true
+	}
+	if err := c.doRequest(ctx, http.MethodPost, "/"+adSetID, map[string]any{"status": status}, nil); err != nil {
+		return classifyCascadeErr("ad set", err, mutatedBefore)
+	}
+	return nil
+}
+
+// classifyCascadeErr decides whether a cascade-step error is Unconfirmed. Once an upstream
+// change may have committed (mutatedBefore, or an ambiguous outcome), it is a
+// partialCascadeError (Unconfirmed). Otherwise — the activate path before the campaign flip,
+// with a DEFINITE failure (a 4xx / clean rejection) — nothing is serving yet, so it is a clean
+// error the caller may treat as "not applied".
+func classifyCascadeErr(stage string, err error, mutatedBefore bool) error {
+	if mutatedBefore || createOutcomeAmbiguous(err) {
+		return &partialCascadeError{stage: stage, err: err}
+	}
+	return fmt.Errorf("meta: %s update failed: %w", stage, err)
+}
+
+// listAdIDs discovers the ad ids under an ad set via GET /{adSetID}/ads (the Graph API ads
+// edge returns {"data":[{"id":...}], "paging":{...}}). It follows paging (via the opaque
+// after cursor) so a large ad set is fully covered, bounded by adDiscoveryMaxPages. A returned
+// ad with a missing/non-numeric id FAILS discovery (fail-closed) rather than being skipped —
+// a skipped ad would make discovery look complete and let the cascade persist ACTIVE while
+// that ad stays PAUSED.
+func (c *Client) listAdIDs(ctx context.Context, adSetID string) ([]string, error) {
+	var ids []string
+	after := ""
+	seen := make(map[string]struct{})
+	for page := 0; page < adDiscoveryMaxPages; page++ {
+		// Build the request path OURSELVES from the cursor. Do NOT reuse Meta's absolute
+		// paging.next URL: it carries the access_token (and appsecret_proof) as query params,
+		// which would then be sent in the URL and copied into apiError/transportError — and the
+		// toggle service logs those errors. Passing only the opaque `after` cursor keeps the
+		// credential out of any persisted/logged path.
+		path := "/" + adSetID + "/ads?fields=id&limit=" + strconv.Itoa(adDiscoveryPageSize)
+		if after != "" {
+			path += "&after=" + url.QueryEscape(after)
+		}
+		var resp struct {
+			// Data is a POINTER slice so an ABSENT/null `data` field is distinguishable from a
+			// present-but-empty `{"data":[]}`. A malformed 2xx body like `{}` or `null` decodes
+			// with Data == nil (field absent) and CANNOT prove the ad set has no ads, whereas an
+			// intentional empty page is `{"data":[]}` (Data non-nil, len 0). Decoding both to a
+			// plain nil slice would let a `{}` body read as "fully enumerated, zero ads" and flip
+			// the campaign ACTIVE while ads stay PAUSED — the fail-open trap this cascade forbids.
+			// Mirrors the LinkedIn discovery path's `Elements *[]...` presence check.
+			Data *[]struct {
+				ID string `json:"id"`
+			} `json:"data"`
+			Paging struct {
+				Cursors struct {
+					After string `json:"after"`
+				} `json:"cursors"`
+				Next string `json:"next"`
+			} `json:"paging"`
+		}
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return nil, err
+		}
+		if resp.Data == nil {
+			// 2xx but no `data` field: the body is malformed and we cannot prove the ad set's ads
+			// were enumerated. Fail closed rather than report a spurious complete-empty result.
+			return nil, fmt.Errorf("ad discovery for ad set %s returned a 2xx response with no data field; cannot confirm all ads were enumerated", adSetID)
+		}
+		for _, a := range *resp.Data {
+			id := strings.TrimSpace(a.ID)
+			if !numericIDRE.MatchString(id) {
+				// The edge returned an ad but its id is missing/non-numeric — we can't PATCH
+				// it. Silently skipping would make discovery look complete and let the cascade
+				// persist ACTIVE while this ad stays PAUSED (the fail-open trap the
+				// fail-not-truncate guards close). Fail instead.
+				return nil, fmt.Errorf("ad discovery for ad set %s returned an ad with no usable id", adSetID)
+			}
+			ids = append(ids, id)
+		}
+		// No `next` link means this was the last page; an empty `after` cursor with a `next`
+		// link present is malformed (can't advance) → treat as incomplete.
+		if resp.Paging.Next == "" {
+			return ids, nil // fully enumerated
+		}
+		after = strings.TrimSpace(resp.Paging.Cursors.After)
+		if after == "" {
+			return nil, fmt.Errorf("ad discovery for ad set %s has more pages but no cursor; cannot guarantee all ads were enumerated", adSetID)
+		}
+		if _, dup := seen[after]; dup {
+			return nil, fmt.Errorf("ad discovery for ad set %s did not terminate (repeated paging cursor)", adSetID)
+		}
+		seen[after] = struct{}{}
+	}
+	// Reached the page cap with a cursor still pending: discovery is INCOMPLETE, so fail
+	// rather than silently truncate.
+	return nil, fmt.Errorf("ad discovery for ad set %s exceeded %d pages; too many ads to enumerate", adSetID, adDiscoveryMaxPages)
+}
+
+// partialCascadeError marks a status cascade that applied to SOME of the campaign/ad set/ads
+// but then failed on another entity: the run state is PARTIALLY applied. Because the cascade
+// order is status-dependent (on ACTIVATE the ad set/ads are flipped BEFORE the campaign; on
+// PAUSE the campaign first), a partial error does NOT imply the campaign itself changed — only
+// that the tree is not uniformly at the requested status. Its Unconfirmed() reports true so
+// IsOutcomeUnconfirmed treats it as "may be applied — verify before retrying" rather than
+// "not modified"; a retry re-runs the idempotent cascade. Mirrors the reddit client.
+type partialCascadeError struct {
+	stage string
+	err   error
+}
+
+func (e *partialCascadeError) Error() string {
+	// Does NOT assert which entity changed: with the status-dependent ordering a partial
+	// cascade can occur before OR after the campaign flip. States only that the status change
+	// is partially applied / unconfirmed.
+	return "meta: status change partially applied (" + e.stage + " step failed; verify before retrying): " + e.err.Error()
+}
+func (e *partialCascadeError) Unwrap() error     { return e.err }
+func (e *partialCascadeError) Unconfirmed() bool { return true }
+
 // isMutatingMethod reports whether an HTTP method can create/modify server state,
 // so a 3xx on it may hide a committed mutation. Mirrors the reddit client.
 func isMutatingMethod(method string) bool {
@@ -777,6 +1063,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// *APIError. (An oversized error/redirect body is anomalous, but we classify
 			// on status, not payload.)
 			if status >= 200 && status < 300 {
+				// A 2xx with an oversized body is a SUCCESS when the caller decodes no
+				// response (out == nil, e.g. a status update): there is nothing to parse, so
+				// the unreadable body doesn't matter and the mutation is confirmed. Only when
+				// we NEEDED the body (out != nil) is it ambiguous.
+				if out == nil {
+					return nil
+				}
 				return &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
 			}
 			return &APIError{
@@ -809,6 +1102,12 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			// treated as "may exist". Mirrors the reddit client wrapping 2xx read/decode
 			// failures as transportError.
 			if status >= 200 && status < 300 {
+				// As with the oversized case: a 2xx is a SUCCESS when out == nil (no response
+				// to read), so an unreadable body doesn't downgrade a confirmed mutation to
+				// ambiguous. Only a caller that needed the body sees a transportError.
+				if out == nil {
+					return nil
+				}
 				return &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
 			}
 			// A read failure on a NON-2xx still must preserve the HTTP status: a
