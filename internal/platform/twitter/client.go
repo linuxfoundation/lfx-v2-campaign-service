@@ -1893,7 +1893,7 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if err := c.updateEntityStatus(ctx, campaignPath, status); err != nil {
 		return fmt.Errorf("twitter: campaign %s pause failed: %w", campaignID, err)
 	}
-	if strings.TrimSpace(lineItemID) == "" {
+	if lineItemID == "" { // already trimmed above; see the TRIM ONCE note
 		return nil
 	}
 	if err := c.updateEntityStatus(ctx, lineItemPath, status); err != nil {
