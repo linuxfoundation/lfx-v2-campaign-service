@@ -122,7 +122,14 @@ type CampaignResult struct {
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
 type mutateOperation struct {
-	Create any `json:"create"`
+	// omitempty so an UPDATE operation doesn't emit "create":null — a :mutate operation
+	// must carry exactly ONE of create/update/remove, and a null create alongside an update
+	// is an invalid (and confusing) payload.
+	Create any `json:"create,omitempty"`
+	// Update + UpdateMask carry an UPDATE operation (e.g. a status flip). Both are omitted
+	// on a create so the payload stays exactly as the create path sends it today.
+	Update     any    `json:"update,omitempty"`
+	UpdateMask string `json:"updateMask,omitempty"`
 }
 
 // mutateRequest is the POST body for a *:mutate endpoint. partialFailure is left
@@ -263,8 +270,9 @@ func (e *apiError) hasErrorCode(code string) bool {
 
 // isDefiniteClientError reports whether ae is a definite 4xx client-error rejection
 // that is NOT ambiguous — i.e. a 4xx EXCEPT 429. A 429 is excluded because
-// createOutcomeAmbiguous classifies a mutating 429 as possibly-committed (doRequest
-// does not retry a non-idempotent 429), so a duplicate-name code carried on a 429
+// createOutcomeAmbiguous classifies a mutating 429 as possibly-committed regardless of
+// whether it was retried (the create path never retries one; the toggle path's bounded
+// retries can still EXHAUST after a request was received), so a duplicate-name code on a 429
 // must NOT be read as a known prior create — the throttled request itself may be
 // the one that created it. Keeping this exclusion here (the duplicate predicates run
 // BEFORE createOutcomeAmbiguous on the create path) preserves the ambiguity contract.
@@ -299,10 +307,11 @@ func isDuplicateCampaignNameErr(err error) bool {
 // committed upstream (so a caller must reconcile/verify before retrying, to avoid a
 // duplicate — :mutate has no idempotency key). A 5xx apiError or any transportError
 // is ambiguous regardless of method; a 3xx is ambiguous only on a mutating method
-// (a GET redirect is not a create). A 429 on a mutating call is ALSO ambiguous:
-// doRequest deliberately does NOT retry a non-idempotent 429 (idempotent=false)
-// precisely because the throttled request may already have committed upstream, so
-// the caller must reconcile rather than blind-retry. A definite 4xx (Google
+// (a GET redirect is not a create). A 429 on a mutating call is ALSO ambiguous,
+// whether or not doRequest retried it: the CREATE path passes idempotent=false and
+// never retries (a throttled create may already have committed), while the status
+// TOGGLE passes true and its bounded retries can still EXHAUST — in both cases a
+// request reached Google, so the caller must reconcile rather than blind-retry. A definite 4xx (Google
 // rejected it) and a pre-send error are NOT ambiguous. Mirrors the sibling clients.
 func createOutcomeAmbiguous(err error) bool {
 	var te *transportError
@@ -596,6 +605,98 @@ func validateEntityName(kind, name string, measuredLen, maxLen int, unit string)
 	}
 	if measuredLen > maxLen {
 		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project/NameSuffix", kind, maxLen, unit, measuredLen)
+	}
+	return nil
+}
+
+// Campaign run states in the Google Ads vocabulary. Note ENABLED (not "ACTIVE") — the
+// create path uses PAUSED from this same enum.
+const (
+	// StatusEnabled lets a campaign serve.
+	StatusEnabled = "ENABLED"
+	// StatusPaused stops a campaign serving.
+	StatusPaused = "PAUSED"
+)
+
+// campaignStatusUpdate is the update payload for campaigns:mutate. resourceName identifies
+// the campaign; only the fields named in the operation's updateMask are applied.
+type campaignStatusUpdate struct {
+	ResourceName string `json:"resourceName"`
+	Status       string `json:"status"`
+}
+
+// IsOutcomeUnconfirmed reports whether err leaves the mutation's outcome AMBIGUOUS — Google
+// may have applied it despite the error, so the caller must VERIFY before retrying rather
+// than assume "not applied". Exported so the dispatcher can classify across the package
+// boundary (mirrors the reddit/twitter clients' helper of the same name).
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
+
+// UpdateCampaignStatus toggles a campaign between ENABLED and PAUSED via campaigns:mutate
+// with an updateMask of "status".
+//
+// NO CASCADE, unlike reddit/twitter/microsoft — but not because the tree is complete: the
+// create path provisions only a PAUSED campaign SHELL (budget -> campaign) with no ad group,
+// ad, or keywords, so there are no children to flip YET. That incompleteness is also why
+// GoogleAdsDispatcher.ToggleStatus refuses ACTIVATE outright (ErrCampaignNotProvisioned):
+// enabling a shell would report success while nothing can serve. This method still accepts
+// StatusEnabled so it stays a faithful wrapper over campaigns:mutate for a future caller
+// operating on a fully-provisioned campaign; the serving decision belongs to the dispatcher.
+// When GA-3+ adds ad groups/ads/keywords, this must grow a cascade with the same
+// children-first-on-activate ordering the other adapters use.
+//
+// The mutate IS sent as idempotent (doRequest's last arg), unlike the create path. That flag
+// gates only bounded 429 retries, and the create path's reason for declining them (no
+// idempotency key, so a throttled retry could DOUBLE-CREATE) does not apply to a status flip:
+// re-applying the same ENABLED/PAUSED converges on identical state. See the call site below.
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status string) error {
+	if err := c.validateAccountIDs(); err != nil {
+		return err
+	}
+	if status != StatusEnabled && status != StatusPaused {
+		return fmt.Errorf("google-ads: unsupported campaign status %q (want %s or %s)", status, StatusEnabled, StatusPaused)
+	}
+	id := strings.TrimSpace(campaignID)
+	if id == "" {
+		return fmt.Errorf("google-ads: cannot update status: campaign id is empty")
+	}
+	// The id is interpolated into a resourceName, so keep it strictly numeric — Google
+	// campaign ids are digits, and anything else could alter the resource path.
+	if !customerIDRE.MatchString(id) {
+		return fmt.Errorf("google-ads: campaign id %q is not numeric", campaignID)
+	}
+
+	// NOTE on an already-done context: no explicit guard is needed here. doRequest ->
+	// accessTokenValue checks ctx.Err() FIRST, before the cached-token fast path, so a
+	// cancelled caller never reaches httpClient.Do and the error surfaces as a clean
+	// context error rather than an ambiguous transportError. (CreateCampaign's own guard
+	// predates that check and is now belt-and-braces.) Pinned by
+	// TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing, which primes the token
+	// cache so it exercises exactly the cached path this note describes.
+
+	req := mutateRequest{Operations: []mutateOperation{{
+		Update: campaignStatusUpdate{
+			ResourceName: "customers/" + c.account.CustomerID + "/campaigns/" + id,
+			Status:       status,
+		},
+		UpdateMask: "status",
+	}}}
+	// idempotent=TRUE, unlike the create path. That flag gates ONLY bounded 429 retries, and
+	// the create path's reason for declining them (no idempotency key, so a 429 whose first
+	// attempt may have committed would DOUBLE-CREATE) does not apply here: re-applying the
+	// same ENABLED/PAUSED value converges on the identical state. Passing false would turn
+	// ordinary Google throttling into an avoidable UNCONFIRMED failure. A cancellation while
+	// waiting to retry is WRAPPED by doRequest as a transportError and stays UNCONFIRMED,
+	// which is correct: by then a mutation HAS been sent. That path is reachable without any
+	// user cancellation, since the orchestrator wraps every toggle in a toggleCallTimeout —
+	// pinned by TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed.
+	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true); err != nil {
+		return fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err)
 	}
 	return nil
 }
