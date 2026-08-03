@@ -37,8 +37,12 @@
 -- other statements to this file — a multi-statement migration would be batched and
 -- reintroduce the transaction constraint.
 --
--- A failed concurrent build leaves an INVALID index behind rather than rolling back;
--- the down migration drops it either way, so a retry is clean.
+-- A failed CONCURRENTLY build does NOT roll back: it leaves the index marked INVALID,
+-- and the IF NOT EXISTS below would then see that name and skip the rebuild while
+-- reporting success — Postgres refuses to use an invalid index, so the scans would keep
+-- full-scanning forever with no error anywhere. Recovering a dirty migration with
+-- `force` does not run the down migration, so nothing clears it implicitly either.
+-- Migration 000009 drops an INVALID copy, which is what makes a retry actually rebuild.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_campaigns_stuck_claims
     ON campaigns (created_at)
     WHERE status = 'pending';

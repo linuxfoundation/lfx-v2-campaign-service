@@ -2,6 +2,16 @@
 
 ## 2026-08-03
 
+**Update** — Clear an INVALID stuck-claim index (LFXV2-2665, PR #59 review, migration 000009).
+A failed `CREATE INDEX CONCURRENTLY` does NOT roll back — it leaves the index marked INVALID.
+`IF NOT EXISTS` then sees that name, skips the rebuild and reports success, so the scan keeps
+full-scanning forever with no error anywhere. `force`-recovering a dirty migration marks the
+version applied WITHOUT running the down migration, so nothing else clears it.
+
+000009 drops an INVALID copy (a plain DROP inside a DO block — an invalid index serves no query,
+so nothing that was working is blocked, and DROP CONCURRENTLY cannot run inside the conditional).
+A VALID index is untouched. The "a retry is clean" comment in 000008 was wrong and is corrected.
+
 **Update** — `idx_campaigns_stuck_claims` is now built CONCURRENTLY (LFXV2-2665, PR #59 review).
 A plain `CREATE INDEX` takes a lock blocking INSERT/UPDATE/DELETE on `campaigns` for the whole
 build, and migrations run during a ROLLING startup — other replicas are still claiming and
