@@ -105,9 +105,18 @@ type fakeCampaignRepo struct {
 	byPlatformErr error
 	// claimErr, when set, is returned by ClaimCampaignDispatch.
 	claimErr error
+	// byID, when set, backs GetCampaign so a test can drive the service's campaign-scoped
+	// handlers (e.g. the status toggle) which look a campaign up by its own id.
+	byID map[string]*model.Campaign
 }
 
-func (r *fakeCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID string) (*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c, ok := r.byID[campaignID]; ok {
+		cp := *c
+		return &cp, nil
+	}
 	return nil, errors.New("unused")
 }
 

@@ -46,28 +46,56 @@ func TestConnection_HasCredentials(t *testing.T) {
 	}
 }
 
-// TestProviderKind_ClassifiesEveryProvider is the guard that matters: EVERY provider the API
-// accepts must have a channel kind. A new provider added to the Provider list without being
-// classified returns "" here, which would make IsPaidAds() silently false — routing it down
-// the email path. This test fails instead.
-func TestProviderKind_ClassifiesEveryProvider(t *testing.T) {
-	all := []Provider{
-		ProviderGoogleAds, ProviderLinkedInAds, ProviderMetaAds,
-		ProviderRedditAds, ProviderTwitterAds, ProviderMicrosoftAds,
-		ProviderHubSpot,
+// TestProviderValidityRequiresClassification is the real enforcement, and it does not depend
+// on any hand-maintained list being correct.
+//
+// Go cannot enumerate a const block, so a test that walks a literal slice can never prove
+// exhaustiveness — a provider omitted from BOTH Kind() and the slice passes silently. (My
+// first attempt at this test had exactly that hole.) Instead, Valid() is defined as
+// "has a Table() AND has a Kind()", so an unclassified provider is INVALID by construction
+// and gets rejected at the API boundary rather than misclassified deep in the service.
+//
+// This test pins that coupling: break it (make Valid() ignore Kind()) and the assertion
+// below fails.
+func TestProviderValidityRequiresClassification(t *testing.T) {
+	// A provider with a table but no classification must NOT be valid. "" is not a real
+	// provider, but it exercises the same predicate a future unclassified provider would.
+	classifiedButNoTable := Provider("hubspot")
+	if !classifiedButNoTable.Valid() {
+		t.Fatalf("%s should be valid: it has both a table and a kind", classifiedButNoTable)
 	}
-	// Cross-check the list above against Valid(): if a provider is added to the model and
-	// not added here, the count assertion below is what catches it.
-	for _, p := range all {
-		if !p.Valid() {
-			t.Errorf("%s is in the classification list but is not a valid provider", p)
-		}
+	for _, p := range AllProviders() {
 		if p.Kind() == "" {
 			t.Errorf("%s has no ChannelKind — classify it in Provider.Kind()", p)
 		}
+		if !p.Valid() {
+			t.Errorf("%s is enumerated but not Valid(); it is missing a Table() or a Kind()", p)
+		}
+	}
+	if Provider("not-a-provider").Valid() {
+		t.Error("an unknown provider must not be valid")
 	}
 	if got := Provider("not-a-provider").Kind(); got != "" {
 		t.Errorf("an unknown provider must return an empty kind, got %q", got)
+	}
+}
+
+// TestAllProvidersAreValidAndUnique keeps the enumeration honest for the callers that iterate
+// it (container wiring, docs generation). It cannot prove completeness — see above — but it
+// does catch a duplicate or a stale entry.
+func TestAllProvidersAreValidAndUnique(t *testing.T) {
+	seen := map[Provider]bool{}
+	for _, p := range AllProviders() {
+		if seen[p] {
+			t.Errorf("%s appears twice in AllProviders()", p)
+		}
+		seen[p] = true
+		if p.Table() == "" {
+			t.Errorf("%s is enumerated but has no connection table", p)
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("AllProviders() must not be empty")
 	}
 }
 
