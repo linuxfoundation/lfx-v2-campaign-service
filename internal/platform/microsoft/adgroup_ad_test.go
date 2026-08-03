@@ -1643,3 +1643,29 @@ func TestCreateCampaign_ContextCancelledBeforeAdGroupIsCleanAbort(t *testing.T) 
 		t.Errorf("a pre-ad-group cancel should read as an abort, got: %v", err)
 	}
 }
+
+// TestCreateCampaign_DisplayDomainAcceptsIPv6Host guards the IPv6 regression the fail-closed
+// IDNA check introduced: an IPv6 literal is not an IDNA label, so ToUnicode fails on it. Since
+// validateAdURL accepts IPv6 destinations, treating that failure as invalid input would reject
+// a previously-valid URL with a misleading "not a valid IDNA label" error.
+func TestCreateCampaign_DisplayDomainAcceptsIPv6Host(t *testing.T) {
+	// Prove the fixture actually exercises the branch: the bare host must fail ToUnicode.
+	if _, derr := idna.Lookup.ToUnicode("::1"); derr == nil {
+		t.Skip("IPv6 literal now decodes as an IDNA label; fixture no longer exercises the guard")
+	}
+	api := &campaignsAPI{}
+	c := newAPIClient(t, api.handler(t))
+	in := validInput()
+	in.RegistrationURL = "https://[::1]/register"
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil && strings.Contains(err.Error(), "IDNA") {
+		t.Fatalf("an IPv6 host must not be rejected as an invalid IDNA label: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("CreateCampaign with an IPv6 destination: %v", err)
+	}
+	if res == nil || res.CampaignID == "" {
+		t.Errorf("expected a created campaign for a valid IPv6 destination, got %+v", res)
+	}
+}
