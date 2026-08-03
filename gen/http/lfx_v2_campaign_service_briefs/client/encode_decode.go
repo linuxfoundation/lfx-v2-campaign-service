@@ -2037,11 +2037,11 @@ func DecodeGetJobResponse(decoder func(*http.Response) goahttp.Decoder, restoreB
 	}
 }
 
-// marshalLfxv2campaignservicebriefsBriefInputToBriefInputRequestBody builds a
-// value of type *BriefInputRequestBody from a value of type
-// *lfxv2campaignservicebriefs.BriefInput.
-func marshalLfxv2campaignservicebriefsBriefInputToBriefInputRequestBody(v *lfxv2campaignservicebriefs.BriefInput) *BriefInputRequestBody {
-	res := &BriefInputRequestBody{
+// marshalLfxv2campaignservicebriefsBriefWriteInputToBriefWriteInputRequestBody
+// builds a value of type *BriefWriteInputRequestBody from a value of type
+// *lfxv2campaignservicebriefs.BriefWriteInput.
+func marshalLfxv2campaignservicebriefsBriefWriteInputToBriefWriteInputRequestBody(v *lfxv2campaignservicebriefs.BriefWriteInput) *BriefWriteInputRequestBody {
+	res := &BriefWriteInputRequestBody{
 		ProgramType:  v.ProgramType,
 		EventSlug:    v.EventSlug,
 		URL:          v.URL,
@@ -2060,11 +2060,11 @@ func marshalLfxv2campaignservicebriefsBriefInputToBriefInputRequestBody(v *lfxv2
 	return res
 }
 
-// marshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput builds a
-// value of type *lfxv2campaignservicebriefs.BriefInput from a value of type
-// *BriefInputRequestBody.
-func marshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(v *BriefInputRequestBody) *lfxv2campaignservicebriefs.BriefInput {
-	res := &lfxv2campaignservicebriefs.BriefInput{
+// marshalBriefWriteInputRequestBodyToLfxv2campaignservicebriefsBriefWriteInput
+// builds a value of type *lfxv2campaignservicebriefs.BriefWriteInput from a
+// value of type *BriefWriteInputRequestBody.
+func marshalBriefWriteInputRequestBodyToLfxv2campaignservicebriefsBriefWriteInput(v *BriefWriteInputRequestBody) *lfxv2campaignservicebriefs.BriefWriteInput {
+	res := &lfxv2campaignservicebriefs.BriefWriteInput{
 		ProgramType:  v.ProgramType,
 		EventSlug:    v.EventSlug,
 		URL:          v.URL,

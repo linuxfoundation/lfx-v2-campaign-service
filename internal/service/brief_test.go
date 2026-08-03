@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
 	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -102,7 +103,7 @@ func TestBriefService_NilRepo_ReturnsServiceUnavailable(t *testing.T) {
 	if _, err := s.GetBrief(ctx, &briefs.GetBriefPayload{ProjectID: "cncf", BriefID: "b1"}); !isBriefUnavailable(err) {
 		t.Errorf("GetBrief: expected *briefs.ConnServiceUnavailableError, got %T (%v)", err, err)
 	}
-	if _, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{ProjectID: "cncf", Brief: &briefs.BriefInput{}}); !isBriefUnavailable(err) {
+	if _, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{ProjectID: "cncf", Brief: &briefs.BriefWriteInput{}}); !isBriefUnavailable(err) {
 		t.Errorf("CreateBrief: expected *briefs.ConnServiceUnavailableError, got %T (%v)", err, err)
 	}
 	if _, err := s.GetJob(ctx, &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"}); !isBriefUnavailable(err) {
@@ -174,7 +175,7 @@ func TestBriefService_CreateAndGet_HappyPath(t *testing.T) {
 	s := newTestBriefService(repo)
 	created, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
 		ProjectID: "cncf",
-		Brief:     &briefs.BriefInput{ProgramType: "events", EventSlug: "kubecon-2025"},
+		Brief:     &briefs.BriefWriteInput{ProgramType: "events", EventSlug: "kubecon-2025"},
 	})
 	if err != nil {
 		t.Fatalf("CreateBrief: %v", err)
@@ -217,7 +218,7 @@ func TestBriefService_CreateBriefAndCampaigns_RejectNonSlugProjectID(t *testing.
 	for _, bad := range []string{uuid, "CNCF", "cncf_x", "-cncf", "with space", "foo--bar", "cncf-"} {
 		s := newTestBriefService(newFakeBriefRepo())
 		if _, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
-			ProjectID: bad, Brief: &briefs.BriefInput{ProgramType: "events", EventSlug: "kubecon"},
+			ProjectID: bad, Brief: &briefs.BriefWriteInput{ProgramType: "events", EventSlug: "kubecon"},
 		}); err == nil {
 			t.Errorf("CreateBrief must reject non-slug project_id %q", bad)
 		} else if _, ok := err.(*briefs.BadRequestError); !ok {
@@ -283,7 +284,7 @@ func TestBriefService_ResponseIncludesBriefContent(t *testing.T) {
 	kw := []any{"kubernetes", "cloud native"}
 	created, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
 		ProjectID: "cncf",
-		Brief: &briefs.BriefInput{
+		Brief: &briefs.BriefWriteInput{
 			ProgramType:  "events",
 			EventSlug:    "kubecon-2025",
 			EventDetails: details,
@@ -1048,7 +1049,7 @@ func TestBriefInput_RejectsEmptyEventSlug(t *testing.T) {
 	empty := ""
 	programType := "events"
 
-	err := briefsserver.ValidateBriefInputRequestBody(&briefsserver.BriefInputRequestBody{
+	err := briefsserver.ValidateBriefWriteInputRequestBody(&briefsserver.BriefWriteInputRequestBody{
 		ProgramType: &programType,
 		EventSlug:   &empty,
 	})
@@ -1061,10 +1062,42 @@ func TestBriefInput_RejectsEmptyEventSlug(t *testing.T) {
 
 	// A real slug still passes — the constraint must not reject ordinary input.
 	slug := "kubecon-eu-2026"
-	if verr := briefsserver.ValidateBriefInputRequestBody(&briefsserver.BriefInputRequestBody{
+	if verr := briefsserver.ValidateBriefWriteInputRequestBody(&briefsserver.BriefWriteInputRequestBody{
 		ProgramType: &programType,
 		EventSlug:   &slug,
 	}); verr != nil {
 		t.Errorf("a real slug must still validate, got: %v", verr)
+	}
+}
+
+// TestBriefResponse_StillDecodesLegacyEmptySlug pins the OTHER half of the empty-slug contract:
+// requests reject an empty event_slug, but RESPONSES must still carry one.
+//
+// The constraint originally lived on BriefInput, which the Brief response type Reference()s —
+// and goa copies validations through Reference, so it landed in all five response validators
+// too. Any already-persisted empty-slug row then became undecodable by generated clients,
+// breaking even get-brief for exactly the rows the create-side fix exists to prevent going
+// forward. Hence the separate BriefWriteInput type.
+func TestBriefResponse_StillDecodesLegacyEmptySlug(t *testing.T) {
+	// A response body carrying the legacy empty slug must validate.
+	empty := ""
+	id := "b1"
+	projectID := "cncf"
+	programType := "events"
+	status := "approved"
+	var version int64 = 1
+
+	if err := briefsclient.ValidateGetBriefResponseBody(&briefsclient.GetBriefResponseBody{
+		ID: &id, ProjectID: &projectID, ProgramType: &programType,
+		EventSlug: &empty, Status: &status, Version: &version,
+	}); err != nil {
+		t.Fatalf("a legacy empty-slug row must still be readable, got: %v", err)
+	}
+
+	// ...while the WRITE path still rejects it.
+	if err := briefsserver.ValidateBriefWriteInputRequestBody(&briefsserver.BriefWriteInputRequestBody{
+		ProgramType: &programType, EventSlug: &empty,
+	}); err == nil {
+		t.Error("the create/update payload must still reject an empty event_slug")
 	}
 }

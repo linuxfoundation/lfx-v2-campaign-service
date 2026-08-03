@@ -114,7 +114,7 @@ type Brief struct {
 	Etag *string
 }
 
-type BriefInput struct {
+type BriefWriteInput struct {
 	// Funnel context
 	ProgramType string
 	// Event/course slug (unique within the project)
@@ -180,7 +180,7 @@ type CreateBriefPayload struct {
 	BearerToken *string
 	// Canonical LFX project slug (NOT a UUID) that scopes the resource
 	ProjectID string
-	Brief     *BriefInput
+	Brief     *BriefWriteInput
 }
 
 // CreateCampaignsPayload is the payload type of the
@@ -317,7 +317,7 @@ type UpdateBriefPayload struct {
 	BriefID string
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
-	Brief   *BriefInput
+	Brief   *BriefWriteInput
 }
 
 // UpdateCampaignPayload is the payload type of the

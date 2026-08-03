@@ -2,6 +2,18 @@
 
 ## 2026-08-03
 
+**Update** — Split the brief WRITE payload from the response type (LFXV2-2812, PR #55 review).
+Putting `MinLength(1)` on `BriefInput` fixed the create side but broke the read side: the `Brief`
+RESPONSE type `Reference()`s `BriefInput`, and goa COPIES validations through `Reference`, so the
+constraint landed in all five response validators (12 generated checks). Any already-persisted
+empty-slug row then became undecodable by generated clients — breaking even `get-brief` for
+exactly the rows the fix exists to prevent going forward.
+
+`BriefWriteInput` now carries the constraint for create/update only. Verified by counting the
+generated checks: **0** response-side, **2** request-side. Redeclaring the attribute on `Brief`
+does NOT work — goa merges rather than overrides, so the constraint survives; a separate type is
+required.
+
 **Update** — Closed an event_slug validation gap (LFXV2-2812, PR #55 review, @dealako). The
 find-brief lookup enforces `MinLength(1)` on `event_slug`, but `BriefInput.event_slug` — the
 CREATE contract — had only `Required()`. goa's `Required()` checks that the JSON key is PRESENT,

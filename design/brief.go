@@ -22,20 +22,45 @@ var BriefInput = Type("brief-input", func() {
 	Attribute("program_type", String, "Funnel context", func() {
 		Enum("events", "education", "membership")
 	})
-	// MinLength(1) is REQUIRED here, not merely tidy: goa's Required() checks only that the
-	// JSON key is PRESENT, so an explicit "" satisfies it, and the TEXT NOT NULL column accepts
-	// it too. Without this a brief with an empty slug is creatable, occupies the
-	// UNIQUE(project_id, event_slug) index, and can never be recalled through the
-	// find-by-event-slug lookup (whose own MinLength(1) rejects the request with a 400).
-	Attribute("event_slug", String, "Event/course slug (unique within the project)", func() {
-		MinLength(1)
-	})
+	// NO MinLength here: BriefInput is Reference()d by the Brief RESPONSE type, and goa copies
+	// validations through Reference — so constraining it here also constrains every brief
+	// response, making an already-persisted empty-slug row undecodable by generated clients
+	// (get-brief included). The empty-slug REQUEST is rejected by nonEmptyEventSlug() on the
+	// create/update payloads instead, which is where the constraint belongs.
+	Attribute("event_slug", String, "Event/course slug (unique within the project)")
 	Attribute("url", String, "Event/course page URL")
 	Attribute("platforms", ArrayOf(String), "Suggested default platforms (a planning hint; binding selection is on the campaign)")
 	Attribute("event_details", Any, "Extracted event/course details")
 	Attribute("copy", Any, "Ad copy")
 	Attribute("keywords", Any, "Keyword list")
 	Attribute("targeting", Any, "Targeting recommendation")
+	Required("program_type", "event_slug")
+})
+
+// BriefWriteInput is the CREATE/UPDATE payload. It exists solely to carry MinLength(1) on
+// event_slug WITHOUT that constraint reaching the response type.
+//
+// goa's Required() only checks that the JSON key is present, so an explicit "" satisfies it and
+// the TEXT NOT NULL column accepts it — a brief with an empty slug was creatable, occupied the
+// UNIQUE(project_id, event_slug) index, and could never be recalled through find-brief (whose
+// own MinLength(1) rejects the request with a 400 rather than the documented 404/200).
+//
+// It cannot live on BriefInput: the Brief RESPONSE type Reference()s BriefInput and goa copies
+// validations through Reference, so any already-persisted empty-slug row would become
+// undecodable by generated clients — breaking reads for exactly the rows this prevents going
+// forward. Requests reject empty slugs; responses stay readable.
+var BriefWriteInput = Type("brief-write-input", func() {
+	Reference(BriefInput)
+	Attribute("program_type")
+	Attribute("event_slug", String, "Event/course slug (unique within the project)", func() {
+		MinLength(1)
+	})
+	Attribute("url")
+	Attribute("platforms")
+	Attribute("event_details")
+	Attribute("copy")
+	Attribute("keywords")
+	Attribute("targeting")
 	Required("program_type", "event_slug")
 })
 
@@ -51,7 +76,13 @@ var Brief = Type("brief", func() {
 	Attribute("project_id", String, "Owning project")
 	// Inherited from BriefInput via Reference (name-only Attribute calls).
 	Attribute("program_type")
-	Attribute("event_slug")
+	// event_slug is redeclared here (NOT inherited via Reference) so the CREATE constraint
+	// MinLength(1) does not leak into the RESPONSE validator. Reference() copies validations,
+	// and the response type is shared by every brief-returning method — so inheriting it would
+	// make any already-persisted empty-slug row undecodable by generated clients, breaking even
+	// get-brief for exactly the rows the create-side fix is meant to prevent going forward.
+	// Requests reject empty slugs; responses stay readable for legacy data.
+	Attribute("event_slug", String, "Event/course slug (unique within the project)")
 	Attribute("url")
 	Attribute("platforms")
 	Attribute("event_details")
@@ -179,7 +210,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// Slug-only on CREATE: project_id becomes the campaign-name attribution key,
 			// so a UUID here would break the slug-based join (projectSlugAttr rejects it).
 			projectSlugAttr()
-			Attribute("brief", BriefInput)
+			Attribute("brief", BriefWriteInput)
 			Required("project_id", "brief")
 		})
 		Result(Brief)
@@ -251,7 +282,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			projectIDAttr()
 			briefIDAttr()
 			ifMatchAttr()
-			Attribute("brief", BriefInput)
+			Attribute("brief", BriefWriteInput)
 			Required("project_id", "brief_id", "brief")
 		})
 		Result(Brief)

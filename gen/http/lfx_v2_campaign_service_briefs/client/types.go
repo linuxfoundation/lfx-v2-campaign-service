@@ -17,13 +17,13 @@ import (
 // CreateBriefRequestBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "create-brief" endpoint HTTP request body.
 type CreateBriefRequestBody struct {
-	Brief *BriefInputRequestBody `form:"brief" json:"brief" xml:"brief"`
+	Brief *BriefWriteInputRequestBody `form:"brief" json:"brief" xml:"brief"`
 }
 
 // UpdateBriefRequestBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "update-brief" endpoint HTTP request body.
 type UpdateBriefRequestBody struct {
-	Brief *BriefInputRequestBody `form:"brief" json:"brief" xml:"brief"`
+	Brief *BriefWriteInputRequestBody `form:"brief" json:"brief" xml:"brief"`
 }
 
 // CreateCampaignsRequestBody is the type of the
@@ -918,8 +918,8 @@ type GetJobNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
-// BriefInputRequestBody is used to define fields on request body types.
-type BriefInputRequestBody struct {
+// BriefWriteInputRequestBody is used to define fields on request body types.
+type BriefWriteInputRequestBody struct {
 	// Funnel context
 	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
 	// Event/course slug (unique within the project)
@@ -978,7 +978,7 @@ type PlatformResultResponseBody struct {
 func NewCreateBriefRequestBody(p *lfxv2campaignservicebriefs.CreateBriefPayload) *CreateBriefRequestBody {
 	body := &CreateBriefRequestBody{}
 	if p.Brief != nil {
-		body.Brief = marshalLfxv2campaignservicebriefsBriefInputToBriefInputRequestBody(p.Brief)
+		body.Brief = marshalLfxv2campaignservicebriefsBriefWriteInputToBriefWriteInputRequestBody(p.Brief)
 	}
 	return body
 }
@@ -988,7 +988,7 @@ func NewCreateBriefRequestBody(p *lfxv2campaignservicebriefs.CreateBriefPayload)
 func NewUpdateBriefRequestBody(p *lfxv2campaignservicebriefs.UpdateBriefPayload) *UpdateBriefRequestBody {
 	body := &UpdateBriefRequestBody{}
 	if p.Brief != nil {
-		body.Brief = marshalLfxv2campaignservicebriefsBriefInputToBriefInputRequestBody(p.Brief)
+		body.Brief = marshalLfxv2campaignservicebriefsBriefWriteInputToBriefWriteInputRequestBody(p.Brief)
 	}
 	return body
 }
@@ -1977,11 +1977,6 @@ func ValidateCreateBriefResponseBody(body *CreateBriefResponseBody) (err error) 
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
-	if body.EventSlug != nil {
-		if utf8.RuneCountInString(*body.EventSlug) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
-		}
-	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -2014,11 +2009,6 @@ func ValidateFindBriefResponseBody(body *FindBriefResponseBody) (err error) {
 	if body.ProgramType != nil {
 		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
-		}
-	}
-	if body.EventSlug != nil {
-		if utf8.RuneCountInString(*body.EventSlug) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
 		}
 	}
 	if body.Status != nil {
@@ -2055,11 +2045,6 @@ func ValidateGetBriefResponseBody(body *GetBriefResponseBody) (err error) {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
-	if body.EventSlug != nil {
-		if utf8.RuneCountInString(*body.EventSlug) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
-		}
-	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -2094,11 +2079,6 @@ func ValidateUpdateBriefResponseBody(body *UpdateBriefResponseBody) (err error) 
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
-	if body.EventSlug != nil {
-		if utf8.RuneCountInString(*body.EventSlug) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
-		}
-	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -2131,11 +2111,6 @@ func ValidateApproveBriefResponseBody(body *ApproveBriefResponseBody) (err error
 	if body.ProgramType != nil {
 		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
-		}
-	}
-	if body.EventSlug != nil {
-		if utf8.RuneCountInString(*body.EventSlug) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
 		}
 	}
 	if body.Status != nil {
@@ -3031,9 +3006,9 @@ func ValidateGetJobNotFoundResponseBody(body *GetJobNotFoundResponseBody) (err e
 	return
 }
 
-// ValidateBriefInputRequestBody runs the validations defined on
-// brief-inputRequestBody
-func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
+// ValidateBriefWriteInputRequestBody runs the validations defined on
+// brief-write-inputRequestBody
+func ValidateBriefWriteInputRequestBody(body *BriefWriteInputRequestBody) (err error) {
 	if !(body.ProgramType == "events" || body.ProgramType == "education" || body.ProgramType == "membership") {
 		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", body.ProgramType, []any{"events", "education", "membership"}))
 	}
