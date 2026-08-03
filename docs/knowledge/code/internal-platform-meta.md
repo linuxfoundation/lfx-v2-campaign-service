@@ -101,4 +101,34 @@ UNCONFIRMED, so a create that may have committed is not blind-retried into a
 duplicate. The status is preserved even when the response body is unreadable or
 oversized, so an ambiguous outcome is never downgraded to a definite failure.
 
+## Campaign status toggle
+
+`UpdateCampaignAndChildrenStatus(ctx, campaignID, adSetID, status)` pauses/resumes a campaign
+AND cascades to its ad set + ads, because Meta's create PAUSES all three — toggling only the
+campaign to ACTIVE would leave the ad set/ads PAUSED and the campaign would not serve. Each
+entity is updated by POSTing to its node id with `{"status": "ACTIVE"|"PAUSED"}` (Meta's Graph
+API updates a node by POSTing to the node id with the changed field; the same status enum the
+create path sets). Meta persists the ad set id (in the campaign result) but NOT the individual
+ad ids, so the ads are DISCOVERED via `GET /{adSetID}/ads` (paged; an unexpected/looping
+cursor, the page cap, or an ad with no usable id fails the discovery rather than silently
+truncating). Ordering is STATUS-DEPENDENT (Meta gates a child's serving by its parent's status
+— a paused parent is inherited by all children) and DISCOVER-FIRST: the ads are enumerated (a
+GET) BEFORE any mutation, then on ACTIVATE the ads are updated, then the ad set, and the campaign
+is flipped ACTIVE LAST (every child stays gated by the paused campaign until that flip, so a
+mid-cascade failure leaves NOTHING serving); PAUSE flips the campaign gate FIRST then the
+children. Ids are validated numeric up front (nothing applied on a bad id); activating with no
+ad set id — or with an ad set that has ZERO ads (a degraded broker campaign, since Meta treats
+per-variant ad failures as non-fatal at creation) — is refused BEFORE any mutation via
+`ErrCampaignNotServable` (the dispatcher maps it to a deterministic 409, so a degraded campaign
+converges to a "reprovision" error instead of looping on a transient 503 that re-POSTs the ad
+set each retry). A failure once an upstream change may have landed — the pause path, an ambiguous
+5xx/transport outcome, OR any activate-path failure AFTER the first ad (or the ad set) was
+updated — is a `partialCascadeError` (Unconfirmed). A DEFINITE (4xx) failure BEFORE any child has
+been mutated (including a discovery failure, which now precedes all mutation) is a clean failure. `StatusActive`/`StatusPaused` are the
+accepted values; ids are validated numeric (`numericIDRE`) before interpolation. The narrower
+`UpdateCampaignStatus(ctx, campaignID, status)` (campaign node only) is retained as the
+building block. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classifier (and honors
+the `Unconfirmed()` behavioral interface) so a caller can tell a maybe-applied outcome
+(transport/5xx/3xx-mutating, or a partial cascade) from a definite rejection.
+
 See [internal/platform/meta](../../../internal/platform/meta).
