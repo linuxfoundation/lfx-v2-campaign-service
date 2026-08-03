@@ -2,6 +2,18 @@
 
 ## 2026-08-03
 
+**Update** — Added `idx_campaigns_stuck_claims` (LFXV2-2665, PR #59 review, migration 000008).
+The stuck-claim scan filters `campaigns` on `status = 'pending' AND created_at < …` and now runs
+every 5m on EVERY replica, with no supporting index — a full scan that grows unbounded as
+terminal campaign rows accumulate, while the set it cares about ('pending' claims) stays tiny and
+is usually empty.
+
+A PARTIAL index on `created_at WHERE status = 'pending'` keeps the index small and also serves
+the query's `ORDER BY created_at ASC`, so the `LIMIT` stops early instead of sorting the whole
+match set. This mirrors `idx_campaign_jobs_recovery` (000004), which exists for the same reason
+on the analogous stuck-JOB sweep — the periodic sweep added in this PR is what made the index
+necessary rather than merely nice.
+
 **Update** — Corrected the sweeper-stop reasoning (LFXV2-2665, PR #59 review). The bounded wait
 was right but its justification was WRONG: the comment claimed an abandoned sweeper "holds no
 pool reference". It does — `StuckDispatchClaims` runs a `pgxpool.Query`, which holds a pooled
