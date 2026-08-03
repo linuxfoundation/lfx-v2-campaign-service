@@ -1,5 +1,22 @@
 # Log
 
+## 2026-08-03
+
+**Update** — Closed an event_slug validation gap (LFXV2-2812, PR #55 review, @dealako). The
+find-brief lookup enforces `MinLength(1)` on `event_slug`, but `BriefInput.event_slug` — the
+CREATE contract — had only `Required()`. goa's `Required()` checks that the JSON key is PRESENT,
+not that the string is non-empty, and the `TEXT NOT NULL` column accepts `""` too.
+
+So a brief with an empty slug was creatable, occupied the `UNIQUE(project_id, event_slug)`
+index, and could then NEVER be recalled through the lookup — the caller got a 400 rather than
+the documented 404 (no brief yet) or 200 (found), and a re-create collided.
+
+`BriefInput.event_slug` now carries `MinLength(1)` so the two contracts agree. The comment on
+the lookup asserting that an empty slug "can never match a stored row" was simply FALSE and has
+been replaced with the real reason it is safe: the create side now rejects it. Loosening either
+constraint reopens the gap. `TestBriefInput_RejectsEmptyEventSlug` asserts the GENERATED
+validator, so dropping the constraint in the design and regenerating fails the test.
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
@@ -53,6 +70,7 @@ re-paste correctly 404s into a fresh generation.
 On D5 (Query Service owns lists): this is a KEYED item read, not a list — the unique index
 means it matches at most one brief, returning the same one-item-plus-ETag shape as
 `GET /briefs/{id}`, which D5 retains. Recorded in api-catalog.md next to the rule.
+
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
@@ -98,6 +116,7 @@ a live caller context is a FAILED lookup (UNCONFIRMED), not a clean abort. Also,
 duplicate-name self-heal whose reconciliation re-lookup errors now surfaces that
 cause. Aligned the `internal-platform-microsoft` concept + the older log entry to
 the corrected `ctx.Err()` distinction and the duplicate-name-REJECTED contract.
+
 ## 2026-07-23
 
 **Update** — Microsoft Ads MS-2.5 PR #45 review follow-up (copilot + cursor). (1) The ≥1-word
@@ -318,6 +337,7 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
+
 ## 2026-07-21
 
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review

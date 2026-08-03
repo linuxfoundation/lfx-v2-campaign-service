@@ -22,7 +22,14 @@ var BriefInput = Type("brief-input", func() {
 	Attribute("program_type", String, "Funnel context", func() {
 		Enum("events", "education", "membership")
 	})
-	Attribute("event_slug", String, "Event/course slug (unique within the project)")
+	// MinLength(1) is REQUIRED here, not merely tidy: goa's Required() checks only that the
+	// JSON key is PRESENT, so an explicit "" satisfies it, and the TEXT NOT NULL column accepts
+	// it too. Without this a brief with an empty slug is creatable, occupies the
+	// UNIQUE(project_id, event_slug) index, and can never be recalled through the
+	// find-by-event-slug lookup (whose own MinLength(1) rejects the request with a 400).
+	Attribute("event_slug", String, "Event/course slug (unique within the project)", func() {
+		MinLength(1)
+	})
 	Attribute("url", String, "Event/course page URL")
 	Attribute("platforms", ArrayOf(String), "Suggested default platforms (a planning hint; binding selection is on the campaign)")
 	Attribute("event_details", Any, "Extracted event/course details")
@@ -193,8 +200,13 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// NO MaxLength: BriefInput.event_slug is uncapped and the column is unbounded
 			// TEXT, so any cap here would make a brief the create contract accepted
 			// permanently unrecallable — the caller would get a validation error instead of
-			// its saved brief, then collide on re-create. MinLength(1) only rejects the
-			// empty string, which can never match a stored row.
+			// its saved brief, then collide on re-create.
+			//
+			// MinLength(1) here is SAFE because BriefInput.event_slug now carries the same
+			// constraint. It did not originally: goa's Required() only checks that the JSON
+			// key is present, so an explicit "" was creatable and would then have been
+			// unrecallable through this endpoint — a 400 instead of the documented 404/200.
+			// The two contracts must stay in sync; loosening either one reopens that gap.
 			Attribute("event_slug", String, "Event slug derived from the event page URL.", func() {
 				Example("kubecon-eu-2026")
 				MinLength(1)

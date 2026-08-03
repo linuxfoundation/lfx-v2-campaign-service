@@ -8,6 +8,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	lfxv2campaignservicebriefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -1975,6 +1977,11 @@ func ValidateCreateBriefResponseBody(body *CreateBriefResponseBody) (err error) 
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
+	if body.EventSlug != nil {
+		if utf8.RuneCountInString(*body.EventSlug) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
+		}
+	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -2007,6 +2014,11 @@ func ValidateFindBriefResponseBody(body *FindBriefResponseBody) (err error) {
 	if body.ProgramType != nil {
 		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
+	if body.EventSlug != nil {
+		if utf8.RuneCountInString(*body.EventSlug) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
 		}
 	}
 	if body.Status != nil {
@@ -2043,6 +2055,11 @@ func ValidateGetBriefResponseBody(body *GetBriefResponseBody) (err error) {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
+	if body.EventSlug != nil {
+		if utf8.RuneCountInString(*body.EventSlug) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
+		}
+	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -2077,6 +2094,11 @@ func ValidateUpdateBriefResponseBody(body *UpdateBriefResponseBody) (err error) 
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
 		}
 	}
+	if body.EventSlug != nil {
+		if utf8.RuneCountInString(*body.EventSlug) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
+		}
+	}
 	if body.Status != nil {
 		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
@@ -2109,6 +2131,11 @@ func ValidateApproveBriefResponseBody(body *ApproveBriefResponseBody) (err error
 	if body.ProgramType != nil {
 		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
+	if body.EventSlug != nil {
+		if utf8.RuneCountInString(*body.EventSlug) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
 		}
 	}
 	if body.Status != nil {
@@ -3009,6 +3036,9 @@ func ValidateGetJobNotFoundResponseBody(body *GetJobNotFoundResponseBody) (err e
 func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 	if !(body.ProgramType == "events" || body.ProgramType == "education" || body.ProgramType == "membership") {
 		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", body.ProgramType, []any{"events", "education", "membership"}))
+	}
+	if utf8.RuneCountInString(body.EventSlug) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", body.EventSlug, utf8.RuneCountInString(body.EventSlug), 1, true))
 	}
 	return
 }

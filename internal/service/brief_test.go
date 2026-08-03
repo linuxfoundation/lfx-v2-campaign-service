@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -1029,5 +1030,41 @@ func TestFindBrief_IsScopedToProject(t *testing.T) {
 
 	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "other-foundation", EventSlug: "kubecon-eu-2026"}); err == nil {
 		t.Fatal("a brief must not be visible to a different project")
+	}
+}
+
+// TestBriefInput_RejectsEmptyEventSlug pins that the CREATE contract and the find-by-slug
+// LOOKUP contract agree on event_slug.
+//
+// They originally did not. goa's Required() checks only that the JSON key is PRESENT, so an
+// explicit "" satisfied it, and the TEXT NOT NULL column accepts it — meaning a brief with an
+// empty slug was creatable, occupied the UNIQUE(project_id, event_slug) index, and could never
+// be recalled through find-brief (whose own MinLength(1) rejects the request with a 400
+// instead of the documented 404/200).
+//
+// Asserting on the GENERATED validator is the point: the constraint lives in design/brief.go,
+// so this fails if someone drops MinLength(1) there and regenerates.
+func TestBriefInput_RejectsEmptyEventSlug(t *testing.T) {
+	empty := ""
+	programType := "events"
+
+	err := briefsserver.ValidateBriefInputRequestBody(&briefsserver.BriefInputRequestBody{
+		ProgramType: &programType,
+		EventSlug:   &empty,
+	})
+	if err == nil {
+		t.Fatal("an empty event_slug must be rejected at create: it is creatable but permanently unrecallable")
+	}
+	if !strings.Contains(err.Error(), "event_slug") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+
+	// A real slug still passes — the constraint must not reject ordinary input.
+	slug := "kubecon-eu-2026"
+	if verr := briefsserver.ValidateBriefInputRequestBody(&briefsserver.BriefInputRequestBody{
+		ProgramType: &programType,
+		EventSlug:   &slug,
+	}); verr != nil {
+		t.Errorf("a real slug must still validate, got: %v", verr)
 	}
 }

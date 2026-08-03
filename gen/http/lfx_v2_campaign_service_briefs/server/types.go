@@ -8,6 +8,8 @@
 package server
 
 import (
+	"unicode/utf8"
+
 	lfxv2campaignservicebriefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -2092,6 +2094,11 @@ func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 	if body.ProgramType != nil {
 		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
+	if body.EventSlug != nil {
+		if utf8.RuneCountInString(*body.EventSlug) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
 		}
 	}
 	return
