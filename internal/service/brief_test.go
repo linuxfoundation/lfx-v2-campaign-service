@@ -916,3 +916,70 @@ func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing
 		t.Error("the platform must NOT be called for a pending campaign")
 	}
 }
+
+// nonTogglerDispatcher is a PlatformDispatcher that does NOT implement StatusToggler, which
+// is exactly the shape of the hubspot (email) adapter: it stages a draft and has no run state.
+type nonTogglerDispatcher struct{}
+
+func (nonTogglerDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("not used in this test")
+}
+
+// TestToggleUnsupported_EmailGetsADistinctMessage drives the REAL handler path — repo,
+// orchestrator, and a dispatcher lacking StatusToggler — and asserts the message a caller
+// actually receives. An earlier version of this test only re-asserted Provider.Kind(), so the
+// email-specific message could have been deleted and it would have stayed green.
+func TestToggleUnsupported_EmailGetsADistinctMessage(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name        string
+		platform    model.Provider
+		wantContain string
+	}{
+		// Email: nothing to pause BY DESIGN. The message must say so, or an operator reads a
+		// generic "not supported" as a missing feature and files a bug.
+		{"email channel", model.ProviderHubSpot, "email channel"},
+		// A paid platform with no toggler wired keeps the generic message — there it really
+		// IS unimplemented, and claiming "email has no run state" would be wrong.
+		{"paid platform", model.ProviderRedditAds, "not supported for this campaign's platform"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+				ID: "b1", ProjectID: "cncf", EventSlug: "ev", Status: model.BriefApproved,
+			}
+			camps := &fakeCampaignRepo{}
+			camps.byID = map[string]*model.Campaign{
+				"c1": {
+					ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: tc.platform,
+					PlatformCampaignID: "up-1", Status: model.CampaignStatusCreated, Version: 1,
+				},
+			}
+			jobs := newFakeJobRepo()
+			// The dispatcher exists (so it is not "no dispatcher registered") but does not
+			// implement StatusToggler — the real hubspot situation.
+			orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+				tc.platform: nonTogglerDispatcher{},
+			})
+			s := NewBriefService(nil, nil, nil, nil)
+			s.SetBackend(repo, camps, jobs, orch)
+
+			etag := `"1"` // matches the campaign's Version, satisfying the If-Match gate
+			_, err := s.ToggleCampaignStatus(ctx, &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+				Status: model.CampaignRunPaused, IfMatch: &etag,
+			})
+			if err == nil {
+				t.Fatal("expected a 400 when the platform has no toggle capability")
+			}
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("want a BadRequestError (400), got %T: %v", err, err)
+			}
+			if !strings.Contains(bad.Message, tc.wantContain) {
+				t.Errorf("message = %q, want it to contain %q", bad.Message, tc.wantContain)
+			}
+		})
+	}
+}
