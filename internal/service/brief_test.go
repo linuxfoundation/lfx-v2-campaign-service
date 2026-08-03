@@ -1029,20 +1029,21 @@ func TestDeleteBrief_PublishesArchivedState(t *testing.T) {
 	}
 	// Archiving is a soft DELETE: republishing it as an update would leave the document
 	// findable, which is the whole failure this test guards.
-	if got.Action != indexer.ActionDelete {
-		t.Errorf("action = %q, want %q — an archived brief must be removed from the index", got.Action, indexer.ActionDelete)
+	if got.Action != indexer.ActionDeleted {
+		t.Errorf("action = %q, want %q — an archived brief must be removed from the index", got.Action, indexer.ActionDeleted)
 	}
 	if got.IndexingConfig == nil || got.IndexingConfig.ObjectID != created.ID {
 		t.Errorf("indexing_config.object_id = %+v, want %q", got.IndexingConfig, created.ID)
 	}
-	// The published payload is the INDEXED doc (snake_case json tags), not the goa response
-	// type — see indexer.BriefDoc for why the two are deliberately different.
-	b, ok := got.Data.(indexer.BriefDoc)
+	// A DELETE carries the bare object id, not a document: the indexer type-asserts delete
+	// data to a string and rejects an object with "expected string", so passing a document
+	// means the archived brief is never removed from search.
+	id, ok := got.Data.(string)
 	if !ok {
-		t.Fatalf("published data = %T, want indexer.BriefDoc", got.Data)
+		t.Fatalf("published data = %T, want the bare object id string", got.Data)
 	}
-	if b.Status != string(model.BriefArchived) {
-		t.Errorf("published status = %q, want %q — an archived brief indexed with its old status stays searchable", b.Status, model.BriefArchived)
+	if id != created.ID {
+		t.Errorf("published id = %q, want %q", id, created.ID)
 	}
 }
 

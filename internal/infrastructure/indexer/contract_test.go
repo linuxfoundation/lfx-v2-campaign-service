@@ -21,14 +21,15 @@ func TestSubject(t *testing.T) {
 // service: the indexer REJECTS the message ("missing or invalid action in message data") and
 // indexing silently does nothing, which is exactly what an earlier flat-body version did.
 func TestTransaction_MatchesTheIndexerEnvelope(t *testing.T) {
-	raw, err := json.Marshal(NewTransaction(ActionCreate, ObjectTypeBrief, "b1", "cncf", map[string]any{"id": "b1"}))
+	raw, err := json.Marshal(NewTransaction(ActionCreated, ObjectTypeBrief, "b1", "cncf", "Bearer t0ken", map[string]any{"id": "b1"}))
 	require.NoError(t, err)
 
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(raw, &got))
 
 	// The four top-level fields the indexer requires.
-	assert.Equal(t, "create", got["action"], "a message with no/invalid action is rejected outright")
+	// V2 accepts ONLY past tense — its validator rejects "create"/"update"/"delete".
+	assert.Equal(t, "created", got["action"], "a message with an invalid action is rejected outright")
 	require.Contains(t, got, "headers", "headers are read from the PAYLOAD, not native NATS headers")
 	require.Contains(t, got, "data")
 	require.Contains(t, got, "indexing_config", "without it the resource has no id and no FGA metadata")
@@ -51,7 +52,7 @@ func TestTransaction_MatchesTheIndexerEnvelope(t *testing.T) {
 // TestTransaction_RoutesByObjectType pins that the object type reaches the SUBJECT even though
 // it is not serialized into the payload.
 func TestTransaction_RoutesByObjectType(t *testing.T) {
-	tx := NewTransaction(ActionUpdate, ObjectTypeCampaign, "c1", "cncf", nil)
+	tx := NewTransaction(ActionUpdated, ObjectTypeCampaign, "c1", "cncf", "Bearer t0ken", nil)
 	assert.Equal(t, ObjectTypeCampaign, tx.ObjectType())
 	assert.Equal(t, "lfx.index.campaign", Subject(tx.ObjectType()))
 
@@ -66,15 +67,31 @@ func TestTransaction_RoutesByObjectType(t *testing.T) {
 
 // TestTransaction_ActionsAreTheIndexersVocabulary guards the exact strings.
 func TestTransaction_ActionsAreTheIndexersVocabulary(t *testing.T) {
-	assert.Equal(t, "create", ActionCreate)
-	assert.Equal(t, "update", ActionUpdate)
-	assert.Equal(t, "delete", ActionDelete)
+	assert.Equal(t, "created", ActionCreated)
+	assert.Equal(t, "updated", ActionUpdated)
+	assert.Equal(t, "deleted", ActionDeleted)
 }
 
-// TestTransaction_HeadersAreNonNil pins that headers marshal as an object, not null: the
-// indexer type-asserts the value, so a null would fail the assertion.
-func TestTransaction_HeadersAreNonNil(t *testing.T) {
-	raw, err := json.Marshal(NewTransaction(ActionCreate, ObjectTypeBrief, "b1", "cncf", nil))
+// TestTransaction_CarriesTheAuthorizationHeader pins the header the indexer REQUIRES. Its
+// validateV2Headers drops any V2 message whose `authorization` is missing or empty, so an empty
+// map means the resource silently never gets indexed.
+func TestTransaction_CarriesTheAuthorizationHeader(t *testing.T) {
+	raw, err := json.Marshal(NewTransaction(ActionCreated, ObjectTypeBrief, "b1", "cncf", "Bearer t0ken", nil))
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"headers":{}`)
+	assert.Contains(t, string(raw), `"authorization":"Bearer t0ken"`,
+		"V2 REQUIRES a non-empty authorization header; a message without one is dropped")
+}
+
+// TestTransaction_DeleteCarriesTheBareID pins the delete payload. The indexer type-asserts
+// delete data to a STRING and rejects an object with "expected string" — passing a document
+// there means an archived resource is never removed from search.
+func TestTransaction_DeleteCarriesTheBareID(t *testing.T) {
+	tx := NewTransaction(ActionDeleted, ObjectTypeBrief, "b1", "cncf", "Bearer t0ken",
+		BriefDoc{ID: "b1", ProjectID: "cncf"})
+	assert.Equal(t, "b1", tx.Data, "a delete must carry the bare object id, not a document")
+
+	// A create/update still carries the document.
+	tx = NewTransaction(ActionUpdated, ObjectTypeBrief, "b1", "cncf", "Bearer t0ken",
+		BriefDoc{ID: "b1", ProjectID: "cncf"})
+	assert.IsType(t, BriefDoc{}, tx.Data)
 }

@@ -263,7 +263,7 @@ func TestOrchestrator_AllSucceed(t *testing.T) {
 		model.ProviderLinkedInAds: okDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil, "Bearer test")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestOrchestrator_PartialFailure(t *testing.T) {
 		model.ProviderLinkedInAds: failDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobPartial {
 		t.Errorf("status = %s, want partial", j.Status)
@@ -307,7 +307,7 @@ func TestOrchestrator_PreservesDegradedStatusOnRetainedOrphan(t *testing.T) {
 				model.ProviderLinkedInAds: partialOrphanDispatcher{status: status},
 			})
 			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-			id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+			id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil, "Bearer test")
 			if err != nil {
 				t.Fatalf("Start: %v", err)
 			}
@@ -361,7 +361,7 @@ func TestOrchestrator_PreservesCreatedDegradedWithID(t *testing.T) {
 		model.ProviderLinkedInAds: degradedCreatedDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil, "Bearer test")
 	waitForTerminal(t, jobs, id)
 
 	row := camps.existing["b1|"+string(model.ProviderLinkedInAds)]
@@ -416,7 +416,7 @@ func TestOrchestrator_NoDispatcherFails(t *testing.T) {
 	camps := &fakeCampaignRepo{}
 	orch := NewOrchestrator(camps, jobs, nil) // no dispatchers
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -430,7 +430,7 @@ func TestOrchestrator_NilCampaignFailsWithoutPanic(t *testing.T) {
 		model.ProviderGoogleAds: nilDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -467,7 +467,7 @@ func TestOrchestrator_SkipsAlreadyDispatchedPlatform(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestOrchestrator_PendingOrphanWithIDIsNotAFastPathSuccess(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -548,7 +548,7 @@ func TestOrchestrator_IDlessOrphanWithResultIsNotASkipSuccess(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -572,7 +572,7 @@ func TestOrchestrator_ClaimErrorIsFailure(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -598,7 +598,7 @@ func TestOrchestrator_IdempotencyLookupErrorIsFailure(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -632,7 +632,7 @@ func TestOrchestrator_AlreadyClaimedPendingSkips(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	// A skipped platform (owned by a concurrent dispatch) is a deferral, not a
 	// failure — the job terminalizes as SUCCEEDED (not stuck-running, which the
 	// recovery sweeper would later fail; not failed, which would be spurious).
@@ -727,7 +727,7 @@ func TestOrchestrator_SkipDoesNotFailAlongsideSuccess(t *testing.T) {
 		model.ProviderLinkedInAds: okDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil, "Bearer test")
 	j := waitForFinalized(t, jobs, id)
 	if j.Status != model.JobSucceeded {
 		t.Errorf("status = %s, want succeeded (a skip alongside a success terminalizes succeeded, not failed/partial/stuck)", j.Status)
@@ -778,7 +778,7 @@ func TestOrchestrator_EmptyUpstreamIDIsFailure(t *testing.T) {
 		model.ProviderGoogleAds: emptyIDDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -799,7 +799,7 @@ func TestOrchestrator_ReusesExistingWhenDispatcherGone(t *testing.T) {
 	// No dispatchers registered at all.
 	orch := NewOrchestrator(camps, jobs, nil)
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobSucceeded {
 		t.Errorf("status = %s, want succeeded (existing campaign reused despite no dispatcher)", j.Status)
@@ -826,7 +826,7 @@ func TestOrchestrator_RecoversFromDispatcherPanic(t *testing.T) {
 		model.ProviderGoogleAds: panicDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -853,7 +853,7 @@ func TestOrchestrator_PersistErrorIsSanitized(t *testing.T) {
 		model.ProviderGoogleAds: okDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -895,7 +895,7 @@ func TestOrchestrator_DispatchGoesThroughClaim(t *testing.T) {
 		model.ProviderLinkedInAds: okDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds}, nil, "Bearer test")
 	waitForTerminal(t, jobs, id)
 	camps.cmu.Lock()
 	defer camps.cmu.Unlock()
@@ -926,7 +926,7 @@ func TestOrchestrator_ShutdownDrainsInFlight(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	<-disp.started // dispatch is now in-flight
 
 	shutdownReturned := make(chan error, 1)
@@ -962,7 +962,7 @@ func TestOrchestrator_ShutdownGraceHonorsContextCancel(t *testing.T) {
 	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	<-disp.started
 	<-ctxSeen
 
@@ -1028,7 +1028,7 @@ func TestOrchestrator_StartRejectedAfterShutdown(t *testing.T) {
 		t.Fatalf("Shutdown: %v", err)
 	}
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	if _, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil); err == nil {
+	if _, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test"); err == nil {
 		t.Fatal("expected Start to be rejected after Shutdown")
 	}
 }
@@ -1065,7 +1065,7 @@ func TestOrchestrator_ShutdownCancelsOnTimeout(t *testing.T) {
 	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	<-disp.started
 	dctx := <-ctxSeen
 
@@ -1095,7 +1095,7 @@ func TestOrchestrator_ShutdownGraceBoundedByContext(t *testing.T) {
 	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	<-disp.started
 	<-ctxSeen // drain the captured ctx so Dispatch can proceed to <-release
 
@@ -1131,7 +1131,7 @@ func TestOrchestrator_ShutdownGivesGraceWhenBudgetRemains(t *testing.T) {
 	disp := &ctxCapturingDispatcher{started: make(chan struct{}), release: make(chan struct{}), ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	_, _ = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	<-disp.started
 	dctx := <-ctxSeen // the dispatch's own context, cancelled by rootCancel
 
@@ -1189,7 +1189,7 @@ func TestOrchestrator_NoDispatcherDoesNotLeavePendingClaim(t *testing.T) {
 	camps := &fakeCampaignRepo{}
 	orch := NewOrchestrator(camps, jobs, nil) // no dispatchers
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	waitForTerminal(t, jobs, id)
 	camps.mu.Lock()
 	defer camps.mu.Unlock()
@@ -1222,7 +1222,7 @@ func TestOrchestrator_PreCreateErrorReleasesClaim(t *testing.T) {
 		model.ProviderGoogleAds: preCreateErrDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	waitForTerminal(t, jobs, id)
 	camps.mu.Lock()
 	defer camps.mu.Unlock()
@@ -1254,7 +1254,7 @@ func TestOrchestrator_PartialDispatchErrorPersistsUpstreamID(t *testing.T) {
 		model.ProviderGoogleAds: partialResultDispatcher{},
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	j := waitForTerminal(t, jobs, id)
 	if j.Status != model.JobFailed {
 		t.Errorf("status = %s, want failed", j.Status)
@@ -1388,7 +1388,7 @@ func TestOrchestrator_PersistSurvivesDispatchCancel(t *testing.T) {
 	disp := &cancelThenReturnDispatcher{ctxSeen: ctxSeen}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test")
 	<-ctxSeen // dispatch is in-flight
 
 	// Drain with an already-past deadline so Shutdown immediately cancels the run's

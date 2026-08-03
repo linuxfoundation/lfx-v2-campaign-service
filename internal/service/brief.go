@@ -68,6 +68,14 @@ func (s *BriefService) IndexerIsNoop() bool {
 	return isNoop
 }
 
+// deref returns a bearer token, tolerating the generated payload's optional pointer.
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // briefDoc maps a brief response to the INDEXED shape. The generated briefs.Brief has no json
 // tags, so publishing it directly emits PascalCase keys that no API-shaped consumer matches.
 func briefDoc(b *briefs.Brief) indexer.BriefDoc {
@@ -105,14 +113,17 @@ func derefStr(s *string) string {
 
 // publishIndex sends a resource snapshot to the Query Service. Best-effort by contract: the
 // database already committed, so a publish problem must never surface to the caller.
-func (s *BriefService) publishIndex(ctx context.Context, action, objectType, objectID, projectID string, data any) {
+// publishIndex sends a resource snapshot to the indexer. bearer is the caller's token: the
+// indexer REQUIRES a non-empty authorization header on every message and silently drops those
+// without one, so this must be threaded from the request rather than left empty.
+func (s *BriefService) publishIndex(ctx context.Context, action, objectType, objectID, projectID, bearer string, data any) {
 	s.mu.RLock()
 	p := s.indexer
 	s.mu.RUnlock()
 	if p == nil {
 		return
 	}
-	p.Publish(ctx, indexer.NewTransaction(action, objectType, objectID, projectID, data))
+	p.Publish(ctx, indexer.NewTransaction(action, objectType, objectID, projectID, bearer, data))
 }
 
 // NewBriefService constructs a BriefService. The index publisher is NOT a parameter: it is
@@ -249,7 +260,7 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 	// events — is a deliberate follow-up (LFXV2-2665), not part of this PR. This
 	// persistence layer is the source of truth the indexer consumes; publishing is
 	// best-effort and never fails the write (see publishIndex).
-	s.publishIndex(ctx, indexer.ActionCreate, indexer.ObjectTypeBrief, created.ID, created.ProjectID, briefDoc(briefResult(created)))
+	s.publishIndex(ctx, indexer.ActionCreated, indexer.ObjectTypeBrief, created.ID, created.ProjectID, deref(p.BearerToken), briefDoc(briefResult(created)))
 	return briefResult(created), nil
 }
 
@@ -291,7 +302,7 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdate, indexer.ObjectTypeBrief, updated.ID, updated.ProjectID, briefDoc(briefResult(updated)))
+	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeBrief, updated.ID, updated.ProjectID, deref(p.BearerToken), briefDoc(briefResult(updated)))
 	return briefResult(updated), nil
 }
 
@@ -308,7 +319,7 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdate, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefDoc(briefResult(b)))
+	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeBrief, b.ID, b.ProjectID, deref(p.BearerToken), briefDoc(briefResult(b)))
 	return briefResult(b), nil
 }
 
@@ -329,7 +340,7 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// archived brief keeps its stale pre-archive _source and goes on matching searches forever.
 	// Archiving is a SOFT delete, and the indexer's delete action is what removes the
 	// document from search — republishing it as an update would leave it findable.
-	s.publishIndex(ctx, indexer.ActionDelete, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefDoc(briefResult(b)))
+	s.publishIndex(ctx, indexer.ActionDeleted, indexer.ObjectTypeBrief, b.ID, b.ProjectID, deref(p.BearerToken), briefDoc(briefResult(b)))
 	return nil
 }
 
@@ -381,7 +392,7 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	// (which resets it to draft, bumping version) or archive committing between this
 	// read and job creation makes Start fail (domain.ErrStaleApproval → 409) rather
 	// than launching paid campaigns from a stale "approved" snapshot.
-	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, marshalAny(p.Input.Config))
+	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, marshalAny(p.Input.Config), deref(p.BearerToken))
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -449,7 +460,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdate, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignDoc(campaignResult(updated)))
+	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, deref(p.BearerToken), campaignDoc(campaignResult(updated)))
 	return campaignResult(updated), nil
 }
 
@@ -557,7 +568,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// still records a platform change that already happened. Publishing on ctx would drop
 	// exactly those index updates — the campaign's status would be right in the database and
 	// stale in search, for the requests most likely to need reconciling.
-	s.publishIndex(persistCtx, indexer.ActionUpdate, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignDoc(campaignResult(updated)))
+	s.publishIndex(persistCtx, indexer.ActionUpdated, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, deref(p.BearerToken), campaignDoc(campaignResult(updated)))
 	return campaignResult(updated), nil
 }
 

@@ -276,7 +276,7 @@ func (o *Orchestrator) IndexerIsNoop() bool {
 // change the dispatch result. It deliberately takes an explicit ctx because the callers
 // persist on a DETACHED context during shutdown grace — passing the cancelled dispatch
 // ctx here would drop exactly the shutdown-window publishes the detach exists to save.
-func (o *Orchestrator) publishCampaignIndex(ctx context.Context, c *model.Campaign) {
+func (o *Orchestrator) publishCampaignIndex(ctx context.Context, c *model.Campaign, bearer string) {
 	if c == nil {
 		return
 	}
@@ -286,7 +286,7 @@ func (o *Orchestrator) publishCampaignIndex(ctx context.Context, c *model.Campai
 	if p == nil {
 		return
 	}
-	p.Publish(ctx, indexer.NewTransaction(indexer.ActionCreate, indexer.ObjectTypeCampaign, c.ID, c.ProjectID, campaignDoc(campaignResult(c))))
+	p.Publish(ctx, indexer.NewTransaction(indexer.ActionCreated, indexer.ObjectTypeCampaign, c.ID, c.ProjectID, bearer, campaignDoc(campaignResult(c))))
 }
 
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
@@ -474,7 +474,10 @@ type platformResult struct {
 // The dispatch goroutine runs under the orchestrator's root context (not the
 // request context), so it survives the request ending but can still be cancelled
 // by Shutdown when the drain deadline expires.
-func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage) (string, error) {
+// bearer is the requesting caller's token, captured at Start and carried through the async
+// dispatch: the indexer REQUIRES a non-empty authorization header on every message and drops
+// those without one, and by publish time the originating request is long gone.
+func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage, bearer string) (string, error) {
 	// Register the run with the drain WaitGroup under the lock so a concurrent
 	// Shutdown can't start waiting between the draining check and wg.Add (which
 	// would let an untracked goroutine outlive Shutdown).
@@ -508,14 +511,14 @@ func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, ap
 	dispatchCtx := o.rootCtx
 	go func() {
 		defer o.wg.Done()
-		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy)
+		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy, bearer)
 	}()
 
 	return job.ID, nil
 }
 
 // run performs the parallel per-platform dispatch and finalizes the job.
-func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage) {
+func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage, bearer string) {
 	// Mark the job running. Don't abort dispatch on failure (the work should still
 	// proceed and the final status write will correct it), but log it — silently
 	// dropping this can leave a job stuck at "queued" in the client's view.
@@ -568,7 +571,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				}
 			}()
 
-			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config)
+			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config, bearer)
 			return nil
 		})
 	}
@@ -611,7 +614,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // arbitrates); the other reuses the existing row or, if it's still pending, is
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
-func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage) platformResult {
+func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, bearer string) platformResult {
 	res := platformResult{Platform: string(p)}
 
 	// Fast path: if this pair already has a completed campaign (upstream id set),
@@ -793,7 +796,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 					// able to find in order to reconcile it. Publishing only clean successes
 					// would hide exactly the campaigns that need attention. Uses persistCtx
 					// (detached) so a shutdown-window persist still reaches the index.
-					o.publishCampaignIndex(persistCtx, saved)
+					o.publishCampaignIndex(persistCtx, saved, bearer)
 					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 				}
@@ -855,7 +858,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// immediately rather than only after some later update republishes it. Uses the
 	// DB-returned row (not the input) so the indexed document carries the persisted
 	// id, and persistCtx so a publish during shutdown grace isn't dropped.
-	o.publishCampaignIndex(persistCtx, saved)
+	o.publishCampaignIndex(persistCtx, saved, bearer)
 
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID

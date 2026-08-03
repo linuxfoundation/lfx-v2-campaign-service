@@ -138,7 +138,7 @@ func TestClose_PropagatesShutdownError(t *testing.T) {
 		model.ProviderGoogleAds: disp,
 	})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
-	if _, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil); err != nil {
+	if _, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil, "Bearer test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	<-disp.started // dispatch is in-flight and will block until its ctx is cancelled

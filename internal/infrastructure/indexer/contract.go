@@ -36,13 +36,18 @@ const fgaRelation = "campaign_manager"
 // "lfx.index.>").
 const subjectPrefix = "lfx.index."
 
-// Message actions the indexer accepts. It also accepts the past-tense spellings
-// ("created"/"updated"/"deleted"); the imperative forms are the v2 path.
+// Message actions. V2 (the `lfx.index.*` subjects this service publishes to) accepts ONLY the
+// past-tense spellings — its validator rejects "create"/"update"/"delete" outright, so the
+// imperative forms would have every message discarded before indexing.
 const (
-	ActionCreate = "create"
-	ActionUpdate = "update"
-	ActionDelete = "delete"
+	ActionCreated = "created"
+	ActionUpdated = "updated"
+	ActionDeleted = "deleted"
 )
+
+// authorizationHeader is the header key the indexer requires on every V2 message. Its
+// validateV2Headers rejects a message whose `authorization` is missing OR empty.
+const authorizationHeader = "authorization"
 
 // Subject returns the NATS subject for an object type.
 func Subject(objectType string) string { return subjectPrefix + objectType }
@@ -104,17 +109,24 @@ type IndexingConfig struct {
 //
 // projectID is the OWNING project: both FGA checks are `project:<projectID>` per D2, so a
 // resource is visible to exactly the people who can manage its project.
-func NewTransaction(action, objectType, objectID, projectID string, data any) Transaction {
+// authorization is the caller's bearer token, propagated verbatim. The indexer REQUIRES a
+// non-empty `authorization` header on every V2 message and drops the message without it, so an
+// empty value means the resource silently never gets indexed.
+//
+// For a DELETE, data must be the bare object id STRING — the indexer rejects an object payload
+// with "expected string", so passing a document there means an archived resource is never
+// removed from search.
+func NewTransaction(action, objectType, objectID, projectID, authorization string, data any) Transaction {
 	public := false
 	object := "project:" + projectID
+	if action == ActionDeleted {
+		data = objectID
+	}
 	return Transaction{
 		objectType: objectType,
 		Action:     action,
-		// No request headers are propagated: these publishes happen AFTER the write commits,
-		// often on a context detached for shutdown, so the originating principal is not
-		// reliably available. The map is non-nil because the indexer type-asserts it.
-		Headers: map[string]string{},
-		Data:    data,
+		Headers:    map[string]string{authorizationHeader: authorization},
+		Data:       data,
 		IndexingConfig: &IndexingConfig{
 			ObjectID:             objectID,
 			Public:               &public,
