@@ -26,19 +26,26 @@ type CampaignRepo struct {
 // (possibly-cancelled) request context.
 const claimRollbackTimeout = 5 * time.Second
 
-// claimLeaseTTL is how long a 'pending' dispatch claim stays valid before another
-// dispatcher may RECLAIM it. The claim is a lease, not a permanent lock: a pod that
-// crashes (or is evicted mid-rollout) between claiming and releasing would otherwise
-// leave a 'pending' row that blocks EVERY future dispatch for that (brief, platform)
-// forever, recoverable only by manual SQL.
+// staleClaimAge is how old a still-'pending' campaign row must be before it is reported as
+// STUCK. It is a diagnostic threshold only — nothing reclaims or deletes on it.
 //
-// The value is derived, not guessed. A dispatch's provider call is hard-bounded by the
-// orchestrator's providerCallTimeout (2m), so a LIVE claim can never outlive that plus
-// its bounded release. Doubling it leaves a wide margin for clock skew between replicas
-// and for a slow release, while still self-healing within minutes rather than hours.
-// Keep this comfortably ABOVE service.providerCallTimeout if that value ever changes —
-// TestClaimLeaseTTLExceedsProviderCallTimeout guards the relationship.
-const claimLeaseTTL = 4 * time.Minute
+// Deliberately NOT auto-reclaimed: 'pending' is overloaded. It marks both a claim that is
+// merely in flight AND an AMBIGUOUS dispatch outcome, which the orchestrator persists as
+// 'pending' precisely because the provider MAY already have created a paid campaign
+// (see the retained-claim path in service.dispatchOne). No column distinguishes the two, so
+// a time-based reclaim would eventually authorize a duplicate paid create on a campaign that
+// already exists upstream — the exact failure the claim exists to prevent. Safe automatic
+// recovery needs provider idempotency keys or an authoritative reconcile first (LFXV2-2665);
+// until then a human decides, and this threshold is what tells them there is something to
+// decide about.
+//
+// The value is derived, not guessed: a dispatch's provider call is hard-bounded by the
+// orchestrator's providerCallTimeout (2m), so a healthy claim never lives this long.
+const staleClaimAge = 4 * time.Minute
+
+// defaultStuckClaimLimit bounds StuckDispatchClaims when a caller passes no limit, so a
+// diagnostic query can never scan or allocate without an upper bound.
+const defaultStuckClaimLimit = 100
 
 // NewCampaignRepo returns a CampaignRepo backed by pool.
 func NewCampaignRepo(pool *Pool) *CampaignRepo { return &CampaignRepo{db: pool} }
@@ -81,11 +88,8 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 	// already-expired one.
 	q := `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
 		VALUES ($1, $2, $3, $4, '', 'pending')
-		ON CONFLICT (brief_id, platform) DO UPDATE
-		SET job_id = EXCLUDED.job_id, created_at = now(), updated_at = now()
-		WHERE campaigns.status = 'pending'
-		  AND campaigns.created_at < now() - $5::interval`
-	tag, err := r.db.Exec(ctx, q, projectID, briefID, jobID, string(platform), claimLeaseTTL.String())
+		ON CONFLICT (brief_id, platform) DO NOTHING`
+	tag, err := r.db.Exec(ctx, q, projectID, briefID, jobID, string(platform))
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
@@ -121,6 +125,48 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 		return false, nil, fmt.Errorf("read campaign after claim: %w", gerr)
 	}
 	return claimed, row, nil
+}
+
+// StuckDispatchClaims returns 'pending' campaign rows older than staleClaimAge, newest first,
+// capped at limit. It is READ-ONLY: nothing here reclaims, deletes, or redispatches.
+//
+// It exists because a stuck claim is otherwise INVISIBLE. A pod that crashes or is evicted
+// between claiming and releasing strands a 'pending' row, and since the claim is
+// ON CONFLICT (brief_id, platform) that row blocks every future dispatch for the pair — with
+// no signal anywhere that it happened. Operators currently discover it only when someone
+// reports that a campaign will not dispatch.
+//
+// Reporting rather than auto-reclaiming is deliberate: see staleClaimAge. A row returned here
+// may be an abandoned claim (safe to delete) OR an ambiguous outcome where a paid campaign
+// already exists upstream (deleting it would authorize a duplicate). Distinguishing them
+// requires checking the ad platform, so a human decides until provider idempotency or
+// reconcile lands (LFXV2-2665).
+func (r *CampaignRepo) StuckDispatchClaims(ctx context.Context, limit int) ([]*model.Campaign, error) {
+	if limit <= 0 {
+		limit = defaultStuckClaimLimit
+	}
+	q := `SELECT ` + campaignCols + ` FROM campaigns
+		WHERE status = 'pending' AND created_at < now() - $1::interval
+		ORDER BY created_at DESC
+		LIMIT $2`
+	rows, err := r.db.Query(ctx, q, staleClaimAge.String(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list stuck dispatch claims: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*model.Campaign
+	for rows.Next() {
+		c, serr := scanCampaign(rows)
+		if serr != nil {
+			return nil, fmt.Errorf("scan stuck dispatch claim: %w", serr)
+		}
+		out = append(out, c)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("iterate stuck dispatch claims: %w", rerr)
+	}
+	return out, nil
 }
 
 // DeleteDispatchClaim removes a still-'pending' claim row so a failed dispatch

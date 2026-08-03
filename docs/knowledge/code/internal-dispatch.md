@@ -47,22 +47,19 @@ imports) and outside each `platform/*` package (avoiding an import cycle).
 
 ## The claim contract (release vs retain)
 
-The claim is a **LEASE, not a permanent lock** (`claimLeaseTTL`, 4m). `ClaimCampaignDispatch`
-is `INSERT ... ON CONFLICT DO UPDATE`, so a conflicting row that is still `pending` and whose
-lease has EXPIRED is RECLAIMED by the next dispatcher. Without that, a pod crashing or being
-evicted between claiming and releasing would strand a `pending` row that blocks every future
-dispatch for that pair forever — nothing else deletes one, so recovery meant manual SQL.
+The claim is PERMANENT until released — deliberately NOT auto-reclaimed on a timer. `pending`
+is overloaded: it marks both a claim merely in flight AND an AMBIGUOUS dispatch outcome, which
+the orchestrator persists as `pending` precisely because the provider MAY already have created
+a paid campaign. No column distinguishes the two, so a time-based reclaim would eventually
+authorize a DUPLICATE paid create against a campaign that already exists upstream — the exact
+failure the claim exists to prevent. Safe automatic recovery needs provider idempotency keys or
+an authoritative reconcile first (LFXV2-2665).
 
-Reclaim and insert are deliberately ONE statement: a read-then-delete-then-insert would let
-two replicas both observe the same expired lease and both believe they won. `ON CONFLICT ...
-DO UPDATE` is evaluated under the unique index's row lock, so exactly one concurrent claimer
-satisfies the `WHERE` and the losers see `RowsAffected()==0`.
-
-The `WHERE` is narrow by design — `status = 'pending'` (never touch a real campaign) AND
-`created_at < now() - lease` (never touch a possibly-live claim). The TTL is DERIVED, not
-guessed: a provider call is hard-bounded by `providerCallTimeout` (2m), so a live claim cannot
-outlive that; 2x leaves margin for the bounded release and replica clock skew.
-`TestClaimLeaseTTLExceedsProviderCallTimeout` fails if that relationship is ever broken.
+The cost is that a pod crashing between claim and release strands a `pending` row that blocks
+every future dispatch for that pair, recoverable only by a human. `StuckDispatchClaims` makes
+those rows VISIBLE (read-only, `staleClaimAge` = 4m, bounded by `providerCallTimeout` so a
+healthy in-flight claim is never reported) instead of leaving them silently invisible until
+someone notices a campaign will not dispatch.
 
 The orchestrator single-flight-claims a `(brief, platform)` pair before dispatch and
 decides, from the returned error, whether to RELEASE the claim (retry-safe) or RETAIN

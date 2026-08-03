@@ -2,28 +2,22 @@
 
 ## 2026-08-03
 
-**Update** — Dispatch claims are now LEASES that self-heal (LFXV2-2665, partial). A pod that
-crashed or was evicted between `ClaimCampaignDispatch` and `releaseClaim` stranded a `pending`
-campaigns row, and because the claim is `ON CONFLICT (brief_id, platform)`, that row blocked
-EVERY future dispatch for the pair permanently — nothing reaps pending rows, so recovery was
-manual SQL. The repo's own comment flagged the blast radius as "total for the pair".
+**Update** — Made stuck dispatch claims VISIBLE (LFXV2-2665, partial). A pod crashing between
+`ClaimCampaignDispatch` and `releaseClaim` strands a `pending` campaigns row which, because the
+claim is `ON CONFLICT (brief_id, platform)`, blocks EVERY future dispatch for the pair — with no
+signal anywhere. Operators discovered it only when someone reported a campaign not dispatching.
+`StuckDispatchClaims` reports `pending` rows older than `staleClaimAge` (4m, above
+`providerCallTimeout` so healthy in-flight work is never flagged), bounded by a row limit.
 
-`ClaimCampaignDispatch` is now `INSERT ... ON CONFLICT DO UPDATE`, reclaiming a conflicting row
-only when it is still `pending` AND older than `claimLeaseTTL` (4m). Reclaim and insert are one
-statement on purpose: a read-then-delete-then-insert would let two replicas both observe the
-same expired lease and both believe they won. `ON CONFLICT ... DO UPDATE` evaluates under the
-unique index's row lock, so exactly one concurrent claimer satisfies the WHERE.
-
-The TTL is DERIVED, not guessed: a provider call is hard-bounded by `providerCallTimeout` (2m),
-so a live claim cannot outlive it; 2x absorbs the bounded release and replica clock skew.
-`TestClaimLeaseTTLExceedsProviderCallTimeout` fails if that relationship is ever broken —
-shortening the lease below the call bound would let a LIVE dispatch have its claim stolen and
-duplicate the campaign upstream, the exact failure the claim exists to prevent.
-
-No migration: `created_at` and the unique index already existed. Scope note — this closes the
-single-flight/stuck-claim half of LFXV2-2665. Provider idempotency KEYS and authoritative
-reconcile remain open; the linkedin concept, which described single-flight as merely "planned",
-is corrected to say so.
+**Attempted and REVERTED before merge**: auto-reclaiming an expired claim via
+`ON CONFLICT DO UPDATE`. Review (copilot) correctly showed it was unsafe — `pending` is
+OVERLOADED, marking both a claim in flight AND an ambiguous dispatch outcome that the
+orchestrator persists as `pending` precisely because a paid campaign MAY already exist upstream.
+No column distinguishes them, so the reclaim would eventually authorize a duplicate paid create:
+the exact failure the claim exists to prevent. Recording the dead end so it is not re-attempted
+— safe auto-recovery needs provider idempotency keys or an authoritative reconcile first, both
+still open under LFXV2-2665. The linkedin concept, which called single-flight merely "planned",
+is corrected: single-flight EXISTS (the unique-index claim); what is missing is recovery.
 
 ## 2026-07-29
 
