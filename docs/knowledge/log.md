@@ -1,31 +1,5 @@
 # Log
 
-## 2026-07-30
-
-**Update** — X/Twitter campaign status toggle (LFXV2-2808). `TwitterDispatcher` now implements
-`service.StatusToggler`, closing the toggle gap for the twitter adapter. New client method
-`UpdateCampaignAndChildrenStatus` PUTs `entity_status` (query params, not a JSON body — the same
-X Ads v12 contract `createRequest` documents) and a new exported `IsOutcomeUnconfirmed` mirrors
-the reddit client so the dispatcher can classify ambiguous outcomes across the package boundary.
-
-SCOPE is deliberately campaign + line item, NOT the promoted tweet: the create path leaves the
-association ACTIVE (the endpoint does not accept `entity_status`) and the LINE ITEM is X's
-delivery gate, so the association never needs to move. ORDER mirrors reddit — child first on
-ACTIVATE (nothing serves until the tree is ready), campaign gate first on PAUSE (delivery stops
-immediately). An ACTIVATE with an unknown line-item id is refused up front as
-`ErrCampaignNotProvisioned` → 409, never calling X.
-
-Connection rules are shared via `validateTwitterConnection`, which BOTH `Dispatch` and
-`ToggleStatus` call, so a create and a toggle accept exactly the same connections and cannot
-drift. Each caller keeps its own error wrapping (`Dispatch` wraps with `notCreated` for claim
-semantics; the toggle path must not). `funding_instrument_id` is checked only in `Dispatch` —
-it is a create-time field a toggle never uses, so requiring it would refuse a legitimate pause.
-A post-gate cascade failure returns `partialCascadeError` (`Unconfirmed() == true`) so a
-definite 4xx on the second entity is not misreported as "not modified" when the first already
-changed. `twitterChildIDs` reads the persisted `CampaignResult`
-blob, whose shape is pinned by a round-trip test (the blob is `json.Marshal` of an UNTAGGED
-struct, so the field is `LineItemID`; a renamed/nested field would silently yield "" and turn
-every ACTIVATE into a spurious 409).
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
@@ -58,6 +32,32 @@ about itself. Ordinary patterns remain target-only; that gap is documented in th
 concept as a deferred, unsolved follow-up rather than presented as handled.
 `local-agents/` is now git-ignored.
 
+## 2026-07-30
+
+**Update** — X/Twitter campaign status toggle (LFXV2-2808). `TwitterDispatcher` now implements
+`service.StatusToggler`, closing the toggle gap for the twitter adapter. New client method
+`UpdateCampaignAndChildrenStatus` PUTs `entity_status` (query params, not a JSON body — the same
+X Ads v12 contract `createRequest` documents) and a new exported `IsOutcomeUnconfirmed` mirrors
+the reddit client so the dispatcher can classify ambiguous outcomes across the package boundary.
+
+SCOPE is deliberately campaign + line item, NOT the promoted tweet: the create path leaves the
+association ACTIVE (the endpoint does not accept `entity_status`) and the LINE ITEM is X's
+delivery gate, so the association never needs to move. ORDER mirrors reddit — child first on
+ACTIVATE (nothing serves until the tree is ready), campaign gate first on PAUSE (delivery stops
+immediately). An ACTIVATE with an unknown line-item id is refused up front as
+`ErrCampaignNotProvisioned` → 409, never calling X.
+
+Connection rules are shared via `validateTwitterConnection`, which BOTH `Dispatch` and
+`ToggleStatus` call, so a create and a toggle accept exactly the same connections and cannot
+drift. Each caller keeps its own error wrapping (`Dispatch` wraps with `notCreated` for claim
+semantics; the toggle path must not). `funding_instrument_id` is checked only in `Dispatch` —
+it is a create-time field a toggle never uses, so requiring it would refuse a legitimate pause.
+A post-gate cascade failure returns `partialCascadeError` (`Unconfirmed() == true`) so a
+definite 4xx on the second entity is not misreported as "not modified" when the first already
+changed. `twitterChildIDs` reads the persisted `CampaignResult`
+blob, whose shape is pinned by a round-trip test (the blob is `json.Marshal` of an UNTAGGED
+struct, so the field is `LineItemID`; a renamed/nested field would silently yield "" and turn
+every ACTIVATE into a spurious 409).
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
