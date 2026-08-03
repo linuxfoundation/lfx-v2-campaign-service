@@ -208,9 +208,6 @@ func DecodeFindBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		if utf8.RuneCountInString(eventSlug) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("event_slug", eventSlug, utf8.RuneCountInString(eventSlug), 1, true))
 		}
-		if utf8.RuneCountInString(eventSlug) > 255 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("event_slug", eventSlug, utf8.RuneCountInString(eventSlug), 255, false))
-		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw

@@ -79,9 +79,6 @@ func BuildFindBriefPayload(lfxV2CampaignServiceBriefsFindBriefProjectID string, 
 		if utf8.RuneCountInString(eventSlug) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("event_slug", eventSlug, utf8.RuneCountInString(eventSlug), 1, true))
 		}
-		if utf8.RuneCountInString(eventSlug) > 255 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("event_slug", eventSlug, utf8.RuneCountInString(eventSlug), 255, false))
-		}
 		if err != nil {
 			return nil, err
 		}

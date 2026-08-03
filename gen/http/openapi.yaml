@@ -26,7 +26,6 @@ paths:
                   description: Event slug derived from the event page URL.
                   required: true
                   type: string
-                  maxLength: 255
                   minLength: 1
                 - name: project_id
                   in: path

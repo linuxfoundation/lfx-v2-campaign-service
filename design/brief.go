@@ -190,10 +190,14 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
+			// NO MaxLength: BriefInput.event_slug is uncapped and the column is unbounded
+			// TEXT, so any cap here would make a brief the create contract accepted
+			// permanently unrecallable — the caller would get a validation error instead of
+			// its saved brief, then collide on re-create. MinLength(1) only rejects the
+			// empty string, which can never match a stored row.
 			Attribute("event_slug", String, "Event slug derived from the event page URL.", func() {
 				Example("kubecon-eu-2026")
 				MinLength(1)
-				MaxLength(255)
 			})
 			Required("project_id", "event_slug")
 		})

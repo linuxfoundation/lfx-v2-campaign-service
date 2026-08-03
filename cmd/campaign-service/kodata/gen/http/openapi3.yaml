@@ -25,7 +25,6 @@ paths:
                     description: Event slug derived from the event page URL.
                     example: kubecon-eu-2026
                     minLength: 1
-                    maxLength: 255
                   example: kubecon-eu-2026
                 - name: project_id
                   in: path

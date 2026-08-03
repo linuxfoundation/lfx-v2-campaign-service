@@ -49,7 +49,9 @@ func (r *BriefRepo) GetBrief(ctx context.Context, projectID, id string) (*model.
 //
 // At most ONE row can match: uq_campaign_briefs_project_event is a UNIQUE index on
 // (project_id, event_slug) WHERE status <> 'archived' — the same predicate used here, so
-// the query is an index-only lookup and archiving frees the slug for a fresh brief.
+// this is an efficient unique-key lookup and archiving frees the slug for a fresh brief.
+// (Not an index-ONLY scan: briefCols selects every column while the index carries just the
+// two key columns, so the heap row is still fetched.)
 func (r *BriefRepo) FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {
 	q := `SELECT ` + briefCols + ` FROM campaign_briefs WHERE project_id = $1 AND event_slug = $2 AND status <> 'archived'`
 	b, err := scanBrief(r.db.QueryRow(ctx, q, projectID, eventSlug))

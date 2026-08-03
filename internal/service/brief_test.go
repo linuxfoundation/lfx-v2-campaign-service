@@ -967,6 +967,28 @@ func TestFindBrief_ArchivedBriefDoesNotMatch(t *testing.T) {
 	}
 }
 
+// TestFindBrief_HandlesLongSlugs guards the recall contract against a length cap: BriefInput
+// does not bound event_slug and the column is unbounded TEXT, so any cap on the lookup would
+// make a brief the create contract ACCEPTED permanently unrecallable — the caller would get a
+// validation error instead of its saved brief, then collide on re-create.
+func TestFindBrief_HandlesLongSlugs(t *testing.T) {
+	ctx := context.Background()
+	longSlug := strings.Repeat("a", 512)
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: longSlug, Status: model.BriefDraft,
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: longSlug})
+	if err != nil {
+		t.Fatalf("a slug the create contract accepts must be recallable: %v", err)
+	}
+	if got.ID != "b1" {
+		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+}
+
 // TestFindBrief_IsScopedToProject guards tenancy: the same event slug under a DIFFERENT
 // project must not leak across.
 func TestFindBrief_IsScopedToProject(t *testing.T) {
