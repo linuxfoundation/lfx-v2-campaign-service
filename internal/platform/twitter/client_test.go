@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -3499,9 +3500,9 @@ func TestUpdateCampaignAndChildrenStatus_PauseOrdersCampaignFirst(t *testing.T) 
 // known line item BEFORE any call: activating the campaign alone would leave the line item
 // paused and nothing serving, while the caller persisted a misleading "active".
 func TestUpdateCampaignAndChildrenStatus_ActivateRequiresLineItem(t *testing.T) {
-	var reached bool
+	var reached reachFlag
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		reached = true
+		reached.mark()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -3511,7 +3512,7 @@ func TestUpdateCampaignAndChildrenStatus_ActivateRequiresLineItem(t *testing.T) 
 	if err == nil {
 		t.Fatal("activating without a line-item id must be refused")
 	}
-	if reached {
+	if reached.hit() {
 		t.Error("no API call should be made — the refusal is up front")
 	}
 	// Pausing the same campaign WITHOUT a line item is fine: the gate stops delivery.
@@ -3613,9 +3614,9 @@ func TestUpdateCampaignAndChildrenStatus_RejectsUnsafeIDs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var reached bool
+			var reached reachFlag
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				reached = true
+				reached.mark()
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer srv.Close()
@@ -3629,7 +3630,7 @@ func TestUpdateCampaignAndChildrenStatus_RejectsUnsafeIDs(t *testing.T) {
 			if err := c.UpdateCampaignAndChildrenStatus(context.Background(), tc.campaign, tc.lineItem, StatusPaused); err == nil {
 				t.Fatal("an unsafe id must be rejected")
 			}
-			if reached {
+			if reached.hit() {
 				t.Error("no request may be sent — the guard is up front")
 			}
 		})
@@ -3675,4 +3676,24 @@ func TestUpdateCampaignAndChildrenStatus_WhitespaceLineItemStillPauses(t *testin
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "   ", StatusActive); err == nil {
 		t.Error("activating with a whitespace-only line-item id must be refused")
 	}
+}
+
+// reachFlag records whether the fake server was called. The handler goroutine writes it and the
+// test goroutine reads it, and httptest.Server.Close only synchronizes at the deferred Close —
+// which runs AFTER the assertions — so both sides are mutex-guarded.
+type reachFlag struct {
+	mu  sync.Mutex
+	set bool
+}
+
+func (r *reachFlag) mark() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.set = true
+}
+
+func (r *reachFlag) hit() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.set
 }
