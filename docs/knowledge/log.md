@@ -2,6 +2,18 @@
 
 ## 2026-08-03
 
+**Update** — Two follow-ups on the stuck-claim scan (LFXV2-2665, PR #59 review):
+
+- The COLD-START scan ran on `context.Background()`, so a scan blocked in the database could
+  not be interrupted and `Close`'s `<-c.initDone` wait would overrun the bounded shutdown
+  budget by up to `stuckClaimScanTimeout`. It now derives from the init `ctx`, matching the
+  adjacent `FailStuckJobs` call which already did this for the same reason.
+- The per-row log implied a safe case that does not exist. The code comment said `version > 1`
+  distinguishes an ambiguous outcome from a bare claim "usually safe to delete", but
+  `upserted_after_claim=false` would read as SAFE for a claim whose dispatch is still in flight
+  — those look identical in the row. An explicit `remediation` field now states what must be
+  verified, and never says "safe to delete".
+
 **Update** — Added a periodic stuck-claim sweep (LFXV2-2665, PR #59 review). The startup scan
 alone left a real gap, and it is the COMMON case: a claim stranded seconds before a rolling
 deploy or crash-restart is YOUNGER than `stuckClaimReportAge` (4m), so the replacement pod's

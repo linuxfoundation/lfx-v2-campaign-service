@@ -448,3 +448,65 @@ func TestStuckClaimSweeper_StopsOnCancel(t *testing.T) {
 		t.Fatal("the sweeper did not exit on cancel; Container.Close would hang")
 	}
 }
+
+// blockingScanner blocks until its context is cancelled, modelling a scan stuck on a slow or
+// unavailable database.
+type blockingScanner struct{ entered chan struct{} }
+
+func (b *blockingScanner) StuckDispatchClaims(ctx context.Context, _ int) ([]*model.Campaign, error) {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestScanStuckDispatchClaims_RespectsParentCancel pins that the scan derives from its parent
+// context. On the cold-start path the scan runs inside the init goroutine, which Close waits
+// on via <-c.initDone. If it used context.Background() instead, a scan blocked in the database
+// would be uninterruptible and Close would overrun its bounded shutdown budget by up to
+// stuckClaimScanTimeout — the same reasoning that already governs the FailStuckJobs call.
+func TestScanStuckDispatchClaims_RespectsParentCancel(t *testing.T) {
+	sc := &blockingScanner{entered: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanStuckDispatchClaims(ctx, sc, "at startup")
+	}()
+
+	<-sc.entered // the scan is blocked in the "database"
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the scan ignored its parent context: Close would block until stuckClaimScanTimeout expires")
+	}
+}
+
+// TestStuckClaimRemediation_NeverSaysSafe pins the operator-facing signal. 'pending' cannot
+// distinguish an abandoned claim from one whose dispatch is still running, so no row can be
+// reported as safe to delete — the only honest distinction is how much verification is owed.
+func TestStuckClaimRemediation_NeverSaysSafe(t *testing.T) {
+	cases := []struct {
+		name string
+		c    *model.Campaign
+		want string
+	}{
+		{"bare claim", &model.Campaign{Version: 1}, "verify no dispatch is in flight before deleting"},
+		{"upserted after claim", &model.Campaign{Version: 2}, "verify upstream platform before deleting: a paid campaign may exist"},
+		{"carries a platform id", &model.Campaign{Version: 1, PlatformCampaignID: "pc-1"}, "verify upstream platform before deleting: a paid campaign may exist"},
+		{"carries a result blob", &model.Campaign{Version: 1, Result: []byte(`{"x":1}`)}, "verify upstream platform before deleting: a paid campaign may exist"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stuckClaimRemediation(tc.c)
+			assert.Equal(t, tc.want, got)
+			assert.NotContains(t, got, "safe to delete",
+				"no stuck claim may be reported as safe to delete: a dispatch may still be in flight")
+		})
+	}
+}

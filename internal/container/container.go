@@ -366,8 +366,26 @@ func scanStuckDispatchClaims(parent context.Context, repo stuckClaimScanner, pha
 			"project_id", c.ProjectID, "brief_id", c.BriefID, "platform", c.Platform,
 			"job_id", c.JobID, "created_at", c.CreatedAt, "updated_at", c.UpdatedAt,
 			"version", c.Version, "upserted_after_claim", c.Version > 1,
+			// EXPLICIT rather than inferred from upserted_after_claim=false: a bare claim is
+			// only safe to delete once you know no dispatch is still running for it. Reading
+			// "false" as "safe" would be wrong for a claim whose dispatch is in flight right
+			// now, which looks identical in this row. Never "safe", only "needs verification"
+			// vs "MAY have created a paid campaign upstream".
+			"remediation", stuckClaimRemediation(c),
 			"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0)
 	}
+}
+
+// stuckClaimRemediation describes what an operator must verify before touching a stuck claim.
+// It deliberately never says "safe to delete": 'pending' cannot distinguish an abandoned claim
+// from one whose dispatch is still running, so the only honest distinction is HOW MUCH
+// verification is owed — check the platform for an orphaned campaign, or confirm no dispatch is
+// in flight. The runbook carries the procedure.
+func stuckClaimRemediation(c *model.Campaign) string {
+	if c.Version > 1 || c.PlatformCampaignID != "" || len(c.Result) > 0 {
+		return "verify upstream platform before deleting: a paid campaign may exist"
+	}
+	return "verify no dispatch is in flight before deleting"
 }
 
 // stuckClaimScanner is the one method the stuck-claim scan needs. Declared as an
@@ -509,7 +527,13 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.
-			logStuckDispatchClaims(campaignRepo)
+			//
+			// Derived from ctx (the init context Close cancels), NOT context.Background():
+			// if shutdown begins while this scan is blocked in the DB, cancelling ctx
+			// interrupts the statement so Close's <-c.initDone wait can't overrun the
+			// bounded shutdown budget by up to stuckClaimScanTimeout. Same reasoning as the
+			// FailStuckJobs call below.
+			scanStuckDispatchClaims(ctx, campaignRepo, "at startup")
 			// Start the periodic sweep here too. Safe without a lock for the same reason
 			// as c.orch below: Close waits on <-c.initDone before reading these fields.
 			c.startStuckClaimSweeper(campaignRepo)
