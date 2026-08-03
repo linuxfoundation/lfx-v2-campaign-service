@@ -2,6 +2,19 @@
 
 ## 2026-08-03
 
+**Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the
+adapter but `registerDispatchers` had no `ProviderMicrosoftAds` entry, so a brief selecting
+microsoft recorded a job that finished "failed: no dispatcher registered" — the whole feature
+was unreachable in production. The exact-membership test now covers it, so dropping the wiring
+fails a test rather than shipping silently.
+
+Also refined the failure classification: any non-nil result was labelled UNCONFIRMED, including
+a failure against pre-existing objects where `AlreadyExisted` proves this run created NOTHING.
+Telling an operator to verify state that was never created wastes their time and blunts the
+signal on the cases that genuinely need it.
+
+## 2026-08-03
+
 **Update** — Modelled the paid-ads vs email channel distinction (LFXV2-2813). `model.ChannelKind`
 (`paid-ads` / `email`) with `Provider.Kind()` and `Provider.IsPaidAds()`. Previously the split
 existed only implicitly: `adPlatformProviders` was named for ad platforms but CONTAINED hubspot,
