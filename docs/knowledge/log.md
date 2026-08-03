@@ -1,5 +1,35 @@
 # Log
 
+## 2026-08-03
+
+**Update** — Wired Query Service indexing (LFXV2-2814). `internal/infrastructure/indexer`
+publishes brief and campaign snapshots to NATS on every write; `brief.go:169` had marked this
+seam as "no indexing happens here yet" since the service was built. Architecture D1 and D5 both
+commit to it, and it is why #55 needed its own lookup endpoint rather than querying the index.
+
+The contract was DERIVED from the platform, not invented — recording the derivation so a future
+change can re-verify rather than re-guess:
+
+- Subject `lfx.index.<object_type>` matches the four already in use (`committee_document`,
+  `project_document`, `individual_vote`, `vote_response`).
+- The body mirrors `lfx-v2-query-service`'s `TransactionBodyStub`, whose own comment marks it as
+  the indexed `_source` shape. Its searcher reads `object_type` and `public` directly out of
+  `_source`, so a wrong value there indexes cleanly and then matches nothing.
+- `access_check_relation = campaign_manager` on `project:<projectId>`, per architecture D2 ("no
+  new FGA object types; only relations on project") and the deployed `ruleset.yaml`, which gates
+  every route on exactly that. D2 also explains why the HISTORY check equals the ACCESS check:
+  this service has no read-only audience.
+- `public` is always false — every resource is project-scoped.
+
+BEST-EFFORT by contract: `Publish` has no error return, an unreachable broker logs and returns a
+`Noop` instead of blocking boot, and an empty `NATS_URL` disables indexing outright. The DB is
+the source of truth and the Query Service re-indexes on the next write, so a dropped message
+self-heals — whereas letting indexing fail a write would turn a NATS outage into a
+campaign-service outage. NATS core, not JetStream, for the same reason.
+
+No chart change was needed: `NATS_URL` was already injected via `app.environment` and already
+read into `config.NATSUrl`. The only thing missing was a consumer.
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in

@@ -13,6 +13,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 )
 
 // fakeBriefRepo is a minimal in-memory BriefRepository for handler tests.
@@ -914,5 +915,63 @@ func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing
 	}
 	if tog.gotID != "" {
 		t.Error("the platform must NOT be called for a pending campaign")
+	}
+}
+
+// newIndexTestBriefService wires a BriefService with live collaborators around repo.
+func newIndexTestBriefService(repo *fakeBriefRepo) *BriefService {
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetBackend(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	return s
+}
+
+// failingIndexer records calls and models a publisher whose delivery fails. Publish has no
+// error return by contract, so a real failure is invisible to the caller — which is exactly
+// the property under test.
+type failingIndexer struct{ calls int }
+
+func (f *failingIndexer) Publish(context.Context, indexer.Body) { f.calls++ }
+func (f *failingIndexer) Close()                                {}
+
+// TestCreateBrief_IndexPublishNeverFailsTheWrite pins the fire-and-forget contract. The
+// database is the source of truth; a broker problem costs discoverability (the Query Service
+// re-indexes on the next write), never correctness. If indexing could fail a write, a NATS
+// outage would become a campaign-service outage.
+func TestCreateBrief_IndexPublishNeverFailsTheWrite(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+	idx := &failingIndexer{}
+	s.SetIndexer(idx)
+
+	res, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("a failing index publish must not fail the write: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected the created brief to be returned")
+	}
+	if idx.calls != 1 {
+		t.Errorf("expected exactly one index publish for a create, got %d", idx.calls)
+	}
+}
+
+// TestBriefService_DefaultsToNoopIndexer guards the nil path: every write calls publishIndex
+// unconditionally, so a service constructed without SetIndexer must not panic.
+func TestBriefService_DefaultsToNoopIndexer(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo) // no SetIndexer call
+
+	if _, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "no-indexer"},
+	}); err != nil {
+		t.Fatalf("a service with no indexer configured must still write: %v", err)
 	}
 }

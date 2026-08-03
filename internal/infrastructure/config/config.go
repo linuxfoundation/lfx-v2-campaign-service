@@ -27,6 +27,8 @@ type Config struct {
 	Audience string
 	Issuer   string
 
+	// NATSUrl is the NATS server URL. Used to publish Query Service index updates; empty
+	// disables indexing without affecting any other capability.
 	NATSUrl string
 
 	// DatabaseURL is the PostgreSQL DSN. Empty disables the database layer

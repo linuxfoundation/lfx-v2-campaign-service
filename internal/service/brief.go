@@ -16,6 +16,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 
 	"goa.design/goa/v3/security"
 )
@@ -34,6 +35,10 @@ type BriefService struct {
 	campaigns domain.CampaignRepository
 	jobs      domain.JobRepository
 	orch      *Orchestrator
+	// indexer publishes resource snapshots for the Query Service. Never nil after
+	// construction (a Noop stands in when NATS is unconfigured), so call sites publish
+	// unconditionally rather than nil-checking at each of them.
+	indexer indexer.Publisher
 }
 
 var (
@@ -42,8 +47,33 @@ var (
 )
 
 // NewBriefService constructs a BriefService.
+// SetIndexer injects the Query Service index publisher. Separate from the constructor so the
+// ~40 existing NewBriefService call sites (mostly tests) are unaffected and default to Noop.
+func (s *BriefService) SetIndexer(p indexer.Publisher) {
+	if p == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.indexer = p
+}
+
+// publishIndex sends a resource snapshot to the Query Service. Best-effort by contract: the
+// database already committed, so a publish problem must never surface to the caller.
+func (s *BriefService) publishIndex(ctx context.Context, objectType, objectID, projectID string, data any) {
+	s.mu.RLock()
+	p := s.indexer
+	s.mu.RUnlock()
+	if p == nil {
+		return
+	}
+	p.Publish(ctx, indexer.NewBody(objectType, objectID, projectID, data))
+}
+
 func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j domain.JobRepository, orch *Orchestrator) *BriefService {
-	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch}
+	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch,
+		indexer: indexer.Noop{},
+	}
 }
 
 // SetBackend late-binds the brief/campaign/job repositories and the orchestrator
@@ -169,8 +199,9 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 	// (per the api-catalog). Wiring the Query Service indexer client — so create /
 	// replace / approve / archive and the orchestrator's campaign upserts emit index
 	// events — is a deliberate follow-up (LFXV2-2665), not part of this PR. This
-	// persistence layer is the source of truth the indexer will later consume; no
-	// indexing happens here yet.
+	// persistence layer is the source of truth the indexer consumes; publishing is
+	// best-effort and never fails the write (see publishIndex).
+	s.publishIndex(ctx, indexer.ObjectTypeBrief, created.ID, created.ProjectID, briefResult(created))
 	return briefResult(created), nil
 }
 
@@ -212,6 +243,7 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
+	s.publishIndex(ctx, indexer.ObjectTypeBrief, updated.ID, updated.ProjectID, briefResult(updated))
 	return briefResult(updated), nil
 }
 
@@ -228,6 +260,7 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
+	s.publishIndex(ctx, indexer.ObjectTypeBrief, b.ID, b.ProjectID, briefResult(b))
 	return briefResult(b), nil
 }
 
@@ -355,6 +388,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
+	s.publishIndex(ctx, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignResult(updated))
 	return campaignResult(updated), nil
 }
 
@@ -458,6 +492,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			"new_status", p.Status, "error", uerr)
 		return nil, mapBriefErr(uerr)
 	}
+	s.publishIndex(ctx, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignResult(updated))
 	return campaignResult(updated), nil
 }
 

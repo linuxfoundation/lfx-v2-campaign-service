@@ -20,6 +20,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -222,6 +223,10 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	campaign := service.NewCampaignService(notReady{})
 	connections := service.NewConnectionService(nil, enc)
 	briefs := service.NewBriefService(nil, nil, nil, nil)
+	// Index publishing is independent of the database: a resource is published after its
+	// write commits, and the publisher is a Noop when NATS is unconfigured. Wiring it here
+	// (rather than on the DB path) means both the fast path and the cold-start retry get it.
+	briefs.SetIndexer(newIndexPublisher(cfg))
 	auds := service.NewAudienceService(nil)
 	c.Service = campaign
 	c.Connections = connections
@@ -514,4 +519,23 @@ func (c *Container) Close(ctx context.Context) error {
 		pool.Close()
 	}
 	return shutdownErr
+}
+
+// newIndexPublisher builds the Query Service index publisher from config.
+//
+// A dial failure is logged, NOT fatal: the index is a read-side convenience served by another
+// service, whereas campaign dispatch is this service's reason to exist. Refusing to boot over
+// an unreachable broker would turn a degraded search experience into a total outage. An empty
+// NATSUrl disables indexing outright and returns a Noop.
+func newIndexPublisher(cfg *config.Config) indexer.Publisher {
+	p, err := indexer.NewNATSPublisher(cfg.NATSUrl)
+	if err != nil {
+		slog.Warn("query-service indexing disabled: could not connect to NATS; resources will still be written and dispatched, but will not appear in search until indexing recovers",
+			"error", err)
+		return p // NewNATSPublisher returns a Noop alongside the error
+	}
+	if _, isNoop := p.(indexer.Noop); isNoop {
+		slog.Info("query-service indexing disabled (no NATS URL configured)")
+	}
+	return p
 }

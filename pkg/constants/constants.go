@@ -12,7 +12,11 @@ const (
 	EnvJWKSURL  = "JWKS_URL"
 	EnvAudience = "JWT_AUDIENCE"
 	EnvIssuer   = "JWT_ISSUER"
-	EnvNATSURL  = "NATS_URL"
+	// EnvNATSURL is the NATS server URL used to publish Query Service index updates.
+	// Empty DISABLES indexing: every endpoint still serves and campaigns still dispatch;
+	// only the search index stops being fed (the Query Service rebuilds a resource's
+	// document on its next write).
+	EnvNATSURL = "NATS_URL"
 	// EnvDatabaseURL is an optional PostgreSQL connection string (DSN).
 	// Prefer composing from PG* variables when running in-cluster.
 	EnvDatabaseURL = "DATABASE_URL"
