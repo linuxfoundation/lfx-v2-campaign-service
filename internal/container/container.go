@@ -55,6 +55,12 @@ type briefBackendSetter interface {
 // *AudienceService implements it.
 type audienceBackendSetter interface {
 	SetBackend(domain.AudienceRepository)
+	// SetBriefRepo and SetBuilder are part of this interface so the cold-start path CANNOT
+	// late-bind the repo while silently leaving the build dependencies nil. It did exactly
+	// that: BuildAudience needs all three, so a cold-started pod served every build request
+	// with a 503 forever while looking fully wired.
+	SetBriefRepo(domain.BriefRepository)
+	SetBuilder(service.AudienceBuilder)
 }
 
 // notReady is a ReadinessChecker that always reports not-ready. It is wired as
@@ -424,6 +430,11 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			c.orch = orch
 			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
 			ab.SetBackend(audienceRepo)
+			// The audience service was constructed in 503 mode with no brief repo and no
+			// builder, so binding only the repo leaves BuildAudience permanently 503 on this
+			// path. Bind the other two here (the builder was created just above).
+			ab.SetBriefRepo(briefRepo)
+			ab.SetBuilder(c.audienceBuilder)
 			// Derive from ctx (the init context Close cancels), NOT context.Background():
 			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
 			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the

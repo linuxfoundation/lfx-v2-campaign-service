@@ -2,6 +2,19 @@
 
 ## 2026-08-03
 
+**Update** — Cold start now binds ALL audience-build dependencies (LFXV2-2774, PR #61 review).
+The retry path called `ab.SetBackend(audienceRepo)` only, but the audience service is built in
+503 mode with NO brief repo and NO builder — so after a cold start `BuildAudience` returned 503
+FOREVER on a pod that otherwise looked completely healthy.
+
+Same opt-in-setter trap #60 had to fix for the indexer, repeated in new code. The remedy is
+stronger this time: `audienceBackendSetter` now names all three setters, so a path that binds
+only some of them fails to satisfy the interface at COMPILE time. (Verified: reverting the fix
+no longer fails a test — it fails the build.)
+
+`SetBuilder(nil)` is also now a no-op, so a degraded deployment reports "not configured" instead
+of storing a nil interface that panics on first use.
+
 **Update** — Wired audience building end to end (LFXV2-2774). This closes the gap that made the
 email channel unusable: `dispatch/hubspot.go` refuses every brief whose audience is not `built`
 with a master list, and nothing could produce one. `hubspot.CreateList`, `UpdateListFilters` and

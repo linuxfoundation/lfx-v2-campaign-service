@@ -426,3 +426,33 @@ func TestNewAudienceService_InjectsBuilder(t *testing.T) {
 	// And a container with no builder must NOT claim one — the degrade is real, not implied.
 	assert.False(t, (&Container{}).newAudienceService(nil, nil).BuilderIsSet())
 }
+
+// TestAudienceService_ColdStartBindsAllBuildDeps pins the cold-start late-binding. The audience
+// service is constructed in 503 mode with NO brief repo and NO builder, so a retry path that
+// binds only the audience repo leaves BuildAudience returning 503 forever — on a pod that looks
+// completely healthy. My first cut did exactly that.
+//
+// The audienceBackendSetter interface now names all three setters, so a path that forgets one
+// fails to satisfy it at COMPILE time rather than at 3am.
+func TestAudienceService_ColdStartBindsAllBuildDeps(t *testing.T) {
+	// The concrete service must satisfy the full late-bind contract.
+	var ab audienceBackendSetter = service.NewAudienceService(nil)
+
+	ab.SetBackend(fakeAudienceRepo{})
+	ab.SetBriefRepo(nil)
+	ab.SetBuilder(newAudienceBuilder(nil, nil, &config.Config{}))
+
+	s, ok := ab.(*service.AudienceService)
+	require.True(t, ok)
+	assert.True(t, s.BuilderIsSet(),
+		"the cold-start path must bind the builder; binding only the audience repo leaves BuildAudience 503 forever")
+}
+
+// TestSetBuilder_IgnoresNil guards the degraded deployment: with no HubSpot/Snowflake
+// configured the container's builder is nil, and binding it must leave the service reporting
+// "not configured" rather than storing a nil interface that panics on first use.
+func TestSetBuilder_IgnoresNil(t *testing.T) {
+	s := service.NewAudienceService(nil)
+	s.SetBuilder(nil)
+	assert.False(t, s.BuilderIsSet(), "a nil builder must not register as configured")
+}

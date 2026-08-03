@@ -59,6 +59,9 @@ func audienceBuildErr(err error) error {
 // SetBuilder injects the platform-side builder. Opt-in like the other late-bound dependencies
 // so the ~existing NewAudienceService call sites are unaffected.
 func (s *AudienceService) SetBuilder(b AudienceBuilder) {
+	if b == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.builder = b
