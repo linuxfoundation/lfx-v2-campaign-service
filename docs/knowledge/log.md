@@ -2,6 +2,16 @@
 
 ## 2026-08-03
 
+**Update** — Toggle publish now uses the DETACHED context (LFXV2-2814, PR #60 review).
+`ToggleCampaignStatus` writes on `persistCtx` (`context.WithoutCancel`) on purpose — the platform
+status has already changed, so a cancelled request must still record it — but the index publish
+still used the request `ctx`. That dropped the index update for exactly the cancelled requests
+the detach exists to protect, leaving the database correct and search stale on the cases most
+likely to need reconciling. Same class as the orchestrator's persist-site publishes.
+
+Note the SIBLING site (`UpdateCampaign`) writes on plain `ctx` and publishes on `ctx`, which is
+consistent — only the toggle mismatched.
+
 **Update** — Closed a read-then-archive race in `DeleteBrief` (LFXV2-2814, PR #60 review). The
 archive-republish fix read the brief, archived it, then published the SNAPSHOT with a
 hand-incremented version. A concurrent `ReplaceBrief`/`Approve` committing in that window would

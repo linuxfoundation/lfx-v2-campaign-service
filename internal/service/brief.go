@@ -516,7 +516,11 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			"new_status", p.Status, "error", uerr)
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignResult(updated))
+	// persistCtx, NOT ctx: the write above is deliberately detached so a cancelled request
+	// still records a platform change that already happened. Publishing on ctx would drop
+	// exactly those index updates — the campaign's status would be right in the database and
+	// stale in search, for the requests most likely to need reconciling.
+	s.publishIndex(persistCtx, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, campaignResult(updated))
 	return campaignResult(updated), nil
 }
 
