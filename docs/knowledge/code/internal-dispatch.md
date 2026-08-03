@@ -155,8 +155,19 @@ count, not ids), and PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUS
 400 on an in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) —
 the campaign is already the effective gate. An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`)
 is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
-package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). The X/Twitter and
-Google Ads DISPATCHERS already exist (creation); adding the status-TOGGLE capability to them is
-remaining follow-up work.
+package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). 
+
+**Google Ads** implements PAUSE only; **ACTIVATE is refused** with `ErrCampaignNotProvisioned`
+(→409, raised locally without calling Google). The create path provisions only a PAUSED search
+campaign SHELL (budget → campaign) with no ad group, ad, or keywords, so flipping the campaign
+to ENABLED would report success while nothing can serve — the exact lie that sentinel exists to
+prevent. There is no cascade for the same reason: there are no children to cascade to.
+`UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE with `updateMask: "status"`.
+Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE. When GA-3+ adds
+ad groups/ads/keywords, this must grow BOTH a cascade and a real child-id-based activate guard,
+matching the reddit shape.
+
+X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
+separately.
 
 See [internal/dispatch](../../../internal/dispatch).
