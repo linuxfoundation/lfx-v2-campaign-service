@@ -54,8 +54,10 @@ type Plan struct {
 	// country — and a collision does not fail loudly: it either rejects the create or points
 	// the audience at another event's list.
 	EventName string
-	Country   string
-	Region    Region
+	// BuildRef discriminates this build's lists from a previous build's (see PlanInput).
+	BuildRef string
+	Country  string
+	Region   Region
 	// PastEditions are the VERBATIM past-edition names resolved from Snowflake. Empty when the
 	// event has no prior edition — a first-time event, which is normal, not an error.
 	PastEditions []string
@@ -69,6 +71,14 @@ type Plan struct {
 type PlanInput struct {
 	// EventName is the current event's name, used in generated list names.
 	EventName string
+	// BuildRef discriminates THIS build's lists from a previous build's for the same brief.
+	// Several audiences per brief are supported (rebuilds, revised targeting), and HubSpot list
+	// names are portal-global — without it a rebuild emits the exact same names and either the
+	// create is rejected or the new audience silently adopts the OLD build's lists, so the
+	// master would point at stale membership.
+	//
+	// The caller passes the audience row id, which is unique per build.
+	BuildRef string
 	// Country is the event's host country. Required: every inclusion list is country-scoped.
 	Country string
 	// PastEditions are past-edition names from snowflake.ResolvePastEventNames, used VERBATIM.
@@ -105,7 +115,7 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 	// silently, while group 7 still widened correctly via the mapped region.
 	country = DisplayName(country)
 
-	p := &Plan{Country: country, EventName: eventName}
+	p := &Plan{Country: country, EventName: eventName, BuildRef: strings.TrimSpace(in.BuildRef)}
 
 	// Group 4 — always available: it needs only the country.
 	eduFilter, err := EducationEnrolledFilter(country)
@@ -114,7 +124,7 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 	}
 	p.Lists = append(p.Lists, PlannedList{
 		Group:  GroupEducationEnrolled,
-		Name:   listName(GroupEducationEnrolled.String(), country, eventName),
+		Name:   p.listName(GroupEducationEnrolled.String(), country),
 		Filter: eduFilter,
 	})
 
@@ -133,7 +143,7 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 		}
 		p.Lists = append(p.Lists, PlannedList{
 			Group:  GroupEventRegistered,
-			Name:   listName(GroupEventRegistered.String(), country, eventName),
+			Name:   p.listName(GroupEventRegistered.String(), country),
 			Filter: regFilter,
 		})
 
@@ -154,7 +164,7 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 			}
 			p.Lists = append(p.Lists, PlannedList{
 				Group:  GroupRegionRegistrants,
-				Name:   listName(GroupRegionRegistrants.String(), string(region), eventName),
+				Name:   p.listName(GroupRegionRegistrants.String(), string(region)),
 				Filter: regionFilter,
 			})
 		}
@@ -201,8 +211,31 @@ func (p *Plan) InclusionSummary() string {
 // portal-global: without the suffix, two events in the same country would both want
 // "Education Enrolled Korea", and the second build would either be rejected or silently
 // adopt the first event's list.
-func listName(group, scope, eventName string) string {
-	return fmt.Sprintf("%s %s — %s", group, scope, eventName)
+func (p *Plan) listName(group, scope string) string {
+	name := fmt.Sprintf("%s %s — %s", group, scope, p.EventName)
+	if p.BuildRef == "" {
+		return name
+	}
+	// Short suffix: enough to disambiguate rebuilds without making the name unreadable in the
+	// HubSpot UI, where an operator has to recognise it.
+	ref := p.BuildRef
+	if len(ref) > 8 {
+		ref = ref[:8]
+	}
+	return name + " (" + ref + ")"
+}
+
+// MasterName is the master list's name, discriminated the same way as its inclusion lists.
+func (p *Plan) MasterName() string {
+	name := p.EventName + " — Master"
+	if p.BuildRef == "" {
+		return name
+	}
+	ref := p.BuildRef
+	if len(ref) > 8 {
+		ref = ref[:8]
+	}
+	return name + " (" + ref + ")"
 }
 
 // nonBlank drops blank entries, preserving order AND the original strings.

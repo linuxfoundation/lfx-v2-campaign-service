@@ -165,12 +165,14 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		editions = nil
 	}
 
-	plan, perr := audience.BuildPlan(audience.PlanInput{
+	planInput := audience.PlanInput{
 		EventName:    details.EventName,
 		Country:      details.Country,
 		PastEditions: editions,
-	})
-	if perr != nil {
+	}
+	// Validate the plan BEFORE creating the row: a brief that cannot be planned must not leave
+	// a building row behind. The plan is rebuilt below with the row id as its BuildRef.
+	if _, perr := audience.BuildPlan(planInput); perr != nil {
 		return nil, audienceValidationErr(perr)
 	}
 
@@ -186,6 +188,15 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	created, cerr := repo.CreateAudience(ctx, row)
 	if cerr != nil {
 		return nil, mapAudienceErr(cerr)
+	}
+
+	// Rebuild the plan with the row id as BuildRef so THIS build's list names cannot collide
+	// with a previous build's for the same brief — HubSpot list names are portal-global, and a
+	// collision would silently adopt the older build's lists.
+	planInput.BuildRef = created.ID
+	plan, perr := audience.BuildPlan(planInput)
+	if perr != nil {
+		return nil, audienceValidationErr(perr)
 	}
 
 	// Scope the builder's client cache to THIS build (see dispatch.BeginBuild): all of a
@@ -285,7 +296,7 @@ func createPlanLists(ctx context.Context, b AudienceBuilder, projectID string, p
 	if ferr != nil {
 		return "", ids, ferr
 	}
-	masterName := fmt.Sprintf("%s — Master", plan.EventName)
+	masterName := plan.MasterName()
 	masterID, merr := b.CreateList(ctx, projectID, masterName, masterFilter)
 	if merr != nil {
 		return "", ids, fmt.Errorf("create master list %q: %w", masterName, merr)

@@ -80,7 +80,13 @@ is resolved or created.
 - **Soft** when a country has no region mapping, or the warehouse is down: the country-scoped
   lists are still valid, so the build produces a narrower audience and records why.
 
-List names are **event-scoped**: HubSpot list names are portal-global, so the runbook's bare
-"Education Enrolled [Country]" collides between two events in the same country.
+List names are **event-scoped AND build-scoped**. HubSpot list names are portal-global, so the
+runbook's bare "Education Enrolled [Country]" collides between two events in the same country —
+and event-scoping alone still collides between two BUILDS of the same brief, which is supported
+(rebuilds, revised targeting). A collision is not loud: the create is rejected, or the new
+audience silently adopts the older build's lists and the master points at stale membership.
+
+The discriminator is the audience row id, so the row is created BEFORE the plan is finalised.
+The plan is validated first, so a brief that cannot be planned leaves no row behind.
 
 See [internal/audience](../../../internal/audience).

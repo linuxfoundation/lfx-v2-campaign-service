@@ -116,3 +116,36 @@ func TestBuildPlan_DropsBlankEditions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"KubeCon Korea 2025"}, p.PastEditions)
 }
+
+// TestBuildPlan_BuildRefDisambiguatesRebuilds pins that two builds of the SAME brief do not
+// produce identical list names. Several audiences per brief are supported, and HubSpot list
+// names are portal-global — without a discriminator a rebuild either has its create rejected or
+// silently adopts the previous build's lists, leaving the master pointing at stale membership.
+func TestBuildPlan_BuildRefDisambiguatesRebuilds(t *testing.T) {
+	in := PlanInput{EventName: "KubeCon Korea 2026", Country: "South Korea", PastEditions: []string{"KubeCon Korea 2025"}}
+
+	in.BuildRef = "aud-11111111-aaaa"
+	first, err := BuildPlan(in)
+	require.NoError(t, err)
+
+	in.BuildRef = "aud-22222222-bbbb"
+	second, err := BuildPlan(in)
+	require.NoError(t, err)
+
+	require.Equal(t, len(first.Lists), len(second.Lists))
+	for i := range first.Lists {
+		assert.NotEqual(t, first.Lists[i].Name, second.Lists[i].Name,
+			"two builds of one brief must not emit the same list name")
+	}
+	assert.NotEqual(t, first.MasterName(), second.MasterName(), "the master name must differ too")
+
+	// The event still leads the name, so an operator can recognise it in the HubSpot UI.
+	assert.Contains(t, first.Lists[0].Name, "KubeCon Korea 2026")
+	assert.Contains(t, first.MasterName(), "KubeCon Korea 2026")
+
+	// With no BuildRef the names stay clean (the first build for a brief).
+	in.BuildRef = ""
+	plain, err := BuildPlan(in)
+	require.NoError(t, err)
+	assert.NotContains(t, plain.Lists[0].Name, "(")
+}
