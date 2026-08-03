@@ -16,10 +16,10 @@ import (
 // silently ending the guard at the moment it would matter.
 const providerCallTimeoutMirror = 2 * time.Minute
 
-// TestStaleClaimAgeExceedsProviderCallTimeout keeps the diagnostic from crying wolf. A claim
+// TestStuckClaimReportAgeExceedsProviderCallTimeout keeps the diagnostic from crying wolf. A claim
 // held by a HEALTHY dispatch cannot outlive providerCallTimeout, so reporting anything younger
 // than that would flag in-flight work as stuck and train operators to ignore the signal.
-func TestStaleClaimAgeExceedsProviderCallTimeout(t *testing.T) {
+func TestStuckClaimReportAgeExceedsProviderCallTimeout(t *testing.T) {
 	if stuckClaimReportAge <= providerCallTimeoutMirror {
 		t.Fatalf("stuckClaimReportAge (%s) must exceed providerCallTimeout (%s), or a healthy in-flight dispatch is reported as stuck",
 			stuckClaimReportAge, providerCallTimeoutMirror)

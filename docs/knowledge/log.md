@@ -2,6 +2,23 @@
 
 ## 2026-08-03
 
+**Update** — `idx_campaigns_stuck_claims` is now built CONCURRENTLY (LFXV2-2665, PR #59 review).
+A plain `CREATE INDEX` takes a lock blocking INSERT/UPDATE/DELETE on `campaigns` for the whole
+build, and migrations run during a ROLLING startup — other replicas are still claiming and
+finalizing dispatches at that moment, so a blocking build could stall a claim mid-flight and
+MANUFACTURE the ambiguous outcomes this diagnostic exists to report.
+
+Safe with this runner, and verified rather than assumed: the pgx/v5 golang-migrate driver
+executes each migration with a bare `ExecContext` and does NOT wrap it in a transaction
+(`database/pgx/v5/pgx.go`), which `CONCURRENTLY` requires. Keep this migration SINGLE-statement
+— a multi-statement file would be batched and reintroduce the transaction constraint. The down
+migration drops concurrently too, and clears the INVALID index a failed concurrent build leaves
+behind so a retry is clean.
+
+Also renamed `TestStaleClaimAgeExceedsProviderCallTimeout` →
+`TestStuckClaimReportAgeExceedsProviderCallTimeout` (@dealako): it asserts on
+`stuckClaimReportAge`, so the old name referenced a constant that never existed.
+
 **Update** — Added `idx_campaigns_stuck_claims` (LFXV2-2665, PR #59 review, migration 000008).
 The stuck-claim scan filters `campaigns` on `status = 'pending' AND created_at < …` and now runs
 every 5m on EVERY replica, with no supporting index — a full scan that grows unbounded as

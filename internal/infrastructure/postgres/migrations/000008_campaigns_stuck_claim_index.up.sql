@@ -24,6 +24,21 @@
 -- Separate migration (not an edit to an earlier one): golang-migrate records
 -- applied versions and never re-runs them, so amending an applied migration would
 -- silently skip databases that already ran it.
-CREATE INDEX IF NOT EXISTS idx_campaigns_stuck_claims
+--
+-- CONCURRENTLY: a plain CREATE INDEX takes a lock that blocks INSERT/UPDATE/DELETE on
+-- campaigns for the whole build. Migrations run during a ROLLING startup, so other
+-- replicas are still claiming and finalizing dispatches at that moment — a blocking
+-- build could stall a claim mid-flight and manufacture exactly the ambiguous
+-- outcomes this diagnostic exists to report.
+--
+-- This is safe with our runner: the pgx/v5 golang-migrate driver executes each
+-- migration with a bare ExecContext and does NOT wrap it in a transaction (verified
+-- in database/pgx/v5/pgx.go), and CONCURRENTLY cannot run inside one. Do NOT add
+-- other statements to this file — a multi-statement migration would be batched and
+-- reintroduce the transaction constraint.
+--
+-- A failed concurrent build leaves an INVALID index behind rather than rolling back;
+-- the down migration drops it either way, so a retry is clean.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_campaigns_stuck_claims
     ON campaigns (created_at)
     WHERE status = 'pending';
