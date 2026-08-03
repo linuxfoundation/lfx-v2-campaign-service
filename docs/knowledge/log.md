@@ -2,6 +2,23 @@
 
 ## 2026-08-03
 
+**Update** — Bounded indexing's shutdown cost (LFXV2-2814, PR #60 review). Both findings were
+consequences of wiring the publisher into the shutdown path without checking its budget:
+
+- `Close` calls `conn.Drain()`, and nats.go defaults `DrainTimeout` to **30s** — alone MORE
+  than the service's entire graceful-shutdown budget (`DefaultShutdownTimeout`, 25s). A wedged
+  broker would hold `Container.Close` past the budget and get the pod SIGKILLed mid-shutdown,
+  defeating the very budget `ContainerCloseTimeout` exists to enforce. Now pinned to 2s.
+- `Publish` flushed for a flat `publishTimeout` (3s) even during shutdown grace, which is sized
+  as `persistResultTimeout + jobFinalizeTimeout + 1s` and budgets nothing for a flush between
+  them. The flush now takes the smaller of `publishTimeout` and the caller's remaining
+  deadline (`flushBudget`), skipping entirely when none is left — the message stays buffered
+  and the drain is its last chance, which is correct for a best-effort concern.
+
+The flush bound is asserted on `flushBudget` directly rather than by timing a real publish: an
+unreachable broker fails its flush immediately, so a timing test passes even with the bound
+removed. The first version of that test was vacuous for exactly that reason.
+
 **Update** — Wired Query Service indexing (LFXV2-2814). `internal/infrastructure/indexer`
 publishes brief and campaign snapshots to NATS on every write; `brief.go:169` had marked this
 seam as "no indexing happens here yet" since the service was built. Architecture D1 and D5 both

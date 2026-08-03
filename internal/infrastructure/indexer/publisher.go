@@ -21,6 +21,14 @@ const publishTimeout = 3 * time.Second
 // connectTimeout bounds the initial dial at startup.
 const connectTimeout = 5 * time.Second
 
+// drainTimeout bounds the shutdown drain. The nats.go DEFAULT is 30s, which alone exceeds the
+// service's entire graceful-shutdown budget (constants.DefaultShutdownTimeout, 25s) — a wedged
+// broker would hold Container.Close past the budget and get the pod SIGKILLed mid-shutdown,
+// defeating the very budget ContainerCloseTimeout exists to enforce. Indexing is best-effort,
+// so a small fixed slice is the right trade: buffered publishes get a chance to flush, and an
+// unreachable broker costs 2s of shutdown instead of 30.
+const drainTimeout = 2 * time.Second
+
 // Publisher publishes index documents. Implementations MUST be non-fatal: the database is the
 // source of truth, and a failed publish costs discoverability (the Query Service re-indexes on
 // the next write), never correctness. It must therefore never fail the caller's operation.
@@ -58,6 +66,7 @@ func NewNATSPublisher(url string) (Publisher, error) {
 	}
 	conn, err := nats.Connect(url,
 		nats.Timeout(connectTimeout),
+		nats.DrainTimeout(drainTimeout),
 		nats.MaxReconnects(-1), // reconnect forever; a broker restart must not permanently mute indexing
 		nats.RetryOnFailedConnect(true),
 	)
@@ -85,7 +94,20 @@ func (p *NATSPublisher) Publish(ctx context.Context, body Body) {
 	}
 	// Flush with a bound so a wedged broker cannot hold the caller. Publish() alone only
 	// buffers, so without this a message can be silently discarded on a later connection drop.
-	if err := p.conn.FlushTimeout(publishTimeout); err != nil {
+	//
+	// The bound is the SMALLER of publishTimeout and whatever the caller's context still
+	// allows. That matters during shutdown: the orchestrator's grace window is sized as
+	// persistResultTimeout + jobFinalizeTimeout + 1s and does NOT budget for a flush between
+	// them, so a flat 3s wait per publish could push a run past the grace period and race the
+	// pool close. Honouring the caller's deadline keeps a best-effort convenience from
+	// consuming a budget reserved for writes that actually matter.
+	flushWait := flushBudget(ctx)
+	if flushWait <= 0 {
+		// No budget left: the publish is buffered and the connection drain on shutdown is
+		// its remaining chance to land. Not an error — indexing is best-effort by contract.
+		return
+	}
+	if err := p.conn.FlushTimeout(flushWait); err != nil {
 		slog.WarnContext(ctx, "index document published but not flushed (delivery unconfirmed)",
 			"subject", subject, "object_ref", body.ObjectRef, "error", err)
 	}
@@ -100,6 +122,22 @@ func (p *NATSPublisher) Close() {
 	if err := p.conn.Drain(); err != nil {
 		slog.Warn("failed to drain nats connection", "error", err)
 	}
+}
+
+// flushBudget returns how long Publish may wait for a flush: the SMALLER of publishTimeout
+// and whatever the caller's context still allows (publishTimeout when it has no deadline).
+// Extracted so the bound is directly testable — asserting it via wall-clock timing against a
+// broker is unreliable, since an unreachable broker fails fast and would make such a test pass
+// even with the bound removed.
+func flushBudget(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return publishTimeout
+	}
+	if remaining := time.Until(deadline); remaining < publishTimeout {
+		return remaining
+	}
+	return publishTimeout
 }
 
 // redactURL strips any credentials from a NATS URL before it reaches a log line. A NATS URL
