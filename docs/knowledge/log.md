@@ -16,8 +16,10 @@ orchestrator persists as `pending` precisely because a paid campaign MAY already
 No column distinguishes them, so the reclaim would eventually authorize a duplicate paid create:
 the exact failure the claim exists to prevent. Recording the dead end so it is not re-attempted
 — safe auto-recovery needs provider idempotency keys or an authoritative reconcile first, both
-still open under LFXV2-2665. The linkedin concept, which called single-flight merely "planned",
-is corrected: single-flight EXISTS (the unique-index claim); what is missing is recovery.
+still open under LFXV2-2665. The linkedin concept, which called single-flight merely "planned", now states the
+reality: single-flight EXISTS (the unique-index claim), the claim is NOT reclaimed on a
+timer, and a crashed holder strands it until a human acts.
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
@@ -95,6 +97,7 @@ a live caller context is a FAILED lookup (UNCONFIRMED), not a clean abort. Also,
 duplicate-name self-heal whose reconciliation re-lookup errors now surfaces that
 cause. Aligned the `internal-platform-microsoft` concept + the older log entry to
 the corrected `ctx.Err()` distinction and the duplicate-name-REJECTED contract.
+
 ## 2026-07-23
 
 **Update** — Microsoft Ads MS-2.5 PR #45 review follow-up (copilot + cursor). (1) The ≥1-word
@@ -315,6 +318,7 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
+
 ## 2026-07-21
 
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review

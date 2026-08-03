@@ -280,6 +280,12 @@ var adPlatformProviders = []model.Provider{
 // cannot delay readiness. The scan is diagnostic only, so timing out is survivable.
 const stuckClaimScanTimeout = 5 * time.Second
 
+// maxStuckClaimDetailLogs caps the per-row detail lines. The realistic bad day is exactly the
+// one this diagnostic exists for — a rolling deploy stranding many claims — so an uncapped
+// loop would bury the startup log in the moment an operator most needs to read it. The
+// summary line reports how many rows were elided.
+const maxStuckClaimDetailLogs = 10
+
 // logStuckDispatchClaims reports 'pending' dispatch claims stranded by a previous process at
 // STARTUP — the moment they are most likely to exist, since the usual cause is a pod dying
 // mid-dispatch (a crash, an OOM kill, or an eviction during a rolling deploy).
@@ -290,13 +296,21 @@ const stuckClaimScanTimeout = 5 * time.Second
 // deletes — see staleClaimAge for why a time-based takeover would be unsafe — the point is to
 // turn a silent block into an alertable log line.
 //
-// Runs inline on the wiring path (one bounded query) rather than as a goroutine: with 3
-// replicas a background sweeper would need leader election to avoid triplicate logs, and the
-// scan is cheap enough not to warrant it.
+// Runs inline on the wiring path (one bounded query) rather than as a background goroutine.
+// To be precise about what that does and does not buy: it does NOT avoid duplication — every
+// replica boots and scans, so a rolling deploy logs the same stuck row once per replica. What
+// it does buy is BOUNDED duplication: startup-only rather than every sweep interval forever.
+// (StartRecoverySweeper already runs on all replicas without leader election, so a goroutine
+// here would not have been unprecedented — just noisier.)
+//
+// The per-row lines are therefore kept few and the SUMMARY is the line to alert on: it is
+// low-cardinality and identical across replicas, so an alert built on it dedups naturally. A
+// gauge would be better still, but this service exposes no metrics endpoint today.
 func logStuckDispatchClaims(repo *postgres.CampaignRepo) {
 	ctx, cancel := context.WithTimeout(context.Background(), stuckClaimScanTimeout)
 	defer cancel()
 
+	// 0 = the repo's defaultStuckClaimLimit (100).
 	stuck, err := repo.StuckDispatchClaims(ctx, 0)
 	if err != nil {
 		// Diagnostic only — never block startup on it.
@@ -306,13 +320,39 @@ func logStuckDispatchClaims(repo *postgres.CampaignRepo) {
 	if len(stuck) == 0 {
 		return
 	}
-	for _, c := range stuck {
-		slog.WarnContext(ctx, "stuck dispatch claim blocks future dispatches for this brief+platform; verify on the ad platform whether a campaign was created, then delete the row or reconcile it",
+	// Summary FIRST: it is the line an operator alerts on, so it must not sit beneath the
+	// detail it summarizes. "truncated" distinguishes "exactly N stuck" from "at least N" —
+	// a saturated limit means the real number is unknown and larger.
+	// The repo queries limit+1, so more rows than the cap means the true total is unknown and
+	// larger — report that rather than a flat count that understates an incident.
+	truncated := len(stuck) > postgres.DefaultStuckClaimLimit
+	if truncated {
+		stuck = stuck[:postgres.DefaultStuckClaimLimit]
+	}
+	slog.WarnContext(ctx, "stuck dispatch claims detected at startup",
+		"count", len(stuck), "truncated", truncated,
+		"reported", min(len(stuck), maxStuckClaimDetailLogs),
+		"runbook", "docs/knowledge/code/internal-dispatch.md")
+	for i, c := range stuck {
+		if i >= maxStuckClaimDetailLogs {
+			break
+		}
+		// A short, stable message so operators can group and alert on it; the remediation
+		// procedure lives in the runbook referenced above, not in the message field.
+		//
+		// created_at AND updated_at are both emitted because they mean different things here.
+		// created_at is the CLAIM time and is never rewritten (UpsertCampaign updates
+		// updated_at only), so for a row the orchestrator later upserted with an ambiguous
+		// outcome, created_at alone would make a days-old unreconciled row look like a fresh
+		// crash. version > 1 is the in-band signal that such an upsert happened — i.e. this is
+		// an ambiguous outcome where a paid campaign MAY exist upstream (verify before
+		// deleting), not a bare abandoned claim (usually safe to delete).
+		slog.WarnContext(ctx, "stuck dispatch claim",
 			"project_id", c.ProjectID, "brief_id", c.BriefID, "platform", c.Platform,
-			"job_id", c.JobID, "claimed_at", c.CreatedAt,
+			"job_id", c.JobID, "created_at", c.CreatedAt, "updated_at", c.UpdatedAt,
+			"version", c.Version, "upserted_after_claim", c.Version > 1,
 			"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0)
 	}
-	slog.WarnContext(ctx, "stuck dispatch claims detected at startup", "count", len(stuck))
 }
 
 // logMissingDispatchers warns about ad providers that have no adapter yet — those
