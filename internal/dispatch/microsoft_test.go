@@ -571,3 +571,43 @@ func TestMicrosoft_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 		t.Errorf("a 5xx toggle must be Unconfirmed() — the change may have applied, got %T: %v", err, err)
 	}
 }
+
+// TestMicrosoft_ToggleStatus_PauseWithOrphanAdIsNotProvisioned pins the second local refusal:
+// a persisted row with an ad id but NO ad-group id cannot be paused, because Microsoft
+// addresses an ad by its parent (the Ads PUT is scoped by AdGroupId). Reporting success would
+// leave the ad serving. It is a fact about the ROW, so it is ErrCampaignNotProvisioned (409)
+// and must be caught before any credential resolution or upstream call.
+func TestMicrosoft_ToggleStatus_PauseWithOrphanAdIsNotProvisioned(t *testing.T) {
+	var mu sync.Mutex
+	var reached bool
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		reached = true
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		reached = true
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := microsoftToggleCampaign("321", "", "987")
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Fatalf("want ErrCampaignNotProvisioned for an ad with no ad group, got %T: %v", err, err)
+	}
+	mu.Lock()
+	sawRequest := reached
+	mu.Unlock()
+	if sawRequest {
+		t.Error("the refusal is a local row check — no token or API request may be made")
+	}
+}

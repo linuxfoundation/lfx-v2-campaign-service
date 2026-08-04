@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1129,18 +1130,22 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { r
 func TestUpdateCampaignAndChildrenStatus_CancelledContextStopsCascade(t *testing.T) {
 	rec := &statusCascadeRecorder{}
 	ctx, cancel := context.WithCancel(context.Background())
-	// cancelAfterCampaign is armed by the handler and fired by the RoundTripper wrapper once
-	// the campaign response has been fully delivered. Cancelling inside the handler would
-	// abort the campaign PUT itself — the gate would never apply and this would no longer be
-	// the between-step case under test.
-	var cancelAfterCampaign bool
+	// cancelAfterCampaign is armed by the handler (server goroutine) and fired by the
+	// RoundTripper wrapper (client goroutine). It MUST be atomic: RoundTrip returns once the
+	// response headers are read, which is not ordered against the handler returning, and
+	// t.Cleanup(srv.Close) fires only after the assertions — so nothing else supplies a
+	// happens-before edge. A plain bool would both race and flake (a stale false read would
+	// skip cancel(), the cascade would complete, and the failure would point at production
+	// code that is correct). CompareAndSwap additionally gives the fire-once semantics a
+	// Load/Store pair would not.
+	var cancelAfterCampaign atomic.Bool
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
 		rec.record(r.URL.Path, body)
 		if strings.HasSuffix(r.URL.Path, "Campaigns") {
-			cancelAfterCampaign = true
+			cancelAfterCampaign.Store(true)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
@@ -1151,10 +1156,9 @@ func TestUpdateCampaignAndChildrenStatus_CancelledContextStopsCascade(t *testing
 	}
 	c.httpClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		resp, err := base.RoundTrip(r)
-		if err == nil && cancelAfterCampaign {
-			// The campaign PUT completed and its status DID apply; only now cancel, so the
-			// next step is abandoned cleanly between requests.
-			cancelAfterCampaign = false
+		// The campaign PUT completed and its status DID apply; only now cancel, so the next
+		// step is abandoned cleanly between requests. CompareAndSwap fires exactly once.
+		if err == nil && cancelAfterCampaign.CompareAndSwap(true, false) {
 			cancel()
 		}
 		return resp, err

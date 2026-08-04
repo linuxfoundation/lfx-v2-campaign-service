@@ -108,8 +108,6 @@ between themselves (nothing serves while the gate is Paused), so Microsoft's
 ad-group-then-ad and reddit's deepest-first are both correct — an earlier
 comment claiming the order "mirrors reddit" was simply wrong.
 
-## 2026-07-30
-
 **Update** — Patched four indirect-dependency CVEs flagged by Dependabot on main
 (LFXV2-2811): `google.golang.org/grpc` 1.82.0→1.82.1 (HIGH, xDS RBAC + HTTP/2, reached via
 `goa.design/clue/debug`), `github.com/apache/thrift` 0.22.0→0.23.0 (HIGH,

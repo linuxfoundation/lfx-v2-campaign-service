@@ -269,20 +269,31 @@ func microsoftChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 // FULL CASCADE, like reddit: the create path builds the whole Campaign -> AdGroup -> Ad tree
 // PAUSED, so toggling only the campaign would leave the children paused and nothing serving.
 // ACTIVATE requires BOTH child ids — a missing child would stay Paused while the row claimed
-// "active" — and that refusal is ErrCampaignNotProvisioned, so the service maps it to a 409
-// state error without ever calling Microsoft. Pausing needs no child ids.
+// "active". Pausing needs no child ids, EXCEPT that an ad id with no ad-group id is refused:
+// the Ads PUT is scoped by AdGroupId, so the ad cannot be addressed at all.
+//
+// Both refusals are ErrCampaignNotProvisioned, so the service maps them to a 409 STATE error
+// rather than a platform failure — they are facts about the persisted row, not about
+// Microsoft. Both are checked BEFORE resolving credentials, so a row that can never be
+// toggled costs no decrypt and no upstream call.
 func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	msStatus, err := microsoftRunStatus(status)
 	if err != nil {
 		return err
 	}
+	adGroupID, adID := microsoftChildIDs(campaign)
+	adGroupID, adID = strings.TrimSpace(adGroupID), strings.TrimSpace(adID)
+	if msStatus == microsoft.StatusActive && (adGroupID == "" || adID == "") {
+		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	// An ad with no known parent cannot be paused (the client refuses the pair), and sending
+	// the campaign anyway would report success while the ad kept serving.
+	if adID != "" && adGroupID == "" {
+		return fmt.Errorf("%w: microsoft campaign %s records ad %s but no ad group id, so the ad's status cannot be changed", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, adID)
+	}
 	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
 	if err != nil {
 		return err
-	}
-	adGroupID, adID := microsoftChildIDs(campaign)
-	if msStatus == microsoft.StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
-		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, msStatus); uerr != nil {
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
