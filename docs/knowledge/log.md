@@ -54,6 +54,62 @@ index and the bare one errors; `000015`'s guard fires and leaves the old constra
 the index is missing; the down path restores the constraint and fails by design once
 soft-deleted duplicates exist.
 
+**Fix** — Review findings on the delete PR. Three issues, two of them real bugs in work the
+entry above describes as verified — worth recording, because in both cases the original
+verification was aimed slightly to one side of the defect.
+
+The delete guard enumerated only `pending`, so the RETAINED PARTIAL orphans `group_created`
+and `unconfirmed` passed it. Both mean the upstream create did not complete: a sub-resource
+exists, or the outcome is ambiguous. Soft-deleting one overwrites `status` with `'deleted'`,
+which erases the only local record of WHAT went wrong AND frees the `(brief, platform)` slot,
+so the next dispatch creates a fresh campaign with no sign that a half-created one may already
+be sitting upstream. The rest of the codebase already had this doctrine — the run-state toggle
+refuses any unreconciled row via `CampaignStatusToggleable` — so delete was the one path that
+didn't follow it. Now keyed off `model.CampaignStatusNeedsReconciliation`.
+
+`created_degraded` is deliberately excluded from that predicate: it was fully created upstream,
+so the row is a complete record and retiring it loses nothing. That makes it deletable but NOT
+toggleable, which is precisely why these are two functions rather than one — a tempting future
+"simplification" that collapses them is wrong, and a test now asserts the disagreement.
+
+Getting the two orphan literals to the postgres package needed them exported from
+`internal/domain/model`: they live as unexported constants in `internal/dispatch` and an
+unexported map in `internal/service`, and postgres may import neither. Both original sites now
+reference the model constants instead of re-spelling the strings, and the existing
+`TestPartialOrphanStatusValues` drift guard was extended to cover the new copies.
+
+The migration guard was the more dangerous finding. `000015` verified that an index named
+`uq_campaigns_brief_platform_live` existed and was `indisvalid` — nothing more. But `000014`
+builds with `IF NOT EXISTS`, so ANY pre-existing index carrying that name makes `000014` a
+silent no-op and satisfies a name-only guard, after which `000015` drops the sole real
+uniqueness constraint. The pair is then left with NO enforceable uniqueness: every
+`ClaimCampaignDispatch` wins and concurrent retries double-create paid campaigns, silently,
+because nothing errors. The guard now proves the relation, `indisunique`, `indnkeyatts = 2`
+with key columns exactly `(brief_id, platform)` in order, and a predicate deparsing to
+`(status <> 'deleted'::text)`.
+
+Verified on a throwaway PostgreSQL 16.10 rather than by reading, and the decisive check was
+running the OLD guard against the same fixture: on a non-unique index of the right name it
+returns true (would have dropped the constraint) while the new one returns false, the migration
+RAISEs, and the constraint survives. Also rejected: a superset key list `(brief_id, platform,
+id)`, reversed column order, a non-partial index, a wrong predicate, an index of that name on
+another table, and a forged INVALID index. Still accepted: an `INCLUDE` column, and an
+equivalent predicate spelled `!=` or with an explicit `::text` cast — the comparison is against
+the text Postgres itself deparses, so it is normalization-proof rather than a fragile string
+match. End to end, the migration drops the constraint on a good index and is idempotent on
+re-run.
+
+The third finding asked for a DB-backed `DeleteCampaign` test, and that one was declined with
+reasons rather than implemented. `TestDeleteCampaign_LocksRowBeforeGuards` genuinely never
+calls the function — it asserts on a SQL constant — but this repo has no DB-backed test harness
+at all (no testcontainers, dockertest or pgxmock; `make test` is a plain `go test`) and
+`CampaignRepo.db` is a concrete `*Pool` with no interface seam. Satisfying the ask literally
+means adding a docker dependency to CI that no other test uses, which is a bigger change than a
+review finding should decide. Instead the guard DECISION — the part that actually had the bug —
+moved to pure logic in the model package and is pinned exhaustively over the whole status
+vocabulary, so an unclassified new status fails a test rather than silently defaulting to
+deletable. Both new tests were verified by reverting the fixes and watching them fail.
+
 ## 2026-08-03
 
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the

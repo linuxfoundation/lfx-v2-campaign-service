@@ -95,6 +95,12 @@ func TestDeleteCampaign_IsSoftDelete(t *testing.T) {
 
 // TestDeleteCampaign_LocksRowBeforeGuards pins the FOR UPDATE row lock.
 //
+// This asserts on the locking read's SQL only. The guard DECISION it protects — which
+// statuses may be deleted — is pure logic and is tested exhaustively as
+// model.CampaignStatusNeedsReconciliation (see TestCampaignStatusNeedsReconciliation);
+// that split is deliberate, because this repo has no DB-backed test harness and the
+// predicate is the part that actually had the bug.
+//
 // A 'pending' campaign is an ACTIVE dispatch claim. Deleting one would free the
 // (brief, platform) slot while an in-flight dispatch still owns it, letting a
 // concurrent claim win the same pair and DOUBLE-CREATE a paid campaign upstream.
@@ -110,6 +116,54 @@ func TestDeleteCampaign_LocksRowBeforeGuards(t *testing.T) {
 			"is a TOCTOU race under READ COMMITTED and a concurrent claim could double-create upstream.")
 	require.Contains(t, q, "SELECT STATUS, VERSION",
 		"the locking read must fetch status and version so both guards are evaluated against the locked row")
+}
+
+// TestMigration000015_GuardChecksIndexDefinition pins that the drop-guard verifies the
+// replacement index's DEFINITION and not merely its name.
+//
+// The hole this closes: 000014 builds uq_campaigns_brief_platform_live with
+// CREATE UNIQUE INDEX CONCURRENTLY *IF NOT EXISTS*. Any pre-existing index that happens to
+// carry that name therefore makes 000014 a silent no-op — and a guard that checks only
+// name/namespace/indisvalid accepts it, after which this migration drops the sole full
+// UNIQUE (brief_id, platform) constraint. The table is then left with NO enforceable
+// uniqueness on the pair: every ClaimCampaignDispatch wins, and concurrent retries
+// double-create paid campaigns upstream, silently, because nothing errors.
+//
+// Verified against PostgreSQL 16.10: with a NON-unique index of the right name in place,
+// the old name-only guard returned true (would have dropped the constraint) while the
+// current guard returns false and the migration RAISEs with the constraint left intact.
+// The same run confirmed the guard rejects a superset key list (brief_id, platform, id), a
+// reversed column order, a non-partial index, a wrong predicate, an index on a different
+// table, and an INVALID index — while still accepting an equivalent predicate spelled
+// `!=` or with an explicit ::text cast, since the comparison is against the text Postgres
+// itself deparses.
+func TestMigration000015_GuardChecksIndexDefinition(t *testing.T) {
+	b, err := fs.ReadFile(migrations.FS, "000015_drop_campaigns_full_unique_platform.up.sql")
+	require.NoError(t, err)
+	sql := normalizeWS(string(b))
+
+	// Each check is load-bearing; a guard missing any one of them accepts an index that
+	// does not enforce what the dropped constraint enforced.
+	for _, want := range []struct{ frag, why string }{
+		{"i.indisunique", "a NON-unique index of the right name would pass and arbitrates no dispatch claim"},
+		{"i.indnkeyatts = 2", "without pinning the key count, a superset like (brief_id, platform, id) passes and permits two live rows for the pair"},
+		{"i.indrelid = 'public.campaigns'::regclass", "without pinning the relation, an index of the same name on ANOTHER table satisfies the guard"},
+		{"i.indisvalid", "a failed CONCURRENTLY build leaves an INVALID index that Postgres refuses to use"},
+		{"'brief_id'", "the first key column must be proven to be brief_id"},
+		{"'platform'", "the second key column must be proven to be platform"},
+		{"i.indpred IS NOT NULL", "a non-partial index covers deleted rows too and does not free the slot"},
+		{`= '(status <> ''deleted''::text)'`, "the predicate must match what Postgres deparses for WHERE status <> 'deleted'; a different predicate covers a different row set"},
+	} {
+		require.Contains(t, sql, want.frag,
+			"migration 000015's drop-guard is missing %q: %s", want.frag, want.why)
+	}
+
+	// The guard must still gate the DROP. A guard that RAISEs correctly but whose
+	// exception is unreachable, or a DROP that runs outside it, protects nothing.
+	require.Contains(t, strings.ToUpper(sql), "RAISE EXCEPTION",
+		"the guard must RAISE (failing the migration and the pod's startup) rather than skip the drop silently")
+	require.Contains(t, strings.ToUpper(sql), "DROP CONSTRAINT CAMPAIGNS_BRIEF_ID_PLATFORM_KEY",
+		"the migration must still drop the old constraint once the guard is satisfied")
 }
 
 // TestMigrations_UniqueNumbering guards against two migration files sharing a version.

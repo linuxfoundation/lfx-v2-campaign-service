@@ -82,10 +82,26 @@ applied file.
   exists before the constraint it replaces is dropped. Dropping first would open a
   window with NO uniqueness, during which two concurrent claims could both win and
   double-create a paid campaign upstream. `000015` is a guarded `DO` block that
-  REFUSES to drop the constraint unless the new index is present AND `indisvalid`,
-  because a failed CONCURRENTLY build does not roll back — it leaves an INVALID index
-  that `IF NOT EXISTS` would silently skip rebuilding. Failing the migration loudly
-  (leaving the old constraint protecting the table) is the correct outcome.
+  REFUSES to drop the constraint unless the new index is present, `indisvalid`, and
+  matches its required DEFINITION, because a failed CONCURRENTLY build does not roll
+  back — it leaves an INVALID index that `IF NOT EXISTS` would silently skip rebuilding.
+  Failing the migration loudly (leaving the old constraint protecting the table) is the
+  correct outcome.
+
+  The guard checks the definition, not just the name, and that distinction is
+  load-bearing. Because `000014` builds with `IF NOT EXISTS`, ANY pre-existing index
+  carrying the name `uq_campaigns_brief_platform_live` makes `000014` a silent no-op —
+  and a name-only guard then accepts it and drops the sole real uniqueness constraint,
+  leaving the pair with none: every claim wins and concurrent retries double-create paid
+  campaigns, silently. So the guard proves `indrelid = public.campaigns`, `indisunique`,
+  `indnkeyatts = 2` with key columns exactly `(brief_id, platform)` in order, and a
+  partial predicate deparsing to `(status <> 'deleted'::text)`. Verified on PostgreSQL
+  16.10: a non-unique index of the right name PASSED the old name-only guard and FAILS
+  this one, as do a superset key list, a reversed column order, a non-partial index, a
+  wrong predicate, an index on another table, and an INVALID index; an equivalent
+  predicate spelled `!=` or with an explicit `::text` cast still passes, since the
+  comparison uses the text Postgres itself deparses. Pinned by
+  `TestMigration000015_GuardChecksIndexDefinition`.
 
   **Consequence for every `ON CONFLICT (brief_id, platform)`**: PostgreSQL infers the
   arbiter index by matching the conflict target AND its predicate, so once the full
@@ -97,5 +113,49 @@ applied file.
   (`GetCampaign`, `GetCampaignByPlatform`, `ReplaceCampaign`) also filters deleted
   rows — load-bearing for `GetCampaignByPlatform`, which the orchestrator uses to
   decide whether a pair was already dispatched.
+
+## DeleteCampaign's guards
+
+`DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one
+transaction BEFORE evaluating its guards. The lock is required, not decorative: under
+READ COMMITTED each statement takes a fresh snapshot, so a `ClaimCampaignDispatch` that
+commits just before a guarded `UPDATE` runs is invisible to its predicate — and because
+the claim INSERTs a new row rather than updating this one, there is no row-level conflict
+for Postgres to serialize on. Pinned by `TestDeleteCampaign_LocksRowBeforeGuards`.
+
+The guards, in order: `deleted` → `ErrNotFound` (a second DELETE is a 404, matching
+`GetCampaign`, not a silent success); an unresolved reconciliation marker →
+`ErrConflict`; then `version != expectedVersion` → `ErrPreconditionFailed` (checked LAST
+so a stale ETag on an unresolved campaign yields the actionable conflict rather than a
+412 implying a reload would fix it).
+
+**The reconciliation guard covers three statuses, not one.** It keys off
+`model.CampaignStatusNeedsReconciliation` — `pending` (a live dispatch claim, or one that
+died mid-flight) plus the partial orphans `group_created` and `unconfirmed`. Enumerating
+only `pending` was a real defect: soft-deleting overwrites `status` with `'deleted'`,
+which erases the only local record that a half-created campaign may exist upstream AND
+frees the `(brief, platform)` slot, so the next dispatch creates a fresh campaign with no
+sign of the orphan. This is the same doctrine `CampaignStatusToggleable` enforces for the
+run-state toggle.
+
+`created_degraded` is deliberately DELETABLE though not TOGGLEABLE — the two predicates
+differ on exactly that status, which is why they are separate functions. A degraded
+campaign was fully created upstream, so its row is a complete record and retiring it
+loses nothing; toggling it would erase a reconciliation marker that still matters.
+
+The two orphan literals are exported from `internal/domain/model` solely so this package
+can share them: they originate as unexported constants in `internal/dispatch` and an
+unexported map in `internal/service`, neither of which postgres may import. Drift between
+the copies is caught by `TestPartialOrphanStatusValues` (`internal/dispatch`), and the
+predicate itself is pinned exhaustively over the whole status vocabulary by
+`TestCampaignStatusNeedsReconciliation` (`internal/domain/model`) — a new status that
+nobody classifies fails that test rather than silently defaulting to deletable.
+
+Note the testing split: this repo has NO DB-backed test harness (no testcontainers,
+dockertest or pgxmock; `make test` is a plain `go test`), and `CampaignRepo.db` is a
+concrete `*Pool` with no interface seam. So the SQL is pinned as text and the guard
+DECISION — the part that actually had the bug — is tested as pure logic in the model
+package. A DB-backed test of `DeleteCampaign` would need a docker dependency in CI that
+no other test here uses.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).

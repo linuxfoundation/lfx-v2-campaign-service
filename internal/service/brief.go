@@ -494,11 +494,13 @@ func (s *BriefService) DeleteCampaign(ctx context.Context, p *briefs.DeleteCampa
 	}
 	derr := campaignRepo.DeleteCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
 	if errors.Is(derr, domain.ErrConflict) {
-		// The repo returns ErrConflict ONLY for a mid-dispatch ('pending') campaign.
-		// mapBriefErr would render that as "the resource already exists", which
-		// describes a uniqueness violation and tells the caller nothing actionable.
-		// A dispatch in flight is transient, so say that and say to retry.
-		return &briefs.ConflictError{Code: "409", Message: "the campaign is currently being dispatched and cannot be deleted; wait for the dispatch to finish, then retry"}
+		// The repo returns ErrConflict only when the campaign's status is an unresolved
+		// reconciliation marker — a mid-dispatch 'pending' claim, or a
+		// 'group_created'/'unconfirmed' partial orphan. mapBriefErr would render that as
+		// "the resource already exists", which describes a uniqueness violation and tells
+		// the caller nothing actionable. Name the real cause and both remedies instead: an
+		// in-flight dispatch clears on its own, an orphan needs reconciling.
+		return &briefs.ConflictError{Code: "409", Message: "the campaign cannot be deleted while its dispatch is unresolved; if a dispatch is in flight, wait for it to finish and retry, otherwise the campaign is a partially-created orphan that must be reconciled first"}
 	}
 	return mapBriefErr(derr)
 }

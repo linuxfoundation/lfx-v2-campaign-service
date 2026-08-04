@@ -267,8 +267,10 @@ const deleteCampaignQuery = `UPDATE campaigns SET status='deleted', version=vers
 // soft delete are therefore atomic with respect to dispatch.
 //
 // Returns domain.ErrNotFound if the campaign is absent or already deleted,
-// domain.ErrConflict if it is mid-dispatch ('pending'), and
-// domain.ErrPreconditionFailed on a version mismatch.
+// domain.ErrConflict if its status is an unresolved reconciliation marker (a
+// mid-dispatch 'pending' claim, or a 'group_created'/'unconfirmed' partial orphan —
+// see model.CampaignStatusNeedsReconciliation), and domain.ErrPreconditionFailed on a
+// version mismatch.
 func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -294,9 +296,18 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 	if status == model.CampaignStatusDeleted {
 		return domain.ErrNotFound
 	}
-	// A 'pending' row is a live dispatch claim owned by an in-flight dispatch; see
-	// the isolation reasoning above.
-	if status == model.CampaignStatusPending {
+	// Refuse to retire a row whose status is an unresolved reconciliation marker:
+	// 'pending' (a live dispatch claim, or one that died mid-flight) and the partial
+	// orphans 'group_created'/'unconfirmed'. Soft-deleting overwrites status with
+	// 'deleted', which both erases the only local record of WHAT went wrong and frees
+	// the (brief, platform) slot — so a re-dispatch then creates a fresh campaign with
+	// no indication that a half-created one may already exist upstream. The orphan must
+	// be reconciled first. This mirrors the run-state toggle's refusal to act on an
+	// unreconciled row (see CampaignStatusNeedsReconciliation).
+	//
+	// 'created_degraded' is deliberately NOT included: it means the campaign WAS fully
+	// created upstream, so its row is a complete record and retiring it loses nothing.
+	if model.CampaignStatusNeedsReconciliation(status) {
 		return domain.ErrConflict
 	}
 	// Version is checked AFTER the state guards so a caller holding a stale ETag for
