@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -748,11 +749,11 @@ func TestCreateCampaign_DisplayDomainWideCapDecodesPunycodeHost(t *testing.T) {
 	if strings.EqualFold(asciiHost, unicodeHost) {
 		t.Fatal("test host did not punycode-encode; fixture is not exercising the xn-- path")
 	}
-	var reached bool
+	var reached reachFlag
 	api := &campaignsAPI{}
 	base := api.handler(t)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		reached = true
+		reached.mark()
 		base(w, r)
 	})
 	in := validInput()
@@ -767,8 +768,46 @@ func TestCreateCampaign_DisplayDomainWideCapDecodesPunycodeHost(t *testing.T) {
 	if res != nil {
 		t.Errorf("a bad display domain must fail cleanly (nil result), got %+v", res)
 	}
-	if reached {
+	if reached.hit() {
 		t.Error("no API call should be made — the punycode display domain is invalid up front")
+	}
+}
+
+func TestCreateCampaign_DisplayDomainRejectsUndecodableIDNAHost(t *testing.T) {
+	// The sibling of the decode-SUCCESS case above: a malformed `xn--` A-label that idna
+	// ToUnicode cannot decode. Falling back to the raw ASCII label would measure a host that is
+	// short enough to clear the 67-rune cap, so the invalid domain would only be caught later by
+	// AddAds — after the PAUSED campaign and ad group already exist, the exact orphan this
+	// up-front block prevents. A decode failure must fail CLOSED, like the URL-parse failure.
+	const badHost = "xn--a.example" // a syntactically invalid punycode label
+	if _, derr := idna.Lookup.ToUnicode(badHost); derr == nil {
+		t.Fatalf("fixture no longer exercises the decode-failure branch: %q now decodes", badHost)
+	}
+	if len(badHost) >= maxDisplayDomainRunes {
+		t.Fatalf("fixture host must be UNDER the %d-rune cap to prove the length check alone would pass it", maxDisplayDomainRunes)
+	}
+	var reached reachFlag
+	api := &campaignsAPI{}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reached.mark()
+		base(w, r)
+	})
+	in := validInput()
+	in.RegistrationURL = "https://" + badHost + "/register"
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected a rejection for a host whose IDNA label cannot be decoded")
+	}
+	if !strings.Contains(err.Error(), "IDNA") {
+		t.Errorf("expected an IDNA-label error, got: %v", err)
+	}
+	if res != nil {
+		t.Errorf("an undecodable host must fail cleanly (nil result, claim released), got %+v", res)
+	}
+	if reached.hit() {
+		t.Error("no API call should be made — the host is rejected before any campaign is created")
 	}
 }
 
@@ -818,11 +857,11 @@ func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
 	}
 	for name, badURL := range cases {
 		t.Run(name, func(t *testing.T) {
-			var reached bool
+			var reached reachFlag
 			api := &campaignsAPI{}
 			base := api.handler(t)
 			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-				reached = true // any API call means we failed to validate up front
+				reached.mark() // any API call means we failed to validate up front
 				base(w, r)
 			})
 			in := validInput()
@@ -834,7 +873,7 @@ func TestCreateCampaign_RejectsBadAdURL(t *testing.T) {
 			if res != nil {
 				t.Errorf("%s: a bad URL must fail cleanly (nil result), got %+v", name, res)
 			}
-			if reached {
+			if reached.hit() {
 				t.Errorf("%s: no API call should be made — the URL is invalid up front", name)
 			}
 			// A userinfo URL error must not echo the password.
@@ -849,11 +888,11 @@ func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
 	// A registration URL whose HOST exceeds the 67-char display-domain limit passes the
 	// 2,048-char FinalUrls check but Microsoft rejects the display domain at AddAds. It must
 	// fail UP FRONT (nil, err, no API call) so a PAUSED campaign/ad group is never orphaned.
-	var reached bool
+	var reached reachFlag
 	api := &campaignsAPI{}
 	base := api.handler(t)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		reached = true
+		reached.mark()
 		base(w, r)
 	})
 	in := validInput()
@@ -868,7 +907,7 @@ func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
 	if res != nil {
 		t.Errorf("an over-long display domain must fail cleanly (nil result), got %+v", res)
 	}
-	if reached {
+	if reached.hit() {
 		t.Error("no API call should be made — the display domain is invalid up front")
 	}
 }
@@ -879,11 +918,11 @@ func TestCreateCampaign_RejectsOverLongDisplayDomain(t *testing.T) {
 // after the PAUSED campaign/ad group already exist (orphaning them). Guards the 2,048-char
 // composed-URL check (which the raw-URL validation alone does not enforce).
 func TestCreateCampaign_RejectsOverLongComposedFinalURL(t *testing.T) {
-	var reached bool
+	var reached reachFlag
 	api := &campaignsAPI{}
 	base := api.handler(t)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		reached = true
+		reached.mark()
 		base(w, r)
 	})
 	in := validInput()
@@ -905,7 +944,7 @@ func TestCreateCampaign_RejectsOverLongComposedFinalURL(t *testing.T) {
 	if res != nil {
 		t.Errorf("an over-long composed final URL must fail cleanly (nil result), got %+v", res)
 	}
-	if reached {
+	if reached.hit() {
 		t.Error("no API call should be made — the composed URL is invalid up front")
 	}
 }
@@ -923,11 +962,11 @@ func TestCreateCampaign_DisplayDomainCountsNonDefaultPort(t *testing.T) {
 	}
 
 	t.Run("non-default port pushes over the cap -> rejected up front", func(t *testing.T) {
-		var reached bool
+		var reached reachFlag
 		api := &campaignsAPI{}
 		base := api.handler(t)
 		c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-			reached = true
+			reached.mark()
 			base(w, r)
 		})
 		in := validInput()
@@ -939,7 +978,7 @@ func TestCreateCampaign_DisplayDomainCountsNonDefaultPort(t *testing.T) {
 		if res != nil {
 			t.Errorf("must fail cleanly (nil result), got %+v", res)
 		}
-		if reached {
+		if reached.hit() {
 			t.Error("no API call should be made — the authority is over the cap up front")
 		}
 	})
@@ -984,11 +1023,11 @@ func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			var reached bool
+			var reached reachFlag
 			api := &campaignsAPI{}
 			base := api.handler(t)
 			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-				reached = true
+				reached.mark()
 				base(w, r)
 			})
 			in := validInput()
@@ -996,7 +1035,7 @@ func TestCreateCampaign_RejectsBadAdCopy(t *testing.T) {
 			if _, err := c.CreateCampaign(context.Background(), in); err == nil {
 				t.Fatalf("%s: expected an ad-copy validation error", name)
 			}
-			if reached {
+			if reached.hit() {
 				t.Errorf("%s: no API call should be made — copy is invalid up front", name)
 			}
 		})
@@ -1603,5 +1642,89 @@ func TestCreateCampaign_ContextCancelledBeforeAdGroupIsCleanAbort(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), "aborted") {
 		t.Errorf("a pre-ad-group cancel should read as an abort, got: %v", err)
+	}
+}
+
+// TestCreateCampaign_DisplayDomainAcceptsIPv6Host guards the IPv6 regression the fail-closed
+// IDNA check introduced: an IPv6 literal is not an IDNA label, so ToUnicode fails on it. Since
+// validateAdURL accepts IPv6 destinations, treating that failure as invalid input would reject
+// a previously-valid URL with a misleading "not a valid IDNA label" error.
+func TestCreateCampaign_DisplayDomainAcceptsIPv6Host(t *testing.T) {
+	// Prove the fixture actually exercises the branch: the bare host must fail ToUnicode.
+	if _, derr := idna.Lookup.ToUnicode("::1"); derr == nil {
+		t.Skip("IPv6 literal now decodes as an IDNA label; fixture no longer exercises the guard")
+	}
+	api := &campaignsAPI{}
+	c := newAPIClient(t, api.handler(t))
+	in := validInput()
+	in.RegistrationURL = "https://[::1]/register"
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil && strings.Contains(err.Error(), "IDNA") {
+		t.Fatalf("an IPv6 host must not be rejected as an invalid IDNA label: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("CreateCampaign with an IPv6 destination: %v", err)
+	}
+	if res == nil || res.CampaignID == "" {
+		t.Errorf("expected a created campaign for a valid IPv6 destination, got %+v", res)
+	}
+}
+
+// reachFlag records whether the fake server was called. The handler goroutine writes it and the
+// test goroutine reads it, and httptest.Server.Close only synchronizes at the deferred Close —
+// which runs AFTER the assertions — so both sides are mutex-guarded.
+type reachFlag struct {
+	mu  sync.Mutex
+	set bool
+}
+
+func (r *reachFlag) mark() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.set = true
+}
+
+func (r *reachFlag) hit() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.set
+}
+
+// TestDisplayDomainCountsTheBracketedIPv6Authority pins that the display-domain width check
+// measures the SAME authority string canonicalFinalURL emits.
+//
+// Hostname() strips the brackets off an IPv6 literal, so a naive count would be two runes short
+// of the form the URL actually carries. That is unreachable as a bug today — the longest possible
+// IPv6 literal is ~47 runes, well under the 67-rune cap — but the two call sites are supposed to
+// measure the same thing, and a future cap reduction or a longer authority form would turn a
+// silent mismatch into a campaign that passes here and is rejected upstream, orphaning a PAUSED
+// campaign and ad group. Cheaper to pin the invariant than to rediscover it there.
+func TestDisplayDomainCountsTheBracketedIPv6Authority(t *testing.T) {
+	cases := []struct {
+		name, rawURL, want string
+	}{
+		{"no port", "https://[2001:db8::1]/p", "[2001:db8::1]"},
+		{"non-default port", "https://[2001:db8::1]:8443/p", "[2001:db8::1]:8443"},
+		{"default port is dropped", "https://[2001:db8::1]:443/p", "[2001:db8::1]"},
+		{"longest literal", "https://[2001:0db8:85a3:0000:0000:8a2e:0370:7334]/p", "[2001:0db8:85a3:0000:0000:8a2e:0370:7334]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := url.Parse(tc.rawURL)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			got := authorityForWidth(u, u.Hostname())
+			if got != tc.want {
+				t.Errorf("authorityForWidth = %q, want %q (brackets must survive: canonicalFinalURL emits them)", got, tc.want)
+			}
+			// The measured authority must match what the ad's final URL actually carries.
+			canon := canonicalFinalURL(tc.rawURL)
+			if !strings.Contains(canon, got) {
+				t.Errorf("canonicalFinalURL(%q) = %q does not contain the measured authority %q; "+
+					"the two checks would disagree at the cap", tc.rawURL, canon, got)
+			}
+		})
 	}
 }

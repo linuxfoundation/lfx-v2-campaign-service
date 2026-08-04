@@ -74,3 +74,13 @@ golang-migrate / `dktest`). MegaLinter is pointed at that config with
 package-scoped so new findings in runtime dependencies still fail CI.
 Engine patches exist, but a remediated Go module is not yet resolvable on
 the path migrate pulls; track a migrate/dktest upgrade separately.
+
+That ignore list is for **test-only** transitives. A **runtime-scope** CVE is
+PATCHED instead, even when the module is indirect — the ignore list must not
+grow to cover code that ships. Four such advisories were remediated by version
+bump on 2026-07-30 (LFXV2-2811): `google.golang.org/grpc` → 1.82.1 (xDS RBAC /
+HTTP2, via `goa.design/clue/debug`), `github.com/apache/thrift` → 0.23.0
+(`TFramedTransport` integer overflow, via `gosnowflake` → `arrow-go`), and
+`aws-sdk-go-v2/service/s3` → 1.97.3 plus
+`aws-sdk-go-v2/aws/protocol/eventstream` → 1.7.8 (EventStream decoder panic /
+DoS, via `gosnowflake`). None was added to `.grype.yaml`.
