@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
@@ -546,6 +548,99 @@ func TestStuckClaimRemediation_NeverSaysSafe(t *testing.T) {
 				"no stuck claim may be reported as safe to delete: a dispatch may still be in flight")
 		})
 	}
+}
+
+// fixedScanner returns a canned batch of stuck claims.
+type fixedScanner struct{ rows []*model.Campaign }
+
+func (f *fixedScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
+	return f.rows, nil
+}
+
+// stuckClaims builds n distinct 'pending' rows.
+func stuckClaims(n int) []*model.Campaign {
+	out := make([]*model.Campaign, 0, n)
+	for i := range n {
+		out = append(out, &model.Campaign{BriefID: fmt.Sprintf("b-%d", i), Version: 1})
+	}
+	return out
+}
+
+// summaryFor runs one scan against rows and returns the parsed "stuck dispatch claims detected"
+// summary record, plus how many per-claim detail lines were emitted.
+func summaryFor(t *testing.T, rows []*model.Campaign) (map[string]any, int) {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	scanStuckDispatchClaims(context.Background(), &fixedScanner{rows: rows}, "in test")
+
+	var summary map[string]any
+	details := 0
+	for _, line := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var rec map[string]any
+		require.NoError(t, json.Unmarshal(line, &rec))
+		switch rec["msg"] {
+		case "stuck dispatch claims detected in test":
+			summary = rec
+		case "stuck dispatch claim":
+			details++
+		}
+	}
+	return summary, details
+}
+
+// TestScanStuckDispatchClaims_TruncationIsHonest pins the one contract that decides whether an
+// operator sees the real size of an incident. The repo deliberately queries DefaultStuckClaimLimit+1
+// so a saturated cap is DISTINGUISHABLE from an exact count; if the scan reported a flat
+// count=100 with truncated=false, a crash-loop stranding thousands of claims would read as a
+// bounded 100-row problem. count must therefore never exceed the cap, and truncated must be
+// true exactly when the repo returned more than the cap.
+func TestScanStuckDispatchClaims_TruncationIsHonest(t *testing.T) {
+	cases := []struct {
+		name          string
+		returned      int
+		wantCount     float64
+		wantTruncated bool
+	}{
+		{"under the cap", 3, 3, false},
+		{"exactly the cap", postgres.DefaultStuckClaimLimit, float64(postgres.DefaultStuckClaimLimit), false},
+		// The repo queries limit+1, so this is what "at least the cap" looks like on the wire.
+		{"cap saturated", postgres.DefaultStuckClaimLimit + 1, float64(postgres.DefaultStuckClaimLimit), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			summary, details := summaryFor(t, stuckClaims(tc.returned))
+			require.NotNil(t, summary, "a non-empty scan must emit a summary line")
+
+			assert.Equal(t, tc.wantTruncated, summary["truncated"],
+				"truncated must be true exactly when the repo returned more rows than the cap, or a saturated scan understates the incident")
+			assert.Equal(t, tc.wantCount, summary["count"],
+				"count must be clamped to the cap and never report the +1 probe row")
+			// An ABSOLUTE bound, deliberately not `<= maxStuckClaimDetailLogs`: comparing the
+			// output against the very constant that produced it holds for any value of that
+			// constant, so it would not notice the cap being raised to something that floods
+			// the log during an incident. A stuck-claim burst is exactly when logging volume
+			// matters, and the summary line already carries the true total.
+			assert.LessOrEqual(t, details, 10,
+				"per-claim detail logging must stay bounded regardless of how many rows came back")
+			assert.Equal(t, float64(details), summary["reported"],
+				"reported must equal the number of detail lines actually emitted")
+		})
+	}
+}
+
+// TestScanStuckDispatchClaims_SilentWhenClean keeps the diagnostic from being noise: a clean
+// scan is the normal state on every replica every 5 minutes, so it must log nothing at all.
+func TestScanStuckDispatchClaims_SilentWhenClean(t *testing.T) {
+	summary, details := summaryFor(t, nil)
+	assert.Nil(t, summary, "a clean scan must not emit a summary line")
+	assert.Zero(t, details, "a clean scan must not emit detail lines")
 }
 
 // wedgedScanner ignores context cancellation until released, modelling a driver already

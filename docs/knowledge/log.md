@@ -2,6 +2,25 @@
 
 ## 2026-08-04
 
+**Update** — Pinned the stuck-claim truncation contract with tests (LFXV2-2665, PR #59 review).
+`scanStuckDispatchClaims` clamps the reported batch to `DefaultStuckClaimLimit` and sets
+`truncated` when the repo's `limit+1` probe comes back saturated — the mechanism that lets an
+operator tell "exactly 100 stuck" from "at least 100, real total unknown". Nothing tested it.
+
+Added `TestScanStuckDispatchClaims_TruncationIsHonest` (under the cap / exactly the cap /
+saturated) and `TestScanStuckDispatchClaims_SilentWhenClean`, asserting against the actual emitted
+slog records. Each was verified by reverting the behavior it covers: dropping the clamp leaks the
+raw `101` probe row into the operator-facing `count` and reports `truncated=false`; forcing
+`truncated=false` alone still fails; removing the empty-result early return breaks the silent-when-
+clean guarantee (a clean scan is the normal state on every replica every 5 minutes, so it must log
+nothing).
+
+One trap worth recording: the detail-log assertion was first written as
+`details <= maxStuckClaimDetailLogs`, which compares the output against the very constant that
+produced it and therefore holds for ANY value of that constant — raising the cap to 1000 still
+passed. It is now an absolute bound (`<= 10`), which does fail on that change. A cap-vs-itself
+assertion is not a test.
+
 **Update** — Corrected the stated reason for `make_interval` in the stuck-claim scan (LFXV2-2665,
 PR #59 review). The comment in `campaign_repo.go` and `stuck_claims_test.go` claimed Postgres
 REJECTS the `"4m0s"` Go renders for `4 * time.Minute`, and that an earlier `$1::interval` version
