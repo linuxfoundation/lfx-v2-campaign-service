@@ -201,7 +201,17 @@ func (p *NATSPublisher) PublishRaw(ctx context.Context, subject, objectID string
 	if wait <= 0 {
 		return errNoFlushBudget
 	}
-	reply, err := p.conn.Request(subject, payload, wait)
+	// RequestWithContext, not Request: the duration-only form cannot be INTERRUPTED. At shutdown
+	// Relay.Stop returns after relayStopTimeout (250ms) while an in-flight Request would keep
+	// running for its full budget (up to publishTimeout, 3s) — still holding the outbox claim
+	// transaction. The pgxpool.Close that follows then blocks on that connection, overrunning
+	// the composed shutdown bound this budget exists to enforce.
+	//
+	// The deadline is a CHILD of ctx, so whichever ends first wins: the relay's cancellation on
+	// shutdown, or the flush budget.
+	reqCtx, cancelReq := context.WithTimeout(ctx, wait)
+	defer cancelReq()
+	reply, err := p.conn.RequestWithContext(reqCtx, subject, payload)
 	if err != nil {
 		// Includes nats.ErrNoResponders (no indexer running) and a timeout waiting for the ACK.
 		// Both leave the row PENDING, which is correct: nothing confirmed the message landed.

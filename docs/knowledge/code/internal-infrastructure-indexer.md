@@ -148,6 +148,12 @@ predecessor died mid-publish.
 - **A publisher that did not send must not retire rows.** `Noop.PublishRaw` therefore reports
   FAILURE — otherwise a pod started with indexing disabled would silently drain every pending
   message as delivered, permanently defeating recovery for messages that never left the process.
+- **The ACK request is CONTEXT-AWARE** (`RequestWithContext`, not `Request`). The duration-only
+  form cannot be interrupted: at shutdown `Relay.Stop` returns after `relayStopTimeout` (250ms)
+  while an in-flight request would run its full `publishTimeout` (3s), still holding the outbox
+  claim transaction — and the `pgxpool.Close` that follows would block on that connection,
+  overrunning the composed shutdown bound. The deadline is a CHILD of the pass context, so
+  whichever ends first wins. Verified live: cancellation ends the request in ~200ms.
 - **A FLUSH IS NOT AN ACK.** `PublishRaw` uses NATS request/reply, not publish-and-flush: a flush
   only confirms the bytes reached the BROKER. The indexer subscribes to `lfx.index.*` with reply
   support and answers `"OK"` on success or `"ERROR: ..."` on any envelope/config/data rejection
