@@ -117,8 +117,17 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 	return claimed, row, nil
 }
 
-// StuckDispatchClaims returns 'pending' campaign rows older than stuckClaimReportAge, OLDEST first,
-// capped at limit. It is READ-ONLY: nothing here reclaims, deletes, or redispatches.
+// StuckDispatchClaims returns 'pending' campaign rows older than stuckClaimReportAge, OLDEST
+// first. It is READ-ONLY: nothing here reclaims, deletes, or redispatches.
+//
+// Cardinality: it returns up to limit+1 rows, NOT limit. The extra row is a deliberate
+// truncation probe — receiving limit+1 is how a caller distinguishes "exactly limit are stuck"
+// from "at least limit are stuck and the true total is unknown and larger", which matters
+// because a flat count would understate a crash-looping incident. Callers must therefore treat
+// len(result) > limit as the truncated signal and slice back to limit before reporting a count
+// (see scanStuckDispatchClaims in internal/container). Passing limit <= 0 uses
+// DefaultStuckClaimLimit, so the probe row makes that case return up to
+// DefaultStuckClaimLimit+1.
 //
 // Oldest-first is deliberate and interacts with the cap: a row seconds past the threshold may
 // still be a slow-but-live owner, whereas one stuck for days is unambiguously dead and is what
