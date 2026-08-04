@@ -148,7 +148,7 @@ transient states whose rows are real work, and the relay drains them on recovery
 AFTER the drain (delivery must not queue behind housekeeping) and a prune failure is logged and
 dropped: it costs disk, never correctness.
 
-`index_outbox` (migration 000010, lease columns added in 000015) holds a fully-marshalled message
+`index_outbox` (migration 000010, lease columns added in 000011) holds a fully-marshalled message
 written in the SAME transaction as its resource, so it commits if and only if the resource does.
 `indexer.Relay` drains it every 15s and at startup — the likeliest reason rows are pending is that
 this pod's predecessor died mid-publish.

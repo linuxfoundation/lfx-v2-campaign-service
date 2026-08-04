@@ -6,6 +6,7 @@ package postgres
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -78,11 +79,11 @@ func TestDrainClaimsOneRowPerResourceInOrder(t *testing.T) {
 // exists to serve. The predecessor check probes (object_type, object_id, id) — a (created_at)
 // index cannot serve that, so every pass would re-scan retained published history, which is the
 // bulk of the table.
-// Reads migration 000015, which REPLACED 000010's idx_index_outbox_pending with the
+// Reads migration 000011, which REPLACED 000010's idx_index_outbox_pending with the
 // lease-aware idx_index_outbox_claimable. Asserting against 000010 would pass forever while the
 // index the claim actually uses went unchecked.
 func TestPendingIndexPartialIndexSupportsTheClaim(t *testing.T) {
-	sql, err := os.ReadFile(filepath.Join("migrations", "000015_index_outbox_lease.up.sql"))
+	sql, err := os.ReadFile(filepath.Join("migrations", "000011_index_outbox_lease.up.sql"))
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}
@@ -220,4 +221,97 @@ func TestRecordFailureStampsTheAttemptTime(t *testing.T) {
 		"verified on live PostgreSQL: now() does not advance within a transaction")
 	assert.Contains(t, recordFailureSQL, "attempts = attempts + 1",
 		"and must advance the attempt count that sizes the backoff")
+}
+
+// migrationVersions returns every migration's numeric version, sorted ascending.
+func migrationVersions(t *testing.T) ([]int, map[int]string) {
+	t.Helper()
+	entries, err := filepath.Glob(filepath.Join("migrations", "*.up.sql"))
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+
+	versions := make([]int, 0, len(entries))
+	byVersion := map[int]string{}
+	for _, e := range entries {
+		base := filepath.Base(e)
+		v, _, ok := strings.Cut(base, "_")
+		require.True(t, ok, "migration %q does not follow the NNNNNN_name.up.sql convention", base)
+		n, convErr := strconv.Atoi(v)
+		require.NoError(t, convErr, "migration %q has a non-numeric version %q", base, v)
+		if prev, dup := byVersion[n]; dup {
+			t.Fatalf("migrations %q and %q share version %06d; golang-migrate applies one and SILENTLY "+
+				"SKIPS the other, so a migration never runs and the schema drifts with no error anywhere", prev, base, n)
+		}
+		versions = append(versions, n)
+		byVersion[n] = base
+	}
+	sort.Ints(versions)
+	return versions, byVersion
+}
+
+// TestMigrations_UniqueNumbering guards against two migration files sharing a version.
+// golang-migrate applies one and silently skips the other. This nearly shipped: this branch
+// and feat/LFXV2-campaign-delete independently both defined a 000015, which no CI check on
+// either PR could catch (see TestMigrations_NoVersionGaps for why).
+func TestMigrations_UniqueNumbering(t *testing.T) {
+	versions, _ := migrationVersions(t) // duplicate detection lives in the helper
+	require.NotEmpty(t, versions)
+}
+
+// allowedVersionGaps records gaps that are KNOWN and transitional: versions claimed by a
+// sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
+// numbering bug — this branch must not merge before the PR that fills it, or those migrations
+// are skipped forever. The list must shrink to empty as siblings land.
+//
+// 000008-000009: feat/LFXV2-2665-reclaim-expired-dispatch-claims (PR #59).
+var allowedVersionGaps = map[int]string{
+	8: "PR #59 owns 000008/000009 and must merge before this branch",
+}
+
+// TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
+// exist yet in this tree.
+//
+// golang-migrate records the HIGHEST version it has applied and thereafter only applies
+// versions above it. So if a tree carrying a gap deploys first, the migrations that later fill
+// that gap are skipped SILENTLY and permanently — Up() reports success and the schema is simply
+// missing them.
+//
+// Note the limit of this test and TestMigrations_UniqueNumbering: both see only THIS branch's
+// migrations directory. Neither can detect that a SIBLING branch has claimed the same number —
+// which is exactly how the 000015 collision with feat/LFXV2-campaign-delete arose, green on
+// both PRs and red only on whichever merged second. Choosing a version therefore requires
+// checking every open PR branch, not just main.
+func TestMigrations_NoVersionGaps(t *testing.T) {
+	versions, byVersion := migrationVersions(t)
+
+	require.Equal(t, 1, versions[0], "migrations must start at version 1, got %d (%s)", versions[0], byVersion[versions[0]])
+	for i := 1; i < len(versions); i++ {
+		prev, cur := versions[i-1], versions[i]
+		if cur == prev+1 {
+			continue
+		}
+		why, allowed := allowedVersionGaps[prev+1]
+		require.True(t, allowed,
+			"migration versions must be contiguous: %s jumps from %06d to %06d. golang-migrate records the "+
+				"highest applied version and never applies a lower one afterwards, so if this tree deploys first, "+
+				"any migration later filling versions %06d-%06d is skipped silently and permanently. Renumber to "+
+				"the next consecutive version above every version claimed in main AND in every open PR branch, or "+
+				"record the gap in allowedVersionGaps with the sibling PR that fills it.",
+			byVersion[cur], prev, cur, prev+1, cur-1)
+		t.Logf("tolerating known transitional gap %06d-%06d before %s: %s", prev+1, cur-1, byVersion[cur], why)
+	}
+}
+
+// TestMigrations_AllowedVersionGapsAreStillOpen keeps allowedVersionGaps honest. An entry there
+// suppresses a real contiguity failure, so a stale entry silently re-permits the exact hazard
+// the test above exists to catch.
+func TestMigrations_AllowedVersionGapsAreStillOpen(t *testing.T) {
+	_, byVersion := migrationVersions(t)
+	for gapStart, why := range allowedVersionGaps {
+		_, exists := byVersion[gapStart]
+		require.False(t, exists,
+			"allowedVersionGaps[%d] is stale: version %06d now exists in this tree, so the gap it excused is "+
+				"closed (%s). Delete the entry — leaving it would let a future genuine gap at this version pass "+
+				"unnoticed.", gapStart, gapStart, why)
+	}
 }

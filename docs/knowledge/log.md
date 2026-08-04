@@ -2,6 +2,28 @@
 
 ## 2026-08-04
 
+**Fix** — Renumbered `000015_index_outbox_lease` → `000011_index_outbox_lease`. It COLLIDED with
+`000015_drop_campaigns_full_unique_platform` on `feat/LFXV2-campaign-delete` (PR #64): two
+different migration files claiming the same version in two open PRs.
+
+golang-migrate applies one and silently skips the other — no error, the schema just drifts. And
+no CI check on either PR could catch it: a uniqueness test globs only its own branch's migrations
+directory, so it is green on both PRs and fails only on whichever merges second. The lease
+migration was also numbered above `000011`–`000014`, which nothing owned, so the version had no
+reason to be 15 in the first place.
+
+Added the numbering guards this needed: `TestMigrations_UniqueNumbering` (duplicate versions),
+`TestMigrations_NoVersionGaps` (a version numbered above ones that do not exist yet — if this tree
+deploys first, the migrations later filling the gap are skipped permanently), and
+`TestMigrations_AllowedVersionGapsAreStillOpen` (an `allowedVersionGaps` entry becomes stale once
+its sibling lands, so it must be deleted rather than left to mask a future genuine gap). The
+remaining `000008`–`000009` gap is recorded there as the merge-ordering obligation it is: PR #59
+must merge before this branch. Each test verified by violating what it guards.
+
+Verified on PostgreSQL 16.10: the chain applies ascending (`000001`–`000007`, `000010`, `000011`)
+with the lease columns and `idx_index_outbox_claimable` present and `idx_index_outbox_pending`
+replaced, and `000011`'s down migration reverses it.
+
 **Update** — Took the NATS publish OUT of the outbox claim transaction (LFXV2-2814, PR #60). The
 drain held one transaction across claim, publish and retire, so a pool connection stayed checked
 out for up to the 30s pass budget while the relay waited on the indexer. With a small pool that
@@ -11,7 +33,7 @@ connection, defeating the bounded `Relay.Stop`. A drain is now three short trans
 publish in none of them: claim and commit, publish, then settle each outcome separately.
 
 Removing the long transaction removed what carried exclusivity, since `FOR UPDATE SKIP LOCKED`
-locks end at commit. Migration `000015` adds `leased_until`/`leased_by`, stamped in the SAME
+locks end at commit. Migration `000011` adds `leased_until`/`leased_by`, stamped in the SAME
 statement that selects the rows — splitting the select and the update would leave a window where
 two pods both read an unleased row. A row is claimable only when its lease is absent or expired;
 the expiry (not a permanent flag) is what lets a crashed pod's rows recover instead of wedging
@@ -26,7 +48,7 @@ row is in-flight, not absent, and must still block its successor.
 
 Two existing tests were stale rather than failing, which is the worse kind:
 `TestPendingIndexPartialIndexSupportsTheClaim` asserted against `000010`'s
-`idx_index_outbox_pending`, which `000015` replaces with the lease-aware
+`idx_index_outbox_pending`, which `000011` replaces with the lease-aware
 `idx_index_outbox_claimable` — it would have passed forever while the index the claim actually uses
 went unchecked. `TestDrainClaimsOneRowPerResourceInOrder`'s comment still claimed locks were held
 "through the publish AND the retire", the precise property this change removes.
