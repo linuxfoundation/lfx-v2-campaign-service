@@ -114,6 +114,7 @@ returns `""` and is caught by `TestProviderValidityHoldsForEveryProvider` instea
 inheriting paid-ads behaviour. Also made `TestLogMissingDispatchers_SurfacesGaps` rot-proof: it
 now removes one provider from the real map (a synthetic gap) rather than asserting a specific
 provider is still unregistered, which broke each time an adapter landed.
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
@@ -170,6 +171,7 @@ Connection rules are shared via `validateGoogleAdsConnection`, called by BOTH `D
 (`Dispatch` wraps with `notCreated` for claim semantics, the toggle path does not). The
 campaign id is validated digits-only before any request, since it interpolates into a
 resourceName.
+
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
@@ -215,6 +217,7 @@ a live caller context is a FAILED lookup (UNCONFIRMED), not a clean abort. Also,
 duplicate-name self-heal whose reconciliation re-lookup errors now surfaces that
 cause. Aligned the `internal-platform-microsoft` concept + the older log entry to
 the corrected `ctx.Err()` distinction and the duplicate-name-REJECTED contract.
+
 ## 2026-07-23
 
 **Update** — Microsoft Ads MS-2.5 PR #45 review follow-up (copilot + cursor). (1) The ≥1-word
@@ -435,6 +438,7 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
+
 ## 2026-07-21
 
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review
