@@ -29,6 +29,7 @@ type Server struct {
 	GetCampaign          http.Handler
 	UpdateCampaign       http.Handler
 	ToggleCampaignStatus http.Handler
+	DeleteCampaign       http.Handler
 	GetJob               http.Handler
 }
 
@@ -68,6 +69,7 @@ func New(
 			{"GetCampaign", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"UpdateCampaign", "PUT", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"ToggleCampaignStatus", "PATCH", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/status"},
+			{"DeleteCampaign", "DELETE", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"GetJob", "GET", "/projects/{project_id}/jobs/{job_id}"},
 		},
 		CreateBrief:          NewCreateBriefHandler(e.CreateBrief, mux, decoder, encoder, errhandler, formatter),
@@ -79,6 +81,7 @@ func New(
 		GetCampaign:          NewGetCampaignHandler(e.GetCampaign, mux, decoder, encoder, errhandler, formatter),
 		UpdateCampaign:       NewUpdateCampaignHandler(e.UpdateCampaign, mux, decoder, encoder, errhandler, formatter),
 		ToggleCampaignStatus: NewToggleCampaignStatusHandler(e.ToggleCampaignStatus, mux, decoder, encoder, errhandler, formatter),
+		DeleteCampaign:       NewDeleteCampaignHandler(e.DeleteCampaign, mux, decoder, encoder, errhandler, formatter),
 		GetJob:               NewGetJobHandler(e.GetJob, mux, decoder, encoder, errhandler, formatter),
 	}
 }
@@ -97,6 +100,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetCampaign = m(s.GetCampaign)
 	s.UpdateCampaign = m(s.UpdateCampaign)
 	s.ToggleCampaignStatus = m(s.ToggleCampaignStatus)
+	s.DeleteCampaign = m(s.DeleteCampaign)
 	s.GetJob = m(s.GetJob)
 }
 
@@ -115,6 +119,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetCampaignHandler(mux, h.GetCampaign)
 	MountUpdateCampaignHandler(mux, h.UpdateCampaign)
 	MountToggleCampaignStatusHandler(mux, h.ToggleCampaignStatus)
+	MountDeleteCampaignHandler(mux, h.DeleteCampaign)
 	MountGetJobHandler(mux, h.GetJob)
 }
 
@@ -586,6 +591,60 @@ func NewToggleCampaignStatusHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "toggle-campaign-status")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountDeleteCampaignHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint.
+func MountDeleteCampaignHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("DELETE", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}", f)
+}
+
+// NewDeleteCampaignHandler creates a HTTP handler which loads the HTTP request
+// and calls the "lfx-v2-campaign-service-briefs" service "delete-campaign"
+// endpoint.
+func NewDeleteCampaignHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeDeleteCampaignRequest(mux, decoder)
+		encodeResponse = EncodeDeleteCampaignResponse(encoder)
+		encodeError    = EncodeDeleteCampaignError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "delete-campaign")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

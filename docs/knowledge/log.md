@@ -1,5 +1,59 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Added campaign DELETE (`DELETE /projects/{id}/briefs/{id}/campaigns/{id}`). There
+was no delete path at any layer: the service could create campaigns and pause them, and that
+was all.
+
+The real problem was not the missing verb. `000002` declared `UNIQUE (brief_id, platform)`,
+which is load-bearing — it is what makes dispatch idempotent, so a retry cannot create a
+SECOND paid campaign upstream — but because it covered every row regardless of status, a
+campaign row occupied that brief's slot for that platform PERMANENTLY. A campaign created with
+the wrong budget, or one whose upstream create failed ambiguously, blocked that (brief,
+platform) pair forever with no supported recovery.
+
+Fix mirrors what `000003` already did for briefs on archive: `000014` builds the partial unique
+index `uq_campaigns_brief_platform_live` (`WHERE status <> 'deleted'`), `000015` drops the old
+constraint. Two versions rather than one is forced — `CREATE INDEX CONCURRENTLY` (needed
+because migrations run during a rolling startup, where a blocking build could stall an
+in-flight dispatch claim) cannot share a file with other statements, since a multi-statement
+migration is batched and reintroduces the transaction CONCURRENTLY forbids. The split also
+gives the required ordering for free: build the replacement BEFORE dropping the constraint, or
+there is a window with no uniqueness at all in which two concurrent claims both win and
+double-create upstream. `000015` refuses to drop unless the new index is present AND
+`indisvalid`, because a failed CONCURRENTLY build leaves an INVALID index that `IF NOT EXISTS`
+would silently skip rebuilding.
+
+The non-obvious consequence, found by testing against a live PostgreSQL 16 rather than by
+reading: once the full constraint is gone, a BARE `ON CONFLICT (brief_id, platform)` matches no
+index and fails at runtime — "there is no unique or exclusion constraint matching the ON
+CONFLICT specification". Postgres infers the arbiter by matching the target AND its predicate.
+That would have broken `ClaimCampaignDispatch` (every dispatch claim) and `UpsertCampaign`
+(every persist) with no compile error. Both now carry the predicate, and the queries were
+hoisted to named constants so a test can pin it.
+
+Deliberately NOT done: upstream deletion. No client in `internal/platform/*` implements a
+campaign delete/remove call, and inventing an unverified one is worse than omitting it —
+removing the local row while a real paid campaign keeps spending is the worst outcome
+available. The endpoint is local-only and its API description says so. Same reasoning makes the
+delete SOFT: the retained row holds `platform_campaign_id`, the only local pointer to whatever
+may still exist upstream, so a hard delete would free the slot but destroy the record needed to
+find and stop the campaign still spending.
+
+A `pending` campaign is refused (409). It is an active dispatch claim, and freeing its slot
+mid-dispatch could let a concurrent claim double-create upstream. The guard runs under
+`SELECT … FOR UPDATE`, following `CreateJobForApprovedBrief`: under READ COMMITTED a plain
+guarded UPDATE cannot see a claim that commits just before the statement, and because the claim
+INSERTs rather than updates there is no row conflict to serialize on.
+
+Verified against a real database on port 55470 (all migrations in order): two live campaigns
+for a pair are still rejected; a soft delete frees the slot and re-dispatch to the same pair
+succeeds; repeated delete/re-dispatch cycles coexist; the predicated ON CONFLICT infers the
+index and the bare one errors; `000015`'s guard fires and leaves the old constraint intact when
+the index is missing; the down path restores the constraint and fails by design once
+soft-deleted duplicates exist.
+
 ## 2026-08-03
 
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the

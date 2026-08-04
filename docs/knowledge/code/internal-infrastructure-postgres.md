@@ -63,5 +63,39 @@ applied file.
   expose it under the wrong tenant. The API create path already guards this (`INSERT …
   WHERE EXISTS` an active brief scoped by project+brief); the FK makes the datastore the
   source of truth for all writers.
+- `000014` / `000015` — campaign SOFT DELETE. `000002`'s full
+  `UNIQUE (brief_id, platform)` made a campaign row occupy its brief's slot for that
+  platform PERMANENTLY, so a campaign created with the wrong budget (or one whose
+  upstream create failed ambiguously) blocked that pair forever with no recovery.
+  `000014` creates the partial unique index `uq_campaigns_brief_platform_live`
+  (`(brief_id, platform) WHERE status <> 'deleted'`) and `000015` drops the old
+  constraint — mirroring what `000003` did for briefs on archive. Deleting a campaign
+  now frees the slot for a re-dispatch while two LIVE campaigns for the pair are still
+  rejected.
+
+  The split into two versions is required, not stylistic: `000014` uses
+  `CREATE INDEX CONCURRENTLY` (migrations run during a ROLLING startup, so a blocking
+  build could stall an in-flight dispatch claim), which cannot share a file with other
+  statements — a multi-statement migration is batched, reintroducing the implicit
+  transaction CONCURRENTLY forbids. Splitting also gives the required ORDERING for
+  free: golang-migrate applies versions ascending, so the replacement index always
+  exists before the constraint it replaces is dropped. Dropping first would open a
+  window with NO uniqueness, during which two concurrent claims could both win and
+  double-create a paid campaign upstream. `000015` is a guarded `DO` block that
+  REFUSES to drop the constraint unless the new index is present AND `indisvalid`,
+  because a failed CONCURRENTLY build does not roll back — it leaves an INVALID index
+  that `IF NOT EXISTS` would silently skip rebuilding. Failing the migration loudly
+  (leaving the old constraint protecting the table) is the correct outcome.
+
+  **Consequence for every `ON CONFLICT (brief_id, platform)`**: PostgreSQL infers the
+  arbiter index by matching the conflict target AND its predicate, so once the full
+  constraint is gone a BARE conflict target matches no index and fails at runtime with
+  "there is no unique or exclusion constraint matching the ON CONFLICT specification".
+  `ClaimCampaignDispatch` and `UpsertCampaign` therefore both carry
+  `WHERE status <> 'deleted'`, pinned by
+  `TestCampaignRepo_OnConflictCarriesLivePredicate`. Every campaigns read
+  (`GetCampaign`, `GetCampaignByPlatform`, `ReplaceCampaign`) also filters deleted
+  rows — load-bearing for `GetCampaignByPlatform`, which the orchestrator uses to
+  decide whether a pair was already dispatched.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).

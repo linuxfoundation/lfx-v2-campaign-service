@@ -24,12 +24,13 @@ type Client struct {
 	GetCampaignEndpoint          goa.Endpoint
 	UpdateCampaignEndpoint       goa.Endpoint
 	ToggleCampaignStatusEndpoint goa.Endpoint
+	DeleteCampaignEndpoint       goa.Endpoint
 	GetJobEndpoint               goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, updateCampaign, toggleCampaignStatus, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
 		GetBriefEndpoint:             getBrief,
@@ -40,6 +41,7 @@ func NewClient(createBrief, getBrief, updateBrief, approveBrief, deleteBrief, cr
 		GetCampaignEndpoint:          getCampaign,
 		UpdateCampaignEndpoint:       updateCampaign,
 		ToggleCampaignStatusEndpoint: toggleCampaignStatus,
+		DeleteCampaignEndpoint:       deleteCampaign,
 		GetJobEndpoint:               getJob,
 	}
 }
@@ -208,6 +210,22 @@ func (c *Client) ToggleCampaignStatus(ctx context.Context, p *ToggleCampaignStat
 		return
 	}
 	return ires.(*Campaign), nil
+}
+
+// DeleteCampaign calls the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// DeleteCampaign may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - error: internal error
+func (c *Client) DeleteCampaign(ctx context.Context, p *DeleteCampaignPayload) (err error) {
+	_, err = c.DeleteCampaignEndpoint(ctx, p)
+	return
 }
 
 // GetJob calls the "get-job" endpoint of the "lfx-v2-campaign-service-briefs"
