@@ -148,10 +148,36 @@ transient states whose rows are real work, and the relay drains them on recovery
 AFTER the drain (delivery must not queue behind housekeeping) and a prune failure is logged and
 dropped: it costs disk, never correctness.
 
-`index_outbox` (migration 000010) holds a fully-marshalled message written in the SAME
-transaction as its resource, so it commits if and only if the resource does. `indexer.Relay`
-drains it every 15s and at startup — the likeliest reason rows are pending is that this pod's
-predecessor died mid-publish.
+`index_outbox` (migration 000010, lease columns added in 000015) holds a fully-marshalled message
+written in the SAME transaction as its resource, so it commits if and only if the resource does.
+`indexer.Relay` drains it every 15s and at startup — the likeliest reason rows are pending is that
+this pod's predecessor died mid-publish.
+
+- **A drain is THREE short transactions, not one long one — and the publish is in none of them.**
+  Claim (stamp a lease, commit), publish outside any transaction, then settle each outcome in its
+  own transaction. An earlier revision held ONE transaction across the whole pass, which meant a
+  pool connection stayed checked out for up to the 30s pass budget while the relay waited on NATS.
+  With a small pool that blocks every brief/campaign write and the readiness query — turning the
+  broker degradation this table exists to ISOLATE into a service outage — and the `pgxpool.Close`
+  at shutdown waits on that connection, defeating the bounded `Relay.Stop`.
+- **`leased_until` carries exclusivity across the publish, because row locks no longer can.**
+  `FOR UPDATE SKIP LOCKED` still makes the CLAIM atomic between replicas, but its locks end when
+  the claim commits. The lease is stamped in the SAME statement that selects the rows (a split
+  select-then-update would let two pods read one unleased row), and a row is claimable only when
+  its lease is absent or EXPIRED. An expiry rather than a permanent flag is what makes a crashed
+  pod recoverable: its rows return to the pool instead of wedging their resource forever.
+  `leaseDuration` (60s) must exceed the pass budget PLUS the settle budget, or a lease dies
+  mid-publish and a peer republishes behind the pod still working.
+- **Both settle paths are guarded on still HOLDING the lease.** Retiring or stamping a failure on
+  a row whose lease expired would race the peer that now legitimately owns it, or corrupt that
+  peer's backoff accounting. The guard makes the write a no-op instead. Delivering twice is safe
+  (the indexer overwrites by object id); writing a row you no longer own is not.
+- **Settle runs on a context DETACHED from the pass.** At shutdown the publish above may have
+  already succeeded; settling under a cancelled context would leave a delivered message pending,
+  and for a failure would lose the attempt stamp that drives the backoff.
+- **The predecessor check deliberately ignores the lease.** An older row LEASED by another pod is
+  in-flight, not absent, so it must still block its successor — otherwise this pod publishes an
+  update while a peer is still publishing the create, the exact reordering the predicate prevents.
 
 - **No credential is ever stored.** The row carries an EMPTY authorization header and the relay
   stamps a service credential (`INDEXER_SERVICE_TOKEN`, wired in the chart as an `optional`
@@ -164,10 +190,11 @@ predecessor died mid-publish.
   message as delivered, permanently defeating recovery for messages that never left the process.
 - **The ACK request is CONTEXT-AWARE** (`RequestWithContext`, not `Request`). The duration-only
   form cannot be interrupted: at shutdown `Relay.Stop` returns after `relayStopTimeout` (250ms)
-  while an in-flight request would run its full `publishTimeout` (3s), still holding the outbox
-  claim transaction — and the `pgxpool.Close` that follows would block on that connection,
-  overrunning the composed shutdown bound. The deadline is a CHILD of the pass context, so
-  whichever ends first wins. Verified live: cancellation ends the request in ~200ms.
+  while an in-flight request would run its full `publishTimeout` (3s), overrunning the composed
+  shutdown bound. (The publish no longer holds a claim transaction — see the three-transaction
+  drain above — so it can no longer block `pgxpool.Close` as well.) The deadline is a CHILD of the
+  pass context, so whichever ends first wins. Verified live: cancellation ends the request in
+  ~200ms.
 - **`deleted` writes a TOMBSTONE, not a physical delete — and the platform does not yet filter
   it.** Verified across both repos: `lfx-v2-indexer-service` sets `deleted_at` and retains
   `object_ref`/`latest` (`indexer_service.go`, `ActionDeleted` branch; its `StorageRepository.Delete`

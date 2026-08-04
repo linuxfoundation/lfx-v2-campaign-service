@@ -2,6 +2,35 @@
 
 ## 2026-08-04
 
+**Update** — Took the NATS publish OUT of the outbox claim transaction (LFXV2-2814, PR #60). The
+drain held one transaction across claim, publish and retire, so a pool connection stayed checked
+out for up to the 30s pass budget while the relay waited on the indexer. With a small pool that
+blocks every brief/campaign write and the readiness query — the broker degradation this table
+exists to isolate becomes a service outage — and `pgxpool.Close` at shutdown waits on that
+connection, defeating the bounded `Relay.Stop`. A drain is now three short transactions with the
+publish in none of them: claim and commit, publish, then settle each outcome separately.
+
+Removing the long transaction removed what carried exclusivity, since `FOR UPDATE SKIP LOCKED`
+locks end at commit. Migration `000015` adds `leased_until`/`leased_by`, stamped in the SAME
+statement that selects the rows — splitting the select and the update would leave a window where
+two pods both read an unleased row. A row is claimable only when its lease is absent or expired;
+the expiry (not a permanent flag) is what lets a crashed pod's rows recover instead of wedging
+their resource forever. `leaseDuration` is 60s, which must exceed the pass budget plus the settle
+budget or a lease dies mid-publish and a peer republishes behind the pod still working —
+`TestClaimStampsALeaseThatOutlastsAPass` pins that, mirroring `relayPassTimeout` locally because
+this package must not import `indexer`. Both settle paths are guarded on still holding the lease,
+so a pod whose lease expired cannot retire a row or corrupt the new owner's backoff accounting;
+settle also runs on a context detached from the pass, because at shutdown the publish may already
+have succeeded. The predecessor check deliberately does NOT filter on the lease: an older leased
+row is in-flight, not absent, and must still block its successor.
+
+Two existing tests were stale rather than failing, which is the worse kind:
+`TestPendingIndexPartialIndexSupportsTheClaim` asserted against `000010`'s
+`idx_index_outbox_pending`, which `000015` replaces with the lease-aware
+`idx_index_outbox_claimable` — it would have passed forever while the index the claim actually uses
+went unchecked. `TestDrainClaimsOneRowPerResourceInOrder`'s comment still claimed locks were held
+"through the publish AND the retire", the precise property this change removes.
+
 **Update** — Renumbered the outbox migration `000008_index_outbox` → `000010_index_outbox`
 (LFXV2-2814, PR #60). PR #59 (stuck-claim recovery) also defines a `000008`, plus a `000009` that
 repairs an INVALID index its own `000008` may leave behind, so that pair must stay together;

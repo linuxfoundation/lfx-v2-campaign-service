@@ -29,8 +29,10 @@ func TestIndexObjectTypesMatchTheIndexer(t *testing.T) {
 // with multiple replicas. Both were verified against a live PostgreSQL 16 before being written
 // down here; this test guards them from silent edits.
 //
-//  1. EXCLUSIVITY (FOR UPDATE SKIP LOCKED): each pod gets a disjoint set and holds the locks
-//     through the publish AND the retire, so two pods can never publish the same row.
+//  1. EXCLUSIVITY: FOR UPDATE SKIP LOCKED makes the CLAIM atomic between pods, but its row locks
+//     end when the short claim transaction commits — the publish runs outside any transaction, so
+//     the leased_until stamp is what carries exclusivity across it. See
+//     TestClaimStampsALeaseThatOutlastsAPass.
 //
 //  2. PER-RESOURCE ORDER (the NOT EXISTS predecessor check): exclusivity alone is NOT enough.
 //     SKIP LOCKED will skip an older locked row for object X and hand a second pod the NEWER row
@@ -76,8 +78,11 @@ func TestDrainClaimsOneRowPerResourceInOrder(t *testing.T) {
 // exists to serve. The predecessor check probes (object_type, object_id, id) — a (created_at)
 // index cannot serve that, so every pass would re-scan retained published history, which is the
 // bulk of the table.
+// Reads migration 000015, which REPLACED 000010's idx_index_outbox_pending with the
+// lease-aware idx_index_outbox_claimable. Asserting against 000010 would pass forever while the
+// index the claim actually uses went unchecked.
 func TestPendingIndexPartialIndexSupportsTheClaim(t *testing.T) {
-	sql, err := os.ReadFile(filepath.Join("migrations", "000010_index_outbox.up.sql"))
+	sql, err := os.ReadFile(filepath.Join("migrations", "000015_index_outbox_lease.up.sql"))
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}
@@ -148,6 +153,60 @@ func TestDrainBacksOffFailedRows(t *testing.T) {
 	assert.Greater(t, 1<<shift, secs,
 		"the exponent cap must exceed the seconds cap, or the seconds cap could never apply")
 	assert.LessOrEqual(t, secs, 3600, "a failing row must retry at least hourly")
+}
+
+// TestClaimStampsALeaseThatOutlastsAPass pins the lease that replaced row locks as the carrier of
+// exclusivity.
+//
+// The publish now runs with no transaction and no pool connection held, so FOR UPDATE SKIP LOCKED
+// only makes the CLAIM atomic — its locks are gone by the time deliver runs. leased_until is what
+// stops a second pod from taking a row this pod is still publishing, and the claim must stamp it in
+// the SAME statement that selects the rows: a split SELECT-then-UPDATE leaves a window where two
+// pods both read an unleased row.
+//
+// The duration must comfortably exceed the worst-case pass, or a lease expires mid-publish and a
+// peer republishes rows behind this pod. relayPassBudget mirrors the relay's own bound (this package
+// must not import indexer), so this is where the two are held together: if the relay's pass budget
+// ever grows past the lease, the lease stops covering a publish and this fails.
+func TestClaimStampsALeaseThatOutlastsAPass(t *testing.T) {
+	assert.Contains(t, drainClaimQuery, "leased_until IS NULL OR o.leased_until < clock_timestamp()",
+		"a row is claimable only when its lease is ABSENT or EXPIRED, or two pods publish it at once")
+	assert.Contains(t, drainClaimQuery, "SET leased_until = clock_timestamp()",
+		"the lease must be stamped by the claim itself; a split select-then-update races")
+	assert.Contains(t, drainClaimQuery, "RETURNING",
+		"the claim must return the rows it leased in the same statement")
+	assert.NotContains(t, drainClaimQuery, "now()",
+		"now() is transaction-START time; it understates elapsed time and double-leases a row")
+
+	assert.Greater(t, leaseDuration, relayPassBudget,
+		"a lease shorter than a pass expires mid-publish, letting a peer republish behind this pod")
+	assert.Greater(t, leaseDuration, relayPassBudget+settleTimeout,
+		"the lease must still be live for the settle that FOLLOWS a worst-case publish, or the "+
+			"retire is refused as expired and a delivered message republishes")
+}
+
+// TestSettleRequiresStillHoldingTheLease pins the guard on BOTH settle paths.
+//
+// A lease can expire during a long broker stall, after which another pod legitimately owns the row.
+// An unguarded retire would let this pod's late write race the peer's; an unguarded failure stamp
+// would corrupt the peer's backoff accounting. Delivering twice is safe (the indexer overwrites by
+// object id) — retiring or stamping a row you no longer own is not.
+func TestSettleRequiresStillHoldingTheLease(t *testing.T) {
+	for name, sql := range map[string]string{
+		"markPublished": markPublishedSQL,
+		"recordFailure": recordFailureSQL,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Contains(t, sql, "leased_by = $",
+				"the write must be guarded on THIS pod still owning the lease")
+			assert.Contains(t, sql, "leased_until > clock_timestamp()",
+				"an EXPIRED lease means another pod owns the row; the write must become a no-op")
+			assert.Contains(t, sql, "published_at IS NULL",
+				"an already-retired row must not be written again")
+			assert.Contains(t, sql, "leased_by = NULL",
+				"settling must RELEASE the lease so the row does not wait out a stale one")
+		})
+	}
 }
 
 // TestRecordFailureStampsTheAttemptTime pins the other half of the backoff: the predicate is

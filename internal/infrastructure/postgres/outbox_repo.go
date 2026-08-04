@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,11 +26,19 @@ func NewOutboxRepo(db *Pool) *OutboxRepo { return &OutboxRepo{db: db} }
 
 // drainClaimQuery claims a batch of unpublished rows for THIS pod, at most ONE per resource.
 //
+// The claim is a SHORT transaction that stamps a lease and commits. Publishing then happens with
+// NO transaction and NO pool connection held — see DrainPendingIndexMessages for why that
+// restructuring was required.
+//
 // Three properties have to hold together, and the naive "oldest N pending" query provides none
 // of them:
 //
-//  1. EXCLUSIVITY. FOR UPDATE SKIP LOCKED gives each replica a disjoint set and holds the locks
-//     through the publish and the retire, so two pods can never publish the same row.
+//  1. EXCLUSIVITY. FOR UPDATE SKIP LOCKED makes the claim itself atomic between concurrent
+//     pods, but its row locks end when this short transaction commits — long before the publish.
+//     The leased_until stamp is what carries exclusivity across the publish: a row is claimable
+//     only when its lease is absent or EXPIRED, so a second pod cannot take a row this pod is
+//     still publishing. An expiry (rather than a permanent flag) is what makes a crashed pod
+//     recoverable: its rows become claimable again instead of wedging their resource forever.
 //
 //  2. PER-RESOURCE ORDER. Exclusivity alone is not enough: SKIP LOCKED will happily skip an
 //     older locked row for object X and hand this pod a NEWER row for the same X, publishing
@@ -38,6 +47,12 @@ func NewOutboxRepo(db *Pool) *OutboxRepo { return &OutboxRepo{db: db} }
 //     One message per resource per pass; the next pass takes the successor. A failed delivery
 //     therefore blocks only its OWN resource, which is the correct behaviour: publishing past
 //     it would reorder that resource's history.
+//
+//     The predecessor subquery deliberately does NOT filter on the lease. An older row that is
+//     currently LEASED by another pod is in-flight, not absent, so it must still block its
+//     successor — otherwise this pod would publish the update while the peer is still publishing
+//     the create, which is exactly the reordering this predicate exists to prevent. "Older
+//     pending row exists" is the correct test regardless of who holds it.
 //
 //  3. NO STARVATION BY POISON MESSAGES. Blocking one resource is only acceptable if it stays
 //     confined to that resource. `attempts` was recorded but never affected ELIGIBILITY, so a
@@ -59,9 +74,14 @@ func NewOutboxRepo(db *Pool) *OutboxRepo { return &OutboxRepo{db: db} }
 // TRANSACTION-START time — a transaction that began earlier but committed its write later gets
 // an EARLIER created_at, so sorting by it can invert the committed order. id comes from a
 // BIGSERIAL assigned at INSERT, which does not have that inversion.
-const drainClaimQuery = `SELECT o.id, o.object_type, o.object_id, o.payload, o.attempts
+// The lease is stamped in the SAME statement that selects the rows, so the claim is atomic: a
+// concurrent pod either sees the lease or is excluded by SKIP LOCKED, never neither. Splitting
+// the SELECT and the UPDATE would leave a window where two pods both read an unleased row.
+const drainClaimQuery = `WITH claimable AS (
+	SELECT o.id
 	FROM index_outbox o
 	WHERE o.published_at IS NULL
+	  AND (o.leased_until IS NULL OR o.leased_until < clock_timestamp())
 	  AND (
 	      o.last_attempt_at IS NULL
 	      OR o.last_attempt_at < clock_timestamp() - LEAST(
@@ -78,7 +98,14 @@ const drainClaimQuery = `SELECT o.id, o.object_type, o.object_id, o.payload, o.a
 	  )
 	ORDER BY o.id ASC
 	LIMIT $1
-	FOR UPDATE SKIP LOCKED`
+	FOR UPDATE SKIP LOCKED
+)
+UPDATE index_outbox o
+SET leased_until = clock_timestamp() + ($2::text)::interval,
+    leased_by    = $3
+FROM claimable c
+WHERE o.id = c.id
+RETURNING o.id, o.object_type, o.object_id, o.payload, o.attempts, o.leased_until`
 
 // Backoff bounds, inlined into drainClaimQuery. A failed row waits 2^attempts seconds before it
 // is eligible again, capped so a long-failing message still retries roughly hourly rather than
@@ -94,6 +121,45 @@ const (
 // defaultOutboxBatch bounds one relay pass. Small: the relay runs frequently, and a large batch
 // would hold a slow publish open while newer rows queue behind it.
 const defaultOutboxBatch = 50
+
+// leaseDuration is how long a claim stays exclusive.
+//
+// It must COMFORTABLY EXCEED the worst-case publish of a whole batch, or a lease expires while
+// this pod is still working and a peer republishes rows behind it. The relay bounds a pass at
+// its relayPassTimeout, mirrored below, so 60s leaves the same margin again. The number is
+// duplicated rather than imported because this package must not depend on indexer (the
+// dependency runs the other way, as TestIndexObjectTypesMatchTheIndexer records for the object
+// types); TestClaimStampsALeaseThatOutlastsAPass pins the relationship on this side.
+//
+// The cost of a longer lease is only recovery latency after a pod CRASHES: its rows sit until
+// the lease expires. 60s against a 15s relay interval is a bounded, acceptable delay, and it is
+// strictly better than the alternative failure — two pods publishing one resource out of order.
+const leaseDuration = 60 * time.Second
+
+// relayPassBudget mirrors the indexer's relayPassTimeout — the longest a single drain pass can
+// run, and therefore the longest a claimed row can be mid-publish. Duplicated for the reason
+// given above; if the relay's bound grows past this, leaseDuration must grow with it.
+const relayPassBudget = 30 * time.Second
+
+// settleTimeout bounds the short transaction that records one publish outcome. It runs on a
+// context detached from the pass, so it needs its own bound: without one a wedged database at
+// shutdown could hang the relay past the budget Relay.Stop enforces.
+const settleTimeout = 5 * time.Second
+
+// leaseOwner identifies this process in leased_by. HOSTNAME is the pod name under Kubernetes,
+// which is what an operator needs to find the replica holding a stuck resource. The PID suffix
+// keeps two processes on one host (tests, local runs) distinct.
+//
+// Correctness does not depend on this being unique — the lease guard also requires an unexpired
+// leased_until, and rows are claimed under SKIP LOCKED — but a collision would make the
+// diagnostic misleading, which is the whole reason the column exists.
+func leaseOwner() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	return fmt.Sprintf("%s/%d", host, os.Getpid())
+}
 
 // DrainPendingIndexMessages claims a batch of unpublished messages and publishes each one
 // through deliver, retiring only what deliver confirms.
@@ -119,82 +185,179 @@ func (r *OutboxRepo) DrainPendingIndexMessages(
 	if limit <= 0 {
 		limit = defaultOutboxBatch
 	}
-	tx, err := r.db.Begin(ctx)
+	// PHASE 1 — claim. A SHORT transaction: stamp the lease, commit, release the connection.
+	claimed, err := r.claimBatch(ctx, limit)
 	if err != nil {
-		return 0, fmt.Errorf("drain index outbox: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	// See drainClaimQuery for the three properties this claim has to hold at once: exclusivity,
-	// per-resource ordering, and backoff so a poison row cannot starve the batch.
-	rows, qerr := tx.Query(ctx, drainClaimQuery, limit)
-	if qerr != nil {
-		return 0, fmt.Errorf("claim pending index messages: %w", qerr)
-	}
-	var claimed []*model.OutboxMessage
-	for rows.Next() {
-		var (
-			m   model.OutboxMessage
-			raw []byte
-		)
-		if serr := rows.Scan(&m.ID, &m.ObjectType, &m.ObjectID, &raw, &m.Attempts); serr != nil {
-			rows.Close()
-			return 0, fmt.Errorf("scan pending index message: %w", serr)
-		}
-		m.Payload = json.RawMessage(raw)
-		claimed = append(claimed, &m)
-	}
-	rows.Close()
-	if rerr := rows.Err(); rerr != nil {
-		return 0, fmt.Errorf("iterate pending index messages: %w", rerr)
+		return 0, err
 	}
 	if len(claimed) == 0 {
 		return 0, nil
 	}
 
-	for _, m := range claimed {
-		// Stop early on shutdown rather than pushing through a cancelled context. The rollback
-		// releases the claim and the rows go back to the pool for the next process.
+	// PHASE 2 — publish, with NO transaction and NO pool connection held.
+	//
+	// deliver is a NATS request/reply that waits on the indexer, and the pass budget allows up to
+	// relayPassTimeout (30s) across a batch. Doing this inside the claim transaction pinned a
+	// pool connection for that whole time: with a small pool a slow indexer blocked every
+	// brief/campaign write and the readiness probe, converting the broker degradation this table
+	// exists to ISOLATE into a service outage. It also defeated the bounded Relay.Stop, because
+	// the pool.Close() that follows waits on a checked-out connection.
+	for _, c := range claimed {
+		// Stop early on shutdown rather than pushing through a cancelled context. Unretired rows
+		// keep their lease, which expires on its own, so the next process picks them up.
 		if ctx.Err() != nil {
 			break
 		}
-		if derr := deliver(ctx, m); derr != nil {
-			if rerr := recordFailureTx(ctx, tx, m.ID, derr.Error()); rerr != nil {
-				return published, fmt.Errorf("record index message %d failure: %w", m.ID, rerr)
-			}
-			continue
-		}
-		if merr := markPublishedTx(ctx, tx, m.ID); merr != nil {
-			return published, fmt.Errorf("mark index message %d published: %w", m.ID, merr)
-		}
-		published++
-	}
+		derr := deliver(ctx, c.msg)
 
-	if cerr := tx.Commit(ctx); cerr != nil {
-		// The commit failed, so NOTHING was retired — including messages that were genuinely
-		// published. They stay pending and republish next pass, which is safe: the indexer
-		// overwrites by object id, so a duplicate is a no-op.
-		return 0, fmt.Errorf("drain index outbox: commit: %w", cerr)
+		// PHASE 3 — retire, in its own short transaction, guarded on still holding the lease.
+		// Uses a context detached from ctx: on shutdown the publish above may have SUCCEEDED,
+		// and a cancelled ctx would skip the retire and republish a delivered message next pass.
+		if rerr := r.settle(ctx, c, derr); rerr != nil {
+			return published, rerr
+		}
+		if derr == nil {
+			published++
+		}
 	}
 	return published, nil
 }
 
-func markPublishedTx(ctx context.Context, tx pgx.Tx, id int64) error {
-	_, err := tx.Exec(ctx, `UPDATE index_outbox SET published_at = now() WHERE id = $1 AND published_at IS NULL`, id)
-	return err
+// claimedRow pairs a claimed message with the lease token that authorises retiring it.
+type claimedRow struct {
+	msg   *model.OutboxMessage
+	owner string
+}
+
+// claimBatch runs the claim in one short transaction and commits before returning, so no pool
+// connection is held across the publish that follows.
+func (r *OutboxRepo) claimBatch(ctx context.Context, limit int) ([]claimedRow, error) {
+	owner := leaseOwner()
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("drain index outbox: begin claim tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// See drainClaimQuery for the properties this claim holds at once: exclusivity via the
+	// lease, per-resource ordering, and backoff so a poison row cannot starve the batch.
+	rows, qerr := tx.Query(ctx, drainClaimQuery, limit, leaseDuration.String(), owner)
+	if qerr != nil {
+		return nil, fmt.Errorf("claim pending index messages: %w", qerr)
+	}
+	var claimed []claimedRow
+	for rows.Next() {
+		var (
+			m     model.OutboxMessage
+			raw   []byte
+			until time.Time
+		)
+		if serr := rows.Scan(&m.ID, &m.ObjectType, &m.ObjectID, &raw, &m.Attempts, &until); serr != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan pending index message: %w", serr)
+		}
+		m.Payload = json.RawMessage(raw)
+		claimed = append(claimed, claimedRow{msg: &m, owner: owner})
+	}
+	rows.Close()
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("iterate pending index messages: %w", rerr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		// Nothing was leased, so the rows stay claimable. Returning empty is correct.
+		return nil, fmt.Errorf("drain index outbox: commit claim: %w", cerr)
+	}
+	return claimed, nil
+}
+
+// settle records the outcome of one publish in its own short transaction.
+//
+// The context is DETACHED from the pass context (keeping only its values) and given its own
+// small budget. On shutdown the publish may have already succeeded, and settling under a
+// cancelled context would leave a delivered message pending — republished next pass. That is
+// safe but wasteful, and for a failure it would lose the attempt stamp that drives the backoff,
+// letting a poison row spin at full rate.
+func (r *OutboxRepo) settle(ctx context.Context, c claimedRow, deliverErr error) error {
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
+
+	tx, err := r.db.Begin(settleCtx)
+	if err != nil {
+		return fmt.Errorf("settle index message %d: begin tx: %w", c.msg.ID, err)
+	}
+	defer func() { _ = tx.Rollback(settleCtx) }()
+
+	if deliverErr != nil {
+		if rerr := recordFailureTx(settleCtx, tx, c.msg.ID, deliverErr.Error(), c.owner); rerr != nil {
+			return fmt.Errorf("record index message %d failure: %w", c.msg.ID, rerr)
+		}
+	} else {
+		// A false here means the lease expired mid-publish and another pod owns the row now.
+		// Not an error: that pod republishes, and the indexer overwrites by object id.
+		if _, merr := markPublishedTx(settleCtx, tx, c.msg.ID, c.owner); merr != nil {
+			return fmt.Errorf("mark index message %d published: %w", c.msg.ID, merr)
+		}
+	}
+	if cerr := tx.Commit(settleCtx); cerr != nil {
+		// A genuinely published message stays PENDING and republishes next pass. Safe: the
+		// indexer overwrites by object id, so a duplicate is a no-op.
+		return fmt.Errorf("settle index message %d: commit: %w", c.msg.ID, cerr)
+	}
+	return nil
+}
+
+// markPublishedSQL retires a row, but ONLY while this pod still holds the lease it claimed.
+//
+// The lease can expire mid-publish (a long broker stall), at which point another pod may claim
+// and publish the same row. Retiring unconditionally would then let this pod's late write race
+// the peer's. The leased_by/leased_until guard makes the retire a no-op in that case: the row
+// stays owned by whoever holds the live lease. The message may be delivered twice, which is
+// safe — the indexer overwrites by object id — but it is never retired by a pod that no longer
+// owns it.
+//
+// published_at uses clock_timestamp(), not now(): now() would stamp TRANSACTION-START time, and
+// this runs in its own short transaction after a publish that may have taken seconds.
+const markPublishedSQL = `UPDATE index_outbox
+	SET published_at = clock_timestamp(), leased_until = NULL, leased_by = NULL
+	WHERE id = $1
+	  AND published_at IS NULL
+	  AND leased_by = $2
+	  AND leased_until > clock_timestamp()`
+
+func markPublishedTx(ctx context.Context, tx pgx.Tx, id int64, leaseOwner string) (bool, error) {
+	tag, err := tx.Exec(ctx, markPublishedSQL, id, leaseOwner)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // recordFailureSQL advances the attempt count and STAMPS the attempt time. The stamp is what
 // makes the backoff in drainClaimQuery work: without it a permanently failing row keeps a NULL
 // last_attempt_at, stays eligible on every pass, and starves the batch.
+//
+// It also RELEASES the lease. A failed row must become claimable again as soon as its backoff
+// elapses; leaving the lease set would block it (and, via the predecessor rule, its whole
+// resource) until the lease expired on its own, stacking an arbitrary lease wait on top of the
+// backoff the row already serves.
+//
+// Guarded on leased_by like the retire: a pod whose lease already expired must not stamp an
+// attempt onto a row another pod now owns, or it would corrupt that pod's backoff accounting.
 const recordFailureSQL = `UPDATE index_outbox
-	SET attempts = attempts + 1, last_error = $2, last_attempt_at = clock_timestamp()
-	WHERE id = $1 AND published_at IS NULL`
+	SET attempts = attempts + 1,
+	    last_error = $2,
+	    last_attempt_at = clock_timestamp(),
+	    leased_until = NULL,
+	    leased_by = NULL
+	WHERE id = $1
+	  AND published_at IS NULL
+	  AND leased_by = $3
+	  AND leased_until > clock_timestamp()`
 
-func recordFailureTx(ctx context.Context, tx pgx.Tx, id int64, cause string) error {
+func recordFailureTx(ctx context.Context, tx pgx.Tx, id int64, cause, leaseOwner string) error {
 	_, err := tx.Exec(ctx,
 		recordFailureSQL,
-		id, truncateErr(cause))
+		id, truncateErr(cause), leaseOwner)
 	return err
 }
 
