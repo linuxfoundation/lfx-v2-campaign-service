@@ -32,7 +32,7 @@ A brief is the funnel unit: it carries the **program** (`program_type` = events 
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/briefs` | `campaign_manager` | JSON | Create a brief. |
 | GET | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Get a brief (full copy, keywords, targeting); returns ETag. |
-| GET | `/projects/{projectId}/briefs?event_slug=` | `campaign_manager` | JSON | Find the saved brief for an event slug; returns ETag. `404` when the event has no brief yet (the ordinary first-generation case). The slug is length-unbounded, matching `BriefInput` and the `TEXT` column, so any brief the create contract accepts is recallable. See the D5 note below. |
+| GET | `/projects/{projectId}/briefs?event_slug=` | `campaign_manager` | JSON | Find the saved brief for an event slug; returns ETag. `404` when the event has no brief yet (the ordinary first-generation case). The slug has no upper bound here, matching `BriefWriteInput` (the create/update payload) and the `TEXT` column, so any brief the create contract accepts is recallable; it must be non-empty, as on create. See the D5 note below. |
 | PUT | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Replace a brief (requires `If-Match`). |
 | POST | `/projects/{projectId}/briefs/{id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
 | POST | `/projects/{projectId}/briefs/{id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation (requires `If-Match`; approval is version-gated so a brief replaced since it was fetched cannot be approved on stale content). |
