@@ -25,7 +25,8 @@ func NewOutboxRepo(db *Pool) *OutboxRepo { return &OutboxRepo{db: db} }
 
 // drainClaimQuery claims a batch of unpublished rows for THIS pod, at most ONE per resource.
 //
-// Two properties have to hold together, and the naive "oldest N pending" query provides neither:
+// Three properties have to hold together, and the naive "oldest N pending" query provides none
+// of them:
 //
 //  1. EXCLUSIVITY. FOR UPDATE SKIP LOCKED gives each replica a disjoint set and holds the locks
 //     through the publish and the retire, so two pods can never publish the same row.
@@ -38,6 +39,15 @@ func NewOutboxRepo(db *Pool) *OutboxRepo { return &OutboxRepo{db: db} }
 //     therefore blocks only its OWN resource, which is the correct behaviour: publishing past
 //     it would reorder that resource's history.
 //
+//  3. NO STARVATION BY POISON MESSAGES. Blocking one resource is only acceptable if it stays
+//     confined to that resource. `attempts` was recorded but never affected ELIGIBILITY, so a
+//     row that can never be delivered was re-selected on EVERY pass — and once enough of them
+//     accumulate as the oldest resource heads they consume the whole batch, starving every
+//     newer write in the table. The last_attempt_at predicate applies exponential backoff, so a
+//     persistently failing row yields its slot. Measured on 50 poison heads plus one new write:
+//     without backoff the batch was 50 poison rows and the new write was never indexed; with
+//     backoff the batch was the new write alone.
+//
 // Ordering is by id, NOT created_at. created_at defaults to now(), which in PostgreSQL is
 // TRANSACTION-START time — a transaction that began earlier but committed its write later gets
 // an EARLIER created_at, so sorting by it can invert the committed order. id comes from a
@@ -45,6 +55,13 @@ func NewOutboxRepo(db *Pool) *OutboxRepo { return &OutboxRepo{db: db} }
 const drainClaimQuery = `SELECT o.id, o.object_type, o.object_id, o.payload, o.attempts
 	FROM index_outbox o
 	WHERE o.published_at IS NULL
+	  AND (
+	      o.last_attempt_at IS NULL
+	      OR o.last_attempt_at < now() - LEAST(
+	             POWER(2, LEAST(o.attempts, ` + maxBackoffShiftSQL + `))::int,
+	             ` + maxBackoffSecondsSQL + `
+	         ) * INTERVAL '1 second'
+	  )
 	  AND NOT EXISTS (
 	      SELECT 1 FROM index_outbox p
 	      WHERE p.published_at IS NULL
@@ -55,6 +72,17 @@ const drainClaimQuery = `SELECT o.id, o.object_type, o.object_id, o.payload, o.a
 	ORDER BY o.id ASC
 	LIMIT $1
 	FOR UPDATE SKIP LOCKED`
+
+// Backoff bounds, inlined into drainClaimQuery. A failed row waits 2^attempts seconds before it
+// is eligible again, capped so a long-failing message still retries roughly hourly rather than
+// receding forever — the outage it is waiting out may end at any time.
+//
+// The shift is capped SEPARATELY from the seconds because POWER(2, n) overflows int well before
+// the seconds cap would bite: attempts is unbounded, so 2^60 must never be evaluated.
+const (
+	maxBackoffShiftSQL   = "12"   // 2^12 = 4096s, past the seconds cap below
+	maxBackoffSecondsSQL = "3600" // retry a persistently failing row at most hourly
+)
 
 // defaultOutboxBatch bounds one relay pass. Small: the relay runs frequently, and a large batch
 // would hold a slow publish open while newer rows queue behind it.
@@ -90,9 +118,8 @@ func (r *OutboxRepo) DrainPendingIndexMessages(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// ORDER BY created_at, id: these are replayed writes for the same resources, so replaying
-	// them out of order could reinstate a stale document. id breaks ties, since two rows can
-	// share a created_at at now() resolution and ordering must be total to be deterministic.
+	// See drainClaimQuery for the three properties this claim has to hold at once: exclusivity,
+	// per-resource ordering, and backoff so a poison row cannot starve the batch.
 	rows, qerr := tx.Query(ctx, drainClaimQuery, limit)
 	if qerr != nil {
 		return 0, fmt.Errorf("claim pending index messages: %w", qerr)
@@ -150,9 +177,16 @@ func markPublishedTx(ctx context.Context, tx pgx.Tx, id int64) error {
 	return err
 }
 
+// recordFailureSQL advances the attempt count and STAMPS the attempt time. The stamp is what
+// makes the backoff in drainClaimQuery work: without it a permanently failing row keeps a NULL
+// last_attempt_at, stays eligible on every pass, and starves the batch.
+const recordFailureSQL = `UPDATE index_outbox
+	SET attempts = attempts + 1, last_error = $2, last_attempt_at = now()
+	WHERE id = $1 AND published_at IS NULL`
+
 func recordFailureTx(ctx context.Context, tx pgx.Tx, id int64, cause string) error {
 	_, err := tx.Exec(ctx,
-		`UPDATE index_outbox SET attempts = attempts + 1, last_error = $2 WHERE id = $1 AND published_at IS NULL`,
+		recordFailureSQL,
 		id, truncateErr(cause))
 	return err
 }

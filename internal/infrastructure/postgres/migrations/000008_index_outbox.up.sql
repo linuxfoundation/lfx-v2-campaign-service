@@ -24,7 +24,12 @@ CREATE TABLE IF NOT EXISTS index_outbox (
     -- pruning is a separate operational concern.
     published_at TIMESTAMPTZ,
     attempts     INT         NOT NULL DEFAULT 0,
-    last_error   TEXT
+    last_error   TEXT,
+    -- When the last delivery attempt failed. Drives exponential backoff: without it, a row that
+    -- can never be delivered (a "poison" message) is re-selected on EVERY pass, and once enough
+    -- of them accumulate as the oldest resource heads they consume the whole batch forever —
+    -- starving every other resource rather than blocking only their own.
+    last_attempt_at TIMESTAMPTZ
 );
 
 -- The relay's claim query. PARTIAL, so the index stays small — it never grows with published

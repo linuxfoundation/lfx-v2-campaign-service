@@ -2,6 +2,17 @@
 
 ## 2026-08-03
 
+**Update** — Added retry backoff to the outbox claim (LFXV2-2814, PR #60). `attempts` was
+recorded but never affected ELIGIBILITY, so a row that can never be delivered was re-selected on
+every pass — and once enough poison rows accumulate as the oldest resource heads they consume the
+whole batch, so a failure stops "blocking only its own resource" and starves every newer write.
+A failed row now waits `2^attempts` seconds (`last_attempt_at`, new column), capped at hourly so a
+long outage still recovers. The exponent is capped separately from the seconds: `attempts` is
+unbounded and `POWER(2, n)` overflows int first (verified with attempts=999999). Reproduced on
+live PostgreSQL 16 with 50 poison heads + 1 new write: without backoff the batch was 50 poison
+rows with the new write excluded; with backoff it was the new write alone. EXPLAIN still shows an
+index scan on the partial index.
+
 **Update** — REVERTED the pending-row pruning added earlier today (LFXV2-2814, PR #60); a
 reviewer was right and I was wrong. Aging out undelivered work is unrecoverable here: there is no
 full-reindex path, and the cases with no later write to repair them — a terminal brief archive, a

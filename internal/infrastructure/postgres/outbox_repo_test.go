@@ -6,11 +6,13 @@ package postgres
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestIndexObjectTypesMatchTheIndexer pins the duplicated object-type constants.
@@ -105,4 +107,54 @@ func TestPruneNeverTouchesPendingRows(t *testing.T) {
 		"a pending row must never be selected for deletion, at any age")
 	assert.NotContains(t, pruneQuery, "created_at",
 		"aging by created_at would sweep undelivered work, which is unrecoverable here")
+}
+
+// TestDrainBacksOffFailedRows pins the anti-starvation guard.
+//
+// `attempts` was recorded but never affected ELIGIBILITY, so a row that can never be delivered
+// (a poison message) was re-selected on every pass. Once enough of them accumulate as the oldest
+// resource heads they consume the entire batch forever — at which point a failure no longer
+// "blocks only its own resource", it starves every newer write in the table.
+//
+// Reproduced on a live PostgreSQL 16 with 50 poison heads plus one new valid write:
+//
+//	without backoff -> batch = 50 poison rows, new write NOT included (never indexed)
+//	with backoff    -> batch = the new write alone
+//
+// The cap on the exponent is separate from the cap on seconds ON PURPOSE: attempts is unbounded,
+// so POWER(2, attempts) would overflow int long before the seconds cap applied. Verified with
+// attempts=999999, which stays eligible on an hourly retry rather than erroring.
+func TestDrainBacksOffFailedRows(t *testing.T) {
+	// A never-attempted row must always be eligible: backoff may only delay RETRIES.
+	assert.Contains(t, drainClaimQuery, "o.last_attempt_at IS NULL",
+		"a row that has never been attempted must never be held back")
+	assert.Contains(t, drainClaimQuery, "o.last_attempt_at < now()",
+		"a failed row must wait before it is eligible again")
+	assert.Contains(t, drainClaimQuery, "POWER(2,",
+		"the wait grows with attempts, so a persistently failing row yields its slot")
+
+	// Both caps must be present, and the exponent cap must be the smaller of the two.
+	assert.Contains(t, drainClaimQuery, "LEAST(o.attempts, "+maxBackoffShiftSQL+")",
+		"the EXPONENT must be capped independently: attempts is unbounded and 2^n overflows int")
+	assert.Contains(t, drainClaimQuery, maxBackoffSecondsSQL,
+		"a long-failing row must still retry periodically; the outage may end at any time")
+
+	shift, err := strconv.Atoi(maxBackoffShiftSQL)
+	require.NoError(t, err)
+	secs, err := strconv.Atoi(maxBackoffSecondsSQL)
+	require.NoError(t, err)
+	assert.Less(t, shift, 31, "2^shift must fit in an int32 to avoid overflow in POWER()")
+	assert.Greater(t, 1<<shift, secs,
+		"the exponent cap must exceed the seconds cap, or the seconds cap could never apply")
+	assert.LessOrEqual(t, secs, 3600, "a failing row must retry at least hourly")
+}
+
+// TestRecordFailureStampsTheAttemptTime pins the other half of the backoff: the predicate is
+// inert unless every failure stamps last_attempt_at. Without it a poison row keeps a NULL
+// timestamp and stays permanently eligible — exactly the starvation the backoff prevents.
+func TestRecordFailureStampsTheAttemptTime(t *testing.T) {
+	assert.Contains(t, recordFailureSQL, "last_attempt_at = now()",
+		"a failed attempt must stamp its time or the backoff predicate never fires")
+	assert.Contains(t, recordFailureSQL, "attempts = attempts + 1",
+		"and must advance the attempt count that sizes the backoff")
 }

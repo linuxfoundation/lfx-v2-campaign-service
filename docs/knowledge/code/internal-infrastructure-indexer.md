@@ -92,6 +92,14 @@ resource per pass, and a failed delivery blocks only its OWN resource — publis
 reorder that resource's history. Verified against a live PostgreSQL 16: with one pod holding
 `b1`'s create, a concurrent pod claimed ZERO rows rather than `b1`'s update.
 
+**A failed row BACKS OFF** (`last_attempt_at` + `2^attempts` seconds, capped hourly). Blocking one
+resource is only acceptable while it stays confined to that resource: `attempts` was recorded but
+never affected eligibility, so a poison message was re-selected on every pass, and once enough of
+them sat as the oldest resource heads they consumed the whole batch — starving every newer write.
+Measured on 50 poison heads plus one new write: without backoff the batch was 50 poison rows and
+the new write was never indexed; with backoff it was the new write alone. The exponent is capped
+separately from the seconds because `attempts` is unbounded and `POWER(2, n)` would overflow.
+
 **Ordering is by `id`, never `created_at`.** `created_at` defaults to `now()`, which is
 TRANSACTION-START time in PostgreSQL: a transaction that began earlier but wrote later gets an
 EARLIER timestamp, so sorting by it can invert the committed order of two mutations. `id` is a
