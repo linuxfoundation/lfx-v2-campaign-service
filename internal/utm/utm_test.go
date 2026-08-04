@@ -303,3 +303,28 @@ func TestApply_PathTokenOccurrencesKeepTheirIdentity(t *testing.T) {
 		"the pre-encoded literal must stay encoded and the live token must stay live")
 	assert.Contains(t, got, "utm_campaign=kubecon-korea-2026", "and the link is still tagged")
 }
+
+// TestApply_PathTokensSurviveFragments pins the fragment case. Splitting the original on "?"
+// alone left "#agenda" inside the "path" when there was no query, so the unescape comparison
+// never matched, the restore silently skipped, and the token stayed percent-encoded — HubSpot
+// would not substitute it and the personalized link would break at send time.
+func TestApply_PathTokensSurviveFragments(t *testing.T) {
+	cases := map[string]string{
+		"fragment, no query": "https://events.lfx.dev/{{contact.id}}/r#agenda",
+		"fragment and query": "https://events.lfx.dev/{{contact.id}}/r?a=1#agenda",
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := Apply(raw, testParams(), "")
+
+			assert.Contains(t, got, "{{contact.id}}", "the token must stay live")
+			assert.NotContains(t, got, "%7B", "no brace may remain percent-encoded")
+			assert.True(t, strings.HasSuffix(got, "#agenda"), "the fragment must survive, and stay last: %s", got)
+			assert.Contains(t, got, "utm_campaign=kubecon-korea-2026")
+		})
+	}
+
+	// A fragment with no token still round-trips untouched.
+	got := Apply("https://events.lfx.dev/r#agenda", testParams(), "")
+	assert.True(t, strings.HasSuffix(got, "#agenda"))
+}

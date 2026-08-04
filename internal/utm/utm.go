@@ -174,12 +174,18 @@ func restoreTemplateTokens(tagged, original string) string {
 	//
 	// Splicing the original path back is exact by construction: the path is not something this
 	// function modifies, only something URL.String() re-escaped on the way out.
-	origPath, _, _ := strings.Cut(original, "?")
+	// Strip the FRAGMENT before the query: a url with a fragment and no query
+	// ("/path/{{tok}}#agenda") would otherwise keep "#agenda" inside the "path", the unescape
+	// comparison would never match, and the restore would silently skip — leaving the token
+	// percent-encoded and the personalized link broken at send time.
+	origPath, _, _ := strings.Cut(original, "#")
+	origPath, _, _ = strings.Cut(origPath, "?")
 	if !templateToken.MatchString(origPath) {
 		return tagged // no tokens in the path: nothing to restore
 	}
-	// Split the TAGGED url at its own query boundary and swap the path half back.
-	taggedPath, taggedQuery, hasQuery := strings.Cut(tagged, "?")
+	// Split the TAGGED url the same way, keeping the fragment to re-attach below.
+	taggedNoFrag, fragment, hasFragment := strings.Cut(tagged, "#")
+	taggedPath, taggedQuery, hasQuery := strings.Cut(taggedNoFrag, "?")
 	// Only splice when the two paths differ purely by ESCAPING. Comparing their unescaped forms
 	// is the check — but unescape BOTH: the original may already contain percent-escapes the
 	// author wrote deliberately, and comparing a decoded tagged path against a raw original
@@ -189,10 +195,14 @@ func restoreTemplateTokens(tagged, original string) string {
 	if terr != nil || oerr != nil || taggedPlain != origPlain {
 		return tagged
 	}
-	if !hasQuery {
-		return origPath
+	out := origPath
+	if hasQuery {
+		out += "?" + taggedQuery
 	}
-	return origPath + "?" + taggedQuery
+	if hasFragment {
+		out += "#" + fragment
+	}
+	return out
 }
 
 // stripUTM removes EVERY utm_* pair, preserving all other pairs verbatim (position and exotic
