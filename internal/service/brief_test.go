@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -15,6 +18,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	goahttp "goa.design/goa/v3/http"
 )
 
 // fakeBriefRepo is a minimal in-memory BriefRepository for handler tests.
@@ -1011,10 +1015,12 @@ func TestFindBrief_ArchivedBriefDoesNotMatch(t *testing.T) {
 	}
 }
 
-// TestFindBrief_HandlesLongSlugs guards the recall contract against a length cap: BriefInput
-// does not bound event_slug and the column is unbounded TEXT, so any cap on the lookup would
-// make a brief the create contract ACCEPTED permanently unrecallable — the caller would get a
-// validation error instead of its saved brief, then collide on re-create.
+// TestFindBrief_HandlesLongSlugs checks the SERVICE layer passes a long slug straight through
+// to the repo without truncating or rejecting it.
+//
+// This test alone does NOT pin the absence of a MaxLength on the contract: it calls FindBrief
+// directly, and a design-level cap is enforced by the generated DECODER, which this bypasses.
+// TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes is what binds that.
 func TestFindBrief_HandlesLongSlugs(t *testing.T) {
 	ctx := context.Background()
 	longSlug := strings.Repeat("a", 512)
@@ -1030,6 +1036,68 @@ func TestFindBrief_HandlesLongSlugs(t *testing.T) {
 	}
 	if got.ID != "b1" {
 		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+}
+
+// TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes pins the find-brief QUERY-PARAM contract
+// at the layer that actually enforces it: the generated decoder.
+//
+// The load-bearing half is the LONG slug. A MaxLength MUST NOT be (re)introduced on this
+// lookup: BriefWriteInput.event_slug is uncapped and the column is unbounded TEXT, so a cap
+// here would make a brief the CREATE contract accepted permanently unrecallable — the caller
+// would get a validation error instead of its saved brief, then collide on re-create against
+// the UNIQUE(project_id, event_slug) index. The service-level test above cannot catch that,
+// because a cap lives in design/brief.go and is generated into DecodeFindBriefRequest, not
+// into the service method. Verified binding: adding MaxLength(64) to design/brief.go and
+// regenerating fails this test.
+//
+// The empty-slug half is a guard, not a proof. Because event_slug is a REQUIRED query param,
+// goa rejects "" with a MissingFieldError from Required() alone — so this assertion still
+// passes if MinLength(1) is dropped from the design. MinLength(1) is therefore belt-and-braces
+// on THIS endpoint; the constraint that genuinely does work is the one on BriefWriteInput
+// (a JSON body field, where Required() only checks key presence), which
+// TestBriefInput_RejectsEmptyEventSlug pins.
+func TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes(t *testing.T) {
+	mux := goahttp.NewMuxer()
+	decode := briefsserver.DecodeFindBriefRequest(mux, goahttp.RequestDecoder)
+
+	// Route through the muxer so mux.Vars(r) resolves {project_id}; decoding a raw
+	// httptest request would silently yield an empty project_id and not exercise the
+	// real path. The handler runs synchronously inside ServeHTTP, so capturing the
+	// routed request without a lock is safe.
+	var routed *http.Request
+	mux.Handle(http.MethodGet, "/projects/{project_id}/briefs", func(_ http.ResponseWriter, rr *http.Request) {
+		routed = rr
+	})
+	newReq := func(t *testing.T, slug string) *http.Request {
+		t.Helper()
+		routed = nil
+		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet,
+			"/projects/cncf/briefs?event_slug="+url.QueryEscape(slug), nil))
+		if routed == nil {
+			t.Fatal("request was not routed; the decoder would not see path params")
+		}
+		return routed
+	}
+
+	// An empty slug must be rejected: it can never match a stored row. (Satisfied by
+	// Required() alone — see the doc comment.)
+	if _, err := decode(newReq(t, "")); err == nil {
+		t.Error("an empty event_slug must be rejected by the decoder")
+	}
+
+	// A very long slug must still decode. A MaxLength added to design/brief.go and regenerated
+	// would fail here — which is the regression this test exists to catch.
+	longSlug := strings.Repeat("a", 512)
+	got, err := decode(newReq(t, longSlug))
+	if err != nil {
+		t.Fatalf("a long slug must decode (no MaxLength on the contract), got: %v", err)
+	}
+	if got.EventSlug != longSlug {
+		t.Errorf("event_slug was altered by decoding: len = %d, want %d", len(got.EventSlug), len(longSlug))
+	}
+	if got.ProjectID != "cncf" {
+		t.Errorf("project_id = %q, want cncf", got.ProjectID)
 	}
 }
 
@@ -1180,6 +1248,5 @@ func TestToggleUnsupported_EmailGetsADistinctMessage(t *testing.T) {
 				t.Errorf("message = %q, want it to contain %q", bad.Message, tc.wantContain)
 			}
 		})
-
 	}
 }

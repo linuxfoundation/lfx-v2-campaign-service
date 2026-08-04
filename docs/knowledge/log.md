@@ -1,5 +1,30 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where
+`MinLength(1)` actually bites (LFXV2-2812, PR #55 review).
+
+`TestFindBrief_HandlesLongSlugs` called `BriefService.FindBrief` directly, so it could not catch a
+length cap reintroduced in `design/brief.go`: goa generates that check into
+`DecodeFindBriefRequest`, which the service-level call bypasses. The test's comment nevertheless
+claimed it guarded against exactly that. Added
+`TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes`, which routes a real request through the
+goa muxer and decodes it. Verified binding by adding `MaxLength(64)` to the design and
+regenerating: the new test fails, the old one still passes.
+
+Also established, by removing it and regenerating, that `MinLength(1)` on the find-brief
+`event_slug` QUERY PARAM is redundant: because the param is `Required()`, goa already rejects `""`
+with a `MissingFieldError`, so no test can distinguish its presence. It is kept as
+belt-and-braces and is now documented as such. The constraint that genuinely does work is the one
+on `BriefWriteInput.event_slug` — a JSON BODY field, where `Required()` only checks key presence —
+and `TestBriefInput_RejectsEmptyEventSlug` was confirmed binding the same way (drop the design
+constraint, regenerate, test fails).
+
+**Fix** — Corrected a stale comment on `BriefInput` in `design/brief.go` that pointed maintainers
+at a `nonEmptyEventSlug()` helper which does not exist anywhere in the repo. The real mechanism is
+the separate `BriefWriteInput` type; the comment now names it.
+
 ## 2026-08-03
 
 **Update** — Split the brief WRITE payload from the response type (LFXV2-2812, PR #55 review).

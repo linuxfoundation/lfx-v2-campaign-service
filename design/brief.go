@@ -25,8 +25,9 @@ var BriefInput = Type("brief-input", func() {
 	// NO MinLength here: BriefInput is Reference()d by the Brief RESPONSE type, and goa copies
 	// validations through Reference — so constraining it here also constrains every brief
 	// response, making an already-persisted empty-slug row undecodable by generated clients
-	// (get-brief included). The empty-slug REQUEST is rejected by nonEmptyEventSlug() on the
-	// create/update payloads instead, which is where the constraint belongs.
+	// (get-brief included). The empty-slug REQUEST is rejected by BriefWriteInput below — the
+	// create/update payload type, which redeclares event_slug with MinLength(1) — which is
+	// where the constraint belongs. Keep the two in sync: see BriefWriteInput's doc comment.
 	Attribute("event_slug", String, "Event/course slug (unique within the project)")
 	Attribute("url", String, "Event/course page URL")
 	Attribute("platforms", ArrayOf(String), "Suggested default platforms (a planning hint; binding selection is on the campaign)")
