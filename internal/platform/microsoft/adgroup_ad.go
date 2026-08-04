@@ -1278,6 +1278,27 @@ func upperHex(c byte) byte {
 
 // isDefaultPort reports whether port is the scheme's default (and thus omittable without
 // changing the destination): 80 for http, 443 for https.
+// authorityForWidth returns the authority in the SAME form the ad's final URL carries, which is
+// what the display-domain width check must measure. host is the (possibly IDNA-decoded) hostname
+// with brackets already stripped by url.Hostname().
+//
+// Both bracket cases matter: JoinHostPort re-adds them when there is a port, and the second
+// branch re-adds them when there is not — Hostname() having removed them would otherwise leave
+// the count two runes short of the string canonicalFinalURL emits, so a host at the limit could
+// pass the check and be rejected upstream, orphaning a PAUSED campaign and ad group.
+func authorityForWidth(u *url.URL, host string) string {
+	// Lower-case the scheme before the default-port test: validateAdURL accepts any scheme
+	// casing and buildAdFinalURL preserves it, so a valid HTTPS://…:443 would otherwise miss
+	// the case-sensitive "https" match and wrongly count :443 against the host length.
+	if port := u.Port(); port != "" && !isDefaultPort(strings.ToLower(u.Scheme), port) {
+		return net.JoinHostPort(host, port)
+	}
+	if strings.Contains(host, ":") {
+		return "[" + host + "]"
+	}
+	return host
+}
+
 func isDefaultPort(scheme, port string) bool {
 	// Scheme names are case-insensitive (RFC 3986); lower-case so an HTTPS://…:443 URL is
 	// recognized as a default port by every caller, not only the ones that pre-lower-case.

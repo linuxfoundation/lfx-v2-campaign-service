@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -368,21 +367,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				host = uni
 			}
 		}
-		authority := host
-		// Lower-case the scheme before the default-port test: validateAdURL accepts any scheme
-		// casing and buildAdFinalURL preserves it, so a valid HTTPS://…:443 would otherwise
-		// miss the case-sensitive "https" match and wrongly count :443 against the host length.
-		if port := u.Port(); port != "" && !isDefaultPort(strings.ToLower(u.Scheme), port) {
-			// JoinHostPort re-adds the [] around an IPv6 literal.
-			authority = net.JoinHostPort(host, port)
-		} else if strings.Contains(host, ":") {
-			// An IPv6 literal with NO port: Hostname() stripped the brackets, so the count
-			// would be two runes short of the form the URL actually carries. Re-add them so
-			// this measures the same authority canonicalFinalURL produces (adgroup_ad.go),
-			// which has the identical guard — otherwise a host right at the limit passes here
-			// and is rejected upstream.
-			authority = "[" + host + "]"
-		}
+		authority := authorityForWidth(u, host)
 		limit := maxDisplayDomainRunes
 		if hasDoubleWidth(authority) {
 			limit = maxDisplayDomainRunesWide

@@ -1690,3 +1690,41 @@ func (r *reachFlag) hit() bool {
 	defer r.mu.Unlock()
 	return r.set
 }
+
+// TestDisplayDomainCountsTheBracketedIPv6Authority pins that the display-domain width check
+// measures the SAME authority string canonicalFinalURL emits.
+//
+// Hostname() strips the brackets off an IPv6 literal, so a naive count would be two runes short
+// of the form the URL actually carries. That is unreachable as a bug today — the longest possible
+// IPv6 literal is ~47 runes, well under the 67-rune cap — but the two call sites are supposed to
+// measure the same thing, and a future cap reduction or a longer authority form would turn a
+// silent mismatch into a campaign that passes here and is rejected upstream, orphaning a PAUSED
+// campaign and ad group. Cheaper to pin the invariant than to rediscover it there.
+func TestDisplayDomainCountsTheBracketedIPv6Authority(t *testing.T) {
+	cases := []struct {
+		name, rawURL, want string
+	}{
+		{"no port", "https://[2001:db8::1]/p", "[2001:db8::1]"},
+		{"non-default port", "https://[2001:db8::1]:8443/p", "[2001:db8::1]:8443"},
+		{"default port is dropped", "https://[2001:db8::1]:443/p", "[2001:db8::1]"},
+		{"longest literal", "https://[2001:0db8:85a3:0000:0000:8a2e:0370:7334]/p", "[2001:0db8:85a3:0000:0000:8a2e:0370:7334]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := url.Parse(tc.rawURL)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			got := authorityForWidth(u, u.Hostname())
+			if got != tc.want {
+				t.Errorf("authorityForWidth = %q, want %q (brackets must survive: canonicalFinalURL emits them)", got, tc.want)
+			}
+			// The measured authority must match what the ad's final URL actually carries.
+			canon := canonicalFinalURL(tc.rawURL)
+			if !strings.Contains(canon, got) {
+				t.Errorf("canonicalFinalURL(%q) = %q does not contain the measured authority %q; "+
+					"the two checks would disagree at the cap", tc.rawURL, canon, got)
+			}
+		})
+	}
+}
