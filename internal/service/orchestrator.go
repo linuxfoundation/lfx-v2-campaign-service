@@ -272,7 +272,12 @@ func (o *Orchestrator) IndexerIsNoop() bool {
 }
 
 // campaignIndexPayload builds the outbox payload for a campaign write, co-committed with the
-// row by UpsertCampaign.
+// row by the repo. Used by EVERY campaign write — create, update and status toggle.
+//
+// Mixing paths does not work: while creates went through the outbox and updates published
+// directly, a replayed create could land AFTER a newer update or toggle and overwrite it in the
+// index, leaving search stale until some later write happened to repair it. One ordered sequence
+// per row removes that, exactly as for briefs.
 //
 // It carries NO bearer token. Campaign creation is ASYNC — the dispatch runs on the
 // orchestrator's root context, long after the request returned — so a captured JWT could be

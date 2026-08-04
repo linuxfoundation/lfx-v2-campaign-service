@@ -4,6 +4,8 @@
 package postgres
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,34 +23,65 @@ func TestIndexObjectTypesMatchTheIndexer(t *testing.T) {
 	assert.Equal(t, indexer.ObjectTypeCampaign, indexObjectTypeCampaign)
 }
 
-// TestDrainClaimsRowsExclusively pins the claim in the drain query.
+// TestDrainClaimsOneRowPerResourceInOrder pins the two properties that make the drain correct
+// with multiple replicas. Both were verified against a live PostgreSQL 16 before being written
+// down here; this test guards them from silent edits.
 //
-// Without FOR UPDATE SKIP LOCKED every replica loads the SAME batch, so a slow pod can publish
-// an earlier `updated` after a faster one already published the later `deleted` for that
-// brief — resurrecting an archived document and reopening the race the outbox exists to close.
-// Rolling deploys make overlapping pods routine, not exotic.
+//  1. EXCLUSIVITY (FOR UPDATE SKIP LOCKED): each pod gets a disjoint set and holds the locks
+//     through the publish AND the retire, so two pods can never publish the same row.
 //
-// SKIP LOCKED specifically (not a bare FOR UPDATE) is what keeps a second pod moving on to
-// unclaimed work rather than blocking behind this one.
+//  2. PER-RESOURCE ORDER (the NOT EXISTS predecessor check): exclusivity alone is NOT enough.
+//     SKIP LOCKED will skip an older locked row for object X and hand a second pod the NEWER row
+//     for the same X — publishing an update before its create. Gating on "no older pending row
+//     for this object" is what stops that. Confirmed empirically: with pod A holding b1's create,
+//     a concurrent pod claimed ZERO rows rather than b1's update.
 //
-// Asserted against the SQL text because this package has no live-database harness; the
-// alternative is no coverage at all for the property that makes multi-replica drain correct.
-func TestDrainClaimsRowsExclusively(t *testing.T) {
+// Ordering is by id, NOT created_at: created_at defaults to now(), which is TRANSACTION-START
+// time in PostgreSQL, so a transaction that began earlier but wrote later gets an earlier
+// created_at and sorting by it can invert the committed order.
+//
+// Asserted against the SQL text because this package has no live-database harness in CI; the
+// alternative is no regression coverage at all for the properties that make the drain correct.
+func TestDrainClaimsOneRowPerResourceInOrder(t *testing.T) {
 	q := drainClaimQuery
 
 	assert.Contains(t, q, "FOR UPDATE SKIP LOCKED",
 		"an unclaimed read lets every replica drain the same rows")
 	assert.Contains(t, q, "published_at IS NULL",
 		"the drain must only consider unretired rows")
-	// Ordering must be TOTAL. created_at alone is not: two rows can share a now() value, and an
-	// ambiguous order between an update and a delete for the same object is exactly the
-	// interleaving this table prevents.
+
+	// The predecessor check, keyed on the SAME resource and a LOWER id.
+	assert.Contains(t, q, "NOT EXISTS",
+		"without a predecessor check, SKIP LOCKED hands a second pod a newer row for a locked object")
+	assert.Contains(t, q, "p.object_type = o.object_type")
+	assert.Contains(t, q, "p.object_id = o.object_id")
+	assert.Contains(t, q, "p.id < o.id",
+		"the predecessor check must compare ids, the commit-ordered key")
+
+	// Order by id, never created_at — see the doc comment.
 	orderIdx := strings.Index(q, "ORDER BY")
 	limitIdx := strings.Index(q, "LIMIT")
 	if orderIdx < 0 || limitIdx < orderIdx {
 		t.Fatalf("expected ORDER BY before LIMIT in the drain query, got:\n%s", q)
 	}
 	order := q[orderIdx:limitIdx]
-	assert.Contains(t, order, "created_at", "replay order is what keeps a stale document from being reinstated")
-	assert.Contains(t, order, "id", "created_at can tie at now() resolution; id makes the order total")
+	assert.Contains(t, order, "o.id", "id is the commit-ordered key")
+	assert.NotContains(t, order, "created_at",
+		"created_at is transaction-START time; sorting by it can invert the committed order")
+}
+
+// TestPendingIndexPartialIndexSupportsTheClaim pins the migration's index against the query it
+// exists to serve. The predecessor check probes (object_type, object_id, id) — a (created_at)
+// index cannot serve that, so every pass would re-scan retained published history, which is the
+// bulk of the table.
+func TestPendingIndexPartialIndexSupportsTheClaim(t *testing.T) {
+	sql, err := os.ReadFile(filepath.Join("migrations", "000008_index_outbox.up.sql"))
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	got := string(sql)
+	assert.Contains(t, got, "ON index_outbox (object_type, object_id, id)",
+		"the partial index must key the predecessor check's probe columns")
+	assert.Contains(t, got, "WHERE published_at IS NULL",
+		"the index must stay PARTIAL so it does not grow with published history")
 }

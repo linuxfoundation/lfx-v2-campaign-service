@@ -169,7 +169,45 @@ func (r *Relay) drain(parent context.Context) {
 		return
 	}
 
-	published, err := r.outbox.DrainPendingIndexMessages(ctx, 0, func(ctx context.Context, m *model.OutboxMessage) error {
+	// Loop while a pass makes progress. A pass claims at most ONE row per resource (that is
+	// what keeps a resource's messages in order), so a brief with a queued create+update+delete
+	// needs three passes. Waiting a full relayInterval between them would take 45s to drain a
+	// backlog that is ready NOW — the recovery this table exists for should not be that slow.
+	// Bounded by relayPassTimeout on the context and by a pass that publishes nothing.
+	// maxPasses bounds the loop. A pass is only supposed to repeat while it drains a backlog,
+	// but "published > 0" is progress as REPORTED by the outbox — a bug that published without
+	// retiring would otherwise spin here forever, burning the broker on the same rows. The cap
+	// turns that into a bounded pass and a resumed drain on the next tick.
+	const maxPasses = 20
+	total := 0
+	for pass := 0; pass < maxPasses; pass++ {
+		published, err := r.drainOnce(ctx)
+		if err != nil {
+			// Do not log a cancellation during shutdown as a failure.
+			if parent.Err() == nil {
+				slog.ErrorContext(ctx, "index relay could not drain the outbox", "error", err)
+			}
+			break
+		}
+		total += published
+		// Nothing published means either an empty outbox or every remaining resource is blocked
+		// behind a failed delivery. Either way another immediate pass would not help.
+		if published == 0 {
+			break
+		}
+		// Re-check the deadline: relayPassTimeout bounds the whole drain, not one pass.
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if total > 0 {
+		slog.InfoContext(ctx, "index relay published pending messages", "count", total)
+	}
+}
+
+// drainOnce runs a single claim-and-publish pass.
+func (r *Relay) drainOnce(ctx context.Context) (int, error) {
+	return r.outbox.DrainPendingIndexMessages(ctx, 0, func(ctx context.Context, m *model.OutboxMessage) error {
 		payload, aerr := r.stamp(m.Payload)
 		if aerr != nil {
 			// A row we cannot parse can never be published. Returning the error records it on
@@ -178,14 +216,4 @@ func (r *Relay) drain(parent context.Context) {
 		}
 		return r.pub.PublishRaw(ctx, Subject(m.ObjectType), m.ObjectID, payload)
 	})
-	if err != nil {
-		// Do not log a cancellation during shutdown as a failure.
-		if parent.Err() == nil {
-			slog.ErrorContext(ctx, "index relay could not drain the outbox", "error", err)
-		}
-		return
-	}
-	if published > 0 {
-		slog.InfoContext(ctx, "index relay published pending messages", "count", published)
-	}
 }

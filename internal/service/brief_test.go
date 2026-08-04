@@ -504,6 +504,9 @@ func TestBriefService_CreateCampaigns_ApprovedAtVersionSucceeds(t *testing.T) {
 type campaignEditRepo struct {
 	got *model.Campaign // the campaign passed to ReplaceCampaign
 	cur *model.Campaign // the stored campaign returned by GetCampaign
+	// indexPayloads records the co-committed index messages, so a test can assert the update
+	// is indexed rather than only persisted.
+	indexPayloads [][]byte
 }
 
 func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -522,9 +525,23 @@ func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Pr
 func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
-func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64) (*model.Campaign, error) {
+func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
-	return c, nil
+	return c, r.recordIndex(c, indexPayload)
+}
+
+// recordIndex runs the payload builder the way the real repo does — inside the "transaction",
+// after the row is written — so a test can assert the update is actually indexed.
+func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) error {
+	if indexPayload == nil {
+		return nil
+	}
+	payload, err := indexPayload(c)
+	if err != nil {
+		return err
+	}
+	r.indexPayloads = append(r.indexPayloads, payload)
+	return nil
 }
 
 // UpdateCampaign must NOT wipe the stored config when the caller omits config, and it must
@@ -736,6 +753,8 @@ type toggleCampaignRepo struct {
 	got      *model.Campaign
 	replaced *model.Campaign
 	getErr   error
+	// indexPayloads records the co-committed index messages for the toggle path.
+	indexPayloads [][]byte
 }
 
 func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -745,8 +764,16 @@ func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string
 	cp := *r.got
 	return &cp, nil
 }
-func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64) (*model.Campaign, error) {
+func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.replaced = c
+	if indexPayload == nil {
+		return c, nil
+	}
+	payload, err := indexPayload(c)
+	if err != nil {
+		return nil, err
+	}
+	r.indexPayloads = append(r.indexPayloads, payload)
 	return c, nil
 }
 
@@ -1410,5 +1437,77 @@ func TestBriefWrites_AllGoThroughTheOutbox(t *testing.T) {
 	if last.Action != indexer.ActionDeleted {
 		t.Errorf("final index action = %q, want %q — the archive must be the last event for the brief",
 			last.Action, indexer.ActionDeleted)
+	}
+}
+
+// TestCampaignWrites_UpdateAndToggleCoCommitTheirIndex closes the last direct-publish path.
+//
+// Creates went through the outbox while UpdateCampaign and ToggleCampaignStatus still published
+// after ReplaceCampaign. Mixing the two cannot be ordered: a replayed create could land AFTER a
+// newer update or toggle and overwrite it in the index, leaving search stale until some later
+// write happened to repair it — the same interleaving already fixed for briefs.
+//
+// The toggle case carries a second hazard. Its write is deliberately detached (persistCtx) so a
+// cancelled request still records a platform change that already happened; publishing on the
+// REQUEST context dropped exactly those index events, leaving the status right in the database
+// and stale in search for the requests most likely to need reconciling. Co-committing means the
+// row and its message share one fate.
+func TestCampaignWrites_UpdateAndToggleCoCommitTheirIndex(t *testing.T) {
+	t.Run("update", func(t *testing.T) {
+		cur := &model.Campaign{
+			ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			CampaignName: "old", Status: "created", Version: 1,
+		}
+		repo := &campaignEditRepo{cur: cur}
+		s := &BriefService{briefs: newFakeBriefRepo(), campaigns: repo, jobs: newFakeJobRepo(),
+			orch: NewOrchestrator(repo, newFakeJobRepo(), nil)}
+		im := "1"
+
+		if _, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+			Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "created"},
+		}); err != nil {
+			t.Fatalf("UpdateCampaign: %v", err)
+		}
+		assertOneCampaignIndexMessage(t, repo.indexPayloads)
+	})
+
+	t.Run("status toggle", func(t *testing.T) {
+		camp := &model.Campaign{
+			ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+			PlatformCampaignID: "t3_c", Status: "created", Version: 1,
+		}
+		s, camps := newToggleService(camp, &stubToggler{})
+		im := "1"
+		if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+		}); err != nil {
+			t.Fatalf("ToggleCampaignStatus: %v", err)
+		}
+		assertOneCampaignIndexMessage(t, camps.indexPayloads)
+	})
+}
+
+// assertOneCampaignIndexMessage checks that exactly one message was co-committed, that it
+// describes an update, and that it carries NO caller credential — the relay stamps a service
+// token at publish time, and the outbox is retained for audit with no pruning, so a JWT written
+// there would persist as a live credential.
+func assertOneCampaignIndexMessage(t *testing.T, payloads [][]byte) {
+	t.Helper()
+	if len(payloads) != 1 {
+		t.Fatalf("expected exactly one co-committed index message, got %d", len(payloads))
+	}
+	var msg indexer.Transaction
+	if err := json.Unmarshal(payloads[0], &msg); err != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", err)
+	}
+	if msg.Action != indexer.ActionUpdated {
+		t.Errorf("action = %q, want %q", msg.Action, indexer.ActionUpdated)
+	}
+	// NOT asserted: msg.ObjectType(). It is unexported state that does not survive the JSON
+	// round-trip by design — the indexer derives the type from the SUBJECT, and the relay routes
+	// from the outbox row's object_type column rather than the payload.
+	if auth := msg.Headers["authorization"]; auth != "" {
+		t.Errorf("stored payload carries an authorization header (%q); the relay must stamp it at publish time", auth)
 	}
 }

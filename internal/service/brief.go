@@ -119,21 +119,6 @@ func derefStr(s *string) string {
 	return *s
 }
 
-// publishIndex sends a resource snapshot to the Query Service. Best-effort by contract: the
-// database already committed, so a publish problem must never surface to the caller.
-// publishIndex sends a resource snapshot to the indexer. bearer is the caller's token: the
-// indexer REQUIRES a non-empty authorization header on every message and silently drops those
-// without one, so this must be threaded from the request rather than left empty.
-func (s *BriefService) publishIndex(ctx context.Context, action, objectType, objectID, projectID, bearer string, data any, names ...string) {
-	s.mu.RLock()
-	p := s.indexer
-	s.mu.RUnlock()
-	if p == nil {
-		return
-	}
-	p.Publish(ctx, indexer.NewTransaction(action, objectType, objectID, projectID, bearer, data, names...))
-}
-
 // NewBriefService constructs a BriefService. The index publisher is NOT a parameter: it is
 // injected via SetIndexer so the many existing call sites (mostly tests) are unaffected and
 // default to a Noop publisher.
@@ -477,11 +462,10 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
-	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version)
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, deref(p.BearerToken), campaignDoc(campaignResult(updated)), updated.CampaignName)
 	return campaignResult(updated), nil
 }
 
@@ -581,7 +565,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	existing.Status = p.Status
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancel()
-	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version)
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		// The platform WAS changed but the row write failed → platform and DB now diverge.
 		// Log it loudly as an operational reconcile signal (the run state on the platform is
@@ -592,11 +576,10 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			"new_status", p.Status, "error", uerr)
 		return nil, mapBriefErr(uerr)
 	}
-	// persistCtx, NOT ctx: the write above is deliberately detached so a cancelled request
-	// still records a platform change that already happened. Publishing on ctx would drop
-	// exactly those index updates — the campaign's status would be right in the database and
-	// stale in search, for the requests most likely to need reconciling.
-	s.publishIndex(persistCtx, indexer.ActionUpdated, indexer.ObjectTypeCampaign, updated.ID, updated.ProjectID, deref(p.BearerToken), campaignDoc(campaignResult(updated)), updated.CampaignName)
+	// The index message co-committed with the row on persistCtx, so a cancelled request still
+	// records BOTH the platform change and its index event — previously the row could be
+	// written while the publish was dropped, leaving the status right in the database and
+	// stale in search for exactly the requests most likely to need reconciling.
 	return campaignResult(updated), nil
 }
 

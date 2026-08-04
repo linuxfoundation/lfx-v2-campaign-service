@@ -96,7 +96,7 @@ type CampaignWriter interface {
 	// Campaigns are updated in place when a brief changes after they exist.
 	UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 	// ReplaceCampaign replaces a campaign's mutable fields, gating on version.
-	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64) (*model.Campaign, error)
+	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 }
 
 // CampaignRepository is the full persistence port for campaigns.

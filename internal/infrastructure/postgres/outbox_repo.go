@@ -22,16 +22,36 @@ type OutboxRepo struct {
 // NewOutboxRepo constructs an OutboxRepo.
 func NewOutboxRepo(db *Pool) *OutboxRepo { return &OutboxRepo{db: db} }
 
-// drainClaimQuery claims a batch of unpublished rows for THIS pod.
+// drainClaimQuery claims a batch of unpublished rows for THIS pod, at most ONE per resource.
 //
-// FOR UPDATE SKIP LOCKED is the load-bearing clause: it gives each replica a disjoint batch and
-// holds the locks for the whole pass, so no two pods can publish the same object concurrently.
-// ORDER BY created_at, id is total — created_at alone can tie at now() resolution, and an
-// ambiguous order between an update and a delete is the interleaving this table prevents.
-const drainClaimQuery = `SELECT id, object_type, object_id, payload, attempts
-	FROM index_outbox
-	WHERE published_at IS NULL
-	ORDER BY created_at ASC, id ASC
+// Two properties have to hold together, and the naive "oldest N pending" query provides neither:
+//
+//  1. EXCLUSIVITY. FOR UPDATE SKIP LOCKED gives each replica a disjoint set and holds the locks
+//     through the publish and the retire, so two pods can never publish the same row.
+//
+//  2. PER-RESOURCE ORDER. Exclusivity alone is not enough: SKIP LOCKED will happily skip an
+//     older locked row for object X and hand this pod a NEWER row for the same X, publishing
+//     the update before the create. The NOT EXISTS predicate is what prevents that — a row is
+//     claimable only when no older pending row exists for the same (object_type, object_id).
+//     One message per resource per pass; the next pass takes the successor. A failed delivery
+//     therefore blocks only its OWN resource, which is the correct behaviour: publishing past
+//     it would reorder that resource's history.
+//
+// Ordering is by id, NOT created_at. created_at defaults to now(), which in PostgreSQL is
+// TRANSACTION-START time — a transaction that began earlier but committed its write later gets
+// an EARLIER created_at, so sorting by it can invert the committed order. id comes from a
+// BIGSERIAL assigned at INSERT, which does not have that inversion.
+const drainClaimQuery = `SELECT o.id, o.object_type, o.object_id, o.payload, o.attempts
+	FROM index_outbox o
+	WHERE o.published_at IS NULL
+	  AND NOT EXISTS (
+	      SELECT 1 FROM index_outbox p
+	      WHERE p.published_at IS NULL
+	        AND p.object_type = o.object_type
+	        AND p.object_id = o.object_id
+	        AND p.id < o.id
+	  )
+	ORDER BY o.id ASC
 	LIMIT $1
 	FOR UPDATE SKIP LOCKED`
 

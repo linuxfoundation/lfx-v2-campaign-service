@@ -2,6 +2,21 @@
 
 ## 2026-08-03
 
+**Update** — Hardened the outbox claim and finished routing campaign writes through it
+(LFXV2-2814, PR #60). (1) `SKIP LOCKED` alone did NOT preserve per-resource order: it skips an
+older LOCKED row for object X and hands another pod the NEWER row for the same X, publishing an
+update before its create. The claim now carries a `NOT EXISTS` predecessor check — one message
+per resource per pass, so a failed delivery blocks only its own resource. Verified on a live
+PostgreSQL 16: with one pod holding b1's create, a concurrent pod claimed ZERO rows. (2) Ordering
+moved from `created_at` to `id`: `now()` is TRANSACTION-START time, so a transaction that began
+earlier but wrote later gets an earlier timestamp and sorting by it can invert committed order.
+The partial index is re-keyed `(object_type, object_id, id)` to serve both. (3) `UpdateCampaign`
+and `ToggleCampaignStatus` still published directly after `ReplaceCampaign`, so a replayed create
+could overwrite a newer update — `ReplaceCampaign` now co-commits too, and `publishIndex` is gone
+entirely: no write publishes on the request path. (4) Because a pass now claims one row per
+resource, `drain` loops while making progress (bounded), so a queued create+update+delete drains
+in one tick rather than 45s.
+
 **Update** — Closed two more outbox findings on PR #60 (LFXV2-2814), both raised against the
 previous commit. (1) `PendingIndexMessages` read rows with NO claim, so every replica loaded the
 same batch: a slow pod could publish an earlier `updated` after a faster one had already

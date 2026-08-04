@@ -34,18 +34,36 @@ func (f *fakeOutbox) DrainPendingIndexMessages(
 	if f.drainErr != nil {
 		return 0, f.drainErr
 	}
+	// Model the real claim query, both halves:
+	//
+	//   - A RETIRED row is no longer pending (else the fake replays forever and the relay's
+	//     drain-while-progressing loop sees an endless backlog).
+	//   - At most ONE row per (object_type, object_id) per pass — the predecessor check. This
+	//     is what makes a multi-message backlog take multiple passes, so a fake that drained
+	//     everything at once could not tell a looping relay from a single-pass one.
 	published := 0
+	claimedObject := map[string]bool{}
+	var remaining []*model.OutboxMessage
 	for _, m := range f.pending {
+		key := m.ObjectType + "\x00" + m.ObjectID
+		if claimedObject[key] {
+			remaining = append(remaining, m) // blocked behind an older row for the same object
+			continue
+		}
+		claimedObject[key] = true
 		if ctx.Err() != nil {
-			break
+			remaining = append(remaining, m)
+			continue
 		}
 		if err := deliver(ctx, m); err != nil {
 			f.failed = append(f.failed, m.ID)
+			remaining = append(remaining, m) // still pending, for a later pass
 			continue
 		}
 		f.published = append(f.published, m.ID)
 		published++
 	}
+	f.pending = remaining
 	return published, nil
 }
 
@@ -74,7 +92,11 @@ func outboxMsg(id int64, objectType string) *model.OutboxMessage {
 // indexer requires — outbox rows deliberately store NO token, because the table is retained for
 // audit and a per-request JWT written there would persist as a live credential indefinitely.
 func TestRelay_StampsTheServiceCredential(t *testing.T) {
-	out := &fakeOutbox{pending: []*model.OutboxMessage{outboxMsg(1, ObjectTypeBrief)}}
+	row := outboxMsg(1, ObjectTypeBrief)
+	// Capture the STORED bytes before the drain: a published row stops being pending, as in the
+	// real query, so reading them back off the fake afterwards would find nothing.
+	storedPayload := append([]byte(nil), row.Payload...)
+	out := &fakeOutbox{pending: []*model.OutboxMessage{row}}
 	pub := &capturingPublisher{}
 
 	NewRelay(out, pub, "Bearer service-token").drain(context.Background())
@@ -89,7 +111,7 @@ func TestRelay_StampsTheServiceCredential(t *testing.T) {
 
 	// The STORED payload must not have carried a credential.
 	var stored map[string]any
-	require.NoError(t, json.Unmarshal(out.pending[0].Payload, &stored))
+	require.NoError(t, json.Unmarshal(storedPayload, &stored))
 	assert.Empty(t, stored["headers"].(map[string]any)["authorization"],
 		"an outbox row must never persist a token")
 
@@ -141,4 +163,51 @@ func TestRelay_WithoutACredentialLeavesRowsPending(t *testing.T) {
 		assert.Empty(t, pub.payloads, "nothing may be published without a credential (token %q)", token)
 		assert.Empty(t, out.published, "and no row may be retired: the indexer would have dropped it")
 	}
+}
+
+// TestRelay_DrainsABacklogInOneTick covers the interaction between the per-resource claim and
+// the relay's cadence.
+//
+// A pass claims at most ONE row per resource — that is what keeps a resource's messages in
+// order — so a brief with a queued create+update+delete needs three passes. If the relay waited
+// a full relayInterval between them, a backlog that is ready NOW would take 45s to drain, which
+// is far too slow for the recovery this table exists to provide. drain therefore keeps passing
+// while it makes progress.
+func TestRelay_DrainsABacklogInOneTick(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{
+		outboxMsg(1, ObjectTypeBrief),
+		outboxMsg(2, ObjectTypeBrief),
+		outboxMsg(3, ObjectTypeBrief),
+	}}
+	pub := &capturingPublisher{}
+
+	NewRelay(out, pub, "Bearer service-token").drain(context.Background())
+
+	assert.Len(t, pub.payloads, 3, "a ready backlog must drain within one tick, not one row per 15s")
+	assert.Equal(t, []int64{1, 2, 3}, out.published, "and in id order")
+	assert.Empty(t, out.pending, "nothing may be left behind")
+}
+
+// TestRelay_StopsWhenAPassPublishesNothing pins the loop's exit conditions.
+//
+// A publisher that fails every time makes no progress, so the loop must stop rather than spin on
+// the same rows. The rows stay PENDING for a later tick, which is the whole point of the table —
+// a failed delivery must not be mistaken for a delivered one.
+func TestRelay_StopsWhenAPassPublishesNothing(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{
+		outboxMsg(1, ObjectTypeBrief),
+		outboxMsg(2, ObjectTypeBrief),
+	}}
+	pub := &capturingPublisher{err: errors.New("broker down")}
+
+	NewRelay(out, pub, "Bearer service-token").drain(context.Background())
+
+	assert.Empty(t, out.published, "a failed publish must never retire a row")
+	assert.Len(t, out.pending, 2, "the rows stay pending for a later pass")
+	// ONE attempt, not two: both rows belong to the same brief, so row 2 is blocked behind the
+	// failed row 1 by the predecessor check. That is the point — publishing past a failed
+	// message would reorder that resource's history, which is exactly what the claim prevents.
+	// It also bounds the work: a failed delivery does not spin the loop on its whole backlog.
+	assert.Equal(t, []int64{1}, out.failed,
+		"a failed row must BLOCK its successor, not be skipped past")
 }

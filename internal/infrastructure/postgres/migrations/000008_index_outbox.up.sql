@@ -27,8 +27,17 @@ CREATE TABLE IF NOT EXISTS index_outbox (
     last_error   TEXT
 );
 
--- The relay's only query: oldest pending first. PARTIAL, so the index stays small — it never
--- grows with published history, which is the bulk of the table.
+-- The relay's claim query. PARTIAL, so the index stays small — it never grows with published
+-- history, which is the bulk of the table.
+--
+-- Keyed (object_type, object_id, id), not (created_at): the relay claims at most ONE pending row
+-- per resource, gated on "no older pending row exists for the same object", and this composite
+-- serves both that predecessor check and the ORDER BY id. Without it the NOT EXISTS re-scans
+-- retained history on every pass.
+--
+-- Ordering is by id rather than created_at because created_at defaults to now(), which is
+-- TRANSACTION-START time in PostgreSQL: a transaction that began earlier but wrote later gets an
+-- earlier created_at, so sorting by it can invert the committed order of two mutations.
 CREATE INDEX IF NOT EXISTS idx_index_outbox_pending
-    ON index_outbox (created_at)
+    ON index_outbox (object_type, object_id, id)
     WHERE published_at IS NULL;

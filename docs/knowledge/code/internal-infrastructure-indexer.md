@@ -82,8 +82,25 @@ the commit and the publish regardless.
 across the publish and the retire (the publish is passed down as a callback for exactly this
 reason). An unclaimed read let every replica load the same batch, so a slow pod could publish an
 earlier `updated` after a faster one had already published the later `deleted` — resurrecting an
-archived document ACROSS replicas, which rolling deploys make routine. `SKIP LOCKED` rather than
-a bare `FOR UPDATE` keeps a second pod moving to unclaimed work instead of blocking.
+archived document ACROSS replicas, which rolling deploys make routine.
+
+**Exclusivity alone is not enough.** `SKIP LOCKED` will skip an older LOCKED row for object X and
+hand a second pod the NEWER row for the same X, publishing an update before its create. So the
+claim also carries a `NOT EXISTS` predecessor check: a row is claimable only when no older
+pending row exists for the same `(object_type, object_id)`. That means at most ONE message per
+resource per pass, and a failed delivery blocks only its OWN resource — publishing past it would
+reorder that resource's history. Verified against a live PostgreSQL 16: with one pod holding
+`b1`'s create, a concurrent pod claimed ZERO rows rather than `b1`'s update.
+
+**Ordering is by `id`, never `created_at`.** `created_at` defaults to `now()`, which is
+TRANSACTION-START time in PostgreSQL: a transaction that began earlier but wrote later gets an
+EARLIER timestamp, so sorting by it can invert the committed order of two mutations. `id` is a
+`BIGSERIAL` assigned at INSERT and has no such inversion. The partial index is keyed
+`(object_type, object_id, id)` to serve both the predecessor check and the ordering.
+
+Because a pass takes one row per resource, `drain` LOOPS while it makes progress (bounded by a
+pass cap and the pass deadline) — otherwise a queued create+update+delete would need three ticks
+and take 45s to drain a backlog that is ready immediately.
 
 **Campaign writes co-commit too.** Campaign creation is ASYNC — the dispatch runs on the
 orchestrator's root context, long after the request returned — so publishing with the JWT
