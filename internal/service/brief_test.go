@@ -112,6 +112,13 @@ func TestBriefService_NilRepo_ReturnsServiceUnavailable(t *testing.T) {
 	if err := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{ProjectID: "cncf", BriefID: "b1"}); !isBriefUnavailable(err) {
 		t.Errorf("DeleteBrief: expected *briefs.ConnServiceUnavailableError, got %T (%v)", err, err)
 	}
+	// FindBrief must 503 like every other route during a cold start. Without this, a refactor
+	// touching only the lookup could drop its ready() call and start returning 404 instead —
+	// telling the caller "no brief exists" when the truth is "the database is not up yet",
+	// which for this endpoint means silently regenerating a brief that already exists.
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"}); !isBriefUnavailable(err) {
+		t.Errorf("FindBrief: expected *briefs.ConnServiceUnavailableError, got %T (%v)", err, err)
+	}
 }
 
 // TestBriefService_SetBackend_LateBinding verifies the container can inject the
@@ -130,6 +137,9 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 	if _, err := s.GetJob(ctx, &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"}); !isBriefUnavailable(err) {
 		t.Fatalf("GetJob: expected 503 before backend is set, got %T (%v)", err, err)
 	}
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"}); !isBriefUnavailable(err) {
+		t.Fatalf("FindBrief: expected 503 before backend is set, got %T (%v)", err, err)
+	}
 
 	// Inject live collaborators (as the background DB-init goroutine does).
 	repo := newFakeBriefRepo()
@@ -145,6 +155,10 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 	}
 	if _, err := s.GetJob(ctx, &briefs.GetJobPayload{ProjectID: "cncf", JobID: "missing"}); isBriefUnavailable(err) {
 		t.Fatalf("GetJob: expected the live repo after SetBackend, still got 503")
+	}
+	// A slug with no saved brief is the ordinary first-generation case: NotFound, not 503.
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "brand-new-event"}); isBriefUnavailable(err) {
+		t.Fatalf("FindBrief: expected the live repo after SetBackend, still got 503")
 	}
 }
 

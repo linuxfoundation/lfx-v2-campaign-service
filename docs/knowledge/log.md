@@ -49,6 +49,7 @@ returns `""` and is caught by `TestProviderValidityHoldsForEveryProvider` instea
 inheriting paid-ads behaviour. Also made `TestLogMissingDispatchers_SurfacesGaps` rot-proof: it
 now removes one provider from the real map (a synthetic gap) rather than asserting a specific
 provider is still unregistered, which broke each time an adapter landed.
+
 ## 2026-08-02
 
 **Update** — Bounded the Claude fallback's rerun in
@@ -125,6 +126,7 @@ Connection rules are shared via `validateGoogleAdsConnection`, called by BOTH `D
 (`Dispatch` wraps with `notCreated` for claim semantics, the toggle path does not). The
 campaign id is validated digits-only before any request, since it interpolates into a
 resourceName.
+
 ## 2026-07-29
 
 **Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
