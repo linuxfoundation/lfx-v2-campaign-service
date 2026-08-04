@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -191,9 +192,13 @@ func okAdGroupCriteria(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestCreateAdGroupAndAd_TargetingHappyPath(t *testing.T) {
+	var mu sync.Mutex
 	var criteriaBody map[string]any
 	c := newTargetingClient(t, func(w http.ResponseWriter, r *http.Request) {
-		criteriaBody = decode(t, r)
+		body := decode(t, r)
+		mu.Lock()
+		criteriaBody = body
+		mu.Unlock()
 		okAdGroupCriteria(w, r)
 	})
 	in := sampleInput()
@@ -211,9 +216,12 @@ func TestCreateAdGroupAndAd_TargetingHappyPath(t *testing.T) {
 		t.Errorf("AudienceCriteriaIDs = %v, want [2]", res.AudienceCriteriaIDs)
 	}
 
-	ops, ok := criteriaBody["operations"].([]any)
+	mu.Lock()
+	body := criteriaBody
+	mu.Unlock()
+	ops, ok := body["operations"].([]any)
 	if !ok || len(ops) != 2 {
-		t.Fatalf("adGroupCriteria:mutate operations = %v, want 2", criteriaBody["operations"])
+		t.Fatalf("adGroupCriteria:mutate operations = %v, want 2", body["operations"])
 	}
 	kwOp := ops[0].(map[string]any)["create"].(map[string]any)
 	if kwOp["status"] != StatusEnabled {
@@ -323,9 +331,29 @@ func TestCreateAdGroupAndAd_InvalidAudienceSegmentAbortsBeforeAnyMutate(t *testi
 // newTargetingClientCapturingCampaign is newTargetingClient but also captures the
 // decoded campaigns:mutate request body, for tests asserting on campaign-level
 // fields (targetingSetting) rather than the adGroupCriteria call itself.
-func newTargetingClientCapturingCampaign(t *testing.T, criteriaH http.HandlerFunc) (*Client, *map[string]any) {
+// capturedBody guards a decoded request body captured inside an httptest
+// handler goroutine and read back from the test goroutine — the handler runs
+// on its own goroutine, so an unguarded map read/write here would race.
+type capturedBody struct {
+	mu   sync.Mutex
+	body map[string]any
+}
+
+func (c *capturedBody) set(b map[string]any) {
+	c.mu.Lock()
+	c.body = b
+	c.mu.Unlock()
+}
+
+func (c *capturedBody) get() map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.body
+}
+
+func newTargetingClientCapturingCampaign(t *testing.T, criteriaH http.HandlerFunc) (*Client, *capturedBody) {
 	t.Helper()
-	var campaignBody map[string]any
+	captured := &capturedBody{}
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -333,7 +361,7 @@ func newTargetingClientCapturingCampaign(t *testing.T, criteriaH http.HandlerFun
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
 			okBudget(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
-			campaignBody = decode(t, r)
+			captured.set(decode(t, r))
 			okCampaign(w, r)
 		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
 			okAdGroup(w, r)
@@ -350,7 +378,7 @@ func newTargetingClientCapturingCampaign(t *testing.T, criteriaH http.HandlerFun
 	c := NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
 		withRetryBaseDelay(time.Millisecond))
-	return c, &campaignBody
+	return c, captured
 }
 
 func okAdGroupCriteriaOne(w http.ResponseWriter, _ *http.Request) {
@@ -364,7 +392,7 @@ func TestCreateCampaign_SetsAudienceObservationTargetingSetting(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	op := firstCreate(t, *campaignBody)
+	op := firstCreate(t, campaignBody.get())
 	ts, ok := op["targetingSetting"].(map[string]any)
 	if !ok {
 		t.Fatalf("campaign create body = %v, want a targetingSetting when audience segments are supplied", op)
@@ -384,7 +412,7 @@ func TestCreateCampaign_NoAudienceSegmentsOmitsTargetingSetting(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), sampleInput()); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	op := firstCreate(t, *campaignBody)
+	op := firstCreate(t, campaignBody.get())
 	if _, present := op["targetingSetting"]; present {
 		t.Errorf("campaign create body = %v, want no targetingSetting when no audience segments are supplied", op)
 	}
