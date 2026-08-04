@@ -76,8 +76,8 @@ report "no dispatcher registered" (logged as a startup warning via
 
 Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**,
 **twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **googleads** (LFXV2-2636),
-**hubspot** (the email channel, LFXV2-2777). Microsoft Ads (LFXV2-2804, PR #50) follows
-once its PR merges.
+**microsoft** (Bing Ads, LFXV2-2805), **hubspot** (the email channel, LFXV2-2777) — every
+provider CreateCampaigns accepts now has a dispatcher.
 
 Each adapter interprets its own credential + config shape:
 - **reddit** — OAuth2 (clientId/secret/refreshToken); AccountID from the connection.
@@ -104,6 +104,16 @@ Each adapter interprets its own credential + config shape:
   to the campaign name, so a campaign-stage partial reconciles the budget by `CampaignBudgetID`
   instead (the partial carries both). Either way the dispatcher returns a non-nil result
   (retaining the claim) on an ambiguous/duplicate-name create rather than releasing on an empty id.
+- **microsoft** — OAuth2 app (clientId/secret) + a developer token + refreshToken;
+  AccountConfig from the connection's AccountID (the DIGITS-ONLY `CustomerAccountId`, trimmed)
+  plus an optional `customer_id` (the manager/`CustomerId` header). The client builds the
+  full Campaign → AdGroup → Ad hierarchy (all PAUSED) — so the adapter needs no ad config
+  beyond `microsoftConfig.budget` (the DAILY budget, in the ACCOUNT's currency, no FX) and an
+  optional `timeZone`. `NameSuffix = brief.ID` gives deterministic retry-safe names (Microsoft
+  enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name and
+  cleanly REUSES the existing campaign (`AlreadyExisted=true`, no error) rather than
+  duplicating). A non-nil result accompanied by an error is a separate UNCONFIRMED partial
+  (claim retained); (nil, err) means nothing was created (claim released).
 - **hubspot** — the EMAIL channel (not an ad platform), single private-app token. Unlike the ad
   adapters (which CREATE a campaign) it STAGES a marketing email: it CLONES a caller-specified
   template (`hubspotConfig.sourceEmailId`) and points the clone's send list at the brief's BUILT
