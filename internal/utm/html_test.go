@@ -172,3 +172,30 @@ func TestTagHTMLLinksFrom_SkippedLinksDoNotConsumeNumbers(t *testing.T) {
 	assert.Equal(t, 1, n, "only the tagged link counts")
 	assert.Contains(t, hrefs(t, out)[1], "utm_content=body-link-6", "numbering resumes from the carried count")
 }
+
+// TestTagHTMLLinks_PreservesOutlookConditionalComments pins that re-serializing a widget does
+// not corrupt Outlook's conditional comments. Email markup is full of `<!--[if mso]>…<![endif]-->`
+// blocks, and escaping the `>` inside them would make Outlook stop recognising the block — a
+// layout break visible only in Outlook, so it would ship unnoticed.
+//
+// x/net/html does not escape comment contents, but this pins the behaviour so a library bump
+// that changed it would fail here rather than in someone's inbox.
+func TestTagHTMLLinks_PreservesOutlookConditionalComments(t *testing.T) {
+	cases := map[string]string{
+		"wrapping table":     `<!--[if mso]><table><tr><td><![endif]--><a href="https://events.lfx.dev/r">Go</a><!--[if mso]></td></tr></table><![endif]-->`,
+		"office settings":    `<!--[if gte mso 9]><xml><o:OfficeDocumentSettings/></xml><![endif]--><a href="https://events.lfx.dev/r">Go</a>`,
+		"downlevel-revealed": `<!--[if !mso]><!--><a href="https://events.lfx.dev/r">Go</a><!--<![endif]-->`,
+		"inside a div":       `<div><!--[if mso]><td width="100%"><![endif]--><a href="https://events.lfx.dev/r">Go</a></div>`,
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := TagHTMLLinks(in, testParams(), "")
+			require.NoError(t, err)
+
+			assert.NotContains(t, out, "&gt;", "a > inside a conditional comment must not be escaped")
+			assert.NotContains(t, out, "&lt;")
+			// The link was still tagged — the point is that tagging is safe here, not skipped.
+			assert.Contains(t, out, "utm_campaign=kubecon-korea-2026")
+		})
+	}
+}
