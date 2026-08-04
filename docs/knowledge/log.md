@@ -2,6 +2,25 @@
 
 ## 2026-08-04
 
+**Update** — Every stuck claim now requires an upstream check (LFXV2-2665, PR #59 review).
+`stuckClaimRemediation` gave a bare `version = 1` row the weaker "verify no dispatch is in flight
+before deleting", on the theory that no upsert had happened so nothing could exist upstream. That
+inference is WRONG, and wrong on exactly the paths this diagnostic exists to surface:
+`dispatchOne` RETAINS the claim WITHOUT upserting on `(nil, nil)`, on an empty upstream id, and on
+a non-pre-create `(nil, err)` — its own comments say none of those prove the provider did not
+create a campaign. All three leave a row identical to an abandoned pre-create claim (version 1, no
+platform id, no result blob).
+
+The weaker guidance was therefore SATISFIABLE (the worker is gone) on a row whose paid campaign may
+be live, authorizing a duplicate create — the precise failure the claim exists to prevent. Both
+branches now require upstream verification and differ only in stating WHY it is owed. Guarded by
+`TestStuckClaimRemediation_AlwaysRequiresUpstreamCheck`, written as an invariant over every row
+shape rather than per-case strings; verified by reverting the bare-row branch, which fails on
+`version=1, id="", result=0 bytes`. Runbook updated to say the same.
+
+Credit where due: this was a Copilot suppressed comment that recurred across several rounds. It was
+correct, and reading it on merit rather than dismissing it as bot noise is what surfaced it.
+
 **Update** — Pinned the stuck-claim truncation contract with tests (LFXV2-2665, PR #59 review).
 `scanStuckDispatchClaims` clamps the reported batch to `DefaultStuckClaimLimit` and sets
 `truncated` when the repo's `limit+1` probe comes back saturated — the mechanism that lets an

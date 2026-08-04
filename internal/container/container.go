@@ -386,15 +386,29 @@ func scanStuckDispatchClaims(parent context.Context, repo stuckClaimScanner, pha
 }
 
 // stuckClaimRemediation describes what an operator must verify before touching a stuck claim.
-// It deliberately never says "safe to delete": 'pending' cannot distinguish an abandoned claim
-// from one whose dispatch is still running, so the only honest distinction is HOW MUCH
-// verification is owed — check the platform for an orphaned campaign, or confirm no dispatch is
-// in flight. The runbook carries the procedure.
+// It deliberately never says "safe to delete", and it ALWAYS requires checking the upstream
+// platform.
+//
+// An earlier version gave a bare version-1 row the weaker "verify no dispatch is in flight"
+// on the theory that no upsert had happened, so nothing could exist upstream. That inference
+// is WRONG, and it is wrong on exactly the paths this diagnostic exists to surface.
+// orchestrator.dispatchOne RETAINS the claim WITHOUT upserting when a dispatcher returns
+// (nil, nil), when it returns an empty upstream id, or when it returns (nil, err) that is not
+// pre-create — and its own comments state that none of those prove the provider did not create
+// a campaign. All three leave a row that is byte-for-byte identical to an abandoned pre-create
+// claim: version 1, no platform id, no result blob.
+//
+// So the weaker guidance was satisfiable (the worker is gone) on a row whose paid campaign may
+// be live, which would authorize a duplicate create — the precise failure the claim exists to
+// prevent. The schema cannot separate the two cases, so the honest floor is upstream
+// verification for every row; version/id/result only sharpen WHY it is owed. The runbook
+// carries the procedure.
 func stuckClaimRemediation(c *model.Campaign) string {
 	if c.Version > 1 || c.PlatformCampaignID != "" || len(c.Result) > 0 {
-		return "verify upstream platform before deleting: a paid campaign may exist"
+		return "verify upstream platform before deleting: a paid campaign may exist (dispatch recorded a partial or ambiguous result)"
 	}
-	return "verify no dispatch is in flight before deleting"
+	// Deliberately the same REQUIREMENT as above, differing only in why it is owed.
+	return "verify upstream platform before deleting: a paid campaign may exist (a retained claim does not prove the provider was never called)"
 }
 
 // stuckClaimScanner is the one method the stuck-claim scan needs. Declared as an

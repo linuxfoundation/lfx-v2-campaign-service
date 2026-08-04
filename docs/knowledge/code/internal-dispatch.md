@@ -61,6 +61,16 @@ those rows VISIBLE (read-only, `stuckClaimReportAge` = 4m, bounded by `providerC
 healthy in-flight claim is never reported) instead of leaving them silently invisible until
 someone notices a campaign will not dispatch.
 
+**Every stuck claim requires an upstream-platform check before deletion — including a bare
+`version = 1` row with no platform id and no result blob.** That shape is NOT evidence the
+provider was never called: `dispatchOne` retains the claim WITHOUT upserting when a dispatcher
+returns `(nil, nil)`, when it returns an empty upstream id, and when it returns a non-pre-create
+`(nil, err)`. In each case a paid campaign may already exist upstream while the row remains
+byte-for-byte identical to an abandoned pre-create claim. Confirming that no worker is running
+is therefore NOT sufficient to delete: the schema cannot distinguish the two, so the only safe
+floor is to check the platform. The `remediation` field on each logged claim states this, and
+`version`/`platform_campaign_id`/`has_result` only sharpen WHY the check is owed, never waive it.
+
 The orchestrator single-flight-claims a `(brief, platform)` pair before dispatch and
 decides, from the returned error, whether to RELEASE the claim (retry-safe) or RETAIN
 it (a blind retry could double-create). Adapters drive that decision:

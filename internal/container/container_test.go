@@ -535,10 +535,10 @@ func TestStuckClaimRemediation_NeverSaysSafe(t *testing.T) {
 		c    *model.Campaign
 		want string
 	}{
-		{"bare claim", &model.Campaign{Version: 1}, "verify no dispatch is in flight before deleting"},
-		{"upserted after claim", &model.Campaign{Version: 2}, "verify upstream platform before deleting: a paid campaign may exist"},
-		{"carries a platform id", &model.Campaign{Version: 1, PlatformCampaignID: "pc-1"}, "verify upstream platform before deleting: a paid campaign may exist"},
-		{"carries a result blob", &model.Campaign{Version: 1, Result: []byte(`{"x":1}`)}, "verify upstream platform before deleting: a paid campaign may exist"},
+		{"bare claim", &model.Campaign{Version: 1}, "verify upstream platform before deleting: a paid campaign may exist (a retained claim does not prove the provider was never called)"},
+		{"upserted after claim", &model.Campaign{Version: 2}, "verify upstream platform before deleting: a paid campaign may exist (dispatch recorded a partial or ambiguous result)"},
+		{"carries a platform id", &model.Campaign{Version: 1, PlatformCampaignID: "pc-1"}, "verify upstream platform before deleting: a paid campaign may exist (dispatch recorded a partial or ambiguous result)"},
+		{"carries a result blob", &model.Campaign{Version: 1, Result: []byte(`{"x":1}`)}, "verify upstream platform before deleting: a paid campaign may exist (dispatch recorded a partial or ambiguous result)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -547,6 +547,33 @@ func TestStuckClaimRemediation_NeverSaysSafe(t *testing.T) {
 			assert.NotContains(t, got, "safe to delete",
 				"no stuck claim may be reported as safe to delete: a dispatch may still be in flight")
 		})
+	}
+}
+
+// TestStuckClaimRemediation_AlwaysRequiresUpstreamCheck is the load-bearing half of the
+// remediation contract, and it is deliberately stated as an invariant over EVERY row shape
+// rather than as per-case strings.
+//
+// A bare version-1 row is NOT evidence that the provider was never called. dispatchOne retains
+// the claim without upserting on (nil, nil), on an empty upstream id, and on a non-pre-create
+// (nil, err) — all of which leave version 1, no platform id, no result blob, while a paid
+// campaign may already exist upstream. Guidance that let an operator clear such a row after
+// merely confirming no worker is running would authorize a duplicate paid create.
+func TestStuckClaimRemediation_AlwaysRequiresUpstreamCheck(t *testing.T) {
+	shapes := []*model.Campaign{
+		{Version: 1},                             // bare claim: the ambiguous retained-claim shape
+		{Version: 2},                             // upserted after claim
+		{Version: 1, PlatformCampaignID: "pc-1"}, // partial with an upstream id
+		{Version: 1, Result: []byte(`{"x":1}`)},  // id-less partial carrying a reconcile blob
+		{Version: 9, PlatformCampaignID: "pc-2", Result: []byte(`{}`)}, // everything at once
+	}
+	for _, c := range shapes {
+		got := stuckClaimRemediation(c)
+		assert.Contains(t, got, "verify upstream platform",
+			"every stuck claim must require an upstream check: the schema cannot prove a paid campaign does not exist (version=%d, id=%q, result=%d bytes)",
+			c.Version, c.PlatformCampaignID, len(c.Result))
+		assert.NotContains(t, got, "safe to delete",
+			"no stuck claim may be reported as safe to delete")
 	}
 }
 
