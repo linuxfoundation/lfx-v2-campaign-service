@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -164,6 +165,49 @@ func truncateErr(s string) string {
 		return s
 	}
 	return s[:maxOutboxErrLen]
+}
+
+// outboxRetention is how long a PUBLISHED row is kept before pruning.
+//
+// Long enough to be useful for an incident post-mortem ("was this brief indexed, and with what
+// payload?"), short enough that the table cannot grow without bound. Only published rows are
+// eligible — a pending row is undelivered work and is never pruned, however old.
+const outboxRetention = 7 * 24 * time.Hour
+
+// prunePassLimit bounds one delete so a first prune over a large backlog cannot hold a long
+// transaction or spike replication lag. The relay prunes every pass, so a backlog drains over
+// several passes rather than in one statement.
+const prunePassLimit = 5000
+
+// PrunePublishedIndexMessages deletes published rows older than outboxRetention.
+//
+// Without this the table grows with EVERY brief and campaign mutation and never shrinks: each
+// row carries a full JSONB payload, so the table, its backups, and the vacuum workload all grow
+// unbounded until storage runs out. The partial index stays small either way (it only covers
+// pending rows), which is exactly why the growth would go unnoticed until it was a problem.
+//
+// Deleting by id via a bounded subquery keeps the statement short and lets the PRIMARY KEY do
+// the work: `ORDER BY id LIMIT n` is served by an index scan on the pkey with published_at as a
+// filter (verified with EXPLAIN on 20k rows), so no extra index is needed — and adding one on
+// published_at would only cost writes, since the planner would not choose it for this shape.
+func (r *OutboxRepo) PrunePublishedIndexMessages(ctx context.Context, olderThan time.Duration, limit int) (int64, error) {
+	if olderThan <= 0 {
+		olderThan = outboxRetention
+	}
+	if limit <= 0 {
+		limit = prunePassLimit
+	}
+	q := `DELETE FROM index_outbox WHERE id IN (
+		SELECT id FROM index_outbox
+		WHERE published_at IS NOT NULL AND published_at < now() - $1::interval
+		ORDER BY id
+		LIMIT $2
+	)`
+	tag, err := r.db.Exec(ctx, q, olderThan.String(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("prune published index messages: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // enqueueIndexMessage writes an outbox row inside an EXISTING transaction. Unexported and

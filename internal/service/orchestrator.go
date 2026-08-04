@@ -480,10 +480,10 @@ type platformResult struct {
 // The dispatch goroutine runs under the orchestrator's root context (not the
 // request context), so it survives the request ending but can still be cancelled
 // by Shutdown when the drain deadline expires.
-// bearer is the requesting caller's token, captured at Start and carried through the async
-// dispatch: the indexer REQUIRES a non-empty authorization header on every message and drops
-// those without one, and by publish time the originating request is long gone.
-func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage, bearer string) (string, error) {
+// It takes NO caller token. Dispatch results are indexed by co-committing an outbox row (see
+// campaignIndexPayload), which the relay publishes with the SERVICE credential — deliberately,
+// because by publish time the originating request is long gone and its JWT may have expired.
+func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage) (string, error) {
 	// Register the run with the drain WaitGroup under the lock so a concurrent
 	// Shutdown can't start waiting between the draining check and wg.Add (which
 	// would let an untracked goroutine outlive Shutdown).
@@ -517,14 +517,14 @@ func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, ap
 	dispatchCtx := o.rootCtx
 	go func() {
 		defer o.wg.Done()
-		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy, bearer)
+		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy)
 	}()
 
 	return job.ID, nil
 }
 
 // run performs the parallel per-platform dispatch and finalizes the job.
-func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage, bearer string) {
+func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage) {
 	// Mark the job running. Don't abort dispatch on failure (the work should still
 	// proceed and the final status write will correct it), but log it — silently
 	// dropping this can leave a job stuck at "queued" in the client's view.
@@ -577,7 +577,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				}
 			}()
 
-			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config, bearer)
+			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config)
 			return nil
 		})
 	}
@@ -620,7 +620,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // arbitrates); the other reuses the existing row or, if it's still pending, is
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
-func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, bearer string) platformResult {
+func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage) platformResult {
 	res := platformResult{Platform: string(p)}
 
 	// Fast path: if this pair already has a completed campaign (upstream id set),

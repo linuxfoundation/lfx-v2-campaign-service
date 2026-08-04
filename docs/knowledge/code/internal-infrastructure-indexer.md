@@ -116,6 +116,14 @@ process-local and orders calls only as they arrive, which says nothing about a s
 Routing every write through the table gives each brief ONE ordered sequence, which is also what
 makes the ordering correct ACROSS replicas.
 
+**Published rows are PRUNED after a retention window** (7 days), a few thousand per relay pass.
+Every brief and campaign mutation writes a full JSONB payload and nothing else ever deletes one,
+so without this the table, its backups, and the vacuum workload grow until storage runs out — and
+the partial pending index stays small either way, which is exactly why the growth would go
+unnoticed. PENDING rows are undelivered work and are never pruned, however old. Pruning runs
+AFTER the drain (delivery must not queue behind housekeeping) and a prune failure is logged and
+dropped: it costs disk, never correctness.
+
 `index_outbox` (migration 000008) holds a fully-marshalled message written in the SAME
 transaction as its resource, so it commits if and only if the resource does. `indexer.Relay`
 drains it every 15s and at startup — the likeliest reason rows are pending is that this pod's

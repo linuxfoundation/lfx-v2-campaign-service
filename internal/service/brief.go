@@ -68,14 +68,6 @@ func (s *BriefService) IndexerIsNoop() bool {
 	return isNoop
 }
 
-// deref returns a bearer token, tolerating the generated payload's optional pointer.
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
 // briefDoc maps a brief response to the INDEXED shape. The generated briefs.Brief has no json
 // tags, so publishing it directly emits PascalCase keys that no API-shaped consumer matches.
 func briefDoc(b *briefs.Brief) indexer.BriefDoc {
@@ -398,7 +390,7 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	// (which resets it to draft, bumping version) or archive committing between this
 	// read and job creation makes Start fail (domain.ErrStaleApproval → 409) rather
 	// than launching paid campaigns from a stale "approved" snapshot.
-	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, marshalAny(p.Input.Config), deref(p.BearerToken))
+	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, marshalAny(p.Input.Config))
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}

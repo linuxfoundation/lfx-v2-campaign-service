@@ -41,6 +41,28 @@ func (r *BriefRepo) GetBrief(ctx context.Context, projectID, id string) (*model.
 	return b, nil
 }
 
+// classifyNoRowTx decides whether a guarded UPDATE that matched no row was a MISSING brief or a
+// STALE version, reading through the SAME transaction.
+//
+// It must not call GetBrief: that acquires a SECOND pool connection while this transaction still
+// holds the first. With a saturated pool — pool_max_conns=1 makes it certain — an ordinary
+// stale-version request would block until its context expired instead of returning 412. Reading
+// inside the tx also sees the same snapshot the UPDATE did, so the two cannot disagree.
+//
+// A transient read error is surfaced as-is rather than masked as a precondition failure, which
+// would make the caller retry with a fresh ETag instead of backing off on a server error.
+func classifyNoRowTx(ctx context.Context, tx pgx.Tx, projectID, id string) error {
+	var exists bool
+	q := `SELECT EXISTS (SELECT 1 FROM campaign_briefs WHERE id = $1 AND project_id = $2 AND status <> 'archived')`
+	if err := tx.QueryRow(ctx, q, id, projectID).Scan(&exists); err != nil {
+		return fmt.Errorf("classify guarded update: %w", err)
+	}
+	if !exists {
+		return domain.ErrNotFound
+	}
+	return domain.ErrPreconditionFailed
+}
+
 // CreateBrief inserts a brief. Returns ErrConflict on UNIQUE(project_id, event_slug).
 func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	approvedBy, err := marshalActor(b.ApprovedBy)
@@ -115,19 +137,8 @@ func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, ex
 		return nil, fmt.Errorf("replace brief: %w", err)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Distinguish missing from stale version. Surface a transient re-fetch
-		// error rather than masking it as a precondition failure (which would make
-		// the caller retry with a fresh ETag instead of backing off on a server
-		// error), consistent with ConnectionRepo.Update.
-		_, gerr := r.GetBrief(ctx, b.ProjectID, b.ID)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
-		}
+		// Distinguish missing from stale version, THROUGH THIS TRANSACTION (see classifyNoRowTx).
+		return nil, classifyNoRowTx(ctx, tx, b.ProjectID, b.ID)
 	}
 	if eerr := enqueueBriefIndex(ctx, tx, updated, indexPayload); eerr != nil {
 		return nil, fmt.Errorf("replace brief: %w", eerr)
@@ -162,15 +173,7 @@ func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Distinguish missing from stale version, mirroring ReplaceBrief.
-		_, gerr := r.GetBrief(ctx, projectID, id)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
-		}
+		return nil, classifyNoRowTx(ctx, tx, projectID, id)
 	}
 	if eerr := enqueueBriefIndex(ctx, tx, approved, indexPayload); eerr != nil {
 		return nil, fmt.Errorf("approve brief: %w", eerr)

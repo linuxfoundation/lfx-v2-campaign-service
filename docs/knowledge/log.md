@@ -2,6 +2,21 @@
 
 ## 2026-08-03
 
+**Update** — Closed four more findings on the outbox (LFXV2-2814, PR #60). (1) POOL DEADLOCK: the
+guarded-update paths in `ReplaceBrief`/`Approve`/`ReplaceCampaign` classified a no-row result by
+calling `GetBrief`/`GetCampaign`, which acquires a SECOND pool connection while the transaction
+still holds the first — with a saturated pool (`pool_max_conns=1` makes it certain) an ordinary
+stale-version request blocked until its context expired instead of returning 412. The existence
+check now runs inside the same transaction, which also reads the same snapshot the UPDATE did.
+(2) UNBOUNDED GROWTH: published rows were retained forever with no pruning path;
+`PrunePublishedIndexMessages` now trims them after 7 days, bounded per pass, running after the
+drain. Pending rows are never eligible. (3) The `bearer` parameter threaded through
+`Start`/`run`/`dispatchPlatform` became dead when campaign creates moved to the outbox, and its
+comment still claimed the indexer needed the request JWT — removed, along with the now-unused
+`deref` helper. (4) No `published_at` index: verified with EXPLAIN that the prune's
+`ORDER BY id LIMIT n` is served from the primary key, so an extra index would be pure write
+amplification.
+
 **Update** — Hardened the outbox claim and finished routing campaign writes through it
 (LFXV2-2814, PR #60). (1) `SKIP LOCKED` alone did NOT preserve per-resource order: it skips an
 older LOCKED row for object X and hands another pod the NEWER row for the same X, publishing an

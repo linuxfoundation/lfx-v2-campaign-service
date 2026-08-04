@@ -217,17 +217,21 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: %w", err)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Surface a transient re-fetch error rather than masking it as a
-		// precondition failure, consistent with ConnectionRepo.Update.
-		_, gerr := r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
+		// Distinguish missing from stale version THROUGH THIS TRANSACTION. Calling GetCampaign
+		// would acquire a SECOND pool connection while this one still holds the first — with a
+		// saturated pool (pool_max_conns=1 makes it certain) an ordinary stale-version request
+		// would block until its context expired instead of returning 412.
+		var exists bool
+		eq := `SELECT EXISTS (SELECT 1 FROM campaigns WHERE id = $1 AND brief_id = $2 AND project_id = $3)`
+		if serr := tx.QueryRow(ctx, eq, c.ID, c.BriefID, c.ProjectID).Scan(&exists); serr != nil {
+			// Surface a transient read error rather than masking it as a precondition failure,
+			// which would make the caller retry with a fresh ETag instead of backing off.
+			return nil, fmt.Errorf("replace campaign: classify guarded update: %w", serr)
 		}
+		if !exists {
+			return nil, domain.ErrNotFound
+		}
+		return nil, domain.ErrPreconditionFailed
 	}
 	if eerr := enqueueCampaignIndex(ctx, tx, updated, indexPayload); eerr != nil {
 		return nil, fmt.Errorf("replace campaign: %w", eerr)

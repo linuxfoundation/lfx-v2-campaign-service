@@ -27,6 +27,9 @@ type OutboxReader interface {
 	// DrainPendingIndexMessages claims a batch, calls deliver for each message, and retires
 	// only what deliver confirms. A deliver error leaves that row pending for a later pass.
 	DrainPendingIndexMessages(ctx context.Context, limit int, deliver func(context.Context, *model.OutboxMessage) error) (int, error)
+	// PrunePublishedIndexMessages deletes PUBLISHED rows past the retention window. Pending
+	// rows are undelivered work and are never eligible, however old.
+	PrunePublishedIndexMessages(ctx context.Context, olderThan time.Duration, limit int) (int64, error)
 }
 
 // RawPublisher publishes an already-marshalled payload to a subject. The relay must NOT
@@ -202,6 +205,28 @@ func (r *Relay) drain(parent context.Context) {
 	}
 	if total > 0 {
 		slog.InfoContext(ctx, "index relay published pending messages", "count", total)
+	}
+	r.prune(ctx, parent)
+}
+
+// prune trims published history so the outbox cannot grow without bound: every brief and
+// campaign mutation writes a full JSONB payload, and nothing else ever deletes one.
+//
+// Runs after the drain, never before — delivery is the relay's job and must not queue behind
+// housekeeping. A prune failure is logged and dropped: it costs disk, never correctness.
+func (r *Relay) prune(ctx context.Context, parent context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	deleted, err := r.outbox.PrunePublishedIndexMessages(ctx, 0, 0)
+	if err != nil {
+		if parent.Err() == nil {
+			slog.ErrorContext(ctx, "index relay could not prune published outbox rows", "error", err)
+		}
+		return
+	}
+	if deleted > 0 {
+		slog.InfoContext(ctx, "index relay pruned published outbox rows", "count", deleted)
 	}
 }
 

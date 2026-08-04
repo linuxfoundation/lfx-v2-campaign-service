@@ -41,3 +41,8 @@ CREATE TABLE IF NOT EXISTS index_outbox (
 CREATE INDEX IF NOT EXISTS idx_index_outbox_pending
     ON index_outbox (object_type, object_id, id)
     WHERE published_at IS NULL;
+
+-- NO index on published_at. The retention prune selects `ORDER BY id LIMIT n`, which the planner
+-- serves from the primary key while filtering on published_at — verified with EXPLAIN on 20k
+-- rows. A published_at index is never chosen for that shape, so it would be pure write
+-- amplification on the hottest column in the table.

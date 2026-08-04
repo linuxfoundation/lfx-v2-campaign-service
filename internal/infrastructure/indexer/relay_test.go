@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/stretchr/testify/assert"
@@ -20,6 +21,10 @@ type fakeOutbox struct {
 	published []int64
 	failed    []int64
 	drainErr  error
+
+	pruneCalls int
+	pruned     int64
+	pruneErr   error
 }
 
 // DrainPendingIndexMessages mirrors the real repo's claim semantics: deliver is called for each
@@ -65,6 +70,13 @@ func (f *fakeOutbox) DrainPendingIndexMessages(
 	}
 	f.pending = remaining
 	return published, nil
+}
+
+// PrunePublishedIndexMessages records the prune call so a test can assert housekeeping runs
+// AFTER delivery and never instead of it.
+func (f *fakeOutbox) PrunePublishedIndexMessages(_ context.Context, _ time.Duration, _ int) (int64, error) {
+	f.pruneCalls++
+	return f.pruned, f.pruneErr
 }
 
 // capturingPublisher records what reached the wire.
@@ -210,4 +222,49 @@ func TestRelay_StopsWhenAPassPublishesNothing(t *testing.T) {
 	// It also bounds the work: a failed delivery does not spin the loop on its whole backlog.
 	assert.Equal(t, []int64{1}, out.failed,
 		"a failed row must BLOCK its successor, not be skipped past")
+}
+
+// TestRelay_PrunesAfterDelivering pins the ordering and the independence of the two jobs.
+//
+// The outbox grows with EVERY brief and campaign mutation and nothing else ever deletes a row,
+// so without pruning the table, its backups, and the vacuum workload grow until storage runs
+// out. The partial pending index stays small either way, which is exactly why the growth would
+// go unnoticed until it mattered.
+//
+// Delivery comes FIRST: housekeeping must never delay the recovery the table exists for.
+func TestRelay_PrunesAfterDelivering(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{outboxMsg(1, ObjectTypeBrief)}}
+	pub := &capturingPublisher{}
+
+	NewRelay(out, pub, "Bearer service-token").drain(context.Background())
+
+	assert.Len(t, pub.payloads, 1, "delivery still happens")
+	assert.Equal(t, 1, out.pruneCalls, "each pass prunes exactly once")
+}
+
+// TestRelay_PruneFailureDoesNotAffectDelivery pins that housekeeping cannot break indexing. A
+// prune error costs disk, never correctness, so it is logged and dropped.
+func TestRelay_PruneFailureDoesNotAffectDelivery(t *testing.T) {
+	out := &fakeOutbox{
+		pending:  []*model.OutboxMessage{outboxMsg(1, ObjectTypeBrief)},
+		pruneErr: errors.New("prune blew up"),
+	}
+	pub := &capturingPublisher{}
+
+	NewRelay(out, pub, "Bearer service-token").drain(context.Background())
+
+	assert.Len(t, pub.payloads, 1, "a failing prune must not stop delivery")
+	assert.Equal(t, []int64{1}, out.published, "and must not stop the row being retired")
+}
+
+// TestRelay_NoCredentialSkipsPruningToo pins that a relay with no service credential does
+// nothing at all. It cannot deliver, so it must not quietly delete history either — that would
+// trim the audit trail while the recovery it backs is disabled.
+func TestRelay_NoCredentialSkipsPruningToo(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{outboxMsg(1, ObjectTypeBrief)}}
+
+	NewRelay(out, &capturingPublisher{}, "").drain(context.Background())
+
+	assert.Zero(t, out.pruneCalls, "an idle relay must not prune")
+	assert.Len(t, out.pending, 1, "and must leave the row pending")
 }
