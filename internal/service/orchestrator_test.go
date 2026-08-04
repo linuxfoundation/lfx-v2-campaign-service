@@ -181,6 +181,31 @@ func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int
 	return nil, errors.New("unused")
 }
 
+// DeleteCampaign mirrors the real repo's guard ORDER and its soft-delete semantics:
+// missing/already-deleted → ErrNotFound, mid-dispatch 'pending' → ErrConflict, then
+// the version check, and finally a status flip to 'deleted' that leaves the row in
+// place (so a re-dispatch to the same pair can claim the freed slot).
+func (r *fakeCampaignRepo) DeleteCampaign(_ context.Context, _, _, campaignID string, expectedVersion int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.byID[campaignID]
+	if !ok || c.Status == model.CampaignStatusDeleted {
+		return domain.ErrNotFound
+	}
+	if c.Status == model.CampaignStatusPending {
+		return domain.ErrConflict
+	}
+	if c.Version != expectedVersion {
+		return domain.ErrPreconditionFailed
+	}
+	c.Status = model.CampaignStatusDeleted
+	c.Version++
+	// The freed slot: a deleted row no longer satisfies the live-only lookup, so
+	// GetCampaignByPlatform/ClaimCampaignDispatch see the pair as undispatched.
+	delete(r.existing, c.BriefID+"|"+string(c.Platform))
+	return nil
+}
+
 // okDispatcher always succeeds.
 type okDispatcher struct{}
 

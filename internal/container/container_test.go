@@ -118,6 +118,9 @@ func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provi
 func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
 	return c, nil
 }
+func (stubCampaignRepo) DeleteCampaign(context.Context, string, string, string, int64) error {
+	return nil
+}
 func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
