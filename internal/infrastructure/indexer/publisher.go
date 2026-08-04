@@ -6,6 +6,7 @@ package indexer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -160,6 +161,43 @@ func (p *NATSPublisher) Publish(ctx context.Context, msg Transaction) {
 			"subject", subject, "object_id", msg.objectID(), "error", err)
 	}
 }
+
+// PublishRaw publishes an already-marshalled payload. Used by the relay, which must NOT
+// re-marshal: the payload was fixed when the outbox row was written, so re-deriving it would
+// let a later contract change alter the meaning of a message enqueued under the old one.
+//
+// Unlike Publish it RETURNS an error — the relay needs to know whether to retire the row.
+// It takes the same per-object lock, so a replayed message cannot interleave with a live one
+// for the same resource.
+func (p *NATSPublisher) PublishRaw(ctx context.Context, subject, objectID string, payload []byte) error {
+	if p.conn == nil {
+		return errNoConnection
+	}
+	// Lock on the OBJECT id, not the subject: locking the subject would serialize every
+	// resource of that type against each other, which is both slower and unnecessary — only
+	// same-resource ordering matters.
+	if objectID != "" {
+		lock := p.resourceLock(objectID)
+		lock.Lock()
+		defer lock.Unlock()
+	}
+	if err := p.conn.Publish(subject, payload); err != nil {
+		return err
+	}
+	if wait := flushBudget(ctx); wait > 0 {
+		return p.conn.FlushTimeout(wait)
+	}
+	return nil
+}
+
+// PublishRaw on a Noop reports success: with indexing disabled there is nothing to deliver, and
+// returning an error would make the relay retry forever against a publisher that will never
+// send anything.
+func (Noop) PublishRaw(context.Context, string, string, []byte) error { return nil }
+
+// errNoConnection is returned by PublishRaw when the publisher has no connection, so the relay
+// leaves the row pending rather than retiring an undelivered message.
+var errNoConnection = errors.New("indexer: no NATS connection")
 
 // Close drains and closes the connection.
 func (p *NATSPublisher) Close() {

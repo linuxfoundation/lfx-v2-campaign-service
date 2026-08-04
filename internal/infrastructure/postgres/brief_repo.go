@@ -139,21 +139,52 @@ func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model
 	return r.GetBrief(ctx, projectID, id)
 }
 
+// indexObjectTypeBrief mirrors indexer.ObjectTypeBrief. Duplicated rather than imported: the
+// postgres package must not depend on the indexer, and the value is pinned by a test.
+const indexObjectTypeBrief = "campaign_brief"
+
 // ArchiveBrief soft-archives a brief.
-func (r *BriefRepo) ArchiveBrief(ctx context.Context, projectID, id string) (*model.CampaignBrief, error) {
+func (r *BriefRepo) ArchiveBrief(ctx context.Context, projectID, id string, indexPayload func(*model.CampaignBrief) ([]byte, error)) (*model.CampaignBrief, error) {
+	// Archive + outbox enqueue in ONE transaction. Archiving is TERMINAL: there is no "next
+	// write" to repair the index, so if the post-commit publish is dropped the brief stays
+	// searchable forever. The outbox row co-commits with the archive, so the relay can deliver
+	// it even if this process dies immediately after the commit.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("archive brief: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	// RETURNING the updated row makes the archive and the read of its result ONE statement, so
 	// the caller indexes exactly what was committed. A separate read-then-archive would race a
 	// concurrent ReplaceBrief/Approve and publish a snapshot that never existed in the table.
 	q := `UPDATE campaign_briefs SET status='archived', version=version+1, updated_at=now()
 		WHERE id=$1 AND project_id=$2 AND status <> 'archived'
 		RETURNING ` + briefCols
-	b, err := scanBrief(r.db.QueryRow(ctx, q, id, projectID))
+	b, err := scanBrief(tx.QueryRow(ctx, q, id, projectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No row updated: absent, cross-project, or ALREADY archived (the status guard).
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("archive brief: %w", err)
+	}
+
+	// A nil builder means the caller does not want the resource indexed; the archive still
+	// commits. Marshalling here (not in the relay) freezes the payload under the contract in
+	// force at write time.
+	if indexPayload != nil {
+		payload, perr := indexPayload(b)
+		if perr != nil {
+			return nil, fmt.Errorf("archive brief: build index payload: %w", perr)
+		}
+		if eerr := enqueueIndexMessage(ctx, tx, indexObjectTypeBrief, b.ID, payload); eerr != nil {
+			return nil, eerr
+		}
+	}
+
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("archive brief: commit: %w", cerr)
 	}
 	return b, nil
 }

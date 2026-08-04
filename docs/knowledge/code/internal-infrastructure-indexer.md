@@ -74,25 +74,27 @@ again. Since the Query Service serves lists and history FROM the index, the resu
 user-visible staleness, not a cache miss.
 
 Bounding the publish flush narrows the window but cannot close it: the process can die between
-the commit and the publish regardless. Closing it properly requires delivery to be recoverable
-independently of the write. That is **not implemented** — tracked as a known gap rather than
-claimed as handled.
+the commit and the publish regardless.
 
-### What closing it would cost
+## The outbox closes it
 
-Recorded so the next person does not re-derive it:
+`index_outbox` (migration 000008) holds a fully-marshalled message written in the SAME
+transaction as its resource, so it commits if and only if the resource does. `indexer.Relay`
+drains it every 15s and at startup — the likeliest reason rows are pending is that this pod's
+predecessor died mid-publish.
 
-- **Transactional outbox** (the correct answer). Needs an `index_outbox` table written in the
-  SAME transaction as each resource write, plus a relay that publishes and marks rows done.
-  There is no transaction plumbing in the repositories today — every method is a bare statement
-  — so **14 write methods** across the brief/campaign/audience/job repos would need to accept
-  and join a `pgx.Tx`.
-- **Periodic reconciliation sweep** (cheaper, weaker). Needs a list-all method per repository
-  (none exists), a scan strategy that does not table-scan every tick, and a way to know what
-  the index currently holds.
+- The payload is FROZEN at write time. The relay never re-derives it, so a later contract
+  change cannot alter the meaning of a message enqueued under the old one.
+- A publish that succeeds but fails to retire its row REPUBLISHES next pass. Safe: the indexer
+  overwrites by object id, so a duplicate is a no-op — the right trade against dropping it.
+- `PublishRaw` takes the same per-object lock as `Publish`, so a replayed message cannot
+  interleave with a live one for the same resource.
+- Wired for **archiving a brief** — the terminal write with no "next write" to repair it, which
+  is the case that motivated this. The other write paths still publish directly; moving them
+  onto the outbox is mechanical follow-up now that the machinery exists.
 
-What IS handled: publishes are correct when they succeed, bounded so they cannot overrun
-shutdown, and serialized per resource so a late message cannot overwrite a newer one.
+Publishes are also correct when they succeed, bounded so they cannot overrun shutdown, and
+serialized per resource so a late message cannot overwrite a newer one.
 
 What core NATS does buy is that indexing can never fail a write — the property the service
 actually depends on, since the database is the source of truth.

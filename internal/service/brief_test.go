@@ -22,6 +22,8 @@ type fakeBriefRepo struct {
 	// onGet, when set, fires once after the next GetBrief read, modelling a
 	// concurrent brief mutation that commits in the approve→dispatch window.
 	onGet func()
+	// lastIndexPayload is the outbox payload built during the last ArchiveBrief.
+	lastIndexPayload []byte
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -76,7 +78,7 @@ func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *mode
 // ArchiveBrief mirrors the real repo's single-statement semantics: it applies the archive AND
 // returns the committed row. Modelling the mutation (status + version bump) matters — a fake
 // that only reported success would let a caller publishing a stale snapshot pass.
-func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
+func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string, indexPayload func(*model.CampaignBrief) ([]byte, error)) (*model.CampaignBrief, error) {
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok || b.Status == model.BriefArchived {
 		// The real query guards on status <> 'archived', so a second archive is ErrNotFound.
@@ -84,6 +86,16 @@ func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string) (*
 	}
 	b.Status = model.BriefArchived
 	b.Version++
+	// Exercise the payload builder the way the real repo does — inside the "transaction",
+	// after the row is updated — so a builder that panics or errors is caught by tests rather
+	// than only in production.
+	if indexPayload != nil {
+		payload, err := indexPayload(b)
+		if err != nil {
+			return nil, err
+		}
+		r.lastIndexPayload = payload
+	}
 	return b, nil
 }
 
@@ -1073,7 +1085,7 @@ func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
 	}
 
 	// The port returns the archived row, so a caller cannot publish a separately-read snapshot.
-	archived, aerr := repo.ArchiveBrief(ctx, "cncf", created.ID)
+	archived, aerr := repo.ArchiveBrief(ctx, "cncf", created.ID, nil)
 	if aerr != nil {
 		t.Fatalf("ArchiveBrief: %v", aerr)
 	}
@@ -1086,7 +1098,7 @@ func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
 
 	// Archiving twice must be ErrNotFound: the real query guards on status <> 'archived', so a
 	// second archive commits nothing and therefore has no row to return.
-	if _, second := repo.ArchiveBrief(ctx, "cncf", created.ID); !errors.Is(second, domain.ErrNotFound) {
+	if _, second := repo.ArchiveBrief(ctx, "cncf", created.ID, nil); !errors.Is(second, domain.ErrNotFound) {
 		t.Errorf("second archive = %v, want ErrNotFound (nothing was committed, so nothing to index)", second)
 	}
 }
@@ -1243,5 +1255,50 @@ func TestToggleUnsupported_EmailGetsADistinctMessage(t *testing.T) {
 			}
 		})
 
+	}
+}
+
+// TestDeleteBrief_EnqueuesTheIndexMessageWithTheArchive pins the outbox co-commit for the
+// TERMINAL write. Archiving has no "next write" to repair the index, so if the post-commit
+// publish is dropped the brief stays searchable forever. The outbox row is written in the SAME
+// transaction as the archive, so the relay can deliver it even if the process dies immediately
+// after the commit.
+func TestDeleteBrief_EnqueuesTheIndexMessageWithTheArchive(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026", ProgramType: "events"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("DeleteBrief: %v", derr)
+	}
+
+	if len(repo.lastIndexPayload) == 0 {
+		t.Fatal("no index message was enqueued with the archive: a dropped publish would leave the brief searchable forever")
+	}
+
+	var msg map[string]any
+	if uerr := json.Unmarshal(repo.lastIndexPayload, &msg); uerr != nil {
+		t.Fatalf("the enqueued payload must be a valid index message: %v", uerr)
+	}
+	// The payload is frozen at write time under the CURRENT contract, so the relay never
+	// re-derives it — assert the parts the indexer requires.
+	if msg["action"] != indexer.ActionDeleted {
+		t.Errorf("action = %v, want %q (an archived brief must be REMOVED from the index)", msg["action"], indexer.ActionDeleted)
+	}
+	if msg["data"] != created.ID {
+		t.Errorf("delete data = %v, want the bare object id %q", msg["data"], created.ID)
+	}
+	if _, ok := msg["indexing_config"]; !ok {
+		t.Error("the enqueued message must carry indexing_config or the indexer drops it")
 	}
 }

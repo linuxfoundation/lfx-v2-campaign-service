@@ -340,7 +340,17 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// committed. Reading separately would race a concurrent ReplaceBrief/Approve landing
 	// between the read and the archive: the archive would apply to the newer row while the
 	// index received the older snapshot, with a hand-incremented version that never existed.
-	b, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID)
+	// The index message is built INSIDE the archive transaction and co-committed to the
+	// outbox, so a dropped publish is recoverable by the relay. Archiving is terminal: without
+	// this, one lost message leaves the brief searchable forever.
+	bearer := deref(p.BearerToken)
+	b, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, func(archived *model.CampaignBrief) ([]byte, error) {
+		return json.Marshal(indexer.NewTransaction(
+			indexer.ActionDeleted, indexer.ObjectTypeBrief,
+			archived.ID, archived.ProjectID, bearer,
+			briefDoc(briefResult(archived)), archived.EventSlug,
+		))
+	})
 	if aerr != nil {
 		return mapBriefErr(aerr)
 	}

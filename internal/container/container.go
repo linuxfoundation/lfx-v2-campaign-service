@@ -142,6 +142,10 @@ type Container struct {
 	// two paths share one NATS connection and that Close can shut it down.
 	indexPublisher indexer.Publisher
 
+	// indexRelay drains the index outbox, delivering messages whose direct publish was lost
+	// (a process that died between the commit and the publish). Nil when there is no database.
+	indexRelay *indexer.Relay
+
 	// cancelInit stops the background DB-init goroutine (nil when none runs).
 	cancelInit context.CancelFunc
 	// initDone is closed when the background goroutine exits, so Close can wait
@@ -368,6 +372,12 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// sweep catches those; it stops on Shutdown via the orchestrator's root ctx.
 	orch.StartRecoverySweeper()
 
+	// Drain the index outbox: rows co-committed with their resource whose publish never
+	// landed. Without this a dropped message is lost, and a terminal write (archiving a
+	// brief) has no later write to repair the index.
+	c.indexRelay = indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher())
+	c.indexRelay.Start()
+
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
 }
@@ -418,6 +428,10 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			}
 			cancelRecover()
 			orch.StartRecoverySweeper()
+
+			// Same relay as the fast path (see wireLiveBackends).
+			c.indexRelay = indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher())
+			c.indexRelay.Start()
 			// Flip readiness LAST, so /readyz only reports healthy after the brief
 			// service is fully wired (avoids a window where /readyz is OK but brief
 			// routes still 503).
@@ -586,6 +600,16 @@ func (c *Container) newOrchestrator(campaigns domain.CampaignRepository, jobs do
 	o := service.NewOrchestrator(campaigns, jobs, dispatchers)
 	o.SetIndexer(c.indexPublisher)
 	return o
+}
+
+// rawPublisher exposes the index publisher's raw-publish capability for the relay. The
+// publisher is always non-nil (a Noop when indexing is disabled), and Noop.PublishRaw reports
+// success so the relay retires rows rather than retrying forever against a disabled publisher.
+func (c *Container) rawPublisher() indexer.RawPublisher {
+	if rp, ok := c.indexPublisher.(indexer.RawPublisher); ok {
+		return rp
+	}
+	return indexer.Noop{}
 }
 
 // newIndexPublisher builds the Query Service index publisher from config.

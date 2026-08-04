@@ -31,7 +31,12 @@ type BriefWriter interface {
 	// was actually committed: a concurrent ReplaceBrief/Approve can commit between a
 	// read-then-archive pair, so a separately-read snapshot would publish stale content and a
 	// version that never existed.
-	ArchiveBrief(ctx context.Context, projectID, id string) (*model.CampaignBrief, error)
+	//
+	// indexPayload, when non-nil, builds the index message that is enqueued in the SAME
+	// transaction as the archive. Archiving is TERMINAL — there is no later write to repair the
+	// index — so a dropped post-commit publish would leave the brief searchable forever. The
+	// co-committed outbox row is what makes that recoverable.
+	ArchiveBrief(ctx context.Context, projectID, id string, indexPayload func(*model.CampaignBrief) ([]byte, error)) (*model.CampaignBrief, error)
 }
 
 // BriefRepository is the full persistence port for briefs.
