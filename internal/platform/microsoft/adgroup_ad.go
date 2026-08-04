@@ -1278,6 +1278,19 @@ func upperHex(c byte) byte {
 
 // isDefaultPort reports whether port is the scheme's default (and thus omittable without
 // changing the destination): 80 for http, 443 for https.
+func isDefaultPort(scheme, port string) bool {
+	// Scheme names are case-insensitive (RFC 3986); lower-case so an HTTPS://…:443 URL is
+	// recognized as a default port by every caller, not only the ones that pre-lower-case.
+	switch strings.ToLower(scheme) {
+	case "http":
+		return port == "80"
+	case "https":
+		return port == "443"
+	default:
+		return false
+	}
+}
+
 // authorityForWidth returns the authority in the SAME form the ad's final URL carries, which is
 // what the display-domain width check must measure. host is the (possibly IDNA-decoded) hostname
 // with brackets already stripped by url.Hostname().
@@ -1297,19 +1310,6 @@ func authorityForWidth(u *url.URL, host string) string {
 		return "[" + host + "]"
 	}
 	return host
-}
-
-func isDefaultPort(scheme, port string) bool {
-	// Scheme names are case-insensitive (RFC 3986); lower-case so an HTTPS://…:443 URL is
-	// recognized as a default port by every caller, not only the ones that pre-lower-case.
-	switch strings.ToLower(scheme) {
-	case "http":
-		return port == "80"
-	case "https":
-		return port == "443"
-	default:
-		return false
-	}
 }
 
 // validateAdURL rejects an empty/malformed ad destination BEFORE any mutating call.
