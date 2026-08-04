@@ -21,6 +21,15 @@ stays `building` with an EMPTY `inclusion_summary` while real lists exist upstre
 unreconcilable state the comment says is fixed. The ids now travel in the returned error, so the
 500 body carries them when persistence cannot.
 
+**Fix** — The unnarrowed-editions caveat was filed as a GAP (PR #61 review). It was appended to
+`Plan.Notes`, which `InclusionSummary` always renders under **"Not included"** — so the summary
+announced that groups 5 and 7 were missing while listing them as built three lines above, and the
+caveat's own "verify the editions listed above" pointed at a section it did not sit in.
+
+Added `Plan.Caveats` for qualifications on lists that WERE built, rendered under its own heading
+directly after the past-edition names it qualifies. `Notes` keeps its gaps-only meaning. A test
+pins the section ordering, not just the text, since the wording alone passed while misfiled.
+
 **Fix** — The success-path persist failure no longer claims the build "failed upstream" (PR #61
 review). Returning it through `audienceBuildErr` inherited that prefix, but on this path HubSpot
 SUCCEEDED and only the local write failed — so the body blamed the one system known to be fine

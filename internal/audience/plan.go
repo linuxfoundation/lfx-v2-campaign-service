@@ -63,8 +63,13 @@ type Plan struct {
 	PastEditions []string
 	Lists        []PlannedList
 	// Notes record what was deliberately NOT built and why, so the stored InclusionSummary
-	// explains gaps rather than leaving them to be rediscovered.
+	// explains gaps rather than leaving them to be rediscovered. Rendered under "Not included".
 	Notes []string
+	// Caveats record something about a list that WAS built — a qualification, not a gap. They
+	// are kept separate from Notes because the two render in different sections and mixing them
+	// inverts their meaning: a caveat filed under "Not included" tells an operator a group is
+	// missing when it exists, which is the opposite of what it is trying to say.
+	Caveats []string
 }
 
 // PlanInput is what the planner needs about an event.
@@ -165,10 +170,10 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 	default:
 		if in.EditionsUnnarrowed {
 			// The lookup had no location predicate, so for a multi-city family these editions may
-			// span cities. Record it against the RESOLVED NAMES (which the summary lists), so an
-			// operator can see exactly what was matched and judge it, rather than discovering the
-			// breadth only from the resulting list sizes.
-			p.Notes = append(p.Notes,
+			// span cities. This is a CAVEAT, not a gap: groups 5 and 7 were built. It renders
+			// beside the resolved edition names it qualifies, because filing it under
+			// "Not included" would say those groups are missing when they exist.
+			p.Caveats = append(p.Caveats,
 				"The brief carried no location, so past editions were matched on the event family "+
 					"alone and may include OTHER CITIES' editions of it. Groups 5 and 7 remain scoped "+
 					"to the host country/region, so this widens the audience to prior attendees of the "+
@@ -230,6 +235,15 @@ func (p *Plan) InclusionSummary() string {
 	}
 	if len(p.PastEditions) > 0 {
 		fmt.Fprintf(&b, "Past editions (verbatim from Snowflake): %s\n", strings.Join(p.PastEditions, "; "))
+	}
+	// Caveats sit immediately after the editions they qualify and BEFORE the inclusion lists,
+	// so the qualification is read alongside the names it is about. They must not fall into the
+	// "Not included" section below: these describe lists that WERE built.
+	if len(p.Caveats) > 0 {
+		b.WriteString("\nCaveats (these lists WERE built, with qualifications):\n")
+		for _, c := range p.Caveats {
+			fmt.Fprintf(&b, "  - %s\n", c)
+		}
 	}
 	b.WriteString("\nInclusion lists:\n")
 	for _, l := range p.Lists {

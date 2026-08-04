@@ -102,23 +102,43 @@ func TestBuildPlan_UnnarrowedEditionsAreRecorded(t *testing.T) {
 	// The groups still build: the note is transparency, not a downgrade.
 	assert.Equal(t, []Group{GroupEducationEnrolled, GroupEventRegistered, GroupRegionRegistrants}, groupsOf(p))
 
-	joined := strings.Join(p.Notes, "\n")
+	// It is a CAVEAT, not a gap. Notes render under "Not included", which would claim groups 5
+	// and 7 are missing at the same moment the summary lists them as built.
+	joined := strings.Join(p.Caveats, "\n")
 	assert.Contains(t, joined, "no location",
 		"the operator must be told WHY the editions were matched broadly")
 	assert.Contains(t, joined, "OTHER CITIES",
 		"the actual risk — cross-city editions — must be named, not implied")
 	assert.Contains(t, joined, "set the brief's location and rebuild",
 		"the note must say how to narrow it")
+	assert.NotContains(t, strings.Join(p.Notes, "\n"), "OTHER CITIES",
+		"a caveat about a built group must not be filed as a gap")
 
-	// A located brief must NOT carry the note; otherwise it is noise on every audience and stops
-	// being read at all.
+	// Rendering: the caveat must sit with the editions it qualifies, ABOVE the inclusion lists,
+	// and must not land in the "Not included" section.
+	s := p.InclusionSummary()
+	editionsAt := strings.Index(s, "Past editions")
+	caveatAt := strings.Index(s, "OTHER CITIES")
+	listsAt := strings.Index(s, "Inclusion lists:")
+	notIncludedAt := strings.Index(s, "Not included:")
+	require.NotEqual(t, -1, caveatAt)
+	require.NotEqual(t, -1, notIncludedAt)
+	assert.Greater(t, caveatAt, editionsAt, "the caveat must follow the editions it qualifies")
+	assert.Less(t, caveatAt, listsAt, "the caveat must be read before the lists it applies to")
+	assert.Less(t, caveatAt, notIncludedAt,
+		"the caveat must NOT fall inside 'Not included' — those groups were built")
+
+	// A located brief must NOT carry the caveat; otherwise it is noise on every audience and
+	// stops being read at all.
 	located, lerr := BuildPlan(PlanInput{
 		EventName:    "Open Source Summit Tokyo 2026",
 		Country:      "Japan",
 		PastEditions: []string{"Open Source Summit Tokyo 2025"},
 	})
 	require.NoError(t, lerr)
-	assert.NotContains(t, strings.Join(located.Notes, "\n"), "OTHER CITIES")
+	assert.Empty(t, located.Caveats)
+	assert.NotContains(t, located.InclusionSummary(), "Caveats",
+		"an unqualified audience must not carry an empty caveats section")
 }
 
 // TestBuildPlan_UnmappedCountryFailsSoft pins the deliberate asymmetry: an unknown country

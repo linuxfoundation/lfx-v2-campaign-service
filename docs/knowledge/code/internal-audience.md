@@ -173,9 +173,16 @@ prior attendees of the family who are *already in the target geography*. Refusin
 degrading to country-only, would instead discard a correct returning-event audience every time a
 brief omits an OPTIONAL field, which is the worse trade.
 
-`PlanInput.EditionsUnnarrowed` therefore adds a note listing the risk beside the resolved edition
-names, so an operator can audit the breadth and set a location and rebuild. A located brief does
-not carry the note — a caveat on every audience would stop being read.
+`PlanInput.EditionsUnnarrowed` therefore records the risk so an operator can audit the breadth,
+set a location, and rebuild. A located brief carries nothing — a caveat on every audience would
+stop being read.
+
+It lands in `Plan.Caveats`, NOT `Plan.Notes`. The two render in different sections and mixing
+them inverts their meaning: `Notes` renders under **"Not included"**, so filing this there would
+announce that groups 5 and 7 are missing in the same summary that lists them as built. `Caveats`
+renders under **"Caveats (these lists WERE built, with qualifications)"**, positioned directly
+after the past-edition names it qualifies and before the inclusion lists, so the qualification is
+read alongside the names it is about.
 
 ## `titleCase` decodes runes, not bytes
 
