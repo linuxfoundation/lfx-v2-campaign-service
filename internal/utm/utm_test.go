@@ -374,3 +374,55 @@ func TestSameExceptSchemeCase_OnlyFoldsTheScheme(t *testing.T) {
 		"host case must not be folded here: only the scheme is normalized by url.Parse")
 	assert.True(t, sameExceptSchemeCase("/relative/a", "/relative/a"), "schemeless urls still compare")
 }
+
+// TestApply_SemicolonQueriesDoNotBypassTheNeverRetagGuard covers the interaction between the
+// never-retag guard and Go's query parsing.
+//
+// Go 1.17+ dropped ";" as a query separator, so url.Query() silently DISCARDS semicolon-delimited
+// pairs. A guard built on Values therefore saw no campaign in "?utm_campaign=hand-picked;a=1"
+// and happily retagged — replacing an author's deliberate campaign and dropping "a=1" with it.
+// In the other ordering the stale pair survived the strip and the URL shipped with TWO
+// conflicting utm_campaign values.
+func TestApply_SemicolonQueriesDoNotBypassTheNeverRetagGuard(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "NEW"}
+
+	t.Run("a hand-picked campaign is never overwritten", func(t *testing.T) {
+		// Both orderings: the utm_ pair may be the first field or hidden after a semicolon.
+		for _, raw := range []string{
+			"https://lf.dev/e?utm_campaign=hand-picked;a=1",
+			"https://lf.dev/e?a=1;utm_campaign=hand-picked",
+		} {
+			got := Apply(raw, p, "")
+			assert.Equal(t, raw, got, "a url with a campaign must come back byte-identical")
+			assert.NotContains(t, got, "NEW", "the author's campaign must not be replaced")
+			assert.Contains(t, got, "a=1", "a sibling param must not be dropped")
+			assert.Equal(t, 1, strings.Count(got, "utm_campaign="),
+				"a second utm_campaign would leave analytics two conflicting values")
+		}
+	})
+
+	t.Run("a semicolon query with no campaign is still tagged, separators intact", func(t *testing.T) {
+		got := Apply("https://lf.dev/e?a=1;b=2", p, "")
+		assert.Equal(t, "https://lf.dev/e?a=1;b=2&utm_source=s&utm_medium=m&utm_campaign=NEW", got,
+			"an untagged query is appended to, never reshaped")
+	})
+
+	t.Run("an empty campaign is replaced without losing its siblings", func(t *testing.T) {
+		got := Apply("https://lf.dev/e?utm_campaign=;a=1", p, "")
+		assert.Contains(t, got, "utm_campaign=NEW", "a blank campaign is not a deliberate one")
+		assert.Contains(t, got, "a=1", "stripping the utm_ pair must keep the rest")
+		assert.Equal(t, 1, strings.Count(got, "utm_campaign="))
+	})
+}
+
+// TestRawQueryValues_SeesWhatValuesCannot pins the helper directly, including the percent-decode:
+// a campaign that arrives encoded is still deliberate, and treating it as empty would defeat the
+// guard it backs.
+func TestRawQueryValues_SeesWhatValuesCannot(t *testing.T) {
+	assert.Equal(t, []string{"hand-picked"}, rawQueryValues("utm_campaign=hand-picked;a=1", "utm_campaign"))
+	assert.Equal(t, []string{"", "hand-picked"}, rawQueryValues("utm_campaign=&utm_campaign=hand-picked", "utm_campaign"),
+		"every value, not just the first: a leading blank must not mask a real one")
+	assert.Equal(t, []string{" "}, rawQueryValues("utm_campaign=%20", "utm_campaign"),
+		"values are decoded before the caller trims them")
+	assert.Empty(t, rawQueryValues("a=1;b=2", "utm_campaign"))
+}

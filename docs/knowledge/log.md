@@ -2,6 +2,15 @@
 
 ## 2026-08-03
 
+**Update** — Closed a semicolon-query bypass in email UTM tagging (LFXV2-2775, PR #62). Go 1.17+
+dropped `;` as a query separator, so `url.Query()` silently discards semicolon-delimited pairs:
+the never-retag guard saw no campaign in `?utm_campaign=hand-picked;a=1`, replaced the author's
+deliberate campaign, and dropped `a=1` with it. In the reverse field order the stale pair also
+survived `stripUTM`, so the link shipped with TWO conflicting `utm_campaign` values. Both the
+guard and the strip now read the raw query across both separators. `stripUTM` rewrites only when
+a `utm_` pair is actually present, so a semicolon query it has no reason to touch is returned
+byte-identical.
+
 **Update** — Fixed a scheme-case bug in email UTM tagging (LFXV2-2775, PR #62). A template URL
 written with a non-lower-case scheme (`HTTPS://lf.dev/e/{{contact.id}}`) lost its personalization
 tokens: `url.Parse` normalizes the scheme, so the tagged URL no longer matched the original

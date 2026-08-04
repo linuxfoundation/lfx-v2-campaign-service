@@ -95,12 +95,15 @@ func Apply(rawURL string, p Params, content string) string {
 	if err != nil {
 		return rawURL
 	}
-	q := u.Query()
-	// Check EVERY utm_campaign value, not just the first. Values.Get returns only the first,
-	// so `?utm_campaign=&utm_campaign=hand-picked` would pass the guard and then Set would
-	// DELETE the author's deliberate campaign — the exact silent overwrite this guard exists
-	// to prevent, hidden behind a leading empty value.
-	for _, v := range q["utm_campaign"] {
+	// Scan the RAW query, not u.Query(). Values.Get returns only the FIRST value, so
+	// `?utm_campaign=&utm_campaign=hand-picked` would pass the guard and then have the author's
+	// deliberate campaign overwritten — hidden behind a leading empty value. And url.Query()
+	// DISCARDS semicolon-separated pairs entirely (Go 1.17+ rejects `;` as a separator), so
+	// `?utm_campaign=hand-picked;a=1` parsed to nothing: the guard saw no campaign, and tagging
+	// then replaced the author's campaign AND dropped `a=1` with it. Reading the raw query is
+	// the only way to see both forms — the same reason this function appends rather than
+	// re-encoding.
+	for _, v := range rawQueryValues(u.RawQuery, "utm_campaign") {
 		if strings.TrimSpace(v) != "" {
 			return rawURL
 		}
@@ -244,9 +247,21 @@ func stripUTM(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
 	}
-	parts := strings.Split(rawQuery, "&")
-	kept := parts[:0]
-	for _, part := range parts {
+	// Split on BOTH separators. Splitting only on "&" leaves `a=1;utm_campaign=x` as a single
+	// opaque part whose key is "a", so the utm_ pair inside it survives the strip — and the
+	// freshly-appended utm_campaign then lands NEXT TO the stale one, leaving two conflicting
+	// values in the URL for analytics to choose between.
+	//
+	// Re-joining with "&" is deliberate: "&" is the separator Go and every analytics backend
+	// parse, so a rewritten query is strictly more likely to be read correctly than the
+	// semicolon form it replaces. Only queries that actually CONTAIN a utm_ pair are rewritten;
+	// a query with no utm_ pairs is returned byte-identical, semicolons intact (see the early
+	// return below), so this cannot reshape a link it has no reason to touch.
+	if !hasUTMPair(rawQuery) {
+		return rawQuery
+	}
+	kept := make([]string, 0, 8)
+	for _, part := range splitQuery(rawQuery) {
 		k, _, _ := strings.Cut(part, "=")
 		if strings.HasPrefix(k, "utm_") {
 			continue
@@ -254,6 +269,46 @@ func stripUTM(rawQuery string) string {
 		kept = append(kept, part)
 	}
 	return strings.Join(kept, "&")
+}
+
+// splitQuery splits a raw query on BOTH "&" and ";".
+//
+// url.Query() cannot be used anywhere this package inspects a query: Go 1.17+ dropped ";" as a
+// separator, so it silently DISCARDS semicolon-delimited pairs rather than reporting them. A
+// utm_ pair hidden in one is invisible to a Values-based check while remaining very much present
+// in the URL that gets sent.
+func splitQuery(rawQuery string) []string {
+	return strings.FieldsFunc(rawQuery, func(r rune) bool { return r == '&' || r == ';' })
+}
+
+// rawQueryValues returns every value for key in a raw query, across both separators. Unlike
+// Values.Get it returns ALL of them, so a guard cannot be slipped past with a leading empty pair.
+func rawQueryValues(rawQuery, key string) []string {
+	var out []string
+	for _, part := range splitQuery(rawQuery) {
+		k, v, _ := strings.Cut(part, "=")
+		if k != key {
+			continue
+		}
+		// Decode before comparing: a value that arrives percent-encoded ("%20") is still a
+		// deliberate campaign, and treating it as empty would defeat the guard.
+		if decoded, err := url.QueryUnescape(v); err == nil {
+			out = append(out, decoded)
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// hasUTMPair reports whether a raw query contains any utm_ pair, across both separators.
+func hasUTMPair(rawQuery string) bool {
+	for _, part := range splitQuery(rawQuery) {
+		if k, _, _ := strings.Cut(part, "="); strings.HasPrefix(k, "utm_") {
+			return true
+		}
+	}
+	return false
 }
 
 // hasSkipPrefix reports whether a link is one of the non-web targets that must not be tagged.

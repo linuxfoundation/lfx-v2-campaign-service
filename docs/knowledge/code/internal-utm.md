@@ -56,6 +56,14 @@ invisible.
   otherwise failed the check, skipped the restore, and shipped `%7B%7Bcontact.id%7D%7D` — which
   HubSpot never expands. Only the scheme is folded; host and path case stay significant. The
   spliced result keeps the NORMALIZED scheme — the restore recovers the path, not the casing.
+- **Query inspection reads the RAW query, never `url.Query()`.** Go 1.17+ dropped `;` as a
+  separator, so `Values` silently DISCARDS semicolon-delimited pairs. A `utm_campaign` hidden in
+  one was invisible to the never-retag guard but very much present in the sent URL, so an
+  author's hand-picked campaign got replaced and its sibling params dropped with it; in the other
+  field order the stale pair survived `stripUTM` and the link shipped with TWO conflicting
+  campaigns. `splitQuery`/`rawQueryValues`/`hasUTMPair` split on both separators. `stripUTM`
+  re-joins with `&` (the separator every backend parses) but ONLY when the query actually
+  contains a `utm_` pair — a query with none is returned byte-identical, semicolons intact.
 - **Never mangle.** An unparseable URL, or HTML that fails to parse or render, is returned
   UNCHANGED. A broken link in a sent email is far worse than an untagged one.
 - **`ParseFragment`, not `Parse`.** Email bodies are fragments; `Parse` would wrap them in a
