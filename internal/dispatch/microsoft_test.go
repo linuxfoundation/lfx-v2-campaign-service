@@ -336,16 +336,23 @@ func TestMicrosoft_WhitespaceCredentialsNeverReachTheAPI(t *testing.T) {
 	}
 }
 
+// TestMicrosoft_ToggleStatus_CascadesToChildren verifies the dispatcher resolves creds and
+// PUTs Status across the whole tree — the create path PAUSES all three, so toggling only the
 // campaign would not serve.
 func TestMicrosoft_ToggleStatus_CascadesToChildren(t *testing.T) {
 	type call struct{ method, path string }
-	var calls []call
+	var (
+		mu    sync.Mutex
+		calls []call
+	)
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		calls = append(calls, call{r.Method, r.URL.Path})
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 	}))
@@ -359,6 +366,10 @@ func TestMicrosoft_ToggleStatus_CascadesToChildren(t *testing.T) {
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
+	// The handler runs on the server goroutine; take the same lock the writer used so the
+	// assertions below observe every append (srv.Close is deferred, so it orders nothing here).
+	mu.Lock()
+	defer mu.Unlock()
 	// PAUSE: campaign gate FIRST, then ad group, then ad.
 	if len(calls) != 3 {
 		t.Fatalf("issued %d calls, want 3 (campaign + ad group + ad): %+v", len(calls), calls)
@@ -377,13 +388,18 @@ func TestMicrosoft_ToggleStatus_CascadesToChildren(t *testing.T) {
 // TestMicrosoft_ToggleStatus_ActivateOrdersChildrenFirst pins the reverse ordering: on
 // ACTIVATE nothing may serve until the whole tree is ready, so the campaign gate flips LAST.
 func TestMicrosoft_ToggleStatus_ActivateOrdersChildrenFirst(t *testing.T) {
-	var paths []string
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		paths = append(paths, r.URL.Path)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 	}))
@@ -397,6 +413,8 @@ func TestMicrosoft_ToggleStatus_ActivateOrdersChildrenFirst(t *testing.T) {
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunActive); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if len(paths) != 3 || !strings.HasSuffix(paths[0], "AdGroups") || !strings.HasSuffix(paths[1], "Ads") || !strings.HasSuffix(paths[2], "Campaigns") {
 		t.Errorf("activate order = %v, want [AdGroups Ads Campaigns] (children first, gate last)", paths)
 	}
@@ -406,13 +424,18 @@ func TestMicrosoft_ToggleStatus_ActivateOrdersChildrenFirst(t *testing.T) {
 // guard: with a child id missing nothing could serve, so refuse with
 // ErrCampaignNotProvisioned (a 409) WITHOUT calling Microsoft.
 func TestMicrosoft_ToggleStatus_ActivateWithoutChildrenIsNotProvisioned(t *testing.T) {
-	var reached bool
+	var (
+		mu      sync.Mutex
+		reached bool
+	)
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		reached = true
+		mu.Unlock()
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 	}))
 	defer apiSrv.Close()
@@ -426,13 +449,18 @@ func TestMicrosoft_ToggleStatus_ActivateWithoutChildrenIsNotProvisioned(t *testi
 		{"no ad", "654", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
 			reached = false
+			mu.Unlock()
 			camp := microsoftToggleCampaign("321", tc.adGroup, tc.ad)
 			err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunActive)
 			if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 				t.Fatalf("want ErrCampaignNotProvisioned, got %T: %v", err, err)
 			}
-			if reached {
+			mu.Lock()
+			sawRequest := reached
+			mu.Unlock()
+			if sawRequest {
 				t.Error("no API call should be made — the refusal is a local state check")
 			}
 		})
@@ -474,5 +502,72 @@ func microsoftToggleCampaign(campaignID, adGroupID, adID string) *model.Campaign
 		Platform:           model.ProviderMicrosoftAds,
 		PlatformCampaignID: campaignID,
 		Result:             json.RawMessage(`{"campaignId":"` + campaignID + `","adGroupId":"` + adGroupID + `","adId":"` + adID + `"}`),
+	}
+}
+
+// TestMicrosoft_ToggleStatus_PartialCascadeIsUnconfirmed pins the dispatcher's classification
+// step: the client reports a partially-applied cascade as Unconfirmed, and the dispatcher must
+// PROPAGATE that (as unconfirmedToggleError) rather than surface it as a definite failure.
+// Without the wrap the service would report "not modified" for a change that DID partially land.
+func TestMicrosoft_ToggleStatus_PartialCascadeIsUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var puts int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		puts++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// The campaign gate applies cleanly; the ad group is then REJECTED outright.
+		if strings.HasSuffix(r.URL.Path, "AdGroups") {
+			_, _ = io.WriteString(w, `{"PartialErrors":[{"Code":1234,"Message":"nope"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := microsoftToggleCampaign("321", "654", "987")
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("a rejected child status update must not be reported as success")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a partial cascade (campaign paused, ad group rejected) must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestMicrosoft_ToggleStatus_5xxIsUnconfirmed pins the same propagation for a transport-level
+// ambiguity: Microsoft may have applied the change before the 5xx, so the outcome is unknowable.
+func TestMicrosoft_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := microsoftToggleCampaign("321", "654", "987")
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx toggle")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx toggle must be Unconfirmed() — the change may have applied, got %T: %v", err, err)
 	}
 }
