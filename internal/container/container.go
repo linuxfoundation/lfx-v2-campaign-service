@@ -293,12 +293,13 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 // into the connection repo.
 func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo) map[model.Provider]service.PlatformDispatcher {
 	return map[model.Provider]service.PlatformDispatcher{
-		model.ProviderRedditAds:   dispatch.NewRedditDispatcher(repo, enc),
-		model.ProviderLinkedInAds: dispatch.NewLinkedInDispatcher(repo, enc),
-		model.ProviderMetaAds:     dispatch.NewMetaDispatcher(repo, enc),
-		model.ProviderTwitterAds:  dispatch.NewTwitterDispatcher(repo, enc),
-		model.ProviderGoogleAds:   dispatch.NewGoogleAdsDispatcher(repo, enc),
-		model.ProviderHubSpot:     dispatch.NewHubSpotDispatcher(repo, enc, audiences),
+		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
+		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
+		model.ProviderMetaAds:      dispatch.NewMetaDispatcher(repo, enc),
+		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
+		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc),
+		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences),
+		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
 	}
 }
 
