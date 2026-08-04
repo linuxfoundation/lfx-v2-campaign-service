@@ -1,5 +1,28 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Closed two test gaps on the X/Twitter status toggle (LFXV2-2808, PR #53 review).
+Both were unguarded contracts, not bugs: the code was already correct, but nothing would have
+caught a regression.
+
+The `twitter.IsOutcomeUnconfirmed` branch in `TwitterDispatcher.ToggleStatus` was untested. It
+matters because the client's own errors do NOT implement `Unconfirmed()` — a 5xx surfaces as a
+plain `apiError` and a partial cascade as `partialCascadeError`; the dispatcher's check is what
+wraps them in `unconfirmedToggleError` and so what actually feeds the verify-vs-retry decision.
+Deleting that wrap left every client test green while operators would be told a possibly-applied
+update was "not modified". Twitter was the only toggle-capable dispatcher without this boundary
+test (googleads, reddit and meta all had one). Pinned in BOTH directions — a definite 4xx on the
+first call mutated nothing and must stay definite — so an unconditional wrap fails too.
+
+The deliberate create/toggle credential asymmetry was also undefended: `Dispatch` requires
+`funding_instrument_id`, `validateTwitterConnection` intentionally does not, because
+`UpdateCampaignAndChildrenStatus` only PUTs `entity_status` on entities that already exist and
+never puts that field on the wire. Requiring it in the shared validator would refuse an
+otherwise-valid pause. A future refactor folding the check into the shared validator now breaks
+a test instead of silently restoring the rejection the asymmetry exists to avoid. Recorded in
+`internal-dispatch.md` so the constraint is discoverable before someone attempts that tidy-up.
+
 ## 2026-08-03
 
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the

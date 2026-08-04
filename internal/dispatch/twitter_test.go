@@ -482,3 +482,123 @@ func TestTwitter_ToggleStatus_RejectsUnsupportedStatus(t *testing.T) {
 		t.Fatal("an unsupported run status must be rejected")
 	}
 }
+
+// TestTwitter_ToggleStatus_UnconfirmedCrossesTheDispatcherBoundary pins the classification
+// branch in ToggleStatus, which is what actually feeds BriefService's verify-vs-retry
+// decision. The client's own errors do NOT implement Unconfirmed(): a 5xx surfaces as a
+// plain apiError and a partial cascade as partialCascadeError, and it is the dispatcher's
+// twitter.IsOutcomeUnconfirmed check that wraps them in unconfirmedToggleError. Without
+// this test, deleting that wrap leaves every client test green while operators are told a
+// possibly-applied update was "not modified".
+//
+// Both halves matter. A definite 4xx on the FIRST call mutated nothing and must stay
+// definite, otherwise the branch could be replaced by an unconditional wrap and still pass.
+func TestTwitter_ToggleStatus_UnconfirmedCrossesTheDispatcherBoundary(t *testing.T) {
+	cases := []struct {
+		name string
+		// status returned for the first PUT the dispatcher issues; on PAUSE that is the
+		// campaign gate, and the line item follows only if the gate succeeded.
+		firstStatus     int
+		secondStatus    int
+		wantUnconfirmed bool
+	}{
+		// Ambiguous on the first call: X may or may not have applied the gate flip.
+		{"5xx on the first put", http.StatusBadGateway, http.StatusOK, true},
+		// Definite rejection, nothing mutated — must NOT be softened to "verify".
+		{"4xx on the first put", http.StatusBadRequest, http.StatusOK, false},
+		// Post-first-write failure: the campaign gate ALREADY paused upstream, so even a
+		// definite 4xx on the line item leaves the cascade half-applied and ambiguous.
+		{"4xx after the gate applied", http.StatusOK, http.StatusBadRequest, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Guarded: written on the server goroutine, read on the test goroutine, and
+			// api.Close() only synchronizes at the deferred call — after the reads below.
+			var (
+				mu sync.Mutex
+				n  int
+			)
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				n++
+				seq := n
+				mu.Unlock()
+				code := tc.firstStatus
+				if seq > 1 {
+					code = tc.secondStatus
+				}
+				w.WriteHeader(code)
+				if code == http.StatusOK {
+					_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"errors":[{"code":"BAD","message":"nope"}]}`))
+			}))
+			defer api.Close()
+
+			d := NewTwitterDispatcher(
+				fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+				twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+			)
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds,
+				twitterToggleCampaign("cmp1", "li1"), model.CampaignRunPaused)
+			if err == nil {
+				t.Fatal("expected an error from the failing cascade")
+			}
+			var unconf interface{ Unconfirmed() bool }
+			got := errors.As(err, &unconf) && unconf.Unconfirmed()
+			if got != tc.wantUnconfirmed {
+				t.Errorf("Unconfirmed() = %v, want %v (err %T: %v)", got, tc.wantUnconfirmed, err, err)
+			}
+		})
+	}
+}
+
+// TestTwitter_ToggleStatus_SucceedsWithoutFundingInstrument defends the ONE intentional
+// difference between the create and toggle credential rules: Dispatch requires
+// funding_instrument_id (a create-time field), validateTwitterConnection deliberately does
+// not, because UpdateCampaignAndChildrenStatus only PUTs entity_status on entities that
+// already exist and never puts that field on the wire. Demanding it would refuse an
+// otherwise-valid pause on a connection that has drifted.
+//
+// TestTwitter_PreCreateErrorsReleaseClaim pins the create half ("missing funding
+// instrument" is a pre-create failure); this pins the toggle half. A refactor that folds
+// the funding-instrument check into the shared validator now breaks here instead of
+// silently restoring the rejection this asymmetry exists to avoid.
+func TestTwitter_ToggleStatus_SucceedsWithoutFundingInstrument(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer api.Close()
+
+	// Identical to activeTwitterConn EXCEPT that ProviderConfig carries no
+	// funding_instrument_id — the exact connection shape Dispatch rejects.
+	conn := &model.Connection{
+		Provider:             model.ProviderTwitterAds,
+		AccountID:            "acc1",
+		EncryptedCredentials: []byte(goodTwitterCreds),
+		Status:               model.StatusActive,
+	}
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"), model.CampaignRunPaused); err != nil {
+		t.Fatalf("a pause must not require funding_instrument_id: %v", err)
+	}
+	mu.Lock()
+	got := append([]string(nil), paths...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("issued %d PUTs, want 2 (campaign + line item): %v", len(got), got)
+	}
+}

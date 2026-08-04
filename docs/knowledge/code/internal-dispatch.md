@@ -93,7 +93,12 @@ Each adapter interprets its own credential + config shape:
   from AccountID + `funding_instrument_id`. Budget (`budgetAmount`) is in the ACCOUNT's
   currency (no FX). Surfaces a `Reused` reuse/config-drift flag and classifies an
   exhausted mutating 429 as UNCONFIRMED; validates the destination URL (https/http, no
-  embedded userinfo) up front.
+  embedded userinfo) up front. `validateTwitterConnection` holds the credential rules
+  shared by `Dispatch` and `ToggleStatus`, with ONE intentional asymmetry:
+  `funding_instrument_id` is required only by `Dispatch`. It is a create-time field that
+  `UpdateCampaignAndChildrenStatus` never puts on the wire, so requiring it in the shared
+  validator would refuse an otherwise-valid pause. Do not fold that check into
+  `validateTwitterConnection` — both halves are pinned by tests.
 - **googleads** — OAuth2 application (clientId/secret + refreshToken) PLUS a Google Ads
   API developer token; AccountConfig from AccountID (the customer id) + an OPTIONAL
   `login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
