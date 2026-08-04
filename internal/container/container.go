@@ -380,8 +380,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// Drain the index outbox: rows co-committed with their resource whose publish never
 	// landed. Without this a dropped message is lost, and a terminal write (archiving a
 	// brief) has no later write to repair the index.
-	c.indexRelay = indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken)
-	c.indexRelay.Start()
+	c.setIndexRelay(indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken))
 
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
@@ -434,9 +433,9 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			cancelRecover()
 			orch.StartRecoverySweeper()
 
-			// Same relay as the fast path (see wireLiveBackends).
-			c.indexRelay = indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken)
-			c.indexRelay.Start()
+			// Same relay as the fast path (see wireLiveBackends). Written under c.mu: this runs
+			// on the init goroutine while Close may be reading the field concurrently.
+			c.setIndexRelay(indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken))
 			// Flip readiness LAST, so /readyz only reports healthy after the brief
 			// service is fully wired (avoids a window where /readyz is OK but brief
 			// routes still 503).
@@ -548,19 +547,40 @@ var migrateMu sync.Mutex
 // CancelGracePeriod), not just the drain timeout — otherwise the grace phase
 // would have zero budget and the pool could close while a just-cancelled
 // dispatch is still finalizing job/campaign state.
+// setIndexRelay installs and starts a relay under c.mu. The 503 cold-start path assigns from the
+// init goroutine while Close may read concurrently, so the field is mutex-guarded like c.pool.
+func (c *Container) setIndexRelay(relay *indexer.Relay) {
+	c.mu.Lock()
+	c.indexRelay = relay
+	c.mu.Unlock()
+	relay.Start()
+}
+
+// getIndexRelay reads the relay under c.mu. Callers must have joined the init goroutine first if
+// they need the FINAL value (see Close).
+func (c *Container) getIndexRelay() *indexer.Relay {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.indexRelay
+}
+
 func (c *Container) Close(ctx context.Context) error {
 	// Stop the background DB-init goroutine first (if the container booted in 503
 	// mode and is still retrying), and wait for it to exit so it can't open/swap a
 	// pool after we've decided to shut down.
-	// Stop the index relay first: it reads the outbox, so an in-flight pass must not outlive
-	// the pool. Bounded — abandoning a pass is safe because unpublished rows stay pending and
-	// the next process drains them, which is exactly what the outbox is for.
-	if c.indexRelay != nil {
-		c.indexRelay.Stop(relayStopTimeout)
-	}
+	// Join the DB-init goroutine BEFORE touching the relay. It is the goroutine that installs
+	// a relay on the 503 cold-start path, so reading the field first loses the race: a retry
+	// that succeeds just after the read starts a relay nothing then stops, and it would go on
+	// reading the outbox through the pool.Close below.
 	if c.cancelInit != nil {
 		c.cancelInit()
 		<-c.initDone
+	}
+	// Now the relay set is final. Stop it before the pool: it reads the outbox, so an in-flight
+	// pass must not outlive the pool. Bounded — abandoning a pass is safe because unpublished
+	// rows stay pending and the next process drains them, which is exactly what the outbox is for.
+	if relay := c.getIndexRelay(); relay != nil {
+		relay.Stop(relayStopTimeout)
 	}
 	// Capture the orchestrator shutdown error but do NOT early-return on it: the
 	// pool must still be closed even if the drain timed out with dispatches still

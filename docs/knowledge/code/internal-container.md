@@ -80,4 +80,13 @@ kept alive and `/readyz` stays 503 across a DB cold start, rather than the proce
 exiting at the first 15s attempt and crash-looping. `Close` cancels the retry
 goroutine and waits for it before closing the pool.
 
+**Close joins the init goroutine BEFORE it reads `indexRelay`.** That goroutine is what installs
+a relay on the cold-start path, so reading the field first loses the race: a retry succeeding in
+the gap starts a relay nothing stops, which then reads the outbox straight through `pool.Close`.
+`indexRelay` is mutex-guarded like `pool` for the same reason — it is written from the init
+goroutine and read by `Close`. Every timeout `Close` actually spends is a term of
+`ContainerCloseTimeout` (including `relayStopTimeout`); the container test asserts the full sum,
+so a timeout added to `Close` but not the budget fails a test rather than shipping a shutdown
+that can overrun `DefaultShutdownTimeout` and get SIGKILLed mid-drain.
+
 See [internal/container](../../../internal/container).

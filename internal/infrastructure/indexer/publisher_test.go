@@ -184,3 +184,39 @@ func TestScrubURL_HandlesCommaSeparatedServerLists(t *testing.T) {
 	got = scrubURL(`parse "nats://u:secret@h:4222": bad`, "nats://u:secret@h:4222") // secretlint-disable-line -- fixture
 	assert.NotContains(t, got, "secret")
 }
+
+// TestPublishRaw_ContextEndedIsNotSuccess pins the contract the relay depends on: a publish that
+// was never flushed must REPORT FAILURE.
+//
+// conn.Publish only buffers. If the context ends before the flush, nothing is confirmed on the
+// wire — and a nil return would let Relay.drain retire the outbox row for a delivery that may
+// never have happened, reopening the exact loss window the outbox exists to close. A duplicate
+// on the next pass is harmless (the indexer overwrites by object id); a dropped message is not.
+//
+// Both shapes matter. flushBudget only consults the DEADLINE, so a context cancelled without one
+// still reports a full budget — checking ctx.Err() is what catches it.
+func TestPublishRaw_ContextEndedIsNotSuccess(t *testing.T) {
+	// No connection is needed: the context check is the FIRST thing PublishRaw does. A nil conn
+	// would return errNoConnection instead — a different error, which ErrorIs distinguishes, so
+	// this also pins the ordering rather than merely tolerating it.
+	p := &NATSPublisher{}
+
+	t.Run("cancelled without a deadline", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.Positive(t, flushBudget(ctx), "precondition: the budget alone does not reveal this")
+
+		err := p.PublishRaw(ctx, Subject(ObjectTypeBrief), "brief-1", []byte(`{}`))
+		require.Error(t, err, "an unflushed publish must not report success")
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("deadline already passed", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), -time.Second)
+		defer cancel()
+
+		err := p.PublishRaw(ctx, Subject(ObjectTypeBrief), "brief-1", []byte(`{}`))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+}

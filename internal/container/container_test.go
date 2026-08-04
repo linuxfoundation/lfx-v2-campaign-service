@@ -490,3 +490,62 @@ func TestNewOrchestrator_InjectsSharedPublisher(t *testing.T) {
 	assert.False(t, c.newOrchestrator(nil, nil, nil).IndexerIsNoop(),
 		"the container's real publisher must reach the Orchestrator")
 }
+
+// TestClose_StopsARelayInstalledByALateInitRetry pins the ORDER of the two shutdown steps.
+//
+// On the 503 cold-start path the DB-init goroutine is what installs the relay. Close therefore
+// has to cancel and JOIN that goroutine before it reads c.indexRelay — reading first loses the
+// race: a retry that succeeds in the gap starts a relay nothing ever stops, and it keeps reading
+// the outbox straight through the pool.Close that follows.
+//
+// The test reproduces the gap directly: the goroutine installs the relay only after Close has
+// begun, so a Close that read the field up front would see nil and stop nothing.
+func TestClose_StopsARelayInstalledByALateInitRetry(t *testing.T) {
+	relay := indexer.NewRelay(&stubOutbox{}, indexer.Noop{}, "token")
+
+	c := &Container{}
+	_, cancel := context.WithCancel(context.Background())
+	c.cancelInit = cancel
+	c.initDone = make(chan struct{})
+
+	closeStarted := make(chan struct{})
+	go func() {
+		defer close(c.initDone)
+		<-closeStarted // the retry lands mid-Close, exactly where the race lives
+		c.setIndexRelay(relay)
+	}()
+
+	close(closeStarted)
+	require.NoError(t, c.Close(context.Background()))
+
+	// Stop is idempotent via sync.Once, so a relay Close already stopped reports done
+	// immediately. A relay Close never saw would still be running its ticker.
+	assert.True(t, relayStopped(relay), "Close must stop a relay installed by a late init retry")
+}
+
+// stubOutbox is an outbox that never has pending work. The relay under test is never expected to
+// publish anything — only to be STOPPED — so the reads just need to succeed.
+type stubOutbox struct{}
+
+func (stubOutbox) PendingIndexMessages(context.Context, int) ([]*model.OutboxMessage, error) {
+	return nil, nil
+}
+func (stubOutbox) MarkIndexMessagePublished(context.Context, int64) error         { return nil }
+func (stubOutbox) RecordIndexMessageFailure(context.Context, int64, string) error { return nil }
+
+// relayStopped reports whether Stop has already run, without exporting relay internals: a second
+// Stop on an already-stopped relay returns immediately, while one on a live relay would block
+// for its full wait.
+func relayStopped(r *indexer.Relay) bool {
+	done := make(chan struct{})
+	go func() {
+		r.Stop(time.Second)
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(200 * time.Millisecond):
+		return false
+	}
+}

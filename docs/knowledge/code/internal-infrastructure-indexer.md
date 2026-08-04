@@ -84,12 +84,19 @@ drains it every 15s and at startup — the likeliest reason rows are pending is 
 predecessor died mid-publish.
 
 - **No credential is ever stored.** The row carries an EMPTY authorization header and the relay
-  stamps a service credential (`INDEXER_SERVICE_TOKEN`) at publish time. The table is JSONB
+  stamps a service credential (`INDEXER_SERVICE_TOKEN`, wired in the chart as an `optional`
+  `secretKeyRef` on `lfx-v2-campaign-service-secrets`; optional so a cluster missing the key
+  still starts, with the relay idling rather than draining) at publish time. The table is JSONB
   retained for audit with no pruning, so writing the caller's JWT would persist a live
   credential indefinitely.
 - **A publisher that did not send must not retire rows.** `Noop.PublishRaw` therefore reports
   FAILURE — otherwise a pod started with indexing disabled would silently drain every pending
   message as delivered, permanently defeating recovery for messages that never left the process.
+- **Nor may a publisher that never FLUSHED.** `conn.Publish` only buffers, so `PublishRaw`
+  returns the context error when the context has already ended rather than reporting a delivery
+  it never confirmed. Checked FIRST — before the connection guard and the per-object lock —
+  because `flushBudget` consults only the DEADLINE, so a context cancelled without one would
+  otherwise report a full budget and flush anyway.
 - **Nor may a publisher whose message will be REJECTED.** With no `INDEXER_SERVICE_TOKEN` the
   stamp would write an empty authorization header: NATS accepts the publish, so the row is
   retired, while `validateV2Headers` drops the message at the far end. `Relay.drain` therefore

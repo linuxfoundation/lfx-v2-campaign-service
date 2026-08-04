@@ -2,6 +2,19 @@
 
 ## 2026-08-03
 
+**Update** — Closed four more review findings on the index outbox (LFXV2-2814, PR #60), all
+raised against the previous fix. (1) `INDEXER_SERVICE_TOKEN` was never wired in the Helm chart,
+so the new empty-token guard would have idled the relay in every cluster — added as an
+`optional` `secretKeyRef` (optional so a cluster missing the key still starts; the relay idles
+and rows stay pending rather than blocking pod start). (2) `Close` read `c.indexRelay` BEFORE
+joining the DB-init goroutine, which is what installs the relay on the 503 cold-start path: a
+retry landing in that gap started a relay nothing stopped, reading the outbox through
+`pool.Close`. Reordered, and the field is now mutex-guarded like `pool` — it was an
+unsynchronized read/write besides. (3) `PublishRaw` returned nil when the flush budget was
+exhausted, letting the relay retire a row for a delivery never confirmed on the wire; it now
+returns the context error, checked FIRST because `flushBudget` consults only the deadline and a
+context cancelled without one reported a full budget.
+
 **Update** — Closed two review findings on the index relay (LFXV2-2814, PR #60). Both were
 consequences of the outbox commit itself. (1) With no `INDEXER_SERVICE_TOKEN`, `stamp` wrote an
 EMPTY authorization header; NATS accepted the publish so `drain` retired the row, while the

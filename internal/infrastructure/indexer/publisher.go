@@ -170,6 +170,15 @@ func (p *NATSPublisher) Publish(ctx context.Context, msg Transaction) {
 // It takes the same per-object lock, so a replayed message cannot interleave with a live one
 // for the same resource.
 func (p *NATSPublisher) PublishRaw(ctx context.Context, subject, objectID string, payload []byte) error {
+	// Check the context FIRST. Publish only buffers, so a context that has already ended cannot
+	// produce a confirmed delivery — reporting success would let the relay retire the outbox row
+	// for a message that may never have reached the wire, reopening the loss window the outbox
+	// exists to close. Checked here rather than beside the flush for two reasons: there is no
+	// point taking a per-object lock we cannot use, and flushBudget only consults the DEADLINE,
+	// so a context cancelled without one would otherwise report a full budget and flush anyway.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("indexer: context ended before publish: %w", err)
+	}
 	if p.conn == nil {
 		return errNoConnection
 	}
@@ -184,10 +193,16 @@ func (p *NATSPublisher) PublishRaw(ctx context.Context, subject, objectID string
 	if err := p.conn.Publish(subject, payload); err != nil {
 		return err
 	}
-	if wait := flushBudget(ctx); wait > 0 {
-		return p.conn.FlushTimeout(wait)
+	// Publish only BUFFERS — without a confirmed flush nothing is on the wire. Returning nil
+	// here would let the relay retire the outbox row for a delivery that may never have
+	// happened, reopening the exact loss window the outbox exists to close. A duplicate on the
+	// next pass is harmless (the indexer overwrites by object id); a dropped message is not.
+	//
+	wait := flushBudget(ctx)
+	if wait <= 0 {
+		return errNoFlushBudget
 	}
-	return nil
+	return p.conn.FlushTimeout(wait)
 }
 
 // PublishRaw on a Noop reports FAILURE. Nothing was sent, so reporting success would let the
@@ -198,6 +213,10 @@ func (p *NATSPublisher) PublishRaw(ctx context.Context, subject, objectID string
 // Leaving them pending is the correct outcome: a later process with a working publisher drains
 // them. The relay records the failure rather than spinning silently.
 func (Noop) PublishRaw(context.Context, string, string, []byte) error { return errNoConnection }
+
+// errNoFlushBudget covers the rare case where the budget is exhausted but the context reports no
+// error, so PublishRaw never reports success for an unflushed publish.
+var errNoFlushBudget = errors.New("indexer: no flush budget remaining")
 
 // errNoConnection is returned by PublishRaw when the publisher has no connection, so the relay
 // leaves the row pending rather than retiring an undelivered message.
