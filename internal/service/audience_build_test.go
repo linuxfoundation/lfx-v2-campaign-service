@@ -400,3 +400,31 @@ func (r *recordingBuilder) CreateList(_ context.Context, _, name string, _ json.
 }
 
 func (r *recordingBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }
+
+// TestBuildAudience_StaleApprovalIsRejected pins the TOCTOU guard. The approval check happens
+// BEFORE past-edition resolution (a warehouse round-trip), so a concurrent ReplaceBrief can
+// reset the brief to draft and bump its version in that window. The plain create only checks
+// `status <> 'archived'`, so without this gate the build would go on to create REAL HubSpot
+// lists from a stale approved snapshot.
+func TestBuildAudience_StaleApprovalIsRejected(t *testing.T) {
+	b := &fakeBuilder{}
+	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	// Give the brief a real version, then mark that version stale: the insert is gated on the
+	// version observed at the approval check, so this models a ReplaceBrief committing in the
+	// window between that check and the insert.
+	brief := brepo.briefs[briefKey("cncf", "brief-1")]
+	brief.Version = 3
+	arepo.staleAt = brief.Version
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err, "a brief that moved mid-build must not produce an audience")
+
+	var conflict *audiences.ConflictError
+	assert.ErrorAs(t, err, &conflict, "a moved brief is a 409, not a 404 or 500")
+
+	assert.Empty(t, b.names(), "no HubSpot list may be created from a stale approved snapshot")
+	assert.Empty(t, arepo.rows(), "and no audience row may be recorded")
+}

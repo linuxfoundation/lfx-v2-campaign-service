@@ -335,6 +335,11 @@ func mapAudienceErr(err error) error {
 		// on create/list the ErrNotFound comes from a missing/cross-project/archived
 		// PARENT BRIEF, not a missing audience — so don't claim "audience not found".
 		return &audiences.NotFoundError{Code: "404", Message: "the audience or its parent brief was not found"}
+	case errors.Is(err, domain.ErrStaleApproval):
+		// The brief moved (re-edited / re-approved) between the build's approval check and the
+		// insert. A 409 tells the caller to refresh and retry rather than implying the brief
+		// or audience is missing.
+		return &audiences.ConflictError{Code: "409", Message: "the brief changed while its audience was being built; refresh and rebuild"}
 	case errors.Is(err, domain.ErrConflict):
 		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

@@ -399,6 +399,10 @@ func (fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudie
 	return a, nil
 }
 
+func (fakeAudienceRepo) CreateAudienceForApprovedBrief(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
+	return a, nil
+}
+
 func (fakeAudienceRepo) GetAudience(_ context.Context, _, _, _ string) (*model.CampaignAudience, error) {
 	return &model.CampaignAudience{}, nil
 }

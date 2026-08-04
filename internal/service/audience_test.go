@@ -20,6 +20,9 @@ type fakeAudienceRepo struct {
 	seq     int
 	createE error
 	getE    error
+	// staleAt, when it matches the expectedVersion passed to
+	// CreateAudienceForApprovedBrief, makes that call report ErrStaleApproval.
+	staleAt int64
 }
 
 func newFakeAudienceRepo() *fakeAudienceRepo {
@@ -35,6 +38,16 @@ func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAu
 	a.Version = 1
 	r.items[a.ID] = a
 	return a, nil
+}
+
+// CreateAudienceForApprovedBrief models the version gate: briefVersion is what the fake's
+// parent brief is "at", and a mismatch is ErrStaleApproval — the same signal the real repo
+// gives when a concurrent ReplaceBrief moved the brief.
+func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
+	if r.staleAt != 0 && r.staleAt == expectedVersion {
+		return nil, domain.ErrStaleApproval
+	}
+	return r.CreateAudience(ctx, a)
 }
 
 func (r *fakeAudienceRepo) GetAudience(_ context.Context, _, _, id string) (*model.CampaignAudience, error) {

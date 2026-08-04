@@ -145,6 +145,8 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	// Same lifecycle guard the campaign-creation path applies (brief.go). Building creates
 	// REAL HubSpot lists and makes the brief sendable, so a draft must not reach it — the
 	// event details it would be built from are still being edited.
+	// Capture the version the approval was observed at; the insert below is gated on it.
+	approvedVersion := brief.Version
 	if brief.Status != model.BriefApproved {
 		return nil, audienceValidationErr(fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status))
 	}
@@ -191,7 +193,12 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		Status:    model.AudienceBuilding,
 		CreatedBy: marshalActor(actorFromCtx(ctx)),
 	}
-	created, cerr := repo.CreateAudience(ctx, row)
+	// Gate the insert on the brief STILL being approved at the version read above. Between
+	// that check and here we resolved past editions (a warehouse round-trip), so a concurrent
+	// ReplaceBrief can have reset the brief to draft and bumped its version — and the plain
+	// create only checks `status <> 'archived'`, so the build would go on to create REAL
+	// HubSpot lists from a stale approved snapshot. Mirrors CreateJobForApprovedBrief.
+	created, cerr := repo.CreateAudienceForApprovedBrief(ctx, row, approvedVersion)
 	if cerr != nil {
 		return nil, mapAudienceErr(cerr)
 	}

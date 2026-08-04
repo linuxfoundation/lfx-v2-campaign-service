@@ -30,6 +30,38 @@ const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 	created_by, created_at, updated_at`
 
 // CreateAudience inserts a new audience row and returns it.
+// CreateAudienceForApprovedBrief inserts the row only if the parent brief is still APPROVED at
+// expectedVersion. See the port for why the plain create is not sufficient here.
+//
+// One statement, no transaction needed: the WHERE EXISTS is evaluated against the same snapshot
+// as the insert, so a concurrent ReplaceBrief either commits first (and the insert finds no
+// approved row) or after (and the insert already happened). Zero rows means the brief moved,
+// which is ErrStaleApproval rather than ErrNotFound — the caller should refresh and re-approve,
+// not be told the brief is missing.
+func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
+	q := `INSERT INTO campaign_audiences
+		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
+		 inclusion_summary, status, created_by)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8
+		WHERE EXISTS (
+			SELECT 1 FROM campaign_briefs
+			WHERE id=$2 AND project_id=$1 AND status = 'approved' AND version = $9
+		)
+		RETURNING ` + audienceCols
+	row := r.db.QueryRow(ctx, q,
+		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
+		a.SuppressionListIDs, nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
+		a.CreatedBy, expectedVersion)
+	out, err := scanAudience(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrStaleApproval
+		}
+		return nil, fmt.Errorf("create audience for approved brief: %w", err)
+	}
+	return out, nil
+}
+
 func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
 	// Gate the insert on an ACTIVE parent brief scoped by BOTH (project_id, brief_id).
 	// A bare brief_id FK check would let a caller authorized for project A supply a

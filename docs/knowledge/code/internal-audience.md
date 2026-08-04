@@ -82,6 +82,18 @@ while excluding 2025, so the CURRENT edition comes back as a "past" one and the 
 built from people who already registered. The details field is hand-edited and can go stale; the
 year inside the name cannot disagree with the name.
 
+## Only approved briefs — checked ATOMICALLY
+
+`BuildAudience` rejects a brief that is not approved, but the check alone is not enough: past-
+edition resolution is a warehouse round-trip, so a concurrent `ReplaceBrief` can reset the brief
+to draft and bump its version in that window. The plain `CreateAudience` only gates on
+`status <> 'archived'`, so the build would then create REAL HubSpot lists from a stale approved
+snapshot.
+
+`CreateAudienceForApprovedBrief` gates the insert on the brief still being approved AT the
+version observed by the check, returning `ErrStaleApproval` (→ 409) otherwise. Same shape as
+`JobRepo.CreateJobForApprovedBrief`, which closed this race for campaign creation.
+
 ## Only approved briefs
 
 Building creates real HubSpot lists and makes a brief sendable, so `BuildAudience` applies the
