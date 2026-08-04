@@ -552,3 +552,27 @@ func relayStopped(r *indexer.Relay) bool {
 		return false
 	}
 }
+
+// TestNewContainer_MalformedNATSURLIsFatal pins that an unusable NATS configuration fails boot
+// rather than degrading to a silent Noop.
+//
+// The publisher is built with RetryOnFailedConnect, so an ordinary broker outage does NOT reach
+// the error branch — it returns a reconnecting publisher that heals itself. Reaching it means the
+// config can never work, and no retry will fix it.
+//
+// Carrying on with a Noop there is the worst outcome available: NATS_URL is non-empty, so the
+// enqueue gate stays OPEN and every write co-commits an outbox row into a table this process can
+// never drain — and whose pending rows are deliberately never pruned. The service would report
+// healthy while accumulating undeliverable work forever. Failing fast surfaces a config error as
+// a config error, exactly as invalid database settings already do.
+func TestNewContainer_MalformedNATSURLIsFatal(t *testing.T) {
+	cfg := &config.Config{NATSUrl: "://not-a-url"}
+
+	_, err := NewContainer(cfg)
+
+	require.Error(t, err, "an unusable NATS URL must fail boot, not degrade to a Noop")
+	assert.Contains(t, err.Error(), "nats configuration",
+		"the error must name the misconfigured subsystem so an operator knows what to fix")
+	// The raw URL must not leak: NATS_URL can carry credentials.
+	assert.NotContains(t, err.Error(), "not-a-url@", "a credential-bearing URL must stay redacted")
+}

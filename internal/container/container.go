@@ -194,7 +194,11 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	// path, and 503-mode + its background retry. Building it here and injecting the
 	// same instance everywhere is what stops a path from silently keeping the Noop
 	// and publishing nothing. It is a Noop when NATS is unconfigured or unreachable.
-	c.indexPublisher = newIndexPublisher(cfg)
+	indexPub, iperr := newIndexPublisher(cfg)
+	if iperr != nil {
+		return nil, iperr
+	}
+	c.indexPublisher = indexPub
 
 	if cfg.DatabaseURL == "" {
 		slog.Warn("database URL not set; connection and brief/campaign endpoints will return 503 Service Unavailable")
@@ -669,15 +673,23 @@ func (c *Container) rawPublisher() indexer.RawPublisher {
 // service, whereas campaign dispatch is this service's reason to exist. Refusing to boot over
 // an unreachable broker would turn a degraded search experience into a total outage. An empty
 // NATSUrl disables indexing outright and returns a Noop.
-func newIndexPublisher(cfg *config.Config) indexer.Publisher {
+func newIndexPublisher(cfg *config.Config) (indexer.Publisher, error) {
 	p, err := indexer.NewNATSPublisher(cfg.NATSUrl)
 	if err != nil {
-		slog.Warn("query-service indexing disabled: could not connect to NATS; resources will still be written and dispatched, but will not appear in search until indexing recovers",
-			"error", err)
-		return p // NewNATSPublisher returns a Noop alongside the error
+		// FATAL, not a warning. The publisher is built with RetryOnFailedConnect, so an
+		// ordinary broker outage does NOT land here — it returns a reconnecting publisher that
+		// heals itself. Reaching this branch means the configuration can never work (a
+		// malformed URL, an unparseable scheme), and no retry will fix it.
+		//
+		// Carrying on with a Noop would be the worst of both worlds: NATS_URL is non-empty, so
+		// every write still enqueues an outbox row, into a table this process can never drain
+		// and whose pending rows are deliberately never pruned. The service would look healthy
+		// while accumulating undeliverable work forever. Failing fast surfaces a config error
+		// as a config error — matching how invalid database settings are already treated.
+		return nil, fmt.Errorf("nats configuration: %w", err)
 	}
 	if _, isNoop := p.(indexer.Noop); isNoop {
 		slog.Info("query-service indexing disabled (no NATS URL configured)")
 	}
-	return p
+	return p, nil
 }

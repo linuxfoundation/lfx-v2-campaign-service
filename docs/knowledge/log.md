@@ -2,6 +2,14 @@
 
 ## 2026-08-03
 
+**Update** — An unusable `NATS_URL` now fails boot (LFXV2-2814, PR #60). The publisher is built
+with `RetryOnFailedConnect`, so an ordinary broker outage never reaches that error branch — it
+returns a reconnecting publisher. Reaching it means the config can never work (malformed URL), and
+degrading to a Noop was the worst available outcome: `NATS_URL` is non-empty, so the enqueue gate
+stays OPEN and every write co-commits a row into a table this process can never drain, whose
+pending rows are deliberately never pruned. The service would look healthy while accumulating
+undeliverable work forever. Now fatal, matching how invalid database settings are already treated.
+
 **Update** — Fixed a data-loss bug I introduced with the disabled-indexing gate, plus the backoff
 clock (LFXV2-2814, PR #60). (1) The gate read `IndexerIsNoop()`, but `NewNATSPublisher` returns a
 Noop for an UNREACHABLE broker as well as an empty `NATS_URL` — and the publisher is never
