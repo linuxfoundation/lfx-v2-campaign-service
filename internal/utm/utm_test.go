@@ -360,6 +360,54 @@ func TestStripUTM_PreservesOriginalSeparators(t *testing.T) {
 		"an embedded redirect target survives whole")
 }
 
+// TestStripUTM_SurvivorKeepsItsOwnSeparator pins that a kept part is re-emitted with the byte that
+// ORIGINALLY PRECEDED it, not the one that followed the previous kept part.
+//
+// Keying off the TRAILING byte looks equivalent and is not. When a utm_ pair sits BETWEEN two kept
+// parts, the survivor inherits a separator belonging to the REMOVED pair:
+//
+//	a=1;utm_source=fb&b=2  ->  a=1;b=2     (b=2's own "&" replaced by the dropped pair's ";")
+//
+// url.ParseQuery has rejected ";" since Go 1.17, so it returns an EMPTY map for "a=1;b=2" — the
+// sibling is lost outright, not merely merged into a's value. A part's own leading byte always
+// belongs to that part, so dropping any number of neighbours can never reassign it.
+func TestStripUTM_SurvivorKeepsItsOwnSeparator(t *testing.T) {
+	assert.Equal(t, "a=1&b=2", stripUTM("a=1;utm_source=fb&b=2"),
+		"b=2 arrived after an '&' and must keep it; inheriting the dropped pair's ';' loses b")
+	assert.Equal(t, "a=1;b=2", stripUTM("a=1&utm_source=fb;b=2"),
+		"the mirror image: b=2 arrived after a ';' and keeps that")
+	assert.Equal(t, "a=1", stripUTM("utm_source=fb&a=1"),
+		"the first EMITTED part never carries a leading separator")
+	assert.Equal(t, "a=1", stripUTM("utm_source=fb;a=1"))
+
+	// The two shapes TOGETHER in one query: a semicolon-bearing VALUE that must stay intact, and
+	// an "&"-separated survivor sitting after a removed utm_ pair that must keep its "&".
+	got := stripUTM("sig=a;b;c&utm_source=fb&t=9")
+	assert.Equal(t, "sig=a;b;c&t=9", got,
+		"the signature keeps its internal semicolons AND t=9 keeps the '&' it arrived with")
+
+	// The survivor is genuinely readable, which is the property that actually matters.
+	v, err := url.ParseQuery(stripUTM("a=1;utm_source=fb&b=2"))
+	require.NoError(t, err, "the rewritten query must parse")
+	assert.Equal(t, "2", v.Get("b"), "the sibling parameter must survive as its own key")
+}
+
+// TestApply_SurvivorKeepsItsOwnSeparator is the end-to-end form: a sibling parameter must not
+// vanish from a tagged link because a utm_ pair was removed from beside it.
+func TestApply_SurvivorKeepsItsOwnSeparator(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "NEW"}
+
+	got := Apply("https://lf.dev/p?a=1;utm_source=fb&b=2", p, "")
+	assert.Contains(t, got, "a=1&b=2", "b=2 keeps its own '&' so it stays a separate parameter")
+	assert.NotContains(t, got, "a=1;b=2", "inheriting the removed pair's ';' would lose b entirely")
+	assert.NotContains(t, got, "fb", "the stale utm_source is still stripped")
+
+	u, err := url.Parse(got)
+	require.NoError(t, err)
+	assert.Equal(t, "2", u.Query().Get("b"), "the sibling must still be readable after tagging")
+	assert.Equal(t, "NEW", u.Query().Get("utm_campaign"))
+}
+
 // TestApply_SemicolonInsideANonUTMValueSurvives is the end-to-end form of the same bug: the URL
 // that ships must differ from the input only by the utm_ pairs.
 func TestApply_SemicolonInsideANonUTMValueSurvives(t *testing.T) {

@@ -2,6 +2,18 @@
 
 ## 2026-08-04
 
+**Fix** — Corrected a regression introduced by the separator-preservation change earlier the same
+day (LFXV2-2775, PR #62). That change had each kept query part re-emit the separator that
+FOLLOWED it; it should have been the one that PRECEDED it. The two differ exactly when a `utm_`
+pair sits BETWEEN two kept parts, because the survivor then inherits a separator belonging to the
+removed pair: `a=1;utm_source=fb&b=2` collapsed to `a=1;b=2`. `url.ParseQuery` has rejected `;`
+since Go 1.17, so that does not merge `b` into `a`'s value — it returns an EMPTY map and the
+sibling parameter is lost outright, which is the same silent-damage class the original change set
+out to remove. A part's own LEADING byte always belongs to that part, so dropping any number of
+neighbours can never reassign it; both properties (semicolons inside values preserved, survivors
+keeping their own delimiter) now hold together, pinned by a test covering both shapes in one
+query. Caught by automated review before merge.
+
 **Update** — Stopped `stripUTM` from shredding non-UTM query values containing `;` (LFXV2-2775,
 PR #62). `splitQuery` must split on BOTH `&` and `;` so a `utm_` pair hidden behind a semicolon is
 visible to the strip — but the survivors were re-joined with `&`, so any non-utm VALUE that

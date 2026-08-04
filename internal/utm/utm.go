@@ -288,53 +288,58 @@ func stripUTM(rawQuery string) string {
 	// freshly-appended utm_campaign then lands NEXT TO the stale one, leaving two conflicting
 	// values in the URL for analytics to choose between.
 	//
-	// Every KEPT part is re-emitted with the separator that ORIGINALLY followed it, so a value
+	// Every KEPT part is re-emitted with the separator that ORIGINALLY PRECEDED it, so a value
 	// that legitimately contains ";" survives byte-identical. Re-joining on "&" instead shredded
 	// it: `?sig=a;b;c&utm_term=old` became `sig=a&b&c&utm_…`, silently turning one signature into
 	// three empty-valued parameters. The link still resolved, so the destination just saw a
 	// truncated signature — worse than the untagged link this package exists to avoid.
 	// Signatures, base64 payloads, `redirect=` targets and ad-tracker macros all routinely carry
 	// unencoded semicolons.
+	//
+	// PRECEDING, not trailing. Keying off the byte that FOLLOWED each kept part looks equivalent
+	// and is not: when a utm_ pair sits BETWEEN two kept parts, the survivor inherits a separator
+	// that belonged to the removed pair. `a=1;utm_source=fb&b=2` collapsed to `a=1;b=2`, and
+	// url.ParseQuery has rejected ";" since Go 1.17 — so it returns an EMPTY map and `b` is lost
+	// outright, not merely merged into `a`. A part's own leading byte always belongs to that part,
+	// so dropping any number of neighbours can never reassign it.
 	if !hasUTMPair(rawQuery) {
 		return rawQuery
 	}
 	var b strings.Builder
 	b.Grow(len(rawQuery))
-	prevSep := byte('&')
 	for _, part := range splitQuery(rawQuery) {
 		if strings.HasPrefix(queryKey(part.token), "utm_") {
 			continue
 		}
+		// Skip the separator only for the FIRST part actually emitted: a leading "&"/";" would
+		// otherwise appear when the original first pair was a utm_ one that got stripped.
 		if b.Len() > 0 {
-			// The separator that followed the PREVIOUS kept part. Using the previous part's own
-			// trailing byte (rather than this part's) is what keeps ";" attached to the pair it
-			// actually separated when the parts in between were dropped.
-			b.WriteByte(prevSep)
+			b.WriteByte(part.sep)
 		}
 		b.WriteString(part.token)
-		prevSep = part.sep
 	}
 	return b.String()
 }
 
-// queryPart is one raw query token plus the separator byte that FOLLOWED it in the original
-// query ('&', ';', or 0 for the final part).
+// queryPart is one raw query token plus the separator byte that PRECEDED it in the original query
+// ('&' or ';'; 0 for the first part, which has nothing before it).
 type queryPart struct {
 	token string
 	sep   byte
 }
 
-// splitQuery splits a raw query on BOTH "&" and ";", keeping each part's trailing separator so a
-// caller can re-emit the query without reshaping it.
+// splitQuery splits a raw query on BOTH "&" and ";", keeping each part's LEADING separator so a
+// caller can re-emit a subset of the parts without reshaping the ones it keeps.
 //
 // url.Query() cannot be used anywhere this package inspects a query: Go 1.17+ dropped ";" as a
 // separator, so it silently DISCARDS semicolon-delimited pairs rather than reporting them. A
 // utm_ pair hidden in one is invisible to a Values-based check while remaining very much present
 // in the URL that gets sent.
 //
-// Empty parts are skipped (as strings.FieldsFunc did), so "a=1&&b=2" yields two parts, but the
-// separator recorded for each part is the byte that immediately followed its last token
-// character — so re-emitting kept parts reproduces their original delimiters.
+// The separator is recorded as the byte immediately BEFORE the token rather than after it, so it
+// stays bound to the part it actually delimits no matter which neighbours a caller drops. Empty
+// parts are skipped (as strings.FieldsFunc did), so "a=1&&b=2" yields two parts; the second's
+// leading separator is the "&" adjacent to it.
 func splitQuery(rawQuery string) []queryPart {
 	var out []queryPart
 	start := 0
@@ -344,8 +349,8 @@ func splitQuery(rawQuery string) []queryPart {
 		}
 		if i > start {
 			var sep byte
-			if i < len(rawQuery) {
-				sep = rawQuery[i]
+			if start > 0 {
+				sep = rawQuery[start-1]
 			}
 			out = append(out, queryPart{token: rawQuery[start:i], sep: sep})
 		}

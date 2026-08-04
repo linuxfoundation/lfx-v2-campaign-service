@@ -74,15 +74,20 @@ invisible.
   author's hand-picked campaign got replaced and its sibling params dropped with it; in the other
   field order the stale pair survived `stripUTM` and the link shipped with TWO conflicting
   campaigns. `splitQuery`/`rawQueryValues`/`hasUTMPair` split on both separators.
-- **`stripUTM` re-emits each kept part with its ORIGINAL trailing separator.** `splitQuery` must
-  split on both `&` and `;` to SEE a utm_ pair hidden behind a semicolon — but re-joining the
-  survivors with `&` then SHREDDED any non-utm value that legitimately contained one:
-  `?sig=a;b;c&utm_term=old` came back as `sig=a&b&c&utm_…`, turning one signature into three
+- **`stripUTM` re-emits each kept part with the separator that ORIGINALLY PRECEDED it.**
+  `splitQuery` must split on both `&` and `;` to SEE a utm_ pair hidden behind a semicolon — but
+  re-joining the survivors with `&` then SHREDDED any non-utm value that legitimately contained
+  one: `?sig=a;b;c&utm_term=old` came back as `sig=a&b&c&utm_…`, turning one signature into three
   empty-valued parameters. Signatures, base64 payloads, `redirect=` targets and ad-tracker
   macros all routinely carry unencoded semicolons. Nothing failed loudly — the link still
   resolved, the destination just saw a truncated signature, which is worse than the untagged
-  link this package exists to avoid. Each `queryPart` therefore carries the byte that followed
-  it, and only the removed `utm_` pairs change the string.
+  link this package exists to avoid.
+  **PRECEDING, not trailing** — the distinction is load-bearing. Keying off the byte that
+  *followed* each kept part looks equivalent but lets a survivor inherit a separator belonging to
+  a REMOVED pair: `a=1;utm_source=fb&b=2` collapsed to `a=1;b=2`, and since `url.ParseQuery` has
+  rejected `;` outright since Go 1.17, that returns an EMPTY map — `b` is lost entirely, not
+  merely merged into `a`. A part's own leading byte always belongs to that part, so dropping any
+  number of neighbours can never reassign it. Only the removed `utm_` pairs change the string.
 - **Query KEYS are percent-decoded before comparison (`queryKey`).** `?utm%5Fcampaign=x` decodes
   to `utm_campaign` for every normal reader and for the analytics backend, but a raw comparison
   saw the literal `utm%5Fcampaign`: the never-retag guard missed it, `Apply` appended a SECOND
