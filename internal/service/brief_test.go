@@ -1539,11 +1539,12 @@ func TestDisabledIndexing_EnqueuesNothing(t *testing.T) {
 	repo := newFakeBriefRepo()
 	camps := &fakeCampaignRepo{}
 	jobs := newFakeJobRepo()
-	// No SetIndexer: this is exactly how the container wires a NATS_URL="" deployment.
+	// DisableIndexing is the CONFIG signal the container sets when NATS_URL is empty — the same
+	// call production makes. Deliberately not "construct without SetIndexer": that state also
+	// arises from a wiring bug or a broker outage, and those must still enqueue.
 	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
-	if !s.IndexerIsNoop() {
-		t.Fatal("precondition: indexing must be disabled for this test")
-	}
+	s.SetIndexer(&failingIndexer{}) // a real publisher, to prove the gate is the CONFIG flag
+	s.DisableIndexing()
 
 	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
 		ProjectID: "cncf",
@@ -1561,5 +1562,50 @@ func TestDisabledIndexing_EnqueuesNothing(t *testing.T) {
 	if n := len(repo.indexPayloads); n != 0 {
 		t.Errorf("wrote %d outbox row(s) that can never be delivered; pending rows are never "+
 			"pruned, so this grows without bound", n)
+	}
+}
+
+// TestBrokerDown_StillEnqueues is the counterpart to TestDisabledIndexing_EnqueuesNothing, and
+// guards the distinction the whole gate rests on.
+//
+// NewNATSPublisher returns a Noop for BOTH an empty NATS_URL and an unreachable broker. If the
+// enqueue were gated on "is the publisher a Noop", a pod that happened to start during a broker
+// restart would skip the outbox for its ENTIRE life — the publisher is built once and never
+// re-dialled — and those writes would be lost permanently, since pending rows are never pruned
+// and there is no reindex path. That is strictly worse than the unbounded growth the gate exists
+// to prevent.
+//
+// So the gate keys on CONFIG (DisableIndexing), and a service with a dead publisher but indexing
+// configured must still write its outbox row. The relay delivers it once NATS reconnects.
+func TestBrokerDown_StillEnqueues(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	// Exactly what the container does when NATS is unreachable at boot: a Noop publisher, but
+	// NO DisableIndexing, because NATS_URL is configured.
+	s.SetIndexer(indexer.Noop{})
+	if !s.IndexerIsNoop() {
+		t.Fatal("precondition: the publisher must be a Noop, modelling an unreachable broker")
+	}
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("DeleteBrief: %v", derr)
+	}
+
+	if n := len(repo.indexPayloads); n != 2 {
+		t.Errorf("wrote %d outbox rows, want 2: a broker outage must not skip the enqueue, or "+
+			"the write is lost forever once the pod's publisher never recovers", n)
 	}
 }

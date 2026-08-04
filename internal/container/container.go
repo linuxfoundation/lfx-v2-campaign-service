@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -618,7 +619,21 @@ func (c *Container) Close(ctx context.Context) error {
 func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) *service.BriefService {
 	s := service.NewBriefService(briefs, campaigns, jobs, orch)
 	s.SetIndexer(c.indexPublisher)
+	if c.indexingDisabled() {
+		s.DisableIndexing()
+	}
 	return s
+}
+
+// indexingDisabled reports whether indexing is DELIBERATELY off, from CONFIG alone.
+//
+// Deliberately not `_, isNoop := c.indexPublisher.(indexer.Noop)`: newIndexPublisher also yields
+// a Noop when the broker is merely UNREACHABLE at boot. Treating that as "disabled" would make a
+// pod that started during a broker restart skip the outbox for its entire life — permanently
+// losing those writes, since pending rows are never pruned and there is no reindex path. A
+// transient outage must still enqueue and let the relay deliver on reconnect.
+func (c *Container) indexingDisabled() bool {
+	return c.Config == nil || strings.TrimSpace(c.Config.NATSUrl) == ""
 }
 
 // newOrchestrator constructs an Orchestrator with the container's shared index
@@ -630,12 +645,17 @@ func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns dom
 func (c *Container) newOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]service.PlatformDispatcher) *service.Orchestrator {
 	o := service.NewOrchestrator(campaigns, jobs, dispatchers)
 	o.SetIndexer(c.indexPublisher)
+	if c.indexingDisabled() {
+		o.DisableIndexing()
+	}
 	return o
 }
 
-// rawPublisher exposes the index publisher's raw-publish capability for the relay. The
-// publisher is always non-nil (a Noop when indexing is disabled), and Noop.PublishRaw reports
-// success so the relay retires rows rather than retrying forever against a disabled publisher.
+// rawPublisher exposes the index publisher's raw-publish capability for the relay. The publisher
+// is always non-nil — a Noop stands in when indexing is disabled OR the broker was unreachable at
+// boot — and Noop.PublishRaw reports FAILURE, so the relay leaves rows PENDING rather than
+// retiring messages that were never sent. Retrying against a Noop is the correct outcome: the
+// alternative silently drains the outbox into nothing.
 func (c *Container) rawPublisher() indexer.RawPublisher {
 	if rp, ok := c.indexPublisher.(indexer.RawPublisher); ok {
 		return rp

@@ -212,6 +212,9 @@ type Orchestrator struct {
 	// later update happened to republish it. Never nil: defaults to Noop.
 	indexerMu sync.RWMutex
 	indexer   indexer.Publisher
+	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
+	// publisher — a Noop also appears when the broker is unreachable. See DisableIndexing.
+	indexingDisabled bool
 
 	// wg tracks in-flight dispatch runs so Shutdown can wait for them before the
 	// process (and the DB pool) goes away. mu guards the shutting-down flag so a
@@ -286,10 +289,11 @@ func (o *Orchestrator) IndexerIsNoop() bool {
 // relay stamps a service credential at publish time instead, which also keeps a live credential
 // out of a JSONB table retained for audit with no pruning.
 func (o *Orchestrator) campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
-	// Nothing is enqueued when indexing is DELIBERATELY disabled (NATS_URL=""): the row could
-	// never be delivered, and pending rows are never pruned because discarding undelivered work
-	// is unrecoverable without a reindex path. See BriefService.briefIndexPayload.
-	if o.indexerIsNoop() {
+	// Nothing is enqueued when indexing is DELIBERATELY disabled (NATS_URL=""). Gated on the
+	// CONFIG flag, not on the publisher type: a Noop also appears when the broker is merely
+	// unreachable, and skipping the enqueue then would permanently lose the write. See
+	// BriefService.DisableIndexing.
+	if o.indexingIsDisabled() {
 		return nil
 	}
 	return func(c *model.Campaign) ([]byte, error) {
@@ -301,13 +305,19 @@ func (o *Orchestrator) campaignIndexPayload(action string) domain.CampaignIndexP
 	}
 }
 
-// indexerIsNoop reports whether indexing is deliberately disabled, i.e. the container injected
-// the Noop publisher because NATS_URL was explicitly empty.
-func (o *Orchestrator) indexerIsNoop() bool {
+// DisableIndexing marks indexing as DELIBERATELY off (NATS_URL empty), so dispatch writes skip
+// the outbox. A configuration fact, NOT an observation of the publisher — see
+// BriefService.DisableIndexing for why that distinction prevents permanent data loss.
+func (o *Orchestrator) DisableIndexing() {
+	o.indexerMu.Lock()
+	defer o.indexerMu.Unlock()
+	o.indexingDisabled = true
+}
+
+func (o *Orchestrator) indexingIsDisabled() bool {
 	o.indexerMu.RLock()
 	defer o.indexerMu.RUnlock()
-	_, isNoop := o.indexer.(indexer.Noop)
-	return isNoop
+	return o.indexingDisabled
 }
 
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {

@@ -39,6 +39,9 @@ type BriefService struct {
 	// construction (a Noop stands in when NATS is unconfigured), so call sites publish
 	// unconditionally rather than nil-checking at each of them.
 	indexer indexer.Publisher
+	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
+	// publisher: a Noop also appears when the broker is merely unreachable. See DisableIndexing.
+	indexingDisabled bool
 }
 
 var (
@@ -55,6 +58,29 @@ func (s *BriefService) SetIndexer(p indexer.Publisher) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.indexer = p
+}
+
+// DisableIndexing marks indexing as DELIBERATELY off, so writes skip the outbox entirely.
+//
+// This is a CONFIGURATION fact (NATS_URL is empty), not an observation of the current publisher.
+// The distinction is load-bearing: NewNATSPublisher also returns a Noop when the broker is merely
+// UNREACHABLE, and treating that as "disabled" would drop outbox rows for the entire life of a
+// pod that happened to start during a broker restart — permanently, since pending rows are never
+// pruned and there is no reindex path. A transient outage must still enqueue; the relay delivers
+// once the connection recovers (the publisher is built with RetryOnFailedConnect).
+//
+// Set once at wiring, before any request is served, so it cannot change between two writes.
+func (s *BriefService) DisableIndexing() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.indexingDisabled = true
+}
+
+// indexingIsDisabled reports the configuration fact set by DisableIndexing.
+func (s *BriefService) indexingIsDisabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.indexingDisabled
 }
 
 // IndexerIsNoop reports whether this service would publish nothing. Exported so the
@@ -259,7 +285,7 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 // campaignIndexPayload mirrors briefIndexPayload for campaign writes made on the REQUEST path
 // (update, status toggle). The orchestrator has its own copy for its async dispatch writes.
 func (s *BriefService) campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
-	if s.IndexerIsNoop() {
+	if s.indexingIsDisabled() {
 		return nil
 	}
 	return func(c *model.Campaign) ([]byte, error) {
@@ -272,15 +298,14 @@ func (s *BriefService) campaignIndexPayload(action string) domain.CampaignIndexP
 }
 
 func (s *BriefService) briefIndexPayload(action string) domain.IndexPayloadFunc {
-	// Indexing DELIBERATELY disabled (NATS_URL="") enqueues nothing. The row would never be
-	// delivered and must never be pruned (pending rows are undelivered work and this service
-	// has no reindex path), so writing one is unbounded growth with no upside. This is the only
-	// safe place to make that call: here we KNOW it is a configuration choice, whereas the
-	// relay cannot tell "disabled forever" from "broker down for an hour".
+	// Indexing DELIBERATELY disabled (NATS_URL="") enqueues nothing: the row could never be
+	// delivered and is never pruned, so writing one is unbounded growth with no upside.
 	//
-	// A missing CREDENTIAL is deliberately NOT covered by this — that is a provisioning gap,
-	// the rows are real work, and the relay drains them once the token lands.
-	if s.IndexerIsNoop() {
+	// Gated on the CONFIG flag, never on IndexerIsNoop(): a Noop publisher also appears when the
+	// broker is temporarily UNREACHABLE, and skipping the enqueue then would permanently lose
+	// every write made by a pod that started during a broker restart. A missing CREDENTIAL is
+	// likewise not covered — both are transient states whose rows are real work.
+	if s.indexingIsDisabled() {
 		return nil
 	}
 	return func(b *model.CampaignBrief) ([]byte, error) {

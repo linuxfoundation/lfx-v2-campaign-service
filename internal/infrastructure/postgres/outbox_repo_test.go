@@ -128,8 +128,9 @@ func TestDrainBacksOffFailedRows(t *testing.T) {
 	// A never-attempted row must always be eligible: backoff may only delay RETRIES.
 	assert.Contains(t, drainClaimQuery, "o.last_attempt_at IS NULL",
 		"a row that has never been attempted must never be held back")
-	assert.Contains(t, drainClaimQuery, "o.last_attempt_at < now()",
-		"a failed row must wait before it is eligible again")
+	assert.Contains(t, drainClaimQuery, "o.last_attempt_at < clock_timestamp()",
+		"a failed row must wait before it is eligible again, measured against WALL-CLOCK time: "+
+			"now() is frozen at transaction start and the drain holds one tx across the whole pass")
 	assert.Contains(t, drainClaimQuery, "POWER(2,",
 		"the wait grows with attempts, so a persistently failing row yields its slot")
 
@@ -153,8 +154,11 @@ func TestDrainBacksOffFailedRows(t *testing.T) {
 // inert unless every failure stamps last_attempt_at. Without it a poison row keeps a NULL
 // timestamp and stays permanently eligible — exactly the starvation the backoff prevents.
 func TestRecordFailureStampsTheAttemptTime(t *testing.T) {
-	assert.Contains(t, recordFailureSQL, "last_attempt_at = now()",
-		"a failed attempt must stamp its time or the backoff predicate never fires")
+	assert.Contains(t, recordFailureSQL, "last_attempt_at = clock_timestamp()",
+		"the stamp must be WALL-CLOCK: now() would record when the PASS began, not when the "+
+			"attempt failed, understating every backoff by up to the pass duration")
+	assert.NotContains(t, recordFailureSQL, "= now()",
+		"verified on live PostgreSQL: now() does not advance within a transaction")
 	assert.Contains(t, recordFailureSQL, "attempts = attempts + 1",
 		"and must advance the attempt count that sizes the backoff")
 }

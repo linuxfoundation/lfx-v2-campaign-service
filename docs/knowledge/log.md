@@ -2,6 +2,21 @@
 
 ## 2026-08-03
 
+**Update** — Fixed a data-loss bug I introduced with the disabled-indexing gate, plus the backoff
+clock (LFXV2-2814, PR #60). (1) The gate read `IndexerIsNoop()`, but `NewNATSPublisher` returns a
+Noop for an UNREACHABLE broker as well as an empty `NATS_URL` — and the publisher is never
+re-dialled. So a pod that started during a broker restart skipped the outbox for its entire life,
+permanently losing every brief archive and campaign create (pending rows are never pruned; there
+is no reindex path). Strictly worse than the growth the gate was added to prevent. It now keys on
+an explicit config flag (`DisableIndexing`, set by the container only when `NATS_URL` is empty).
+`TestBrokerDown_StillEnqueues` pins it — with the old gate it writes 0 rows instead of 2. (2) The
+retry backoff used `now()` on both sides, which is TRANSACTION-START time; the drain holds one
+transaction across the whole pass, so every backoff was understated by up to the pass duration.
+Both sides now use `clock_timestamp()`. Verified on live PostgreSQL: inside a transaction, after a
+2s sleep, `now()` had not advanced at all while `clock_timestamp()` advanced by 2s. Also removed
+two stale comments — one asserting the OLD `Noop.PublishRaw`-reports-success contract (the exact
+bug this PR fixed), one describing the reverted two-window prune.
+
 **Update** — Added retry backoff to the outbox claim (LFXV2-2814, PR #60). `attempts` was
 recorded but never affected ELIGIBILITY, so a row that can never be delivered was re-selected on
 every pass — and once enough poison rows accumulate as the oldest resource heads they consume the

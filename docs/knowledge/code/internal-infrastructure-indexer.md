@@ -135,10 +135,16 @@ campaign). An age-based sweep cannot tell "the indexer has been down for a month
 message is obsolete", and guessing wrong loses data permanently.
 
 Unbounded growth is therefore prevented at the SOURCE: when indexing is DELIBERATELY disabled
-(`NATS_URL=""` → the Noop publisher) the payload builder is nil and no row is written at all —
+(`NATS_URL=""`) the payload builder is nil and no row is written at all —
 the only place that distinction can safely be made, since the relay cannot tell "disabled
-forever" from "broker down for an hour". A missing CREDENTIAL is NOT treated this way: that is a
-provisioning gap, the rows are real work, and the relay drains them once the token lands. Pruning runs
+forever" from "broker down for an hour".
+
+That gate keys on the CONFIG flag (`DisableIndexing`), never on "is the publisher a Noop":
+`NewNATSPublisher` also returns a Noop when the broker is merely UNREACHABLE at boot, and the
+publisher is never re-dialled. Gating on the type would make a pod that started during a broker
+restart skip the outbox for its ENTIRE life, losing those writes permanently — strictly worse
+than the growth the gate prevents. A missing CREDENTIAL is likewise not covered: both are
+transient states whose rows are real work, and the relay drains them on recovery. Pruning runs
 AFTER the drain (delivery must not queue behind housekeeping) and a prune failure is logged and
 dropped: it costs disk, never correctness.
 

@@ -48,6 +48,13 @@ func NewOutboxRepo(db *Pool) *OutboxRepo { return &OutboxRepo{db: db} }
 //     without backoff the batch was 50 poison rows and the new write was never indexed; with
 //     backoff the batch was the new write alone.
 //
+// The backoff uses clock_timestamp(), NOT now(). now() is TRANSACTION-START time (the same trap
+// that makes created_at unusable for ordering, below), and the drain holds ONE transaction open
+// across the entire pass. Stamping a failure with now() would record when the PASS began rather
+// than when the attempt failed, and comparing against now() would test a clock frozen at pass
+// start — both understating the wait by up to the pass duration, in the direction that reopens
+// the starvation this predicate exists to close.
+//
 // Ordering is by id, NOT created_at. created_at defaults to now(), which in PostgreSQL is
 // TRANSACTION-START time — a transaction that began earlier but committed its write later gets
 // an EARLIER created_at, so sorting by it can invert the committed order. id comes from a
@@ -57,7 +64,7 @@ const drainClaimQuery = `SELECT o.id, o.object_type, o.object_id, o.payload, o.a
 	WHERE o.published_at IS NULL
 	  AND (
 	      o.last_attempt_at IS NULL
-	      OR o.last_attempt_at < now() - LEAST(
+	      OR o.last_attempt_at < clock_timestamp() - LEAST(
 	             POWER(2, LEAST(o.attempts, ` + maxBackoffShiftSQL + `))::int,
 	             ` + maxBackoffSecondsSQL + `
 	         ) * INTERVAL '1 second'
@@ -181,7 +188,7 @@ func markPublishedTx(ctx context.Context, tx pgx.Tx, id int64) error {
 // makes the backoff in drainClaimQuery work: without it a permanently failing row keeps a NULL
 // last_attempt_at, stays eligible on every pass, and starves the batch.
 const recordFailureSQL = `UPDATE index_outbox
-	SET attempts = attempts + 1, last_error = $2, last_attempt_at = now()
+	SET attempts = attempts + 1, last_error = $2, last_attempt_at = clock_timestamp()
 	WHERE id = $1 AND published_at IS NULL`
 
 func recordFailureTx(ctx context.Context, tx pgx.Tx, id int64, cause string) error {
@@ -248,11 +255,6 @@ func (r *OutboxRepo) PrunePublishedIndexMessages(ctx context.Context, olderThan 
 	if limit <= 0 {
 		limit = prunePassLimit
 	}
-	// Two windows, one statement. A PUBLISHED row is delivered history (short window). A PENDING
-	// row is undelivered work and gets a much longer one — it is only discarded once it is so
-	// old that replaying it would be worse than a reindex. Without the second clause a disabled
-	// or unprovisioned indexer grows the table forever, which the chart's optional token makes a
-	// reachable steady state rather than a misconfiguration.
 	tag, err := r.db.Exec(ctx, pruneQuery, olderThan.String(), limit)
 	if err != nil {
 		return 0, fmt.Errorf("prune published index messages: %w", err)
