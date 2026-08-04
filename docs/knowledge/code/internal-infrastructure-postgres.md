@@ -127,6 +127,28 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   comparison uses the text Postgres itself deparses. Pinned by
   `TestMigration000014_GuardChecksIndexDefinition`.
 
+  **The two versions cannot be staged apart, and the rollout strategy carries the
+  ordering instead.** Deferring `000014`'s drop to a later release (the usual
+  expand/contract remedy for a backward-incompatible change) does not work here: the old
+  full constraint still covers soft-deleted rows, so a re-dispatch after a delete hits
+  `ON CONFLICT ... DO NOTHING` and is SILENTLY swallowed — `RowsAffected` is 0, which
+  `ClaimCampaignDispatch` reads back as "already claimed". Verified on PostgreSQL 16.10:
+  with the drop deferred the re-dispatch INSERT returns `INSERT 0 0`; after the drop the
+  same statement succeeds while a second LIVE claim is still rejected. So staging the drop
+  would ship a delete endpoint whose entire purpose — freeing the slot — does not work, and
+  fails silently rather than loudly.
+
+  The genuine hazard staging was meant to address is real, though: the PREVIOUS release's
+  bare `ON CONFLICT (brief_id, platform)` matches no index once the constraint is gone and
+  errors on every dispatch claim (verified: works while the constraint exists, fails with
+  "there is no unique or exclusion constraint matching the ON CONFLICT specification" after
+  the drop). Since migrations run at pod boot against a shared database, Kubernetes' default
+  `RollingUpdate` — which surges the new pod BEFORE terminating the old one — would put the
+  migrated schema under the old code. The chart therefore pins `strategy.type: Recreate`, so
+  the old pod is gone before the new one migrates. Pinned by
+  `TestDeploymentUsesRecreateStrategy`; `replicaCount` is 1, so nothing is lost by dropping
+  the surge.
+
   **Consequence for every `ON CONFLICT (brief_id, platform)`**: PostgreSQL infers the
   arbiter index by matching the conflict target AND its predicate, so once the full
   constraint is gone a BARE conflict target matches no index and fails at runtime with

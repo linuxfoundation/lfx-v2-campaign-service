@@ -2,6 +2,26 @@
 
 ## 2026-08-04
 
+**Fix** — Pinned `strategy.type: Recreate` on the Deployment, closing the rolling-deploy window
+that `000014`'s `DROP CONSTRAINT` opens.
+
+The review asked for expand/contract staging — deploy the replacement index everywhere, drop the
+old constraint in a later release. Tested rather than assumed, and it is the wrong remedy here:
+with the drop deferred the old full constraint still covers soft-deleted rows, so a re-dispatch
+after a delete hits `ON CONFLICT ... DO NOTHING` and is SILENTLY swallowed (`INSERT 0 0`, which
+`ClaimCampaignDispatch` reads back as "already claimed"). Staging would ship a delete endpoint
+whose entire purpose — freeing the slot — does not work, and fails quietly. `000013` and `000014`
+are inseparable.
+
+The hazard staging targeted is nonetheless real: verified on PostgreSQL 16.10 that the previous
+release's bare `ON CONFLICT (brief_id, platform)` succeeds while the constraint exists and fails
+with "there is no unique or exclusion constraint matching the ON CONFLICT specification" once it
+is dropped. Because migrations run at pod boot against a shared database, the default
+`RollingUpdate` (which surges the new pod before terminating the old) would put the migrated
+schema under the old code. `Recreate` orders it the other way. `replicaCount` is 1, so the surge
+bought no availability anyway, and `/readyz` already gates traffic until migrations finish. Pinned
+by `TestDeploymentUsesRecreateStrategy`, verified by reverting the strategy.
+
 **Fix** — Renumbered this branch's migrations `000014`/`000015` → `000013`/`000014`. They had
 been numbered above versions that are still unmerged in sibling PRs, and `000015` COLLIDED
 outright with `000015_index_outbox_lease` on the query-service-indexing branch.
