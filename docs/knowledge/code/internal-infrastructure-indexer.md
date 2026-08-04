@@ -83,10 +83,20 @@ transaction as its resource, so it commits if and only if the resource does. `in
 drains it every 15s and at startup — the likeliest reason rows are pending is that this pod's
 predecessor died mid-publish.
 
+- **No credential is ever stored.** The row carries an EMPTY authorization header and the relay
+  stamps a service credential (`INDEXER_SERVICE_TOKEN`) at publish time. The table is JSONB
+  retained for audit with no pruning, so writing the caller's JWT would persist a live
+  credential indefinitely.
+- **A publisher that did not send must not retire rows.** `Noop.PublishRaw` therefore reports
+  FAILURE — otherwise a pod started with indexing disabled would silently drain every pending
+  message as delivered, permanently defeating recovery for messages that never left the process.
 - The payload is FROZEN at write time. The relay never re-derives it, so a later contract
   change cannot alter the meaning of a message enqueued under the old one.
 - A publish that succeeds but fails to retire its row REPUBLISHES next pass. Safe: the indexer
   overwrites by object id, so a duplicate is a no-op — the right trade against dropping it.
+- The stamp decodes into a MAP, not a `Transaction`: `objectType` is unexported and never
+  serialized (the indexer derives it from the subject), so a struct round-trip would silently
+  lose it. The relay routes from the outbox ROW instead.
 - `PublishRaw` takes the same per-object lock as `Publish`, so a replayed message cannot
   interleave with a live one for the same resource.
 - Wired for **archiving a brief** — the terminal write with no "next write" to repair it, which

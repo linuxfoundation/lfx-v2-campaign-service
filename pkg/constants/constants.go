@@ -17,6 +17,10 @@ const (
 	// only the search index stops being fed (the Query Service rebuilds a resource's
 	// document on its next write).
 	EnvNATSURL = "NATS_URL"
+	// EnvIndexerServiceToken is the SERVICE credential the index relay stamps onto replayed
+	// messages. Optional: with it unset the relay leaves rows pending rather than publishing
+	// messages the indexer would reject for a missing authorization header.
+	EnvIndexerServiceToken = "INDEXER_SERVICE_TOKEN"
 	// EnvDatabaseURL is an optional PostgreSQL connection string (DSN).
 	// Prefer composing from PG* variables when running in-cluster.
 	EnvDatabaseURL = "DATABASE_URL"

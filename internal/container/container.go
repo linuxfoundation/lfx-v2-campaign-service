@@ -78,6 +78,11 @@ func (notReady) Ready(context.Context) bool { return false }
 // the drain window is trimmed to keep the total within DefaultShutdownTimeout. Trimmed
 // again (6s -> 4s) when indexer.DrainTimeout joined ContainerCloseTimeout, so the HTTP phase
 // keeps a positive budget rather than the total overrunning.
+// relayStopTimeout bounds the wait for the index relay's in-flight pass at shutdown. Small
+// deliberately: this precedes the dispatch drain, and abandoning a pass is safe because
+// unpublished rows stay pending for the next process — that is what the outbox is for.
+const relayStopTimeout = 250 * time.Millisecond
+
 const dispatchDrainTimeout = 4 * time.Second
 
 // ContainerCloseTimeout is the wall-clock budget for Container.Close: the
@@ -375,7 +380,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// Drain the index outbox: rows co-committed with their resource whose publish never
 	// landed. Without this a dropped message is lost, and a terminal write (archiving a
 	// brief) has no later write to repair the index.
-	c.indexRelay = indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher())
+	c.indexRelay = indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken)
 	c.indexRelay.Start()
 
 	// The health service's readiness depends on the database pool (Readyz).
@@ -430,7 +435,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			orch.StartRecoverySweeper()
 
 			// Same relay as the fast path (see wireLiveBackends).
-			c.indexRelay = indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher())
+			c.indexRelay = indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken)
 			c.indexRelay.Start()
 			// Flip readiness LAST, so /readyz only reports healthy after the brief
 			// service is fully wired (avoids a window where /readyz is OK but brief
@@ -547,6 +552,12 @@ func (c *Container) Close(ctx context.Context) error {
 	// Stop the background DB-init goroutine first (if the container booted in 503
 	// mode and is still retrying), and wait for it to exit so it can't open/swap a
 	// pool after we've decided to shut down.
+	// Stop the index relay first: it reads the outbox, so an in-flight pass must not outlive
+	// the pool. Bounded — abandoning a pass is safe because unpublished rows stay pending and
+	// the next process drains them, which is exactly what the outbox is for.
+	if c.indexRelay != nil {
+		c.indexRelay.Stop(relayStopTimeout)
+	}
 	if c.cancelInit != nil {
 		c.cancelInit()
 		<-c.initDone

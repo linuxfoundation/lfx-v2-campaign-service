@@ -5,6 +5,8 @@ package indexer
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -44,15 +46,21 @@ const relayPassTimeout = 30 * time.Second
 type Relay struct {
 	outbox OutboxReader
 	pub    RawPublisher
+	// authorization is the SERVICE credential injected at publish time. Outbox rows
+	// deliberately store no token: the table is JSONB retained for audit with no pruning, so a
+	// per-request JWT written there would persist as a live credential indefinitely.
+	authorization string
 
 	cancel context.CancelFunc
 	done   chan struct{}
 	once   sync.Once
 }
 
-// NewRelay constructs a Relay.
-func NewRelay(outbox OutboxReader, pub RawPublisher) *Relay {
-	return &Relay{outbox: outbox, pub: pub}
+// NewRelay constructs a Relay. authorization is the service credential stamped onto every
+// replayed message; the indexer REQUIRES a non-empty authorization header and drops messages
+// without one.
+func NewRelay(outbox OutboxReader, pub RawPublisher, authorization string) *Relay {
+	return &Relay{outbox: outbox, pub: pub, authorization: authorization}
 }
 
 // Start begins draining in the background. Safe to call once; Stop ends it.
@@ -97,6 +105,33 @@ func (r *Relay) Stop(wait time.Duration) {
 	})
 }
 
+// stamp injects the service credential into a stored payload. The stored message deliberately
+// carries no authorization (see Relay.authorization), and the indexer drops any message whose
+// header is missing or empty.
+func (r *Relay) stamp(payload []byte) ([]byte, error) {
+	// Decode into a MAP, not a Transaction. objectType is unexported and never serialized (the
+	// indexer derives it from the subject), so a Transaction round-trip silently loses it — and
+	// anything later reading ObjectType() off the result would route to "lfx.index.". The relay
+	// routes from the outbox ROW instead, and a map keeps every other field byte-identical
+	// including any the struct does not model.
+	var msg map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		return nil, fmt.Errorf("indexer: unparseable outbox payload: %w", err)
+	}
+	headers := map[string]string{}
+	if raw, ok := msg["headers"]; ok {
+		// A malformed headers value is not fatal: replace it rather than dropping the message.
+		_ = json.Unmarshal(raw, &headers)
+	}
+	headers[authorizationHeader] = r.authorization
+	encoded, err := json.Marshal(headers)
+	if err != nil {
+		return nil, fmt.Errorf("indexer: encode outbox headers: %w", err)
+	}
+	msg["headers"] = encoded
+	return json.Marshal(msg)
+}
+
 // drain publishes one batch of pending messages.
 func (r *Relay) drain(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, relayPassTimeout)
@@ -121,7 +156,17 @@ func (r *Relay) drain(parent context.Context) {
 		if ctx.Err() != nil {
 			break
 		}
-		if perr := r.pub.PublishRaw(ctx, Subject(m.ObjectType), m.ObjectID, m.Payload); perr != nil {
+		payload, aerr := r.stamp(m.Payload)
+		if aerr != nil {
+			// A row we cannot parse can never be published; record it so it is visible rather
+			// than retried silently forever.
+			if rerr := r.outbox.RecordIndexMessageFailure(ctx, m.ID, aerr.Error()); rerr != nil {
+				slog.ErrorContext(ctx, "index relay could not record an unparseable outbox row",
+					"outbox_id", m.ID, "error", rerr)
+			}
+			continue
+		}
+		if perr := r.pub.PublishRaw(ctx, Subject(m.ObjectType), m.ObjectID, payload); perr != nil {
 			if rerr := r.outbox.RecordIndexMessageFailure(ctx, m.ID, perr.Error()); rerr != nil {
 				slog.ErrorContext(ctx, "index relay could not record a publish failure",
 					"outbox_id", m.ID, "error", rerr)

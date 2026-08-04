@@ -190,10 +190,14 @@ func (p *NATSPublisher) PublishRaw(ctx context.Context, subject, objectID string
 	return nil
 }
 
-// PublishRaw on a Noop reports success: with indexing disabled there is nothing to deliver, and
-// returning an error would make the relay retry forever against a publisher that will never
-// send anything.
-func (Noop) PublishRaw(context.Context, string, string, []byte) error { return nil }
+// PublishRaw on a Noop reports FAILURE. Nothing was sent, so reporting success would let the
+// relay retire the row as delivered — and a pod started with indexing disabled or misconfigured
+// would then silently drain every pending message, permanently defeating outbox recovery for
+// messages that were never published at all.
+//
+// Leaving them pending is the correct outcome: a later process with a working publisher drains
+// them. The relay records the failure rather than spinning silently.
+func (Noop) PublishRaw(context.Context, string, string, []byte) error { return errNoConnection }
 
 // errNoConnection is returned by PublishRaw when the publisher has no connection, so the relay
 // leaves the row pending rather than retiring an undelivered message.

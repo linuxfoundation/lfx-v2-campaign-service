@@ -343,11 +343,14 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// The index message is built INSIDE the archive transaction and co-committed to the
 	// outbox, so a dropped publish is recoverable by the relay. Archiving is terminal: without
 	// this, one lost message leaves the brief searchable forever.
-	bearer := deref(p.BearerToken)
 	b, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, func(archived *model.CampaignBrief) ([]byte, error) {
+		// NO bearer token in the stored payload. The outbox row is JSONB retained for audit
+		// with no pruning, so serializing the caller's JWT would persist a live credential
+		// indefinitely. The relay injects a service credential at PUBLISH time instead
+		// (the relay stamps the header from INDEXER_SERVICE_TOKEN).
 		return json.Marshal(indexer.NewTransaction(
 			indexer.ActionDeleted, indexer.ObjectTypeBrief,
-			archived.ID, archived.ProjectID, bearer,
+			archived.ID, archived.ProjectID, "",
 			briefDoc(briefResult(archived)), archived.EventSlug,
 		))
 	})

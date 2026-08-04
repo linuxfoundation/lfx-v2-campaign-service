@@ -31,6 +31,12 @@ type Config struct {
 	// disables indexing without affecting any other capability.
 	NATSUrl string
 
+	// IndexerServiceToken is the SERVICE credential the index relay stamps onto replayed
+	// messages. Outbox rows store no token — the table is retained for audit, so a per-request
+	// JWT written there would persist as a live credential — and the indexer requires a
+	// non-empty authorization header on every message.
+	IndexerServiceToken string
+
 	// DatabaseURL is the PostgreSQL DSN. Empty disables the database layer
 	// (e.g. for tests or a metadata-only run). Prefer composing from PG*
 	// fields via loadDatabaseFromEnv so the password is not interpolated by Helm.
@@ -85,6 +91,7 @@ func LoadConfig() *Config {
 		// collapses unset and empty into the default).
 		NATSUrl: envOrDefaultUnlessSet(constants.EnvNATSURL, constants.DefaultNATSURL),
 
+		IndexerServiceToken:     os.Getenv(constants.EnvIndexerServiceToken),
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
 		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),
 	}
