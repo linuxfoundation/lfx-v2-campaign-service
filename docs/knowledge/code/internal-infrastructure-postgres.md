@@ -65,3 +65,42 @@ applied file.
   source of truth for all writers.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).
+
+## ReconciliationRepo
+
+`ReconciliationRepo` backs the operator-reconciliation endpoints.
+
+`ListReconciliationItems` classifies non-settled campaign rows IN SQL, next to the
+predicates the classification derives from. A row is a releasable BARE claim only when it
+is `pending` AND has no `platform_campaign_id` AND no `result` — that combination is the
+service's own definition of "carries no evidence of an upstream create" (the orchestrator
+persists `Result` precisely so an ambiguous create is not mistaken for a bare claim).
+Everything else non-settled is an `unconfirmed_campaign`, never releasable. Settled
+statuses (`created`, `created_degraded`, and the run states) are excluded: a degraded
+campaign genuinely exists upstream and a re-dispatch cannot repair it, so it is not an
+operator action item. `campaign_audiences` rows left `building` are reported alongside.
+
+`ReleaseDispatchClaimByID` is the safety-critical path. It re-verifies EVERY precondition
+inside ONE transaction under `SELECT … FOR UPDATE`: still `pending`, still no upstream id
+and no result blob, still matching the operator's `expectedVersion`, and still older than
+`minAge`.
+
+A plain guarded `DELETE` is NOT sufficient, and this was verified against a real database
+rather than by inspection. A claim can be legitimately RE-CLAIMED by a new dispatch
+between the operator's read and their write, which bumps `version` and resets
+`created_at`; a status-only guard deletes that LIVE claim, freeing the pair while a
+provider call is in flight so a concurrent dispatch double-creates a paid campaign. The
+version gate refuses it. The age floor is the backstop for the case the version gate
+cannot see: a claim DELETEd and re-INSERTed restarts at version 1, which can coincide with
+the observed version — but a fresh row is young.
+
+`partialOrphanStatuses` duplicates the literals from `internal/service` (which imports
+this package, so a real import would cycle). `TestPartialOrphanStatusesMatchService` is
+what keeps them from drifting: an omitted status here would classify a partial orphan as a
+releasable bare claim, the exact mistake that authorizes a duplicate paid campaign.
+
+The reconciliation SQL is exercised against a REAL PostgreSQL instance in
+`reconciliation_repo_livedb_test.go`, which skips unless `RECON_TEST_DATABASE_URL` is set.
+FOR UPDATE locking and READ COMMITTED snapshot semantics cannot be reproduced by a mock,
+so a fake-repo test asserting on query strings would pass against a query that deletes
+live claims.

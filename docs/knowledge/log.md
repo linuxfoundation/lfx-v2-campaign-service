@@ -1,5 +1,60 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Gave operators an API for the states this service deliberately leaves to a
+human (operator reconciliation). Three ambiguous states were modelled precisely and left
+unresolved on purpose — a stranded dispatch claim, an UNCONFIRMED campaign create, a
+partial audience build — because each sits between "a paid campaign exists upstream" and
+"it does not", and deciding wrongly creates a DUPLICATE PAID CAMPAIGN. The reasoning was
+sound; what was missing was any way for the human to ACT. The only record was a log line,
+which rotates away, so the state was discovered when someone reported a campaign not
+dispatching.
+
+`GET /projects/{projectId}/reconciliation` is a read-only inventory: stranded claims with
+age, unconfirmed campaigns, partial audiences, each carrying an explicit `resolvable`
+verdict and a `detail` saying what to verify upstream. Bounded, with an honest total so
+truncation is visible, and floored above `providerCallTimeout` so a healthy in-flight
+dispatch is never reported as stuck.
+
+Exactly ONE write is offered: releasing a claim that carries no evidence of an upstream
+create. Deliberately NOT automated — adopting an UNCONFIRMED campaign (the existing
+If-Match-gated `PUT .../campaigns/{id}` already records a verified id, so a second write
+path would duplicate it with weaker guarantees), reconciling a partial audience, and any
+time-based takeover. This complements PR #59, which made stranded claims VISIBLE and
+documented why its `ON CONFLICT DO UPDATE` auto-reclaim was reverted as unsafe; that
+reasoning is unchanged here — nothing acts on a timer, only on an operator's assertion.
+
+**The naive guard is wrong, and this was verified against a real database rather than
+argued.** A claim can be legitimately RE-CLAIMED by a new dispatch between the operator's
+read and their write, which bumps `version` and resets `created_at`. A status-only guarded
+`DELETE` deletes that LIVE claim (reproduced on a live PostgreSQL: `DELETE 1`), freeing
+the pair while a provider call is in flight so a concurrent dispatch double-creates. The
+release therefore re-checks every precondition inside one transaction under
+`SELECT … FOR UPDATE` and is gated on `If-Match`. Worth recording that a single guarded
+DELETE is safer than it first appears — Postgres re-evaluates the predicate after waiting
+on a concurrent writer's row lock — but that only covers a writer holding the lock the
+whole time, which a dispatch (which commits its claim, then calls the provider for
+minutes) does not.
+
+`ClaimReleaseFloor` (15m) is DERIVED from `providerCallTimeout` (2m) +
+`persistResultTimeout` (5s), the real bound on a live dispatch, not guessed;
+`TestClaimReleaseFloorExceedsDispatchBound` pins it. It backstops the case the version
+gate cannot see: a claim deleted and re-inserted restarts at version 1, which can coincide
+with the observed version — but a fresh row is young.
+
+Also added the first live-database test harness in the repo
+(`reconciliation_repo_livedb_test.go`, skipped unless `RECON_TEST_DATABASE_URL` is set).
+FOR UPDATE and READ COMMITTED semantics cannot be mocked, and a fake-repo test asserting
+on query strings would pass against a query that deletes live claims. Every guard was
+revert-verified: removing the version gate, the age floor, the evidence check, or the
+project scoping each fails a specific test with the right diagnostic.
+
+No migration was needed — the classification derives from existing columns.
+`/reconciliation` is a flat project-scoped path so it needed BOTH the HTTPRoute regex and
+the Heimdall RuleSet (an unruled path is default-denied, i.e. unreachable); the release
+action nests under `/briefs/**` and inherits the existing wiring.
+
 ## 2026-08-03
 
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the

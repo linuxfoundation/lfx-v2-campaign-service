@@ -18,10 +18,12 @@ import (
 	audiencesvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audiences/server"
 	briefsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
+	reconsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_reconciliation/server"
 	svcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/server"
 	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	reconsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_reconciliation"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/container"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -68,8 +70,12 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("container misconfigured: Audiences service is nil")
 	}
 	audienceEndpoints := audiencesvc.NewEndpoints(cont.Audiences)
+	if cont.Reconcile == nil {
+		return fmt.Errorf("container misconfigured: Reconcile service is nil")
+	}
+	reconEndpoints := reconsvc.NewEndpoints(cont.Reconcile)
 
-	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, cont)
+	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, reconEndpoints, cont)
 }
 
 // buildMux constructs the Goa muxer and mounts the campaign, connection, and
@@ -77,7 +83,7 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 // actually reachable (the bug this fixes — routes that compile but are never
 // mounted return 404) without standing up a full server. It returns an error
 // only for a programmer-level mis-wiring (nil endpoints).
-func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints) (goahttp.Muxer, error) {
+func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, reconEndpoints *reconsvc.Endpoints) (goahttp.Muxer, error) {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
@@ -129,11 +135,17 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
 	audiencesvcsvr.Mount(mux, audienceServer)
 
+	if reconEndpoints == nil {
+		return nil, fmt.Errorf("buildMux: reconEndpoints is nil (reconciliation routes would be unmounted)")
+	}
+	reconServer := reconsvcsvr.New(reconEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	reconsvcsvr.Mount(mux, reconServer)
+
 	return mux, nil
 }
 
-func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, cont *container.Container) error {
-	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints)
+func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, reconEndpoints *reconsvc.Endpoints, cont *container.Container) error {
+	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, reconEndpoints)
 	if err != nil {
 		return err
 	}

@@ -13,6 +13,7 @@ import (
 	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	reconsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_reconciliation"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
@@ -33,8 +34,9 @@ func TestConnectionRoutesAreMounted(t *testing.T) {
 	connEndpoints := connsvc.NewEndpoints(service.NewConnectionService(nil, nil))
 	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
+	reconEndpoints := reconsvc.NewEndpoints(service.NewReconciliationService(nil))
 
-	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints)
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, reconEndpoints)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}
@@ -48,6 +50,8 @@ func TestConnectionRoutesAreMounted(t *testing.T) {
 		{"connection google-ads create", http.MethodPost, "/projects/proj-123/connection-google-ads"},
 		{"brief create", http.MethodPost, "/projects/proj-123/briefs"},
 		{"audience list", http.MethodGet, "/projects/proj-123/briefs/brief-1/audiences"},
+		{"reconciliation report", http.MethodGet, "/projects/proj-123/reconciliation"},
+		{"release dispatch claim", http.MethodPost, "/projects/proj-123/briefs/brief-1/campaigns/camp-1/release-claim"},
 		{"campaign health livez", http.MethodGet, "/livez"},
 	}
 	for _, tc := range cases {
@@ -71,14 +75,18 @@ func TestBuildMuxNilEndpointsFailsLoud(t *testing.T) {
 	connEndpoints := connsvc.NewEndpoints(service.NewConnectionService(nil, nil))
 	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
+	reconEndpoints := reconsvc.NewEndpoints(service.NewReconciliationService(nil))
 
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, nil, briefEndpoints, audienceEndpoints); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, nil, briefEndpoints, audienceEndpoints, reconEndpoints); err == nil {
 		t.Error("expected buildMux to fail loudly when connEndpoints is nil, got nil error")
 	}
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, nil, audienceEndpoints); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, nil, audienceEndpoints, reconEndpoints); err == nil {
 		t.Error("expected buildMux to fail loudly when briefEndpoints is nil, got nil error")
 	}
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, nil); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, nil, reconEndpoints); err == nil {
 		t.Error("expected buildMux to fail loudly when audienceEndpoints is nil, got nil error")
+	}
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, nil); err == nil {
+		t.Error("expected buildMux to fail loudly when reconEndpoints is nil, got nil error")
 	}
 }

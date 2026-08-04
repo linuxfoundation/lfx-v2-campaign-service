@@ -63,6 +63,27 @@ Because these paths nest under `/briefs/{briefId}/`, they inherit the gateway wi
 | GET | `/projects/{projectId}/briefs/{briefId}/audiences` | `campaign_manager` | JSON | List a brief's audiences (newest first). |
 | PATCH | `/projects/{projectId}/briefs/{briefId}/audiences/{audienceId}` | `campaign_manager` | JSON | Partially update an audience (load-then-merge; requires `If-Match`). |
 
+### Operator Reconciliation (Recovery Phase)
+
+The service deliberately models several **ambiguous** states and leaves each one for a human, because the ambiguity is between "a paid campaign exists upstream" and "it does not" — and resolving that wrongly creates a **duplicate paid campaign**. Until these endpoints, the only record of such a state was a log line, which rotates away.
+
+Three states are surfaced:
+
+- **Stranded dispatch claims** — a pod dying mid-dispatch leaves a `pending` campaigns row. Because the claim is `ON CONFLICT (brief_id, platform)`, that row silently **blocks every future dispatch for the pair**.
+- **UNCONFIRMED campaign creates** — a provider call failed after possibly creating an upstream campaign, so the orchestrator retains the claim and records the partial (an upstream id and/or a `result` reconcile blob, and/or a `unconfirmed`/`group_created` status).
+- **Partial audience builds** — a build stopped after creating some HubSpot lists; the row stays `building`.
+
+**What is deliberately NOT automated.** Only one action is offered: releasing a claim that carries **no evidence** of an upstream create. Everything else is read-only. Adopting an UNCONFIRMED campaign, reconciling a partial audience, and any time-based auto-takeover are all out of scope — the service cannot verify what exists on the ad platform, and a plausible guess here spends real money. (An operator who has verified an upstream id records it through the existing `PUT .../campaigns/{id}`, which is already `If-Match` gated.)
+
+**How the release is made safe.** It requires `If-Match` carrying the version observed in the report, an explicit `verified_absent=true` assertion from the operator, and it re-checks every precondition inside one transaction under `SELECT … FOR UPDATE`. A claim can be legitimately **re-claimed** by a new dispatch between the report and the release, which bumps `version` and resets `created_at`; a status-only guarded `DELETE` would delete that live claim (verified against a real database) and let a concurrent dispatch double-create. An age floor (well above the orchestrator's `providerCallTimeout` + persist window) backstops the case where a claim was deleted and re-inserted, restarting `version` at 1.
+
+`GET /projects/{projectId}/reconciliation` is a flat project-scoped path, so it carries its own HTTPRoute alternative and Heimdall rule entry. The release action nests under `/briefs/**` and therefore inherits the existing briefs route/rule wiring.
+
+| Method | Path | FGA relation | Type | Description |
+|--------|------|--------------|------|-------------|
+| GET | `/projects/{projectId}/reconciliation` | `campaign_manager` | JSON | Inventory of everything needing operator attention (stranded claims with age, UNCONFIRMED campaigns, partial audiences). Read-only. Each item carries `resolvable` and a `detail` stating what must be verified upstream. |
+| POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaignId}/release-claim` | `campaign_manager` | JSON | Release a **stranded bare** claim, unblocking the pair. Requires `If-Match` and `verified_absent=true`. Returns `409` when the claim carries evidence of an upstream create, is no longer pending, or is too recent; `412` when it changed since the report. |
+
 ### Monitoring (Insights Phase)
 
 Metrics are read-through from the ad platforms, scoped by project. There are no per-platform root paths; the provider is a path segment under the project. Because a connection is singleton per project, `/{provider}/metrics` unambiguously means "metrics for **this project's** account on that provider" — there is no per-connection or per-campaign metrics path (a campaign's metrics are a row inside the provider response, keyed by `campaignId`).

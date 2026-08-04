@@ -23,6 +23,33 @@ gated on `If-Match` (same strong-validator parsing as briefs); the ETag mirrors 
 row version. Like the other services it late-binds via `SetBackend` after a
 cold-start DB retry and returns a typed `503` (routes mounted) when no repo is wired.
 
+`ReconciliationService` implements the operator-reconciliation endpoints. The service
+deliberately models several AMBIGUOUS states and leaves each for a human — a stranded
+dispatch claim, an UNCONFIRMED campaign create, a partial audience build — because the
+ambiguity is between "a paid campaign exists upstream" and "it does not", and resolving
+that wrongly creates a DUPLICATE PAID CAMPAIGN. Before these endpoints the only record was
+a log line, which rotates away.
+
+`GetReconciliation` is a read-only project-scoped inventory. Every item carries an
+explicit `resolvable` verdict plus a `detail` stating what the operator must verify
+upstream. It is bounded (`reconcileItemLimit`) and reports the true total so truncation is
+visible rather than silent, and it only lists rows older than `reconcileReportMinAge`,
+which sits ABOVE the orchestrator's `providerCallTimeout` so a healthy in-flight dispatch
+is never presented as stuck.
+
+`ReleaseDispatchClaim` is the ONLY write, and is deliberately narrow: it releases a claim
+that carries NO evidence of an upstream create (no `platform_campaign_id`, no `result`
+blob, still `pending`). It refuses unless the operator asserts `verified_absent=true` —
+the service cannot check the ad platform, so that judgement must stay explicit and is
+enforced BEFORE the repository is reached. `model.ClaimReleaseFloor` (15m) is DERIVED from
+`providerCallTimeout` + `persistResultTimeout` (~2m5s, the real bound on a live dispatch)
+rather than guessed; `TestClaimReleaseFloorExceedsDispatchBound` pins the relationship,
+because a floor at or below that bound would let the API release a claim whose provider
+call is still running. Adopting an UNCONFIRMED campaign is NOT offered: an operator who
+verified an upstream id records it through the existing `If-Match` gated
+`PUT .../campaigns/{id}`, so a second write path would duplicate that surface with weaker
+guarantees.
+
 `BriefService` implements brief CRUD and campaign endpoints. Campaign creation
 (`CreateCampaigns`) requires an approved brief, rejects empty and duplicate
 platform sets (a duplicate would create two paid upstream campaigns), then hands

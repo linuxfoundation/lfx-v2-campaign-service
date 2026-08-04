@@ -105,6 +105,11 @@ spec:
           - path: /projects/:projectId/briefs/**
           - path: /projects/:projectId/jobs
           - path: /projects/:projectId/jobs/**
+          # Operator reconciliation inventory. A single flat path (no sub-paths):
+          # the only WRITE action lives under /briefs/** (release-claim on a
+          # campaign), so it is already routed and authorized by the briefs entries
+          # above and deliberately gets no entry of its own here.
+          - path: /projects/:projectId/reconciliation
           # Per-provider metrics (providers per the api-catalog: google/linkedin/
           # meta/reddit/twitter — microsoft-ads is not yet a metrics provider).
           - path: /projects/:projectId/google-ads/metrics
