@@ -370,11 +370,12 @@ func TestBuildAudience_SendsAYearFreeSearchTerm(t *testing.T) {
 func TestEventFamily(t *testing.T) {
 	cases := []struct{ name, detailYear, wantFamily, wantYear string }{
 		{"KubeCon Korea 2026", "2026", "KubeCon Korea", "2026"},
-		{"KubeCon Korea 2026", "", "KubeCon Korea", "2026"},    // derived from the name
-		{"KubeCon Korea 2026", "bad", "KubeCon Korea", "2026"}, // malformed detail year ignored
-		{"Open Summit", "2027", "Open Summit", "2027"},         // year not in the name
-		{"Open Summit", "", "Open Summit", ""},                 // no year anywhere: degrade
-		{"2026", "2026", "2026", "2026"},                       // stripping would empty it
+		{"KubeCon Korea 2026", "", "KubeCon Korea", "2026"},     // derived from the name
+		{"KubeCon Korea 2026", "bad", "KubeCon Korea", "2026"},  // malformed detail year ignored
+		{"KubeCon Korea 2026", "2025", "KubeCon Korea", "2026"}, // STALE detail year loses to the name
+		{"Open Summit", "2027", "Open Summit", "2027"},          // year not in the name
+		{"Open Summit", "", "Open Summit", ""},                  // no year anywhere: degrade
+		{"2026", "2026", "2026", "2026"},                        // stripping would empty it
 	}
 	for _, c := range cases {
 		f, y := eventFamily(c.name, c.detailYear)

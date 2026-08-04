@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
@@ -46,6 +47,11 @@ type AudienceBuilder interface {
 	// long-lived cache would pin a credential that has since been rotated or revoked.
 	BeginBuild(ctx context.Context) context.Context
 }
+
+// audiencePersistTimeout bounds the post-create writes, which run on a context detached from
+// the request so a disconnect cannot orphan HubSpot lists that already exist. Short: these are
+// single-row updates, and the ceiling only bounds a pathological hang.
+const audiencePersistTimeout = 10 * time.Second
 
 // errUnconfirmedCreate marks a create whose outcome is genuinely UNKNOWN — a 2xx carrying no
 // list id. It is a SENTINEL rather than a message convention because the failed-vs-building
@@ -221,7 +227,11 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		if len(ids) == 0 && !hubspot.IsUnconfirmed(buildErr) && !errors.Is(buildErr, errUnconfirmedCreate) {
 			created.Status = model.AudienceFailed
 		}
-		if _, uerr := repo.UpdateAudience(ctx, created, created.Version); uerr != nil {
+		// Detached for the same reason as the success path below: lists may exist upstream and
+		// this row is the only record of them.
+		partialCtx, cancelPartial := context.WithTimeout(context.WithoutCancel(ctx), audiencePersistTimeout)
+		defer cancelPartial()
+		if _, uerr := repo.UpdateAudience(partialCtx, created, created.Version); uerr != nil {
 			slog.ErrorContext(ctx, "failed to record a partial audience build",
 				"audience_id", created.ID, "created_lists", strings.Join(ids, ","), "error", uerr)
 		}
@@ -236,7 +246,15 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, audienceValidationErr(verr)
 	}
 
-	updated, uerr := repo.UpdateAudience(ctx, created, created.Version)
+	// DETACHED context: the HubSpot master and inclusion lists already exist upstream, so a
+	// client disconnect between the final create and this write would make pgx skip it and
+	// leave a real master list orphaned with the row still 'building' — a build that succeeded
+	// on the platform and looks failed in the database. Same reasoning as the orchestrator's
+	// post-create persist. Bounded so it cannot hang shutdown.
+	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), audiencePersistTimeout)
+	defer cancelPersist()
+
+	updated, uerr := repo.UpdateAudience(persistCtx, created, created.Version)
 	if uerr != nil {
 		// The lists EXIST upstream but the row does not reflect them. Log the ids so the
 		// portal state can be reconciled by hand rather than orphaned silently.
@@ -314,9 +332,18 @@ func createPlanLists(ctx context.Context, b AudienceBuilder, projectID string, p
 // returned unchanged with an empty year — the builder then resolves no editions rather than
 // guessing, since a wrong year excludes the wrong edition.
 func eventFamily(eventName, detailYear string) (family, year string) {
-	year = strings.TrimSpace(detailYear)
+	// The NAME wins when it carries a year. The name is what the search term is built from, so
+	// a detail year that disagrees with it is self-defeating: for "KubeCon Korea 2026" with a
+	// stale year=2025, the query keeps 2026 in the term while excluding 2025 — returning the
+	// CURRENT edition as a past one and building an audience from people already registered.
+	// The details field can go stale independently (it is edited by hand); the year embedded in
+	// the name cannot disagree with the name.
+	year = yearInName(eventName)
+	if year == "" {
+		year = strings.TrimSpace(detailYear)
+	}
 	if !isFourDigitYear(year) {
-		year = yearInName(eventName)
+		year = ""
 	}
 	if year == "" {
 		return strings.TrimSpace(eventName), ""

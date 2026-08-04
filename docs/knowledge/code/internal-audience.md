@@ -65,6 +65,23 @@ earlier cut recorded the FIRST inclusion list as the master — groups 5 and 7 w
 in the portal and never emailed, a build reporting success while reaching a fraction of the
 intended people.
 
+## Post-create writes are detached
+
+Once the HubSpot lists exist, the row recording them is written on a context DETACHED from the
+request. A client disconnect between the final create and that write would make pgx skip it,
+orphaning a real master list while the row still reads `building` — a build that succeeded on
+the platform and looks failed in the database. Same reasoning as the orchestrator's post-create
+persist, bounded so it cannot hang shutdown.
+
+## The event NAME decides the edition year
+
+`eventFamily` takes the year from the event name when it has one, and only falls back to the
+brief's `year` detail. A detail year that disagrees with the name is self-defeating: for
+"KubeCon Korea 2026" with a stale `year=2025`, the warehouse query keeps 2026 in the search term
+while excluding 2025, so the CURRENT edition comes back as a "past" one and the audience is
+built from people who already registered. The details field is hand-edited and can go stale; the
+year inside the name cannot disagree with the name.
+
 ## Only approved briefs
 
 Building creates real HubSpot lists and makes a brief sendable, so `BuildAudience` applies the
