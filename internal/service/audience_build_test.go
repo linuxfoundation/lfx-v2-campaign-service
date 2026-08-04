@@ -274,6 +274,54 @@ func TestBuildAudience_UnpersistedPartialReturnsTheListIDs(t *testing.T) {
 			"the created lists — which is why the error must carry them instead")
 }
 
+// TestBuildAudience_UnpersistedSuccessReturnsTheListIDs pins the WORST version of the
+// unrecorded-lists problem: the build fully SUCCEEDED upstream and only the write failed.
+//
+// This path is strictly worse than the partial one. Every inclusion list exists AND so does the
+// MASTER, so a blind retry duplicates the entire set rather than part of it. It also had no
+// safety net: mapAudienceErr has no case for a database error, so a pgx failure fell through to
+// `default:` and returned a bare "an internal server error occurred" carrying nothing at all.
+// The ids existed only in a slog line the caller deciding whether to retry cannot see.
+func TestBuildAudience_UnpersistedSuccessReturnsTheListIDs(t *testing.T) {
+	b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}} // no createErr: the build succeeds
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+	arepo.updateE = errors.New("pq: connection reset by peer")
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	var ise *audiences.InternalServerError
+	require.ErrorAs(t, err, &ise)
+
+	created := b.names()
+	require.Len(t, created, 4, "fixture precondition: three inclusion lists plus the master")
+	masterID := "list-" + created[3]
+	inclusionID := "list-" + created[0]
+
+	assert.Contains(t, ise.Message, masterID,
+		"the MASTER exists upstream and is the list the dispatcher sends to; without its id in "+
+			"the response the operator cannot reconcile it and a retry duplicates it")
+	assert.Contains(t, ise.Message, inclusionID,
+		"every inclusion list that exists must be reconcilable too")
+	assert.Contains(t, ise.Message, "reconciled before retrying")
+	assert.NotEqual(t, "an internal server error occurred", ise.Message,
+		"a DB error must not fall through to the generic 500 that carries no ids")
+
+	// The master must be named exactly once: createPlanLists already returns it as the last
+	// element of ids, so a naive append would list it twice and read like two orphans.
+	assert.Equal(t, 1, strings.Count(ise.Message, masterID),
+		"the master id must appear once, not be duplicated by re-appending it to ids")
+
+	// Precondition: the write really was rejected, so the row never got the summary. (The fake
+	// stores rows by pointer, so assert on Version, which only advances on a completed update.)
+	rows := arepo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, int64(1), rows[0].Version,
+		"precondition: the update was rejected, so the persisted row records none of these lists")
+}
+
 // TestBuildAudience_AmbiguousUpstreamSaysUnconfirmed pins that EVERY ambiguous outcome says so
 // in the RESPONSE, not just in the row state.
 //

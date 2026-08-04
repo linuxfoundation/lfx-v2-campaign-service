@@ -126,13 +126,24 @@ resolver, and a nil resolver answers `(nil, nil)` — identical to "unconfigured
 audience while the build reported success and stored the first-time-event note. The boot log
 rotates away; `InclusionSummary` is the durable record, so the distinction has to live there.
 
-## A partial build whose RECORD also fails returns the list ids
+## When the RECORD fails, the ids travel in the error
 
-The partial-build path records created list ids in `InclusionSummary` so orphaned HubSpot lists
-can be reconciled. When that write ALSO fails, the row stays `building` with an empty summary
-while real lists exist — so the ids are appended to the returned error instead. The 500 body is
-then the operator's only remaining handle on what the build left in the portal, and the message
-says not to retry blindly (a retry without the ids duplicates every list).
+Created list ids normally live in `InclusionSummary` so orphaned HubSpot lists can be reconciled.
+When the write that records them fails, the row stays `building` with an empty summary while real
+lists exist — so `unrecordedListsErr` puts the ids in the returned error instead. The 500 body is
+then the operator's only remaining handle, and the message says not to retry blindly.
+
+Both exits need this, with different urgency:
+
+- **Partial build** — some lists exist; the build failure and the record failure compound.
+- **Successful build** — *worse.* Every inclusion list AND the master exist, so a blind retry
+  duplicates the entire set. This path also had no safety net: `mapAudienceErr` has no case for a
+  database error, so a pgx failure fell through to `default:` and returned a bare
+  "an internal server error occurred" carrying nothing.
+
+`createPlanLists` returns the master as the LAST element of `ids`, so `ids` already covers it —
+re-appending `master` would name it twice and read like two separate orphans. The code guards on
+`slices.Contains` rather than assuming, since that invariant is easy to break from the other side.
 
 ## Every ambiguous outcome says UNCONFIRMED in the RESPONSE
 

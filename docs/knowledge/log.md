@@ -21,6 +21,18 @@ stays `building` with an EMPTY `inclusion_summary` while real lists exist upstre
 unreconcilable state the comment says is fixed. The ids now travel in the returned error, so the
 500 body carries them when persistence cannot.
 
+**Fix** — The SUCCESS-path persist failure dropped the created list ids (PR #61 review). The
+partial path was fixed to carry them, but a failed `UpdateAudience` after a fully successful
+build still returned `mapAudienceErr`, which has no case for a database error — a pgx failure
+fell through to `default:` and returned a bare "an internal server error occurred". The ids
+survived only in a slog line the caller deciding whether to retry cannot see.
+
+This path is the worse of the two: every inclusion list AND the master exist upstream, so a blind
+retry duplicates the entire set. It now returns `unrecordedListsErr` like the partial path.
+Note that `createPlanLists` already returns the master as the last element of `ids`, so the code
+guards with `slices.Contains` instead of re-appending it — a naive append names the master twice
+and reads like two separate orphans.
+
 **Fix** — An ambiguous HubSpot outcome was classified in the ROW but not in the RESPONSE (PR #61
 review). `hubspot.IsUnconfirmed` covers four sources — a 2xx-with-no-id, a mutating 429, a
 mutating 5xx, and a mutating transport failure — and all four correctly keep the row `building`.

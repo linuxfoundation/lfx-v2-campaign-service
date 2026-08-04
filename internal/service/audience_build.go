@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -278,7 +279,21 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		slog.ErrorContext(ctx, "audience lists created but recording them failed",
 			"audience_id", created.ID, "master_list_id", master, "list_ids", strings.Join(ids, ","),
 			"error", uerr)
-		return nil, mapAudienceErr(uerr)
+		// Return the ids too, for the same reason the partial path does — and more urgently.
+		// mapAudienceErr has no case for a DB error, so it falls through to a bare "an internal
+		// server error occurred" carrying nothing. Here the MASTER exists as well as every
+		// inclusion list, so a blind retry duplicates the whole set, not just part of it. The
+		// slog line above is not enough: it is not visible to the caller who has to decide
+		// whether to retry.
+		//
+		// createPlanLists returns the master as the LAST element of ids, so ids already covers
+		// it — appending master again would name it twice in the operator's message. Guarded
+		// rather than assumed, because that is an easy invariant to break from the other side.
+		reported := ids
+		if !slices.Contains(reported, master) {
+			reported = append(slices.Clone(ids), master)
+		}
+		return nil, audienceBuildErr(unrecordedListsErr(uerr, created.ID, reported))
 	}
 	return audienceResult(updated), nil
 }
@@ -301,21 +316,29 @@ func unconfirmedNote(err error, ambiguous bool) error {
 		"retrying, a blind retry can duplicate it)", err)
 }
 
-// unrecordedListsErr wraps a build failure whose created-list ids could NOT be persisted.
+// unrecordedListsErr carries the ids of HubSpot lists that EXIST upstream but could not be
+// recorded, because the write that would have recorded them failed.
 //
-// It exists because the two failures compound: the build broke AND the record of what it left
-// behind broke. The row is stuck 'building' with an empty summary, so the ids survive only in the
-// logs and in this error. audienceBuildErr interpolates err.Error() into the 500 body, which
-// makes the API response the operator's one reliable handle on the orphaned lists.
-func unrecordedListsErr(buildErr error, audienceID string, ids []string) error {
+// Used on both exits, for the same reason and with different urgency:
+//
+//   - the PARTIAL path, where the build broke midway and the record of what it left behind also
+//     broke, and
+//   - the SUCCESS path, where every list including the MASTER was created and only the write
+//     failed — worse, because a blind retry then duplicates the entire set.
+//
+// Either way the row is stuck 'building' with no summary, so the ids survive only in the logs
+// and in this error. audienceBuildErr interpolates err.Error() into the 500 body, which makes
+// the API response the operator's one reliable handle on the orphaned lists. The wording is
+// deliberately neutral about WHICH step failed, since the wrapped error already says that.
+func unrecordedListsErr(cause error, audienceID string, ids []string) error {
 	if len(ids) == 0 {
 		// Nothing upstream to reconcile, so there is nothing to carry — do not inflate the
 		// message with a reconcile instruction that names no lists.
-		return buildErr
+		return cause
 	}
-	return fmt.Errorf("%w (recording the build ALSO failed, so audience %s still reads 'building' "+
+	return fmt.Errorf("%w (recording the result failed, so audience %s still reads 'building' "+
 		"with no summary; these HubSpot lists EXIST and must be reconciled before retrying: %s)",
-		buildErr, audienceID, strings.Join(ids, ", "))
+		cause, audienceID, strings.Join(ids, ", "))
 }
 
 // partialSummary records what a failed build actually left upstream. The plan summary alone
