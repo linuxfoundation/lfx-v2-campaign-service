@@ -42,7 +42,11 @@
 -- reporting success — Postgres refuses to use an invalid index, so the scans would keep
 -- full-scanning forever with no error anywhere. Recovering a dirty migration with
 -- `force` does not run the down migration, so nothing clears it implicitly either.
--- Migration 000009 drops an INVALID copy, which is what makes a retry actually rebuild.
+-- Migration 000009 drops an INVALID copy AND rebuilds it in the same step. It has to do
+-- both: recovering the dirty schema needs `force`, which marks THIS version applied
+-- without running it, so golang-migrate never re-executes this file and the IF NOT
+-- EXISTS below would skip anyway. Leaving the rebuild to "the next deploy" would mean it
+-- never happens.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_campaigns_stuck_claims
     ON campaigns (created_at)
     WHERE status = 'pending';

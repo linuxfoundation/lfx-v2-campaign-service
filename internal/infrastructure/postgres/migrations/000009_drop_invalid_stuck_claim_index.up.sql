@@ -17,6 +17,22 @@
 -- Deliberately a plain DROP, not CONCURRENTLY: an INVALID index is not serving any
 -- query, so dropping it blocks nothing that was working, and DROP INDEX CONCURRENTLY
 -- cannot run inside the DO block this needs for the conditional.
+--
+-- This migration REBUILDS the index itself rather than leaving that to 000008.
+-- 000008 can never do it: recovering the dirty schema requires `force`, which marks
+-- version 8 applied WITHOUT running it, so golang-migrate never executes 000008 again
+-- and its `IF NOT EXISTS` would skip regardless. An operator told to "wait for the next
+-- deploy" would wait forever while the stuck-claim scan silently full-scans.
+--
+-- The rebuild is a plain (non-CONCURRENT) CREATE, which is the opposite of 000008's
+-- choice and is deliberate. CREATE INDEX CONCURRENTLY cannot run inside this DO block,
+-- and it is only reachable at all on the recovery path — where the index is ALREADY
+-- absent, so the scan is already degraded and a brief write lock is the cheaper of the
+-- two costs. On the normal path (no invalid index) nothing here runs.
+--
+-- Both object names are schema-qualified. Unqualified names resolve through search_path,
+-- which is fine today (single schema) but would let a future multi-schema setup inspect
+-- one index and drop another.
 DO $$
 BEGIN
     IF EXISTS (
@@ -24,10 +40,13 @@ BEGIN
         FROM pg_class c
         JOIN pg_index i ON i.indexrelid = c.oid
         WHERE c.relname = 'idx_campaigns_stuck_claims'
+          AND c.relnamespace = 'public'::regnamespace
           AND NOT i.indisvalid
     ) THEN
-        EXECUTE 'DROP INDEX idx_campaigns_stuck_claims';
-        RAISE NOTICE 'dropped INVALID idx_campaigns_stuck_claims; 000008 will rebuild it on the next deploy';
+        EXECUTE 'DROP INDEX public.idx_campaigns_stuck_claims';
+        EXECUTE 'CREATE INDEX idx_campaigns_stuck_claims '
+             || 'ON public.campaigns (created_at) WHERE status = ''pending''';
+        RAISE NOTICE 'rebuilt idx_campaigns_stuck_claims (an INVALID copy from a failed CONCURRENTLY build was dropped)';
     END IF;
 END
 $$;

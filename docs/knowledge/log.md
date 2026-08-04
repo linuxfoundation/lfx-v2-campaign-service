@@ -8,9 +8,16 @@ A failed `CREATE INDEX CONCURRENTLY` does NOT roll back — it leaves the index 
 full-scanning forever with no error anywhere. `force`-recovering a dirty migration marks the
 version applied WITHOUT running the down migration, so nothing else clears it.
 
-000009 drops an INVALID copy (a plain DROP inside a DO block — an invalid index serves no query,
-so nothing that was working is blocked, and DROP CONCURRENTLY cannot run inside the conditional).
-A VALID index is untouched. The "a retry is clean" comment in 000008 was wrong and is corrected.
+000009 drops an INVALID copy AND rebuilds it in the same step (a plain DROP+CREATE inside a DO
+block — an invalid index serves no query, so nothing that was working is blocked, and neither
+form of CONCURRENTLY can run inside the conditional). It must do both: `force`-recovering the
+dirty schema marks version 8 applied WITHOUT running it, so golang-migrate never re-executes
+000008 and its `IF NOT EXISTS` would skip regardless — "000008 rebuilds it on the next deploy"
+was false, and an operator following it would have waited forever while the scan silently
+full-scanned. A VALID index is untouched, and both object names are schema-qualified so a future
+multi-schema setup cannot inspect one index and drop another. Verified on live PostgreSQL 16
+across all three paths: INVALID → dropped and rebuilt VALID with a definition identical to
+000008; healthy → no-op; absent → no-op, no error.
 
 **Update** — `idx_campaigns_stuck_claims` is now built CONCURRENTLY (LFXV2-2665, PR #59 review).
 A plain `CREATE INDEX` takes a lock blocking INSERT/UPDATE/DELETE on `campaigns` for the whole
