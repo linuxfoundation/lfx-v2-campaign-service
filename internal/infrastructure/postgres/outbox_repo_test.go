@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/stretchr/testify/assert"
@@ -87,28 +86,23 @@ func TestPendingIndexPartialIndexSupportsTheClaim(t *testing.T) {
 		"the index must stay PARTIAL so it does not grow with published history")
 }
 
-// TestPruneCoversPendingRowsToo pins the second retention window.
+// TestPruneNeverTouchesPendingRows pins the most consequential boundary in the retention path.
 //
-// Pending rows are undelivered work, so they get a much longer window than published history —
-// pruning a young one would destroy exactly the recovery this table exists for. But "never" is
-// not safe either: indexing can be legitimately disabled (NATS_URL="") or unprovisioned
-// (INDEXER_SERVICE_TOKEN is an OPTIONAL secret in the chart), and in both states every brief and
-// campaign write still co-commits a JSONB row that nothing will ever drain. That is a steady
-// state the deployment permits, not a misconfiguration, so it must not grow without bound.
+// PENDING rows are undelivered work and this service has NO full-reindex path, so discarding one
+// is unrecoverable. The cases that matter are precisely the ones with no later write to repair
+// them: a terminal brief archive (the brief would stay searchable forever) and a
+// created-then-never-edited campaign.
 //
-// Boundaries verified against a live PostgreSQL 16: with a 7d published / 30d pending window, a
-// 30d-published and a 40d-pending row are deleted while a 1d-published, a 29d-PENDING, and a
-// fresh row all survive.
-func TestPruneCoversPendingRowsToo(t *testing.T) {
-	assert.Greater(t, pendingAbandonAge, outboxRetention,
-		"undelivered work must outlive delivered history by a wide margin")
-	assert.GreaterOrEqual(t, pendingAbandonAge, 30*24*time.Hour,
-		"a pending row must survive any realistic outage, rotation, or rollout gap")
-
-	// Both clauses must be present: published-by-published_at, pending-by-created_at. A pending
-	// row has no published_at, so reusing that column would never match it.
-	assert.Contains(t, pruneQuery, "published_at IS NOT NULL AND published_at <",
-		"delivered history is aged by when it was published")
-	assert.Contains(t, pruneQuery, "published_at IS NULL     AND created_at   <",
-		"undelivered work is aged by when it was written")
+// An age-based sweep cannot distinguish "the indexer has been down for a month" from "this
+// message is obsolete", and guessing wrong loses data permanently — so it must not guess. An
+// earlier revision aged pending rows out after 30 days; that was wrong, and this test exists so
+// it does not come back. Unbounded growth from a DELIBERATELY disabled indexer is handled at the
+// source instead (the service enqueues nothing when NATS_URL is explicitly empty).
+func TestPruneNeverTouchesPendingRows(t *testing.T) {
+	assert.Contains(t, pruneQuery, "published_at IS NOT NULL",
+		"only DELIVERED history is eligible for pruning")
+	assert.NotContains(t, pruneQuery, "published_at IS NULL",
+		"a pending row must never be selected for deletion, at any age")
+	assert.NotContains(t, pruneQuery, "created_at",
+		"aging by created_at would sweep undelivered work, which is unrecoverable here")
 }

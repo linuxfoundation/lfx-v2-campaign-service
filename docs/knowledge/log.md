@@ -2,6 +2,16 @@
 
 ## 2026-08-03
 
+**Update** — REVERTED the pending-row pruning added earlier today (LFXV2-2814, PR #60); a
+reviewer was right and I was wrong. Aging out undelivered work is unrecoverable here: there is no
+full-reindex path, and the cases with no later write to repair them — a terminal brief archive, a
+created-then-never-edited campaign — are exactly the ones the outbox exists for. The stated
+motivation did not even hold: `drain` returns BEFORE pruning when the token is absent, so the
+unprovisioned case never pruned anyway. Pending rows are now never pruned at any age. Unbounded
+growth is prevented at the SOURCE instead: when indexing is deliberately disabled (`NATS_URL=""`)
+the payload builder is nil and no row is written. A missing credential is deliberately not
+treated that way — it is a provisioning gap and the rows are real work.
+
 **Update** — `PublishRaw` now uses NATS request/reply instead of publish-and-flush (LFXV2-2814,
 PR #60). A flush only confirms the bytes reached the broker; it says nothing about acceptance.
 Checked the REAL consumer rather than assuming: `lfx-v2-indexer-service` subscribes to

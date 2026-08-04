@@ -800,7 +800,12 @@ func newToggleService(camp *model.Campaign, tog *stubToggler) (*BriefService, *t
 	camps := &toggleCampaignRepo{got: camp}
 	jobs := newFakeJobRepo()
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
-	return NewBriefService(repo, camps, jobs, orch), camps
+	s := NewBriefService(repo, camps, jobs, orch)
+	// A real (non-Noop) publisher: a Noop service deliberately enqueues nothing, which is the
+	// disabled-deployment path rather than the behaviour these tests exercise.
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
+	return s, camps
 }
 
 func TestBriefService_ToggleCampaignStatus_PlatformThenPersist(t *testing.T) {
@@ -979,7 +984,13 @@ func newIndexTestBriefService(repo *fakeBriefRepo) *BriefService {
 	camps := &fakeCampaignRepo{}
 	jobs := newFakeJobRepo()
 	s := NewBriefService(nil, nil, nil, nil)
-	s.SetBackend(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	orch := NewOrchestrator(camps, jobs, nil)
+	s.SetBackend(repo, camps, jobs, orch)
+	// Inject a real (non-Noop) publisher: these tests assert INDEXING behaviour, and a service
+	// left on the default Noop deliberately enqueues nothing — that is the disabled-deployment
+	// path (NATS_URL=""), not the one under test here.
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
 	return s
 }
 
@@ -1461,6 +1472,7 @@ func TestCampaignWrites_UpdateAndToggleCoCommitTheirIndex(t *testing.T) {
 		repo := &campaignEditRepo{cur: cur}
 		s := &BriefService{briefs: newFakeBriefRepo(), campaigns: repo, jobs: newFakeJobRepo(),
 			orch: NewOrchestrator(repo, newFakeJobRepo(), nil)}
+		s.SetIndexer(&failingIndexer{})
 		im := "1"
 
 		if _, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
@@ -1509,5 +1521,45 @@ func assertOneCampaignIndexMessage(t *testing.T, payloads [][]byte) {
 	// from the outbox row's object_type column rather than the payload.
 	if auth := msg.Headers["authorization"]; auth != "" {
 		t.Errorf("stored payload carries an authorization header (%q); the relay must stamp it at publish time", auth)
+	}
+}
+
+// TestDisabledIndexing_EnqueuesNothing pins the source-level answer to unbounded outbox growth.
+//
+// Pending rows are NEVER pruned — they are undelivered work and this service has no reindex
+// path, so discarding one is unrecoverable (a terminal brief archive has no later write to
+// repair it). That makes it essential that rows which can never be delivered are not written in
+// the first place. When indexing is DELIBERATELY disabled (NATS_URL="" → the Noop publisher),
+// the payload builder is nil and the repo skips the enqueue entirely.
+//
+// A missing CREDENTIAL is deliberately NOT treated this way: that is a provisioning gap, the
+// rows are real work, and the relay drains them once the token lands.
+func TestDisabledIndexing_EnqueuesNothing(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	// No SetIndexer: this is exactly how the container wires a NATS_URL="" deployment.
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	if !s.IndexerIsNoop() {
+		t.Fatal("precondition: indexing must be disabled for this test")
+	}
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("a disabled indexer must not fail the write: %v", err)
+	}
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("nor the archive: %v", derr)
+	}
+
+	if n := len(repo.indexPayloads); n != 0 {
+		t.Errorf("wrote %d outbox row(s) that can never be delivered; pending rows are never "+
+			"pruned, so this grows without bound", n)
 	}
 }

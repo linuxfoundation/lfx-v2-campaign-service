@@ -236,7 +236,7 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		Targeting:    marshalAny(in.Targeting),
 	}
 	// The index message co-commits with the row (see briefIndexPayload); the relay delivers it.
-	created, err := briefRepo.CreateBrief(ctx, b, briefIndexPayload(indexer.ActionCreated))
+	created, err := briefRepo.CreateBrief(ctx, b, s.briefIndexPayload(indexer.ActionCreated))
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -256,7 +256,33 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 // NO bearer token is serialized. The outbox is JSONB retained for audit with no pruning, so
 // storing the caller's JWT would persist a live credential indefinitely; the relay stamps a
 // service credential at publish time instead.
-func briefIndexPayload(action string) domain.IndexPayloadFunc {
+// campaignIndexPayload mirrors briefIndexPayload for campaign writes made on the REQUEST path
+// (update, status toggle). The orchestrator has its own copy for its async dispatch writes.
+func (s *BriefService) campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
+	if s.IndexerIsNoop() {
+		return nil
+	}
+	return func(c *model.Campaign) ([]byte, error) {
+		return json.Marshal(indexer.NewTransaction(
+			action, indexer.ObjectTypeCampaign,
+			c.ID, c.ProjectID, "",
+			campaignDoc(campaignResult(c)), c.CampaignName,
+		))
+	}
+}
+
+func (s *BriefService) briefIndexPayload(action string) domain.IndexPayloadFunc {
+	// Indexing DELIBERATELY disabled (NATS_URL="") enqueues nothing. The row would never be
+	// delivered and must never be pruned (pending rows are undelivered work and this service
+	// has no reindex path), so writing one is unbounded growth with no upside. This is the only
+	// safe place to make that call: here we KNOW it is a configuration choice, whereas the
+	// relay cannot tell "disabled forever" from "broker down for an hour".
+	//
+	// A missing CREDENTIAL is deliberately NOT covered by this — that is a provisioning gap,
+	// the rows are real work, and the relay drains them once the token lands.
+	if s.IndexerIsNoop() {
+		return nil
+	}
 	return func(b *model.CampaignBrief) ([]byte, error) {
 		return json.Marshal(indexer.NewTransaction(
 			action, indexer.ObjectTypeBrief,
@@ -300,7 +326,7 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
 	}
-	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version, briefIndexPayload(indexer.ActionUpdated))
+	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version, s.briefIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -316,7 +342,7 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if err != nil {
 		return nil, err
 	}
-	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version, briefIndexPayload(indexer.ActionUpdated))
+	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version, s.briefIndexPayload(indexer.ActionUpdated))
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
@@ -335,7 +361,7 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// The index message is built INSIDE the archive transaction and co-committed to the
 	// outbox, so a dropped publish is recoverable by the relay. Archiving is terminal: without
 	// this, one lost message leaves the brief searchable forever.
-	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, briefIndexPayload(indexer.ActionDeleted))
+	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, s.briefIndexPayload(indexer.ActionDeleted))
 	if aerr != nil {
 		return mapBriefErr(aerr)
 	}
@@ -454,7 +480,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
-	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, campaignIndexPayload(indexer.ActionUpdated))
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -557,7 +583,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	existing.Status = p.Status
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancel()
-	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, campaignIndexPayload(indexer.ActionUpdated))
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		// The platform WAS changed but the row write failed → platform and DB now diverge.
 		// Log it loudly as an operational reconcile signal (the run state on the platform is

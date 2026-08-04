@@ -120,13 +120,17 @@ makes the ordering correct ACROSS replicas.
 Every brief and campaign mutation writes a full JSONB payload and nothing else ever deletes one,
 so without this the table, its backups, and the vacuum workload grow until storage runs out — and
 the partial pending index stays small either way, which is exactly why the growth would go
-unnoticed. PENDING rows are undelivered work and get a MUCH longer window (30 days) rather than an infinite
-one: indexing can be legitimately disabled (`NATS_URL=""`) or unprovisioned (the service token is
-an `optional` chart secret), and in both states every write still co-commits a row nothing will
-ever drain — a steady state the deployment permits, not a misconfiguration. 30 days is long
-enough that a row is only discarded well after any realistic outage, credential rotation, or
-rollout gap would have been noticed; by then a full reindex is the right repair rather than
-replaying a month-old snapshot. Pruning runs
+unnoticed. PENDING rows are NEVER pruned, at any age. They are undelivered work and this service has no
+full-reindex path, so discarding one is UNRECOVERABLE — and the cases that matter are exactly the
+ones with no later write to repair them (a terminal brief archive, a created-then-never-edited
+campaign). An age-based sweep cannot tell "the indexer has been down for a month" from "this
+message is obsolete", and guessing wrong loses data permanently.
+
+Unbounded growth is therefore prevented at the SOURCE: when indexing is DELIBERATELY disabled
+(`NATS_URL=""` → the Noop publisher) the payload builder is nil and no row is written at all —
+the only place that distinction can safely be made, since the relay cannot tell "disabled
+forever" from "broker down for an hour". A missing CREDENTIAL is NOT treated this way: that is a
+provisioning gap, the rows are real work, and the relay drains them once the token lands. Pruning runs
 AFTER the drain (delivery must not queue behind housekeeping) and a prune failure is logged and
 dropped: it costs disk, never correctness.
 

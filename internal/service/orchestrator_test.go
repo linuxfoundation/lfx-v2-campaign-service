@@ -1486,6 +1486,9 @@ func TestOrchestrator_CampaignIndexCoCommitsWithoutACallerToken(t *testing.T) {
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
 		model.ProviderGoogleAds: okDispatcher{},
 	})
+	// A real (non-Noop) publisher: an orchestrator left on the default Noop deliberately
+	// enqueues nothing (the NATS_URL="" path), which is not what this test is about.
+	orch.SetIndexer(&failingIndexer{})
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
 
 	id, _ := orch.Start(context.Background(), brief, brief.Version,

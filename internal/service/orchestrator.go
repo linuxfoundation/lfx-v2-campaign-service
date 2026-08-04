@@ -285,7 +285,13 @@ func (o *Orchestrator) IndexerIsNoop() bool {
 // was nothing to retry, so a slow dispatch left a new campaign permanently unsearchable. The
 // relay stamps a service credential at publish time instead, which also keeps a live credential
 // out of a JSONB table retained for audit with no pruning.
-func campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
+func (o *Orchestrator) campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
+	// Nothing is enqueued when indexing is DELIBERATELY disabled (NATS_URL=""): the row could
+	// never be delivered, and pending rows are never pruned because discarding undelivered work
+	// is unrecoverable without a reindex path. See BriefService.briefIndexPayload.
+	if o.indexerIsNoop() {
+		return nil
+	}
 	return func(c *model.Campaign) ([]byte, error) {
 		return json.Marshal(indexer.NewTransaction(
 			action, indexer.ObjectTypeCampaign,
@@ -293,6 +299,15 @@ func campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
 			campaignDoc(campaignResult(c)), c.CampaignName,
 		))
 	}
+}
+
+// indexerIsNoop reports whether indexing is deliberately disabled, i.e. the container injected
+// the Noop publisher because NATS_URL was explicitly empty.
+func (o *Orchestrator) indexerIsNoop() bool {
+	o.indexerMu.RLock()
+	defer o.indexerMu.RUnlock()
+	_, isNoop := o.indexer.(indexer.Noop)
+	return isNoop
 }
 
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
@@ -797,7 +812,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// Index the RETAINED PARTIAL too: it is a real row an operator must be able to
 				// find in order to reconcile it. Indexing only clean successes would hide
 				// exactly the campaigns that need attention.
-				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, campaignIndexPayload(indexer.ActionCreated)); perr != nil {
+				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); perr != nil {
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
 				} else {
@@ -846,7 +861,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// while still bounding it so it can never hang shutdown.
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancelPersist()
-	if _, uerr := o.campaigns.UpsertCampaign(persistCtx, campaign, campaignIndexPayload(indexer.ActionCreated)); uerr != nil {
+	if _, uerr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); uerr != nil {
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
