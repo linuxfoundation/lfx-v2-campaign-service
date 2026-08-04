@@ -277,8 +277,32 @@ linkedInConfig?: object         — LinkedIn-specific params
 redditConfig?: object           — Reddit-specific params
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
+microsoftConfig?: object        — Microsoft Ads-specific params (see MicrosoftConfig below)
 hubspotConfig?: object          — HubSpot (email channel) params (see HubSpotConfig below)
 ```
+
+#### MicrosoftConfig (the `microsoftConfig` object)
+
+Microsoft Advertising (Bing) per-platform config. The dispatcher creates a PAUSED Search
+campaign with an ad group + a responsive search ad (auto-composed copy); targeting/keywords land
+in a later phase, so only the budget (and optionally a Campaign.TimeZone enum) is caller-supplied
+here. **Budget is in whole units of the ad ACCOUNT's currency**, not USD — the client does no FX
+conversion (mirroring `metaConfig`).
+
+```
+budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
+                                  applied as the campaign's DAILY budget. Must be a finite, POSITIVE
+                                  number; NaN/Inf or a non-positive value is rejected by the client
+                                  during dispatch (a pre-create job failure, since CreateCampaigns is
+                                  async). Omitting it fails the platform job — supply it explicitly.
+timeZone?: string               — OPTIONAL Microsoft Campaign.TimeZone enum value. Microsoft marks
+                                  the field deprecated but still requires it on Add; when omitted the
+                                  client uses its default.
+```
+
+The connection supplies the ad account id (`account_id`, the digits-only `CustomerAccountId`) and
+an OPTIONAL manager/MCC id (`customer_id`, the `CustomerId` header) via the Microsoft connection
+config — not this campaign config.
 
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
