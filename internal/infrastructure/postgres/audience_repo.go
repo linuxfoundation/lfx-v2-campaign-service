@@ -39,25 +39,52 @@ const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 // which is ErrStaleApproval rather than ErrNotFound — the caller should refresh and re-approve,
 // not be told the brief is missing.
 func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
-	q := `INSERT INTO campaign_audiences
-		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
-		 inclusion_summary, status, created_by)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8
-		WHERE EXISTS (
-			SELECT 1 FROM campaign_briefs
-			WHERE id=$2 AND project_id=$1 AND status = 'approved' AND version = $9
-		)
-		RETURNING ` + audienceCols
-	row := r.db.QueryRow(ctx, q,
-		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
-		a.SuppressionListIDs, nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
-		a.CreatedBy, expectedVersion)
-	out, err := scanAudience(row)
+	// A guarded INSERT ... WHERE EXISTS is NOT sufficient here. Under READ COMMITTED the
+	// statement's snapshot can still see the approved row while a concurrent ReplaceBrief
+	// commits a draft/version change before this insert commits — so the build would create
+	// REAL HubSpot lists from a brief that is no longer approved.
+	//
+	// SELECT ... FOR UPDATE takes a row-level exclusive lock and re-reads the row's CURRENT
+	// committed state, so this check cannot straddle a concurrent commit: whichever
+	// transaction takes the lock first runs to completion before the other observes the row.
+	// Same shape as JobRepo.CreateJobForApprovedBrief.
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("create audience for approved brief: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		status  string
+		version int64
+	)
+	lockQ := `SELECT status, version FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`
+	if serr := tx.QueryRow(ctx, lockQ, a.BriefID, a.ProjectID).Scan(&status, &version); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			// Absent, or the caller's project does not own it. Either way there is nothing
+			// approved at expectedVersion to build from.
 			return nil, domain.ErrStaleApproval
 		}
-		return nil, fmt.Errorf("create audience for approved brief: %w", err)
+		return nil, fmt.Errorf("create audience for approved brief: lock brief: %w", serr)
+	}
+	if status != "approved" || version != expectedVersion {
+		return nil, domain.ErrStaleApproval
+	}
+
+	insertQ := `INSERT INTO campaign_audiences
+		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
+		 inclusion_summary, status, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		RETURNING ` + audienceCols
+	out, serr := scanAudience(tx.QueryRow(ctx, insertQ,
+		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
+		a.SuppressionListIDs, nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
+		a.CreatedBy))
+	if serr != nil {
+		return nil, fmt.Errorf("create audience for approved brief: insert: %w", serr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("create audience for approved brief: commit: %w", cerr)
 	}
 	return out, nil
 }
