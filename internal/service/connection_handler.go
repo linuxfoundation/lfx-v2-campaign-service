@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"goa.design/goa/v3/security"
 
@@ -92,6 +93,11 @@ type ConnectionService struct {
 	mu   sync.RWMutex
 	repo domain.ConnectionRepository
 	enc  domain.Encryptor
+	// verifiers holds the per-provider credential verifiers. It is OPTIONAL and
+	// intentionally sparse: a provider with no entry yields VerificationUnverifiable
+	// ("no verifier is wired") rather than a guessed verdict. Guarded by mu because the
+	// container injects it alongside the repo during a cold start.
+	verifiers map[model.Provider]domain.CredentialVerifier
 }
 
 var (
@@ -118,11 +124,28 @@ func (s *ConnectionService) SetBackend(repo domain.ConnectionRepository, enc dom
 	s.mu.Unlock()
 }
 
+// SetVerifiers swaps in the per-provider credential verifiers. Separate from SetBackend
+// because verification does not depend on the database backend: the map is built from the
+// dispatchers (which own provider credentials), and a nil/absent entry is a valid state
+// meaning "no verifier wired for this provider", not an error.
+func (s *ConnectionService) SetVerifiers(v map[model.Provider]domain.CredentialVerifier) {
+	s.mu.Lock()
+	s.verifiers = v
+	s.mu.Unlock()
+}
+
 // backend returns the current repo and encryptor under the read lock.
 func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encryptor) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.repo, s.enc
+}
+
+// verifier returns the credential verifier for a provider, or nil when none is wired.
+func (s *ConnectionService) verifier(p model.Provider) domain.CredentialVerifier {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.verifiers[p]
 }
 
 // resolveBackend returns the repo+encryptor for one request, or the typed 503
@@ -217,9 +240,32 @@ func (s *ConnectionService) deleteConn(ctx context.Context, projectID string, p 
 	return mapErr(repo.Delete(ctx, projectID, p, actorFromCtx(ctx)))
 }
 
-// testConn verifies the stored credential against the provider. Upstream
-// verification is not yet implemented; it reports the connection exists and is
-// pending real verification (LFXV2-2556 follow-up / provider adapters).
+// verifyCallTimeout bounds the SYNCHRONOUS provider verification call, which runs on the HTTP
+// request goroutine. Without a ceiling a slow provider could outlast the server's write
+// timeout, so the operator would never receive the verdict they are waiting on. Kept well
+// under DefaultWriteTimeout (60s); on timeout the probe is cancelled and reported as
+// UNVERIFIABLE (never as invalid — a timeout is not evidence about a credential).
+const verifyCallTimeout = 20 * time.Second
+
+// testConn verifies the stored credential against the provider.
+//
+// The result is a THREE-state verdict (see domain.VerificationState). `ok` is DERIVED from
+// the state purely for wire compatibility; callers must branch on `state`. The states are not
+// interchangeable, because they imply opposite operator actions:
+//
+//   - verified     — the provider accepted the credential for this connection's account.
+//   - invalid      — the provider REJECTED it. Re-authenticate.
+//   - unverifiable — unknown: the provider was unreachable/ambiguous, no verifier is wired
+//     for this provider yet, or no credential is stored at all. Do NOT
+//     re-authenticate on this alone.
+//
+// This deliberately no longer reports credential PRESENCE as success. The previous
+// implementation returned ok=HasCredentials(), so a stored-but-expired token answered `true`
+// and the failure only surfaced later as a dispatch failure on a paid campaign.
+//
+// The connection row is NEVER mutated here — in particular an `unverifiable` outcome must not
+// mark the connection `error`, or a provider outage would durably brand every project's
+// working connection as broken.
 func (s *ConnectionService) testConn(ctx context.Context, projectID string, p model.Provider) (*conn.ConnectionTestResult, error) {
 	repo, _, err := s.resolveBackend()
 	if err != nil {
@@ -229,8 +275,53 @@ func (s *ConnectionService) testConn(ctx context.Context, projectID string, p mo
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	msg := "connection found; upstream verification not yet implemented"
-	return &conn.ConnectionTestResult{OK: c.HasCredentials(), Message: &msg}, nil
+	// No stored credential: there is nothing to verify. This is UNVERIFIABLE, not INVALID —
+	// "you have not supplied a credential" and "the credential you supplied was refused" are
+	// different problems with different fixes, and only the latter means re-authenticating a
+	// rejected secret.
+	if !c.HasCredentials() {
+		return testResult(domain.VerificationResult{
+			State:  domain.VerificationUnverifiable,
+			Reason: "no credential is stored for this connection, so there is nothing to verify; set a credential first",
+		}), nil
+	}
+	v := s.verifier(p)
+	if v == nil {
+		// No verifier wired for this provider yet. Report the truth — that we cannot tell —
+		// rather than implying the credential is good.
+		return testResult(domain.VerificationResult{
+			State:  domain.VerificationUnverifiable,
+			Reason: "credential verification is not yet wired for this provider, so the stored credential could not be checked against it",
+		}), nil
+	}
+	// Bound the provider probe so a hung upstream cannot outlive the HTTP response.
+	callCtx, cancel := context.WithTimeout(ctx, verifyCallTimeout)
+	defer cancel()
+	return testResult(v.VerifyCredential(callCtx, projectID, p)), nil
+}
+
+// testResult converts a domain verification result into the generated wire type, deriving
+// `ok` from the authoritative state.
+//
+// It FAILS CLOSED on an unrecognized state: a future verifier returning a state this build
+// does not know is reported as unverifiable rather than defaulting to a verdict. Defaulting
+// to `verified` would invent a success; defaulting to `invalid` would send an operator to
+// re-authenticate a working credential. "Unknown" is the only honest answer.
+func testResult(r domain.VerificationResult) *conn.ConnectionTestResult {
+	state, reason := r.State, r.Reason
+	if !state.Valid() {
+		state = domain.VerificationUnverifiable
+		reason = "the credential verifier returned an unrecognized outcome, so the credential could not be classified"
+	}
+	out := &conn.ConnectionTestResult{
+		// Derived, never set independently: ok is true for exactly one state.
+		OK:    state == domain.VerificationVerified,
+		State: string(state),
+	}
+	if reason != "" {
+		out.Message = &reason
+	}
+	return out
 }
 
 // ─── helpers ───

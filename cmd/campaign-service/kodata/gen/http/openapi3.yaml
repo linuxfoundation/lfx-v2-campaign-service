@@ -2050,6 +2050,7 @@ paths:
                             example:
                                 message: Dignissimos consequatur reiciendis delectus enim quas.
                                 ok: true
+                                state: verified
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2515,6 +2516,7 @@ paths:
                             example:
                                 message: Et consequatur et et itaque qui repudiandae.
                                 ok: true
+                                state: verified
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2965,6 +2967,7 @@ paths:
                             example:
                                 message: Perspiciatis modi dicta quae sed ut.
                                 ok: true
+                                state: verified
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3422,6 +3425,7 @@ paths:
                             example:
                                 message: Ad ex.
                                 ok: false
+                                state: verified
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3878,6 +3882,7 @@ paths:
                             example:
                                 message: Tempore qui velit omnis.
                                 ok: false
+                                state: verified
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4327,6 +4332,7 @@ paths:
                             example:
                                 message: Autem eos rerum.
                                 ok: true
+                                state: verified
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4783,6 +4789,7 @@ paths:
                             example:
                                 message: Amet quaerat modi.
                                 ok: true
+                                state: verified
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -6135,17 +6142,27 @@ components:
             properties:
                 message:
                     type: string
-                    description: Human-readable detail
+                    description: Human-readable detail. For any non-verified state this names WHICH system failed, so an operator is not sent to the wrong one.
                     example: Corrupti minus alias laudantium sit et.
                 ok:
                     type: boolean
-                    description: Whether the credential authenticated against the provider
+                    description: DERIVED from state (true only when state is 'verified'). Retained for wire compatibility; branch on state instead.
                     example: true
+                state:
+                    type: string
+                    description: Authoritative verification outcome
+                    example: verified
+                    enum:
+                        - verified
+                        - invalid
+                        - unverifiable
             example:
                 message: Eius reiciendis rerum voluptatem.
                 ok: false
+                state: verified
             required:
                 - ok
+                - state
         CreateAudienceRequestBody:
             type: object
             properties:

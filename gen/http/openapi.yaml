@@ -1536,6 +1536,7 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                            - state
                 "404":
                     description: Not Found response.
                     schema:
@@ -1916,6 +1917,7 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                            - state
                 "404":
                     description: Not Found response.
                     schema:
@@ -2296,6 +2298,7 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                            - state
                 "404":
                     description: Not Found response.
                     schema:
@@ -2676,6 +2679,7 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                            - state
                 "404":
                     description: Not Found response.
                     schema:
@@ -3056,6 +3060,7 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                            - state
                 "404":
                     description: Not Found response.
                     schema:
@@ -3436,6 +3441,7 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                            - state
                 "404":
                     description: Not Found response.
                     schema:
@@ -3816,6 +3822,7 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                            - state
                 "404":
                     description: Not Found response.
                     schema:
@@ -4433,17 +4440,27 @@ definitions:
         properties:
             message:
                 type: string
-                description: Human-readable detail
+                description: Human-readable detail. For any non-verified state this names WHICH system failed, so an operator is not sent to the wrong one.
                 example: Quam possimus aut ipsa.
             ok:
                 type: boolean
-                description: Whether the credential authenticated against the provider
+                description: DERIVED from state (true only when state is 'verified'). Retained for wire compatibility; branch on state instead.
                 example: true
+            state:
+                type: string
+                description: Authoritative verification outcome
+                example: verified
+                enum:
+                    - verified
+                    - invalid
+                    - unverifiable
         example:
             message: Et perspiciatis numquam numquam et natus possimus.
             ok: false
+            state: verified
         required:
             - ok
+            - state
     GoogleAdsConnection:
         title: GoogleAdsConnection
         type: object

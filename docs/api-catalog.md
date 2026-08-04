@@ -111,8 +111,41 @@ Because the connection is a singleton, there is **no service-generated `{id}` in
 | GET | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Get the connection (credentials redacted); returns ETag. |
 | PUT | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Replace connection config (requires `If-Match`; does not set credentials). |
 | DELETE | `/projects/{projectId}/connection-google-ads` | `campaign_manager` | JSON | Remove the connection (soft delete). |
-| POST | `/projects/{projectId}/connection-google-ads/test` | `campaign_manager` | JSON | Verify credentials against the provider. |
+| POST | `/projects/{projectId}/connection-google-ads/test` | `campaign_manager` | JSON | Verify the stored credential against the provider. Returns a **three-state** `ConnectionTestResult` — see below. |
 | POST | `/projects/{projectId}/connection-google-ads/set-credential` | `campaign_manager` | JSON | Replace the stored (encrypted) credential. Split out from `PUT` so credential replacement is independently permissioned/audited. Not "rotate" — the service does not generate/swap secrets upstream. |
+
+#### ConnectionTestResult (returned from `POST .../connection-{provider}/test`)
+
+```
+state: 'verified' | 'invalid' | 'unverifiable'   — AUTHORITATIVE. Branch on this.
+ok: boolean                                      — DERIVED (ok == state=='verified').
+                                                   Retained for wire compatibility only.
+message?: string                                 — For any non-verified state, names WHICH
+                                                   system failed.
+```
+
+The three states are **not** interchangeable; they imply opposite operator actions:
+
+| State | Meaning | Operator action |
+|-------|---------|-----------------|
+| `verified` | The provider was contacted and ACCEPTED the credential, scoped to the account this connection names. | None. |
+| `invalid` | The provider was contacted and **REJECTED** the credential (or its access to the configured account). | Re-authenticate, or correct the account id. |
+| `unverifiable` | **Unknown.** The provider was unreachable or answered ambiguously (5xx/timeout/throttle), OR no verifier is wired for this provider yet, OR no credential is stored. | Retry later. Do **NOT** re-authenticate on this alone. |
+
+> **Why three states and not a boolean.** A single `ok: false` would conflate `invalid` with
+> `unverifiable`. Those demand opposite actions, and collapsing them means a provider OUTAGE
+> tells an operator to delete and re-enter a perfectly good credential. This is the same
+> one-value-two-meanings defect that has already caused silent data loss on this stack. `ok` is
+> kept only so existing clients keep compiling; new callers must branch on `state`.
+>
+> The endpoint is **read-only in both directions**: the provider probe never mutates anything
+> upstream, and the connection row is never written — in particular an `unverifiable` result
+> does **not** set the connection's `status` to `error`, or a transient provider outage would
+> durably brand every project's working connection as broken.
+>
+> **Per-provider support.** Verification is wired for `google-ads` (an account-scoped, read-only
+> GAQL probe). Every other provider currently returns `unverifiable` with a reason saying so —
+> deliberately, rather than guessing a verdict from an unconfirmed API contract.
 
 > **Create requires a canonical slug `projectId`.** The connection is stored keyed by `project_id`, which is the EXACT-MATCH key for the dispatch lookup, and brief/campaign create already require a canonical slug — so a UUID-keyed connection could never be joined to a dispatched campaign. `POST` (create) therefore rejects a UUID `projectId` with `400` (Pattern `^[a-z0-9]+(-[a-z0-9]+)*$`, MaxLength 35). The generated HTTP request decoder validates the pattern/length for these create routes, and the service applies the same guard for direct/non-HTTP callers (belt-and-suspenders). `GET`/`PUT`/`DELETE`/`test`/`set-credential` stay permissive (UUID-or-slug) to keep historical UUID-keyed rows reachable.
 >

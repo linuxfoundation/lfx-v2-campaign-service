@@ -165,6 +165,25 @@ that the original budget name is then freed for reuse, so for at-most-once retri
 callers should pass a stable-per-logical-campaign `NameSuffix` (which makes the
 retry collide on `DUPLICATE_NAME`) rather than relying on name reuse.
 
+## Credential verification
+
+`VerifyCredential` is a READ-ONLY, ACCOUNT-SCOPED probe backing the connection `test` endpoint:
+it runs `SELECT customer.id FROM customer LIMIT 1` through `gaqlSearch`, so the request goes to
+`customers/{CustomerID}/googleAds:search`. Both properties are load-bearing — account scoping
+means success proves the credential can read THE CONFIGURED ACCOUNT (a tenant-scoped probe
+would pass for a credential pointed at the wrong ad account), and GAQL search cannot mutate, so
+verification can never alter a paid resource. Rows are discarded; only success/failure is the
+signal.
+
+`CredentialRejected(err)` is the exported classifier (mirroring `IsOutcomeUnconfirmed`). It
+returns true only for a DEFINITIVE refusal. `IsOutcomeUnconfirmed` is checked FIRST and
+short-circuits every 5xx, 429, and transport failure, so the status test below it is reached
+only for unambiguous errors — which is why it carries no 5xx/429 exclusions of its own (they
+would be unreachable dead code that reads like live policy). There is likewise no
+`validateAccountIDs` call in `VerifyCredential`: `doRequest` already validates the ids as its
+first action, before the OAuth token exchange, so a malformed id never reaches the network and
+no credential material leaves the process.
+
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign

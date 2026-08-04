@@ -80,4 +80,31 @@ so the row can't diverge from the platform if the request is cancelled after the
 and a stuck DB can't hang shutdown; a persist failure after the platform changed is logged as a
 divergence reconcile signal.
 
+## Connection credential verification (three-state)
+
+`testConn` (shared by all seven per-provider `Test*` handlers) backs
+`POST /projects/{projectId}/connection-{provider}/test`. It returns an AUTHORITATIVE
+`state` — `verified` / `invalid` / `unverifiable` — with `ok` DERIVED from it
+(`ok == state=="verified"`) and retained only for wire compatibility.
+
+Previously this reported `ok = c.HasCredentials()`: credential PRESENCE, not validity. A
+stored-but-expired token answered `true`, and the failure surfaced only later as a dispatch
+failure on a paid campaign. (The old `message` was honest about being a stub; the defect was
+that `ok` is the field callers branch on.)
+
+The state is resolved in order: no stored credential → `unverifiable` (nothing to verify —
+distinct from "rejected", which is a different fix); no verifier wired for the provider →
+`unverifiable`; otherwise the provider is probed under `verifyCallTimeout` (20s, well under the
+60s HTTP write timeout, so a hung provider cannot outlive the response) and the dispatcher's
+verdict is returned. `testResult` FAILS CLOSED on an unrecognized state, reporting
+`unverifiable` rather than defaulting to a verdict in either direction.
+
+The handler NEVER writes the connection row. In particular an `unverifiable` result does not
+set `status = error`: a transient provider outage must not durably brand every project's
+working connection as broken.
+
+The verifier map is injected by the container via `SetVerifiers`, alongside `SetBackend`, on
+BOTH the fast path and the cold-start retry path — so a cold-started pod's `test` endpoint
+behaves identically to a warm one.
+
 See [internal/service](../../../internal/service).

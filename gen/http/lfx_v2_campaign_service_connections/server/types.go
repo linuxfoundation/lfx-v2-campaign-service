@@ -238,9 +238,13 @@ type UpdateGoogleAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
 // HTTP response body.
 type TestGoogleAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK bool `form:"ok" json:"ok" xml:"ok"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State string `form:"state" json:"state" xml:"state"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -317,9 +321,13 @@ type UpdateLinkedinAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
 // HTTP response body.
 type TestLinkedinAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK bool `form:"ok" json:"ok" xml:"ok"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State string `form:"state" json:"state" xml:"state"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -399,9 +407,13 @@ type UpdateMetaAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
 // response body.
 type TestMetaAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK bool `form:"ok" json:"ok" xml:"ok"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State string `form:"state" json:"state" xml:"state"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -469,9 +481,13 @@ type UpdateRedditAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
 // HTTP response body.
 type TestRedditAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK bool `form:"ok" json:"ok" xml:"ok"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State string `form:"state" json:"state" xml:"state"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -545,9 +561,13 @@ type UpdateTwitterAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
 // HTTP response body.
 type TestTwitterAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK bool `form:"ok" json:"ok" xml:"ok"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State string `form:"state" json:"state" xml:"state"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -621,9 +641,13 @@ type UpdateMicrosoftAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
 // HTTP response body.
 type TestMicrosoftAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK bool `form:"ok" json:"ok" xml:"ok"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State string `form:"state" json:"state" xml:"state"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -715,9 +739,13 @@ type UpdateHubspotResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
 // response body.
 type TestHubspotResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK bool `form:"ok" json:"ok" xml:"ok"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State string `form:"state" json:"state" xml:"state"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -2543,6 +2571,7 @@ func NewUpdateGoogleAdsResponseBody(res *lfxv2campaignserviceconnections.GoogleA
 func NewTestGoogleAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestGoogleAdsResponseBody {
 	body := &TestGoogleAdsResponseBody{
 		OK:      res.OK,
+		State:   res.State,
 		Message: res.Message,
 	}
 	return body
@@ -2605,6 +2634,7 @@ func NewUpdateLinkedinAdsResponseBody(res *lfxv2campaignserviceconnections.Linke
 func NewTestLinkedinAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestLinkedinAdsResponseBody {
 	body := &TestLinkedinAdsResponseBody{
 		OK:      res.OK,
+		State:   res.State,
 		Message: res.Message,
 	}
 	return body
@@ -2670,6 +2700,7 @@ func NewUpdateMetaAdsResponseBody(res *lfxv2campaignserviceconnections.MetaAdsCo
 func NewTestMetaAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestMetaAdsResponseBody {
 	body := &TestMetaAdsResponseBody{
 		OK:      res.OK,
+		State:   res.State,
 		Message: res.Message,
 	}
 	return body
@@ -2729,6 +2760,7 @@ func NewUpdateRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditA
 func NewTestRedditAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestRedditAdsResponseBody {
 	body := &TestRedditAdsResponseBody{
 		OK:      res.OK,
+		State:   res.State,
 		Message: res.Message,
 	}
 	return body
@@ -2791,6 +2823,7 @@ func NewUpdateTwitterAdsResponseBody(res *lfxv2campaignserviceconnections.Twitte
 func NewTestTwitterAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestTwitterAdsResponseBody {
 	body := &TestTwitterAdsResponseBody{
 		OK:      res.OK,
+		State:   res.State,
 		Message: res.Message,
 	}
 	return body
@@ -2853,6 +2886,7 @@ func NewUpdateMicrosoftAdsResponseBody(res *lfxv2campaignserviceconnections.Micr
 func NewTestMicrosoftAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestMicrosoftAdsResponseBody {
 	body := &TestMicrosoftAdsResponseBody{
 		OK:      res.OK,
+		State:   res.State,
 		Message: res.Message,
 	}
 	return body
@@ -2924,6 +2958,7 @@ func NewUpdateHubspotResponseBody(res *lfxv2campaignserviceconnections.HubspotCo
 func NewTestHubspotResponseBody(res *lfxv2campaignserviceconnections.ConnectionTestResult) *TestHubspotResponseBody {
 	body := &TestHubspotResponseBody{
 		OK:      res.OK,
+		State:   res.State,
 		Message: res.Message,
 	}
 	return body

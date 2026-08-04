@@ -411,3 +411,50 @@ func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.
 func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
 	return a, nil
 }
+
+// verifiableProviders is the set of providers whose dispatcher implements
+// domain.CredentialVerifier, so `POST .../connection-{provider}/test` returns a REAL verdict
+// rather than "unverifiable: not yet wired". Extend it as each provider's verifier lands.
+var verifiableProviders = []model.Provider{
+	model.ProviderGoogleAds,
+}
+
+// TestRegisterVerifiers_WiresExactlyTheVerifiableProviders pins the verifier wiring.
+//
+// This is the "silently dead in every environment" guard. registerVerifiers derives its map by
+// type-asserting the dispatchers, so a verifier could be written, reviewed, and merged while
+// remaining unreachable if the assertion or the dispatcher's method signature drifted — and
+// nothing else in the suite would notice, because the endpoint degrades to a plausible
+// "unverifiable" instead of failing. Exact membership catches BOTH directions: a verifier that
+// stopped being wired, and one wired without updating this list.
+func TestRegisterVerifiers_WiresExactlyTheVerifiableProviders(t *testing.T) {
+	v := registerVerifiers(registerDispatchers(nil, nil, nil))
+	for _, p := range verifiableProviders {
+		_, ok := v[p]
+		assert.True(t, ok, "%s must have a credential verifier wired; without it the connection test endpoint silently reports 'unverifiable'", p)
+	}
+	assert.Equal(t, len(verifiableProviders), len(v),
+		"registerVerifiers must wire exactly the expected providers; update verifiableProviders when a verifier is added or removed")
+}
+
+// TestRegisterVerifiers_UnwiredProviderIsAbsentNotNil pins that a provider WITHOUT a verifier
+// is absent from the map rather than present with a nil value. A nil entry would pass the
+// service's `verifier(p) == nil` check by luck today, but any future presence check
+// (`if _, ok := ...`) would treat it as wired and call through a nil interface.
+func TestRegisterVerifiers_UnwiredProviderIsAbsentNotNil(t *testing.T) {
+	v := registerVerifiers(registerDispatchers(nil, nil, nil))
+	// Reddit has a dispatcher but (today) no verifier — a real, currently-unwired provider.
+	entry, present := v[model.ProviderRedditAds]
+	assert.False(t, present, "a provider without a verifier must be ABSENT from the map, not present-with-nil")
+	assert.Nil(t, entry)
+}
+
+// TestRegisterVerifiers_IsDerivedFromDispatchers pins that the verifier map is DERIVED from the
+// dispatcher map rather than maintained as a second literal. Passing an empty dispatcher map
+// must yield an empty verifier map; if registerVerifiers ever hard-coded its own entries, this
+// fails. A hand-maintained second map is exactly how a capability gets wired in one place and
+// forgotten in the other.
+func TestRegisterVerifiers_IsDerivedFromDispatchers(t *testing.T) {
+	assert.Empty(t, registerVerifiers(map[model.Provider]service.PlatformDispatcher{}),
+		"registerVerifiers must derive from the dispatchers it is given, not carry its own hard-coded wiring")
+}

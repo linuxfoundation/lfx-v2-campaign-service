@@ -157,9 +157,13 @@ var MethodNames = [42]string{"create-google-ads", "get-google-ads", "update-goog
 // ConnectionTestResult is the result type of the
 // lfx-v2-campaign-service-connections service test-google-ads method.
 type ConnectionTestResult struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK bool
-	// Human-readable detail
+	// Authoritative verification outcome
+	State string
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string
 }
 

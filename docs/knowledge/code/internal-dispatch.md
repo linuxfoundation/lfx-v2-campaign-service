@@ -166,6 +166,41 @@ matching the reddit shape.
 X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
 separately.
 
+## Credential verification (optional capability)
+
+`domain.CredentialVerifier` is a second OPTIONAL dispatcher interface (alongside
+`StatusToggler`) — `VerifyCredential(ctx, projectID, provider) domain.VerificationResult` —
+backing `POST /projects/{projectId}/connection-{provider}/test`. It reports a THREE-state
+verdict, never a boolean:
+
+* **`verified`** — the provider was contacted and ACCEPTED the credential.
+* **`invalid`** — the provider was contacted and REJECTED it. Actionable: re-authenticate.
+* **`unverifiable`** — unknown: unreachable/ambiguous provider, or no verifier wired.
+
+The three states exist because `invalid` and `unverifiable` demand OPPOSITE operator actions.
+Collapsing them into one `ok: false` would make a provider OUTAGE tell an operator to re-enter
+a working credential — the same one-value-two-meanings defect that has caused silent data loss
+on this stack. Implementations must be READ-ONLY and ACCOUNT-SCOPED (a tenant-scoped probe
+would pass for a credential pointed at the WRONG ad account, which is exactly the
+misconfiguration the endpoint exists to catch), and must return `invalid` ONLY on a definite
+provider rejection — anything ambiguous is `unverifiable`.
+
+**Google Ads** implements it: `resolveGoogleAdsClient` (shared with `Dispatch` and
+`ToggleStatus`, so all three accept exactly the same connections) builds the client, then
+`client.VerifyCredential` runs `SELECT customer.id FROM customer LIMIT 1` against
+`customers/{customerId}/googleAds:search` — account-scoped and non-mutating.
+`googleads.CredentialRejected` classifies the error: a definite 4xx is a rejection; the
+ambiguity guard (`IsOutcomeUnconfirmed`) short-circuits every 5xx/429/transport failure first,
+so those can never be reported as a bad credential. Connection-state failures (not ACTIVE,
+incomplete credentials, missing account id) are `unverifiable`, NOT `invalid` — the provider was
+never contacted, so there is no evidence about the credential, and the reason string names this
+service rather than the provider so an operator is not sent to the wrong system.
+
+The other providers have no verifier yet and are reported `unverifiable` with a reason saying
+so. That is deliberate: a probe written against an unconfirmed API contract fails only in
+production, and fails as `invalid` — sending an operator to re-authenticate a working
+credential.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

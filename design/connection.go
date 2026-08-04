@@ -117,10 +117,29 @@ var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() 
 })
 
 // TestResult is the outcome of verifying a credential against the provider.
+//
+// `state` is AUTHORITATIVE; `ok` is derived from it (ok == state=="verified") and retained
+// only for wire compatibility with existing clients. A boolean alone cannot express this
+// outcome without conflating two opposite operator actions:
+//
+//   - verified     — the provider was called and ACCEPTED the credential.
+//   - invalid      — the provider was called and REJECTED it. Actionable: re-authenticate.
+//   - unverifiable — the provider could not be reached, OR no verifier is wired for that
+//     provider yet. NOT actionable as a credential problem: re-authenticating
+//     a working credential during a provider outage makes things worse.
+//
+// Collapsing `invalid` and `unverifiable` into a single `ok: false` is the same
+// one-value-two-meanings defect that has already caused silent data loss on this stack (a
+// publisher whose "disabled" and "unreachable" states were indistinguishable dropped writes
+// for a pod's entire lifetime). Callers MUST branch on `state`, not on `ok`.
 var TestResult = Type("connection-test-result", func() {
-	Attribute("ok", Boolean, "Whether the credential authenticated against the provider")
-	Attribute("message", String, "Human-readable detail")
-	Required("ok")
+	Attribute("ok", Boolean, "DERIVED from state (true only when state is 'verified'). Retained for wire compatibility; branch on state instead.")
+	Attribute("state", String, "Authoritative verification outcome", func() {
+		Enum("verified", "invalid", "unverifiable")
+		Example("verified")
+	})
+	Attribute("message", String, "Human-readable detail. For any non-verified state this names WHICH system failed, so an operator is not sent to the wrong one.")
+	Required("ok", "state")
 })
 
 // commonConnectionAttrs declares the response fields every provider connection

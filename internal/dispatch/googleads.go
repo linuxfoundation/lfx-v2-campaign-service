@@ -274,3 +274,51 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	}
 	return nil
 }
+
+// VerifyCredential implements domain.CredentialVerifier for Google Ads.
+//
+// It performs a READ-ONLY, ACCOUNT-SCOPED probe (a GAQL search against the connection's
+// customer id) and classifies the outcome into the three-state vocabulary. Nothing is
+// mutated, so a verification call can never affect a paid resource.
+//
+// The classification is the whole point of the method, so each branch is deliberate:
+//
+//   - connection-state problems (not ACTIVE, incomplete credentials, no account id) are
+//     UNVERIFIABLE, not INVALID. Google was never contacted, so we have NO evidence about
+//     the credential itself. Calling this "invalid" would send an operator to re-authenticate
+//     when the actual fix is elsewhere — and the reason string names which, so they are not
+//     sent to the wrong system. (This mirrors the toggle path's treatment of connection-state
+//     pre-flight failures, which likewise never reach the platform.)
+//   - a DEFINITIVE rejection by Google (CredentialRejected: 400/401/403/404) is INVALID.
+//   - everything else — 5xx, throttling, timeouts, transport failures, a cancelled context —
+//     is UNVERIFIABLE. A provider outage must never be reported as a bad credential.
+func (d *GoogleAdsDispatcher) VerifyCredential(ctx context.Context, projectID string, platform model.Provider) domain.VerificationResult {
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		// Google was NOT contacted. Name this service as the failing system so the operator
+		// fixes the connection rather than re-authenticating with the provider.
+		return domain.VerificationResult{
+			State:  domain.VerificationUnverifiable,
+			Reason: "the Google Ads connection could not be used to build a client, so the provider was never contacted: " + err.Error(),
+		}
+	}
+	if verr := client.VerifyCredential(ctx); verr != nil {
+		if googleads.CredentialRejected(verr) {
+			// Google was contacted and DEFINITIVELY refused. Actionable.
+			slog.InfoContext(ctx, "google ads credential verification was rejected by the provider",
+				"project_id", projectID, "platform", platform, "error", verr)
+			return domain.VerificationResult{
+				State:  domain.VerificationInvalid,
+				Reason: "Google Ads rejected the stored credential for this connection's customer id; re-authenticate or correct the account id",
+			}
+		}
+		// Ambiguous/transient. NOT a credential verdict.
+		slog.WarnContext(ctx, "google ads credential verification was inconclusive",
+			"project_id", projectID, "platform", platform, "error", verr)
+		return domain.VerificationResult{
+			State:  domain.VerificationUnverifiable,
+			Reason: "Google Ads could not be reached or answered inconclusively; the stored credential was neither confirmed nor rejected — retry later and do not re-authenticate on this result alone",
+		}
+	}
+	return domain.VerificationResult{State: domain.VerificationVerified}
+}

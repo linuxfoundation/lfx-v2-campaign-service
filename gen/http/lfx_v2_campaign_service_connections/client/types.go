@@ -238,9 +238,13 @@ type UpdateGoogleAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
 // HTTP response body.
 type TestGoogleAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -317,9 +321,13 @@ type UpdateLinkedinAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
 // HTTP response body.
 type TestLinkedinAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -399,9 +407,13 @@ type UpdateMetaAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
 // response body.
 type TestMetaAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -469,9 +481,13 @@ type UpdateRedditAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
 // HTTP response body.
 type TestRedditAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -545,9 +561,13 @@ type UpdateTwitterAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
 // HTTP response body.
 type TestTwitterAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -621,9 +641,13 @@ type UpdateMicrosoftAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
 // HTTP response body.
 type TestMicrosoftAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -715,9 +739,13 @@ type UpdateHubspotResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
 // response body.
 type TestHubspotResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// DERIVED from state (true only when state is 'verified'). Retained for wire
+	// compatibility; branch on state instead.
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
-	// Human-readable detail
+	// Authoritative verification outcome
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Human-readable detail. For any non-verified state this names WHICH system
+	// failed, so an operator is not sent to the wrong one.
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
@@ -2987,6 +3015,7 @@ func NewDeleteGoogleAdsNotFound(body *DeleteGoogleAdsNotFoundResponseBody) *lfxv
 func NewTestGoogleAdsConnectionTestResultOK(body *TestGoogleAdsResponseBody) *lfxv2campaignserviceconnections.ConnectionTestResult {
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
+		State:   *body.State,
 		Message: body.Message,
 	}
 
@@ -3325,6 +3354,7 @@ func NewDeleteLinkedinAdsNotFound(body *DeleteLinkedinAdsNotFoundResponseBody) *
 func NewTestLinkedinAdsConnectionTestResultOK(body *TestLinkedinAdsResponseBody) *lfxv2campaignserviceconnections.ConnectionTestResult {
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
+		State:   *body.State,
 		Message: body.Message,
 	}
 
@@ -3665,6 +3695,7 @@ func NewDeleteMetaAdsNotFound(body *DeleteMetaAdsNotFoundResponseBody) *lfxv2cam
 func NewTestMetaAdsConnectionTestResultOK(body *TestMetaAdsResponseBody) *lfxv2campaignserviceconnections.ConnectionTestResult {
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
+		State:   *body.State,
 		Message: body.Message,
 	}
 
@@ -3999,6 +4030,7 @@ func NewDeleteRedditAdsNotFound(body *DeleteRedditAdsNotFoundResponseBody) *lfxv
 func NewTestRedditAdsConnectionTestResultOK(body *TestRedditAdsResponseBody) *lfxv2campaignserviceconnections.ConnectionTestResult {
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
+		State:   *body.State,
 		Message: body.Message,
 	}
 
@@ -4337,6 +4369,7 @@ func NewDeleteTwitterAdsNotFound(body *DeleteTwitterAdsNotFoundResponseBody) *lf
 func NewTestTwitterAdsConnectionTestResultOK(body *TestTwitterAdsResponseBody) *lfxv2campaignserviceconnections.ConnectionTestResult {
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
+		State:   *body.State,
 		Message: body.Message,
 	}
 
@@ -4675,6 +4708,7 @@ func NewDeleteMicrosoftAdsNotFound(body *DeleteMicrosoftAdsNotFoundResponseBody)
 func NewTestMicrosoftAdsConnectionTestResultOK(body *TestMicrosoftAdsResponseBody) *lfxv2campaignserviceconnections.ConnectionTestResult {
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
+		State:   *body.State,
 		Message: body.Message,
 	}
 
@@ -5021,6 +5055,7 @@ func NewDeleteHubspotNotFound(body *DeleteHubspotNotFoundResponseBody) *lfxv2cam
 func NewTestHubspotConnectionTestResultOK(body *TestHubspotResponseBody) *lfxv2campaignserviceconnections.ConnectionTestResult {
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
+		State:   *body.State,
 		Message: body.Message,
 	}
 
@@ -5202,6 +5237,14 @@ func ValidateTestGoogleAdsResponseBody(body *TestGoogleAdsResponseBody) (err err
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
 	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	if body.State != nil {
+		if !(*body.State == "verified" || *body.State == "invalid" || *body.State == "unverifiable") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state", *body.State, []any{"verified", "invalid", "unverifiable"}))
+		}
+	}
 	return
 }
 
@@ -5297,6 +5340,14 @@ func ValidateUpdateLinkedinAdsResponseBody(body *UpdateLinkedinAdsResponseBody) 
 func ValidateTestLinkedinAdsResponseBody(body *TestLinkedinAdsResponseBody) (err error) {
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
+	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	if body.State != nil {
+		if !(*body.State == "verified" || *body.State == "invalid" || *body.State == "unverifiable") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state", *body.State, []any{"verified", "invalid", "unverifiable"}))
+		}
 	}
 	return
 }
@@ -5394,6 +5445,14 @@ func ValidateTestMetaAdsResponseBody(body *TestMetaAdsResponseBody) (err error) 
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
 	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	if body.State != nil {
+		if !(*body.State == "verified" || *body.State == "invalid" || *body.State == "unverifiable") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state", *body.State, []any{"verified", "invalid", "unverifiable"}))
+		}
+	}
 	return
 }
 
@@ -5489,6 +5548,14 @@ func ValidateUpdateRedditAdsResponseBody(body *UpdateRedditAdsResponseBody) (err
 func ValidateTestRedditAdsResponseBody(body *TestRedditAdsResponseBody) (err error) {
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
+	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	if body.State != nil {
+		if !(*body.State == "verified" || *body.State == "invalid" || *body.State == "unverifiable") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state", *body.State, []any{"verified", "invalid", "unverifiable"}))
+		}
 	}
 	return
 }
@@ -5586,6 +5653,14 @@ func ValidateTestTwitterAdsResponseBody(body *TestTwitterAdsResponseBody) (err e
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
 	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	if body.State != nil {
+		if !(*body.State == "verified" || *body.State == "invalid" || *body.State == "unverifiable") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state", *body.State, []any{"verified", "invalid", "unverifiable"}))
+		}
+	}
 	return
 }
 
@@ -5682,6 +5757,14 @@ func ValidateTestMicrosoftAdsResponseBody(body *TestMicrosoftAdsResponseBody) (e
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
 	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	if body.State != nil {
+		if !(*body.State == "verified" || *body.State == "invalid" || *body.State == "unverifiable") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state", *body.State, []any{"verified", "invalid", "unverifiable"}))
+		}
+	}
 	return
 }
 
@@ -5777,6 +5860,14 @@ func ValidateUpdateHubspotResponseBody(body *UpdateHubspotResponseBody) (err err
 func ValidateTestHubspotResponseBody(body *TestHubspotResponseBody) (err error) {
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
+	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	if body.State != nil {
+		if !(*body.State == "verified" || *body.State == "invalid" || *body.State == "unverifiable") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state", *body.State, []any{"verified", "invalid", "unverifiable"}))
+		}
 	}
 	return
 }

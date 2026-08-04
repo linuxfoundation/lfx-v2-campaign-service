@@ -1,5 +1,55 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Made the connection `test` endpoint actually verify credentials, and gave it a
+THREE-state result (LFXV2-2556). `ConnectionTestResult` gains an authoritative `state` —
+`verified` / `invalid` / `unverifiable` — with `ok` DERIVED from it (`ok == state=="verified"`)
+and kept only for wire compatibility.
+
+The defect was narrower than "the endpoint lies": the old `message` honestly said upstream
+verification was not implemented, but `ok` — the field callers actually branch on — was
+`c.HasCredentials()`, i.e. credential PRESENCE. A stored-but-expired token answered `true`, and
+the failure surfaced later as an async dispatch failure on a paid campaign. All seven providers
+routed through that one stub.
+
+A boolean cannot carry this outcome. `invalid` (the provider REFUSED the credential —
+re-authenticate) and `unverifiable` (unreachable/ambiguous, or no verifier wired — do NOT touch
+the credential) demand OPPOSITE operator actions, and collapsing them into one `ok: false` makes
+a provider OUTAGE tell an operator to delete and re-enter a working credential. That is the same
+one-value-two-meanings failure that has already caused silent data loss here.
+
+`domain.CredentialVerifier` is a new OPTIONAL dispatcher capability, mirroring `StatusToggler`:
+the container DERIVES the verifier map from the dispatcher map by type assertion
+(`registerVerifiers`) rather than maintaining a second literal map, so implementing the
+interface is the only thing needed to become verifiable — a hand-kept second map is exactly how
+a capability gets wired in one place and forgotten in the other. Wired on BOTH the fast path and
+the cold-start retry path, so a cold-started pod behaves identically to a warm one.
+
+**Google Ads only.** `client.VerifyCredential` runs `SELECT customer.id FROM customer LIMIT 1`
+against `customers/{customerId}/googleAds:search` — ACCOUNT-SCOPED (a tenant-scoped probe would
+pass for a credential pointed at the WRONG ad account, the exact misconfiguration this catches)
+and non-mutating. `googleads.CredentialRejected` classifies: a definite 4xx is a rejection,
+while the ambiguity guard (`IsOutcomeUnconfirmed`) short-circuits every 5xx/429/transport
+failure first. Connection-state failures are `unverifiable`, NOT `invalid` — Google was never
+contacted, so there is no evidence about the credential, and each reason names WHICH system
+failed. The other six providers return `unverifiable` with a reason: a probe written against an
+unconfirmed API contract fails only in production, and fails as `invalid`.
+
+Two pieces of code were REMOVED after revert-verification showed no test could distinguish them
+from their absence: a `validateAccountIDs` call in `VerifyCredential` (`doRequest` already
+validates before the token exchange) and the 429/5xx exclusions in `CredentialRejected` (the
+ambiguity guard already covers them). Both were unreachable code that read like live policy.
+The remaining classification is pinned by
+`TestCredentialRejected_AmbiguityGuardBeatsTheStatusCode`, which wraps a 4xx in a transport
+error — the only shape where the guard's ordering actually decides the verdict.
+
+The handler never writes the connection row: an `unverifiable` result must not set
+`status = error`, or a transient outage would durably brand working connections as broken.
+
+Design change, so `make apigen` ran. No migration.
+
+
 ## 2026-08-03
 
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the

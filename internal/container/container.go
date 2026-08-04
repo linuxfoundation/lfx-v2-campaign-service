@@ -40,6 +40,9 @@ type readinessSetter interface {
 }
 type backendSetter interface {
 	SetBackend(domain.ConnectionRepository, domain.Encryptor)
+	// SetVerifiers late-binds the per-provider credential verifiers alongside the repo, so a
+	// cold-started pod's connection `test` endpoint behaves identically to a warm one.
+	SetVerifiers(map[model.Provider]domain.CredentialVerifier)
 }
 
 // briefBackendSetter is the interface the container needs to late-bind the brief
@@ -265,6 +268,28 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	}
 }
 
+// registerVerifiers derives the per-provider credential-verifier map from the SAME dispatcher
+// map used for campaign dispatch, by type-asserting each dispatcher for
+// domain.CredentialVerifier (the optional-capability pattern used for StatusToggler).
+//
+// Deriving it rather than maintaining a second literal map is deliberate: a hand-written
+// second map is exactly how a capability gets wired in one place and forgotten in the other,
+// producing a provider that can dispatch but silently reports "no verifier wired" forever.
+// Here, implementing the interface is the ONLY thing required to become verifiable.
+//
+// A provider whose dispatcher does not implement the interface is simply absent, which the
+// connection service reports as VerificationUnverifiable ("not yet wired") — an honest
+// "unknown", never a guessed verdict.
+func registerVerifiers(dispatchers map[model.Provider]service.PlatformDispatcher) map[model.Provider]domain.CredentialVerifier {
+	verifiers := make(map[model.Provider]domain.CredentialVerifier, len(dispatchers))
+	for p, d := range dispatchers {
+		if v, ok := d.(domain.CredentialVerifier); ok {
+			verifiers[p] = v
+		}
+	}
+	return verifiers
+}
+
 // dispatchableProviders is the full set of providers a brief can select (per the
 // CreateCampaigns contract); any without a registered dispatcher is logged at startup so the
 // gap is visible in production.
@@ -312,7 +337,10 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
 	repo := postgres.NewConnectionRepo(pool)
-	c.Connections = service.NewConnectionService(repo, enc)
+	// Keep the concrete type: c.Connections is the generated service INTERFACE, which does
+	// not expose SetVerifiers (it is a container-wiring concern, not part of the API surface).
+	connections := service.NewConnectionService(repo, enc)
+	c.Connections = connections
 	briefRepo := postgres.NewBriefRepo(pool)
 	campaignRepo := postgres.NewCampaignRepo(pool)
 	jobRepo := postgres.NewJobRepo(pool)
@@ -323,6 +351,10 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	audienceRepo := postgres.NewAudienceRepo(pool)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo)
 	logMissingDispatchers(dispatchers)
+	// Credential verifiers are derived from the dispatchers, so the connection `test`
+	// endpoint reports a real verdict for any provider whose adapter implements the
+	// capability (and an honest "not wired" for the rest).
+	connections.SetVerifiers(registerVerifiers(dispatchers))
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
@@ -375,6 +407,10 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
 			logMissingDispatchers(dispatchers)
+			// Same verifier derivation as the fast path, so a cold-started pod's `test`
+			// endpoint behaves identically to a warm one (a divergence here would make
+			// verification silently depend on how the database came up).
+			b.SetVerifiers(registerVerifiers(dispatchers))
 			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
 			// goroutine returns) before it reads c.orch, so this write happens-before
