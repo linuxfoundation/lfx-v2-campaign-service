@@ -119,7 +119,7 @@ func (stubCampaignRepo) ClaimCampaignDispatch(context.Context, string, string, m
 func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provider) error {
 	return nil
 }
-func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
+func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
 func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64) (*model.Campaign, error) {
@@ -527,11 +527,11 @@ func TestClose_StopsARelayInstalledByALateInitRetry(t *testing.T) {
 // publish anything — only to be STOPPED — so the reads just need to succeed.
 type stubOutbox struct{}
 
-func (stubOutbox) PendingIndexMessages(context.Context, int) ([]*model.OutboxMessage, error) {
-	return nil, nil
+func (stubOutbox) DrainPendingIndexMessages(
+	context.Context, int, func(context.Context, *model.OutboxMessage) error,
+) (int, error) {
+	return 0, nil
 }
-func (stubOutbox) MarkIndexMessagePublished(context.Context, int64) error         { return nil }
-func (stubOutbox) RecordIndexMessageFailure(context.Context, int64, string) error { return nil }
 
 // relayStopped reports whether Stop has already run, without exporting relay internals: a second
 // Stop on an already-stopped relay returns immediately, while one on a live relay would block

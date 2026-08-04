@@ -271,22 +271,23 @@ func (o *Orchestrator) IndexerIsNoop() bool {
 	return isNoop
 }
 
-// publishCampaignIndex publishes a campaign snapshot after its row is committed.
-// Best-effort by contract: the write already succeeded, so a publish problem must never
-// change the dispatch result. It deliberately takes an explicit ctx because the callers
-// persist on a DETACHED context during shutdown grace — passing the cancelled dispatch
-// ctx here would drop exactly the shutdown-window publishes the detach exists to save.
-func (o *Orchestrator) publishCampaignIndex(ctx context.Context, c *model.Campaign, bearer string) {
-	if c == nil {
-		return
+// campaignIndexPayload builds the outbox payload for a campaign write, co-committed with the
+// row by UpsertCampaign.
+//
+// It carries NO bearer token. Campaign creation is ASYNC — the dispatch runs on the
+// orchestrator's root context, long after the request returned — so a captured JWT could be
+// EXPIRED by publish time, and the indexer rejects an expired token. With no outbox row there
+// was nothing to retry, so a slow dispatch left a new campaign permanently unsearchable. The
+// relay stamps a service credential at publish time instead, which also keeps a live credential
+// out of a JSONB table retained for audit with no pruning.
+func campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
+	return func(c *model.Campaign) ([]byte, error) {
+		return json.Marshal(indexer.NewTransaction(
+			action, indexer.ObjectTypeCampaign,
+			c.ID, c.ProjectID, "",
+			campaignDoc(campaignResult(c)), c.CampaignName,
+		))
 	}
-	o.indexerMu.RLock()
-	p := o.indexer
-	o.indexerMu.RUnlock()
-	if p == nil {
-		return
-	}
-	p.Publish(ctx, indexer.NewTransaction(indexer.ActionCreated, indexer.ObjectTypeCampaign, c.ID, c.ProjectID, bearer, campaignDoc(campaignResult(c)), c.CampaignName))
 }
 
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
@@ -788,15 +789,13 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 					campaign.Status = campaignStatusPending
 				}
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
-				if saved, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
+				// Index the RETAINED PARTIAL too: it is a real row an operator must be able to
+				// find in order to reconcile it. Indexing only clean successes would hide
+				// exactly the campaigns that need attention.
+				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, campaignIndexPayload(indexer.ActionCreated)); perr != nil {
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
 				} else {
-					// Index the RETAINED PARTIAL too: it is a real row an operator must be
-					// able to find in order to reconcile it. Publishing only clean successes
-					// would hide exactly the campaigns that need attention. Uses persistCtx
-					// (detached) so a shutdown-window persist still reaches the index.
-					o.publishCampaignIndex(persistCtx, saved, bearer)
 					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 				}
@@ -842,23 +841,20 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// while still bounding it so it can never hang shutdown.
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancelPersist()
-	saved, err := o.campaigns.UpsertCampaign(persistCtx, campaign)
-	if err != nil {
+	if _, uerr := o.campaigns.UpsertCampaign(persistCtx, campaign, campaignIndexPayload(indexer.ActionCreated)); uerr != nil {
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
 		// and the orphaned upstream id; keep the id in the result.
 		slog.ErrorContext(ctx, "persist campaign failed after upstream create — pending claim retained",
-			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", err)
+			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr)
 		res.Error = "created upstream campaign but failed to record it; see logs"
 		res.CampaignID = campaign.PlatformCampaignID
 		return res
 	}
-	// The row is committed; publish it so a newly-created campaign is searchable
-	// immediately rather than only after some later update republishes it. Uses the
-	// DB-returned row (not the input) so the indexed document carries the persisted
-	// id, and persistCtx so a publish during shutdown grace isn't dropped.
-	o.publishCampaignIndex(persistCtx, saved, bearer)
+	// The index message co-committed with the row (see campaignIndexPayload), so the campaign
+	// is searchable once the relay delivers it — no dependency on this goroutine's token still
+	// being valid, and no lost message if the process dies here.
 
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID

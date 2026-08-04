@@ -34,6 +34,15 @@ type BriefWriter interface {
 	ArchiveBrief(ctx context.Context, projectID, id string, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 }
 
+// CampaignIndexPayloadFunc builds the index message for a campaign that has just been written,
+// co-committed with the row like IndexPayloadFunc does for briefs.
+//
+// Campaign creation is ASYNC: the dispatch runs on the orchestrator's root context, long after
+// the request returned. Publishing directly with the caller's captured JWT could therefore fail
+// on an EXPIRED token — and with no outbox row there was nothing to retry, leaving a new
+// campaign permanently unsearchable. The relay stamps a service credential at publish time.
+type CampaignIndexPayloadFunc func(*model.Campaign) ([]byte, error)
+
 // IndexPayloadFunc builds the index message for a brief that has just been written. It is
 // invoked INSIDE the write transaction and its result is enqueued to the outbox alongside the
 // row, so the message co-commits with the change it describes.
@@ -85,7 +94,7 @@ type CampaignReader interface {
 type CampaignWriter interface {
 	// UpsertCampaign inserts or updates the campaign row for a (brief, platform).
 	// Campaigns are updated in place when a brief changes after they exist.
-	UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error)
+	UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 	// ReplaceCampaign replaces a campaign's mutable fields, gating on version.
 	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64) (*model.Campaign, error)
 }

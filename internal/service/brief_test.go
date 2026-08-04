@@ -519,7 +519,7 @@ func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string
 func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider) error {
 	return nil
 }
-func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
+func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
 func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64) (*model.Campaign, error) {

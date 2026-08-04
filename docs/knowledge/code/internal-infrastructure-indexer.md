@@ -78,6 +78,18 @@ the commit and the publish regardless.
 
 ## The outbox closes it
 
+**The drain CLAIMS its batch** with `SELECT ... FOR UPDATE SKIP LOCKED`, holding the row locks
+across the publish and the retire (the publish is passed down as a callback for exactly this
+reason). An unclaimed read let every replica load the same batch, so a slow pod could publish an
+earlier `updated` after a faster one had already published the later `deleted` — resurrecting an
+archived document ACROSS replicas, which rolling deploys make routine. `SKIP LOCKED` rather than
+a bare `FOR UPDATE` keeps a second pod moving to unclaimed work instead of blocking.
+
+**Campaign writes co-commit too.** Campaign creation is ASYNC — the dispatch runs on the
+orchestrator's root context, long after the request returned — so publishing with the JWT
+captured at `Start` could fail on an EXPIRED token, and with no outbox row there was nothing to
+retry: the campaign stayed permanently unsearchable.
+
 **EVERY brief mutation goes through the outbox** — create, replace, approve AND archive — not
 just the terminal archive. A direct post-commit publish cannot be ordered against an outbox
 replay: a replace could commit, stall before publishing, and land its update AFTER the archive

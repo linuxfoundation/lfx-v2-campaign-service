@@ -128,7 +128,7 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 
 // UpsertCampaign inserts or updates the (brief, platform) campaign row. On
 // conflict it updates in place (a brief change after campaigns exist).
-func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error) {
+func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	q := `INSERT INTO campaigns
 		(project_id, brief_id, job_id, platform, platform_campaign_id, campaign_name, status,
 		 budget_amount, budget_type, start_date, end_date, config_snapshot, result)
@@ -141,7 +141,13 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*
 			config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
 			version=campaigns.version+1, updated_at=now()
 		RETURNING ` + campaignCols
-	row := r.db.QueryRow(ctx, q,
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("upsert campaign: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	row := tx.QueryRow(ctx, q,
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType),
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
@@ -150,8 +156,30 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*
 	if err != nil {
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}
+	// Co-commit the index message. Campaign creation is ASYNC — the dispatch runs on the
+	// orchestrator's root context, long after the request returned — so publishing directly
+	// with the caller's captured JWT could fail on an EXPIRED token, and with no outbox row
+	// there was nothing to retry: a new campaign stayed permanently unsearchable. The relay
+	// stamps a service credential at publish time instead.
+	if indexPayload != nil {
+		payload, perr := indexPayload(upserted)
+		if perr != nil {
+			return nil, fmt.Errorf("upsert campaign: build index payload: %w", perr)
+		}
+		if eerr := enqueueIndexMessage(ctx, tx, indexObjectTypeCampaign, upserted.ID, payload); eerr != nil {
+			return nil, fmt.Errorf("upsert campaign: %w", eerr)
+		}
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("upsert campaign: commit: %w", cerr)
+	}
 	return upserted, nil
 }
+
+// indexObjectTypeCampaign mirrors indexer.ObjectTypeCampaign. Duplicated rather than imported
+// for the same reason as indexObjectTypeBrief: the postgres package must not depend on the
+// indexer. Pinned by a test.
+const indexObjectTypeCampaign = "campaign"
 
 // ReplaceCampaign replaces mutable fields, gating on expectedVersion.
 func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64) (*model.Campaign, error) {

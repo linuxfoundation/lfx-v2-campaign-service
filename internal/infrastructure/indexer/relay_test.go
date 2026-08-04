@@ -19,18 +19,34 @@ type fakeOutbox struct {
 	pending   []*model.OutboxMessage
 	published []int64
 	failed    []int64
+	drainErr  error
 }
 
-func (f *fakeOutbox) PendingIndexMessages(context.Context, int) ([]*model.OutboxMessage, error) {
-	return f.pending, nil
-}
-func (f *fakeOutbox) MarkIndexMessagePublished(_ context.Context, id int64) error {
-	f.published = append(f.published, id)
-	return nil
-}
-func (f *fakeOutbox) RecordIndexMessageFailure(_ context.Context, id int64, _ string) error {
-	f.failed = append(f.failed, id)
-	return nil
+// DrainPendingIndexMessages mirrors the real repo's claim semantics: deliver is called for each
+// claimed message, and ONLY what deliver confirms is retired. Modelling the retire/leave-pending
+// split is the point — a fake that always retired would hide exactly the bug this table exists
+// to prevent.
+func (f *fakeOutbox) DrainPendingIndexMessages(
+	ctx context.Context,
+	_ int,
+	deliver func(context.Context, *model.OutboxMessage) error,
+) (int, error) {
+	if f.drainErr != nil {
+		return 0, f.drainErr
+	}
+	published := 0
+	for _, m := range f.pending {
+		if ctx.Err() != nil {
+			break
+		}
+		if err := deliver(ctx, m); err != nil {
+			f.failed = append(f.failed, m.ID)
+			continue
+		}
+		f.published = append(f.published, m.ID)
+		published++
+	}
+	return published, nil
 }
 
 // capturingPublisher records what reached the wire.

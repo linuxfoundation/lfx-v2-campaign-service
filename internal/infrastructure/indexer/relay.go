@@ -17,10 +17,16 @@ import (
 
 // OutboxReader is the outbox slice the relay needs. An interface so the relay is testable
 // without a database.
+//
+// ONE method, not a read/mark/record triple. The claim, the publish and the retire have to
+// happen under the same row locks — a relay that read rows, published, then marked them in
+// separate calls let every replica load the SAME batch, so a slow pod could publish an earlier
+// `updated` after a faster one had already published the later `deleted`. Handing the publish
+// down as a callback is what keeps the lock held across it.
 type OutboxReader interface {
-	PendingIndexMessages(ctx context.Context, limit int) ([]*model.OutboxMessage, error)
-	MarkIndexMessagePublished(ctx context.Context, id int64) error
-	RecordIndexMessageFailure(ctx context.Context, id int64, cause string) error
+	// DrainPendingIndexMessages claims a batch, calls deliver for each message, and retires
+	// only what deliver confirms. A deliver error leaves that row pending for a later pass.
+	DrainPendingIndexMessages(ctx context.Context, limit int, deliver func(context.Context, *model.OutboxMessage) error) (int, error)
 }
 
 // RawPublisher publishes an already-marshalled payload to a subject. The relay must NOT
@@ -145,67 +151,41 @@ func (r *Relay) stamp(payload []byte) ([]byte, error) {
 }
 
 // drain publishes one batch of pending messages.
+//
+// The publish runs INSIDE the outbox's claim transaction (as the deliver callback), so the row
+// locks are held across it and no other replica can process the same rows. That is what makes
+// per-object ordering hold across replicas: the publisher's per-object lock is process-local and
+// could never have provided it.
 func (r *Relay) drain(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, relayPassTimeout)
 	defer cancel()
 
 	// Without a service credential every message would be REJECTED by the indexer for an empty
-	// authorization header — but NATS would accept the publish, so drain would retire the row
-	// as delivered and the recovery this table exists for would be permanently lost. Skip the
-	// pass instead: rows stay pending until the token is configured.
+	// authorization header — but NATS would accept the publish, so the row would be retired as
+	// delivered and the recovery this table exists for would be permanently lost. Skip the pass
+	// instead: rows stay pending until the token is configured.
 	if strings.TrimSpace(r.authorization) == "" {
 		r.warnNoToken()
 		return
 	}
 
-	msgs, err := r.outbox.PendingIndexMessages(ctx, 0)
+	published, err := r.outbox.DrainPendingIndexMessages(ctx, 0, func(ctx context.Context, m *model.OutboxMessage) error {
+		payload, aerr := r.stamp(m.Payload)
+		if aerr != nil {
+			// A row we cannot parse can never be published. Returning the error records it on
+			// the row rather than retrying it silently forever.
+			return aerr
+		}
+		return r.pub.PublishRaw(ctx, Subject(m.ObjectType), m.ObjectID, payload)
+	})
 	if err != nil {
 		// Do not log a cancellation during shutdown as a failure.
 		if parent.Err() == nil {
-			slog.ErrorContext(ctx, "index relay could not read the outbox", "error", err)
+			slog.ErrorContext(ctx, "index relay could not drain the outbox", "error", err)
 		}
 		return
-	}
-	if len(msgs) == 0 {
-		return
-	}
-
-	var published int
-	for _, m := range msgs {
-		// Stop early on shutdown rather than pushing through a cancelled context: the rows
-		// stay pending and the next process takes them.
-		if ctx.Err() != nil {
-			break
-		}
-		payload, aerr := r.stamp(m.Payload)
-		if aerr != nil {
-			// A row we cannot parse can never be published; record it so it is visible rather
-			// than retried silently forever.
-			if rerr := r.outbox.RecordIndexMessageFailure(ctx, m.ID, aerr.Error()); rerr != nil {
-				slog.ErrorContext(ctx, "index relay could not record an unparseable outbox row",
-					"outbox_id", m.ID, "error", rerr)
-			}
-			continue
-		}
-		if perr := r.pub.PublishRaw(ctx, Subject(m.ObjectType), m.ObjectID, payload); perr != nil {
-			if rerr := r.outbox.RecordIndexMessageFailure(ctx, m.ID, perr.Error()); rerr != nil {
-				slog.ErrorContext(ctx, "index relay could not record a publish failure",
-					"outbox_id", m.ID, "error", rerr)
-			}
-			continue
-		}
-		if merr := r.outbox.MarkIndexMessagePublished(ctx, m.ID); merr != nil {
-			// The message WAS published but the row is still pending, so the next pass will
-			// republish it. That is safe — the indexer overwrites by object id, so a duplicate
-			// is a no-op — and is the right trade against dropping it.
-			slog.ErrorContext(ctx, "index relay published a message but could not retire it (it will republish)",
-				"outbox_id", m.ID, "error", merr)
-			continue
-		}
-		published++
 	}
 	if published > 0 {
-		slog.InfoContext(ctx, "index relay published pending messages",
-			"count", published, "batch", len(msgs))
+		slog.InfoContext(ctx, "index relay published pending messages", "count", published)
 	}
 }

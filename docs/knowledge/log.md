@@ -2,6 +2,19 @@
 
 ## 2026-08-03
 
+**Update** — Closed two more outbox findings on PR #60 (LFXV2-2814), both raised against the
+previous commit. (1) `PendingIndexMessages` read rows with NO claim, so every replica loaded the
+same batch: a slow pod could publish an earlier `updated` after a faster one had already
+published the later `deleted`, resurrecting an archived brief ACROSS replicas — the same race the
+outbox closes intra-process, and rolling deploys make overlapping pods routine. The read/mark/
+record triple collapsed into one `DrainPendingIndexMessages(ctx, limit, deliver)` that claims
+with `FOR UPDATE SKIP LOCKED` and holds the locks across the publish (passed down as a callback)
+and the retire. Ordering is now `created_at, id` — total, since `created_at` can tie at now()
+resolution. (2) Campaign creates still published directly with the caller's JWT captured at
+`Start`; because dispatch is async on the root context, that token could be EXPIRED by publish
+time and there was no row to retry, leaving a new campaign permanently unsearchable.
+`UpsertCampaign` now takes a `CampaignIndexPayloadFunc` and co-commits like the brief writes.
+
 **Update** — Routed ALL brief writes through the index outbox (LFXV2-2814, PR #60), not just the
 terminal archive. With create/replace/approve publishing directly after commit and only the
 archive co-committing, the two paths could not be ordered against each other: a replace could
