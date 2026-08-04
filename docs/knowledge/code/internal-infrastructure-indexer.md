@@ -168,6 +168,16 @@ predecessor died mid-publish.
   claim transaction — and the `pgxpool.Close` that follows would block on that connection,
   overrunning the composed shutdown bound. The deadline is a CHILD of the pass context, so
   whichever ends first wins. Verified live: cancellation ends the request in ~200ms.
+- **`deleted` writes a TOMBSTONE, not a physical delete — and the platform does not yet filter
+  it.** Verified across both repos: `lfx-v2-indexer-service` sets `deleted_at` and retains
+  `object_ref`/`latest` (`indexer_service.go`, `ActionDeleted` branch; its `StorageRepository.Delete`
+  performs a real OpenSearch delete but nothing calls it), while `lfx-v2-query-service`'s search
+  template filters `must: [{"term": {"latest": true}}]` with NO `deleted_at` exclusion
+  (`opensearch/template.go`). So an archived brief remains discoverable as a tombstone.
+  `ActionDeleted` is still the correct action to send — it is the only one that records the
+  archive at all, and it carries `deleted_at` for a consumer that filters on it. Closing the gap
+  needs a query-service filter (or physical delete in the indexer); it CANNOT be fixed from this
+  service, and it affects every platform resource type, not just briefs.
 - **A FLUSH IS NOT AN ACK.** `PublishRaw` uses NATS request/reply, not publish-and-flush: a flush
   only confirms the bytes reached the BROKER. The indexer subscribes to `lfx.index.*` with reply
   support and answers `"OK"` on success or `"ERROR: ..."` on any envelope/config/data rejection
