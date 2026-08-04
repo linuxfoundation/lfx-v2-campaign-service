@@ -53,6 +53,7 @@ trimmed); `customer_id` → optional `CustomerId`. `NameSuffix = brief.ID` for r
 idempotency. Non-nil result + error = UNCONFIRMED partial (claim retained); (nil, err) =
 nothing created (claim released). Removed Microsoft from the `logMissingDispatchers` gap list;
 updated the container test's registered-provider set to include it.
+
 ## 2026-07-24
 
 **Update** — Review-hardened the Microsoft campaign contract (PR #44, copilot):
@@ -63,6 +64,7 @@ a live caller context is a FAILED lookup (UNCONFIRMED), not a clean abort. Also,
 duplicate-name self-heal whose reconciliation re-lookup errors now surfaces that
 cause. Aligned the `internal-platform-microsoft` concept + the older log entry to
 the corrected `ctx.Err()` distinction and the duplicate-name-REJECTED contract.
+
 ## 2026-07-23
 
 **Update** — Microsoft Ads MS-2.5 PR #45 review follow-up (copilot + cursor). (1) The ≥1-word
@@ -218,6 +220,7 @@ resume); (5) over-cap `Retry-After` compared in seconds before the Duration mult
 (overflow → short-wait bug) and `parseNonNegativeInt` overflow rejected before wrap;
 (6) single-flight concurrency test (leader + followers, cancel one mid-refresh, assert
 one HTTP call) under `-race`. Registered the OKF concept + code index bullet.
+
 ## 2026-07-21
 
 **Update** — HubSpot deep-review pass (PR #35). Ran a 5-dimension parallel review
