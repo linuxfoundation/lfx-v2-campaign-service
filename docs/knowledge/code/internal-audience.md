@@ -145,6 +145,12 @@ Both exits need this, with different urgency:
 re-appending `master` would name it twice and read like two separate orphans. The code guards on
 `slices.Contains` rather than assuming, since that invariant is easy to break from the other side.
 
+The two exits also use DIFFERENT error prefixes, because they blame different systems:
+`audienceBuildErr` ("failed upstream") for the partial path, where HubSpot really did fail, and
+`audiencePersistErr` ("created but recording them failed") for the success path, where HubSpot is
+the one system known to be fine. Reusing the upstream wording there would send an operator to
+investigate the platform when the remedy is to reconcile the listed ids.
+
 ## Every ambiguous outcome says UNCONFIRMED in the RESPONSE
 
 `hubspot.IsUnconfirmed` classifies four ambiguous sources — a 2xx-with-no-id, a mutating 429, a

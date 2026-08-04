@@ -88,6 +88,21 @@ func audienceBuildErr(err error) error {
 	}
 }
 
+// audiencePersistErr is audienceBuildErr's counterpart for the opposite failure: the upstream
+// build SUCCEEDED and the local write did not.
+//
+// Reusing audienceBuildErr here would prefix "failed upstream" onto a failure that was not
+// upstream at all, sending an operator to check HubSpot when HubSpot is the one system known to
+// be fine — and contradicting the neutral wording of the wrapped unrecordedListsErr, which is
+// telling them the lists EXIST. The distinction matters most in exactly this case, because the
+// remedy is to reconcile listed ids rather than to investigate the platform.
+func audiencePersistErr(err error) error {
+	return &audiences.InternalServerError{
+		Code:    "500",
+		Message: "the audience lists were created but recording them failed: " + err.Error(),
+	}
+}
+
 // SetBuilder injects the platform-side builder. Opt-in like the other late-bound dependencies
 // so the ~existing NewAudienceService call sites are unaffected.
 func (s *AudienceService) SetBuilder(b AudienceBuilder) {
@@ -307,7 +322,7 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		if !slices.Contains(reported, master) {
 			reported = append(slices.Clone(ids), master)
 		}
-		return nil, audienceBuildErr(unrecordedListsErr(uerr, created.ID, reported))
+		return nil, audiencePersistErr(unrecordedListsErr(uerr, created.ID, reported))
 	}
 	return audienceResult(updated), nil
 }

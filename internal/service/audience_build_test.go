@@ -262,6 +262,9 @@ func TestBuildAudience_UnpersistedPartialReturnsTheListIDs(t *testing.T) {
 		"the caller must be told not to retry blindly into duplicate lists")
 	assert.Contains(t, ise.Message, "hubspot 429",
 		"the original build failure must not be swallowed by the persistence failure")
+	assert.Contains(t, ise.Message, "failed upstream",
+		"unlike the success path, this failure DID start upstream — the label must stay accurate "+
+			"in both directions, not merely be removed everywhere")
 
 	// Precondition: the write really was rejected, so the DATABASE never received the summary.
 	// (The fake stores the row by pointer, so rows()[0] aliases the in-memory struct the service
@@ -344,6 +347,15 @@ func TestBuildAudience_UnpersistedSuccessReturnsTheListIDs(t *testing.T) {
 	assert.Contains(t, ise.Message, "reconciled before retrying")
 	assert.NotEqual(t, "an internal server error occurred", ise.Message,
 		"a DB error must not fall through to the generic 500 that carries no ids")
+
+	// The message must not blame HubSpot. Here HubSpot is the one system known to be FINE — it
+	// created everything — and only the local write failed. "failed upstream" would send the
+	// operator to investigate the platform when the remedy is to reconcile the ids listed below,
+	// and would contradict the wrapped message telling them those lists EXIST.
+	assert.NotContains(t, ise.Message, "failed upstream",
+		"the upstream build succeeded; blaming it points reconciliation at the wrong system")
+	assert.Contains(t, ise.Message, "created but recording them failed",
+		"the message must name the step that actually failed")
 
 	// The master must be named exactly once: createPlanLists already returns it as the last
 	// element of ids, so a naive append would list it twice and read like two orphans.

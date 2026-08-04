@@ -21,6 +21,14 @@ stays `building` with an EMPTY `inclusion_summary` while real lists exist upstre
 unreconcilable state the comment says is fixed. The ids now travel in the returned error, so the
 500 body carries them when persistence cannot.
 
+**Fix** — The success-path persist failure no longer claims the build "failed upstream" (PR #61
+review). Returning it through `audienceBuildErr` inherited that prefix, but on this path HubSpot
+SUCCEEDED and only the local write failed — so the body blamed the one system known to be fine
+and contradicted the wrapped message telling the operator the lists EXIST. Added
+`audiencePersistErr` ("the audience lists were created but recording them failed"). The partial
+path keeps the upstream wording, which is accurate there; a test pins both directions so the
+label cannot simply be dropped everywhere.
+
 **Update** — A brief with no location now records that its past editions were matched BROADLY
 (PR #61 review). `ResolvePastEventNames` drops its location predicate when `locationTerm` is
 blank, so a multi-city family resolves other cities' editions.
