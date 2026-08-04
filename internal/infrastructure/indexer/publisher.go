@@ -193,9 +193,21 @@ func flushBudget(ctx context.Context) time.Duration {
 // ours to control and which are known to embed the input verbatim.
 //
 // It replaces the RAW url first, then the userinfo alone — a parse error may quote a normalised
-// or partial form of the input, so matching the full string alone is not sufficient.
+// or partial form of the input, so matching the full string alone is not sufficient. A
+// comma-separated server list is scrubbed entry by entry (see below).
 func scrubURL(text, rawURL string) string {
 	if rawURL == "" {
+		return text
+	}
+	// NATS accepts a COMMA-SEPARATED server list, and nats.go's parse error quotes only the
+	// offending entry. Scrubbing the list as one string matched nothing, so that entry's
+	// credential reached the log verbatim — scrub each entry independently.
+	if strings.Contains(rawURL, ",") {
+		for _, entry := range strings.Split(rawURL, ",") {
+			if entry = strings.TrimSpace(entry); entry != "" {
+				text = scrubURL(text, entry)
+			}
+		}
 		return text
 	}
 	safe := redactURL(rawURL)

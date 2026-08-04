@@ -161,3 +161,26 @@ func TestNATSPublisher_SerializesPerResource(t *testing.T) {
 	assert.NotSame(t, p.resourceLock("a"), p.resourceLock("b"))
 	assert.Same(t, p.resourceLock("a"), p.resourceLock("a"))
 }
+
+// TestScrubURL_HandlesCommaSeparatedServerLists pins the multi-server case. NATS accepts a
+// comma-separated list, and nats.go's parse error quotes only the OFFENDING entry — so scrubbing
+// the list as a single string matched nothing and that entry's credential reached the log
+// verbatim.
+func TestScrubURL_HandlesCommaSeparatedServerLists(t *testing.T) {
+	const p1, p2 = "pass-one", "pass-two" // secretlint-disable-line -- fixture asserting both are scrubbed
+	list := "nats://a:" + p1 + "@host1:4222,nats://b:" + p2 + "@bad host:4222"
+
+	// The error quotes only the second entry.
+	got := scrubURL(`parse "nats://b:`+p2+`@bad host:4222": invalid character`, list)
+	assert.NotContains(t, got, p2, "the offending entry's password must be scrubbed")
+	assert.Contains(t, got, "bad host:4222", "the host stays, so the failure is diagnosable")
+
+	// And when the error quotes the first entry instead.
+	got = scrubURL(`dial tcp: nats://a:`+p1+`@host1:4222 refused`, list)
+	assert.NotContains(t, got, p1)
+	assert.Contains(t, got, "host1:4222")
+
+	// A single-server URL still works (no comma).
+	got = scrubURL(`parse "nats://u:secret@h:4222": bad`, "nats://u:secret@h:4222") // secretlint-disable-line -- fixture
+	assert.NotContains(t, got, "secret")
+}
