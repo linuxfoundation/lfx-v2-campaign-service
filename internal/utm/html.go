@@ -70,7 +70,14 @@ func TagHTMLLinksFrom(fragment string, p Params, prefix string, startAt int) (st
 			}
 			break
 		}
-		raw := z.Raw()
+		// COPY the raw token. z.Raw() returns a slice into the tokenizer's own buffer, and
+		// x/net/html documents it as valid only until the next Next/Token/Text/TagName/TagAttr
+		// call — TagAttr in particular unescapes attribute values IN PLACE. Since an anchor is
+		// only written back after rewriteAnchor has called TagAttr (to discover whether its href
+		// changed at all), holding the original slice would risk emitting a mutated buffer for
+		// an anchor the tagger deliberately left alone. Copying costs one allocation per token
+		// and makes the never-mangle guarantee hold by construction rather than by timing.
+		raw := append([]byte(nil), z.Raw()...)
 		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
 			b.Write(raw)
 			continue

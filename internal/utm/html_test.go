@@ -250,3 +250,42 @@ func TestTagHTMLLinks_LeavesUntaggedBytesVerbatim(t *testing.T) {
 		assert.Equal(t, in, got, "an untagged fragment must come back byte-identical")
 	}
 }
+
+// TestTagHTMLLinks_SkippedAnchorsKeepTheirEntities guards the tokenizer's buffer-reuse contract.
+//
+// z.Raw() returns a slice into the TOKENIZER'S OWN buffer, valid only until the next
+// Next/Token/TagName/TagAttr call — and TagAttr unescapes attribute values IN PLACE. An anchor is
+// only written back after rewriteAnchor has called TagAttr (to discover whether its href changed
+// at all), so holding the original slice would risk emitting a mutated buffer for an anchor the
+// tagger deliberately left alone.
+//
+// The all-untagged fast path returns the input verbatim and would hide this, so every case here
+// puts a TAGGABLE anchor first, forcing the builder path.
+func TestTagHTMLLinks_SkippedAnchorsKeepTheirEntities(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "c"}
+	cases := []struct {
+		name, in, mustKeep string
+	}{
+		{
+			name:     "skipped mailto with entities in href and attributes",
+			in:       `<a href="https://lf.dev/e">go</a><a href="mailto:a&amp;b@x.com" title="A &amp; B">m&amp;m</a>`,
+			mustKeep: `<a href="mailto:a&amp;b@x.com" title="A &amp; B">m&amp;m</a>`,
+		},
+		{
+			name:     "skipped tel plus an entity-bearing non-anchor tag",
+			in:       `<a href="https://lf.dev/e">go</a><a href="tel:+1&amp;2">c</a><p title="&amp;">x</p>`,
+			mustKeep: `<a href="tel:+1&amp;2">c</a><p title="&amp;">x</p>`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, n, err := TagHTMLLinksFrom(tc.in, p, "", 0)
+			require.NoError(t, err)
+			require.Equal(t, 1, n, "exactly the http link is tagged; the rest are skipped")
+			assert.Contains(t, got, tc.mustKeep,
+				"a skipped anchor must survive byte-identical: TagAttr unescapes the tokenizer "+
+					"buffer in place, so a retained Raw() slice would emit mangled entities")
+			assert.NotContains(t, got, "a&b@x.com", "an unescaped entity means the raw buffer was reused")
+		})
+	}
+}
