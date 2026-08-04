@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), and PAUSED campaign creation (GA-2)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), and ad group + responsive search ad creation (GA-3)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -101,10 +101,9 @@ finite (NaN/Inf rejected — NaN passes every ordered comparison, so it would
 otherwise slip through and create a zero-unit budget) and must round to a positive
 `amountMicros` (a sub-micro value like 0.0000001 is > 0 but converts to 0 micros);
 and BOTH Project AND EventName must be non-empty (independently — mirrors the
-meta/twitter/reddit clients). `CampaignInput.EventSlug` is carried for struct parity
-with those clients (they build UTM click-through params from it on the ad's final URL)
-but is NOT consumed here yet — CreateCampaign builds only a PAUSED shell with no ad/
-final URL; GA-3+ ad creation will use it. Project is the canonical attribution key the data
+meta/twitter/reddit clients). `CampaignInput.EventSlug` (plus the newer
+`RegistrationURL`/`Headlines`/`Descriptions` fields) feeds the GA-3 ad-group/ad
+step below — the campaign `:mutate` itself still ignores them. Project is the canonical attribution key the data
 pipeline parses out of the campaign name, so a campaign with only one segment is
 mis-attributed, not just "less descriptive". Caller-supplied name segments are
 sanitized (`sanitizeNamePart`) to strip the `|` delimiter AND any control character
@@ -165,9 +164,82 @@ that the original budget name is then freed for reuse, so for at-most-once retri
 callers should pass a stable-per-logical-campaign `NameSuffix` (which makes the
 retry collide on `DUPLICATE_NAME`) rather than relying on name reuse.
 
+## Ad group + responsive search ad creation (GA-3)
+
+`CreateCampaign` extends the GA-2 campaign shell with a real
+Campaign→AdGroup→Ad hierarchy, in `adgroup_ad.go`: after the campaign
+`:mutate` commits, `createAdGroupAndAd` sends `adGroups:mutate` (a single
+`SEARCH_STANDARD` ad group referencing the campaign's resourceName, status
+`PAUSED`) then `adGroupAds:mutate` (a `PAUSED` Responsive Search Ad on that
+ad group). No keyword/audience criteria are created — the ad group carries no
+targeting, so the campaign still won't serve without a follow-up (tracked as
+GA-4). Both steps run unconditionally after every successful campaign create;
+there is no way to create a campaign shell with no children through this path
+today.
+
+**Idempotency** mirrors the budget/campaign convention (create-then-catch,
+not Microsoft's find-by-name-first): the ad group has a deterministic
+composed name (`composeName("Ad Group", in)`), so a retry with the same
+`NameSuffix` collides on Google's `AdGroupError.DUPLICATE_ADGROUP_NAME` and is
+reported "already exists, reconcile by name" (`isDuplicateAdGroupNameErr`) —
+exactly like the budget/campaign duplicate branches. Unlike those, a
+duplicate/ambiguous ad-group outcome is NOT looked up by name to recover its
+id, so a retry after that outcome cannot re-attempt the ad create either (no
+ad-group id to attach it to) — a documented, intentional limitation requiring
+manual reconciliation, consistent with the existing budget/campaign-duplicate
+precedent. The ad itself has no unique name (Google permits duplicate ad
+content within an ad group) and gets no find-first safety net: a duplicate or
+ambiguous ad-group-create always bails out BEFORE the ad-create step runs, so
+within a single `CreateCampaign` call — or across retries, which re-hit the
+same ad-group duplicate check and bail at the same point — the ad `:mutate`
+can never be attempted twice against one ad group.
+
+**AdGroupAd resource names are a composite key**: unlike every other Google
+Ads resource (a single trailing numeric id split by `resourceID`), an
+AdGroupAd's resourceName trailing segment is `{adGroupId}~{adId}` (tilde-
+separated, e.g. `customers/1/adGroupAds/111~222`). `adGroupAdID` splits on
+`~` after `resourceID`'s slash-split; this composite shape is the single
+highest-risk unverified assumption in this slice (no live fixture in-repo to
+confirm it against) — if wrong, both `UpdateAdGroupAndAdStatus`'s resourceName
+construction and `firstResourceName`'s extraction on ad create would silently
+misbehave.
+
+**Ad copy** (`composeAdCopy`) accepts caller-supplied `Headlines`/
+`Descriptions`, trims/rune-truncates/dedupes them (`boundedUniqueCopy`), then
+pads with deterministic eventName/project-derived placeholders
+(`defaultHeadlines`/`defaultDescriptions` via `padUnique`) up to Google's v23
+RSA minimums (3 headlines ≤30 runes, 2 descriptions ≤90 runes) without ever
+dropping caller-supplied entries. Unlike the Microsoft client, Google's limits
+are plain rune counts — there is NO double-width-character halving rule here.
+A caller with zero usable copy AND an empty EventName is a hard error (there
+is nothing to advertise).
+
+**The ad's final URL** (`buildAdFinalURL`) is the brief's `RegistrationURL`
+tagged with `utm_source=google`, `utm_medium=cpc`, `utm_campaign` (from
+EventSlug, falling back to EventName then NameSuffix), and `utm_content`
+(from Project) — any query param the registration URL already carries,
+INCLUDING a pre-existing `utm_*` key, is preserved rather than overwritten
+(`setIfAbsent`). An empty/non-http(s)/no-host registration URL is rejected
+before any mutate runs, so a bad input never orphans an ad group with no ad.
+
+**Status toggling**: `GoogleAdsDispatcher.ToggleStatus` (in
+`internal/dispatch/googleads.go`) now cascades like the reddit/microsoft
+adapters — children first on ACTIVATE, campaign-gate first on PAUSE — reading
+`adGroupId`/`adId` out of the persisted `CampaignResult` JSON
+(`googleAdsChildIDs`). ACTIVATE on a campaign missing either child id is
+rejected locally as `domain.ErrCampaignNotProvisioned` (a 409, no upstream
+call) before resolving a client. On PAUSE, if both child ids are absent the
+child-status call is skipped defensively (mirrors reddit) — there's nothing
+downstream to pause. `Client.UpdateAdGroupAndAdStatus` sends the ad group
+status update then the ad status update, stopping on the first failure
+without attempting the second (the caller's cascade ordering owns the
+all-or-nothing semantics, not this method).
+
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
-creation (`:mutate`). The orchestrator dispatcher (registering `google-ads` so
-briefs dispatch upstream) is wired in `internal/dispatch/googleads.go` (LFXV2-2636).
-Metrics/keywords/audience reads and keyword actions follow in later GA slices.
+creation (`:mutate`); GA-3 is ad group + responsive search ad creation. The
+orchestrator dispatcher (registering `google-ads` so briefs dispatch upstream)
+is wired in `internal/dispatch/googleads.go` (LFXV2-2636). Keyword/audience
+targeting (GA-4), metrics reads, and keyword actions follow in later GA
+slices.

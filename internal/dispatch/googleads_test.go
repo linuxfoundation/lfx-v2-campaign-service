@@ -76,6 +76,10 @@ func googleAdsServers(t *testing.T, budgetH, campaignH http.HandlerFunc) ([]goog
 			budgetH(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			campaignH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 		}
@@ -327,8 +331,8 @@ func TestGoogleAds_AmbiguousCreateRetainsClaim(t *testing.T) {
 
 // TestGoogleAds_ToggleStatus_MutatesCampaignStatus verifies the dispatcher resolves creds and
 // sends a campaigns:mutate UPDATE carrying status + updateMask. Exactly ONE call is expected:
-// there is no cascade, because the create path provisions only a campaign shell and no child
-// entities exist to flip.
+// this fixture's campaign carries no adGroupId/adId in its Result blob, so the child-status
+// cascade is skipped defensively (mirroring reddit's ToggleStatus) — there is nothing to pause.
 func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
 	// Guarded: the handler runs on the server's goroutine while the assertions below run on
 	// the test goroutine, and the reads happen BEFORE the deferred Close() that would

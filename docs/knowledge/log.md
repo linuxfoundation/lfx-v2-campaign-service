@@ -1,5 +1,28 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Extended the Google Ads client from a create-only PAUSED campaign shell to a
+full Campaign→AdGroup→Ad hierarchy (GA-3, `internal/platform/googleads/adgroup_ad.go`,
+new file). `CreateCampaign` now cascades into `createAdGroupAndAd`: a `SEARCH_STANDARD`
+ad group (create-then-catch-duplicate idempotency via `AdGroupError.DUPLICATE_ADGROUP_NAME`,
+mirroring the existing budget/campaign convention rather than Microsoft's find-first
+pattern) followed by a PAUSED Responsive Search Ad. Ad copy is composed from optional
+caller-supplied headlines/descriptions padded with deterministic eventName/project
+placeholders up to Google's v23 RSA minimums (3/2, no double-width halving unlike
+Microsoft); the ad's final URL is the brief's registration URL UTM-tagged without
+overwriting any pre-existing query params. AdGroupAd resourceNames use a composite
+`{adGroupId}~{adId}` trailing segment (unlike every other Google Ads resource), handled
+by a dedicated `adGroupAdID` splitter — flagged as the riskiest unverified assumption in
+this slice (no live fixture to confirm the shape against).
+`GoogleAdsDispatcher.ToggleStatus` (`internal/dispatch/googleads.go`) now cascades
+children-first-on-ACTIVATE / campaign-first-on-PAUSE like the reddit/microsoft adapters,
+reading `adGroupId`/`adId` out of the persisted `CampaignResult` blob; ACTIVATE on an
+under-provisioned campaign is rejected locally as `ErrCampaignNotProvisioned` before any
+upstream call, and PAUSE skips the child-status call defensively when both ids are absent.
+Keyword/audience targeting is explicitly out of scope here (tracked as GA-4) — the ad group
+carries no criteria, so a GA-3-only campaign still won't serve.
+
 ## 2026-08-03
 
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the
