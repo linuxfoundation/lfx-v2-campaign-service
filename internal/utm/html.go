@@ -54,9 +54,18 @@ func TagHTMLLinksFrom(fragment string, p Params, prefix string, startAt int) (st
 	// table context instead just moves the failure to non-table widgets. Email HTML is written
 	// as table layouts, so this is the common case, not an edge one.
 	//
-	// Rewriting tokens sidesteps the whole problem: every byte the tagger does not deliberately
-	// change survives verbatim — malformed markup, conditional comments, unusual nesting and all.
-	// That is also a stronger form of the never-mangle contract this package already promised.
+	// Rewriting tokens sidesteps the whole problem: every byte OUTSIDE a tagged anchor survives
+	// verbatim — malformed markup, conditional comments, unusual nesting, table structure and all.
+	// That is a stronger form of the never-mangle contract this package already promised.
+	//
+	// The guarantee is per-token, and it stops at the tagged anchors themselves. A tagged <a> is
+	// re-serialized from its parsed attributes (see rewriteAnchor), so its START TAG — and only
+	// its start tag — is normalized: attribute names lower-case, values double-quoted and
+	// HTML-escaped, and a VALUELESS attribute gains an empty value (`download` -> `download=""`).
+	// All three forms are equivalent per the HTML spec and every email client parses them the
+	// same way, so this is cosmetic rather than behavioural — but it is not byte-identity, and
+	// claiming otherwise would invite a future change to rely on identity that does not hold.
+	// Anchors the tagger declines to touch keep their ORIGINAL bytes exactly.
 	var b strings.Builder
 	b.Grow(len(fragment) + 128)
 	z := html.NewTokenizer(strings.NewReader(fragment))

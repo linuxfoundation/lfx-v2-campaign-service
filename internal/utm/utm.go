@@ -44,10 +44,19 @@ const FallbackCampaign = "email-campaign"
 // nonSlugChars matches every run of characters that is not a lowercase letter or digit.
 var nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
 
-// skipPrefixes are link schemes that must never be tagged. mailto:/tel: are not web
-// destinations, and a bare fragment is an in-page anchor — appending query parameters to any
-// of them produces a broken link rather than an attributed one.
-var skipPrefixes = []string{"mailto:", "tel:", "#"}
+// taggableSchemes are the ONLY explicit schemes a link may carry and still be tagged.
+//
+// This is an ALLOWLIST, not a denylist, and deliberately so. A denylist of the known-bad schemes
+// (mailto:, tel:) silently let every other non-web action through: `javascript:void(0)` — the
+// standard placeholder href in marketing-tool HTML — became `javascript:void(0)?utm_source=…`,
+// which changes the expression the browser evaluates. `sms:`, `data:` and `ftp:` mangled the same
+// way. Only http/https carry a query string that means what UTM tagging assumes it means, so
+// anything else is left exactly as the author wrote it.
+//
+// A link with NO scheme (relative "/register", protocol-relative "//lf.dev/x") is still eligible:
+// those resolve to the email's web destination and are the ordinary case in templated HTML. A
+// bare "#anchor" is handled separately — it is an in-page jump, not a destination.
+var taggableSchemes = map[string]bool{"http": true, "https": true}
 
 // Slug converts free text to a URL-safe slug: "Register Now" -> "register-now".
 // Returns "" when the text contains nothing sluggable, so callers can detect that and fall
@@ -76,7 +85,9 @@ func SlugWithSuffix(text, suffix string) string {
 // It returns the URL UNCHANGED when:
 //   - rawURL is blank, or p carries no campaign (an empty utm_campaign is worse than none:
 //     it looks tagged in reports while attributing nothing);
-//   - the link is a mailto:/tel:/fragment target;
+//   - the link is not a web destination — it carries an explicit scheme other than http/https
+//     (mailto:, tel:, javascript:, sms:, data:, …), or it is a bare "#fragment". Relative and
+//     protocol-relative links ARE eligible. See taggableSchemes;
 //   - the URL ALREADY carries a non-empty utm_campaign. Re-tagging a pre-tagged link would
 //     silently overwrite a deliberate campaign an author set by hand, and that loss is
 //     invisible — the link still works, it just reports to the wrong campaign.
@@ -88,7 +99,7 @@ func Apply(rawURL string, p Params, content string) string {
 	if strings.TrimSpace(rawURL) == "" || strings.TrimSpace(p.Campaign) == "" {
 		return rawURL
 	}
-	if hasSkipPrefix(rawURL) {
+	if !isTaggable(rawURL) {
 		return rawURL
 	}
 	u, err := url.Parse(rawURL)
@@ -234,8 +245,12 @@ func restoreTemplateTokens(tagged, original string) string {
 
 	fragment, hasFragment := taggedFragment, taggedHasFragment
 	if origHasFragment && templateToken.MatchString(origFragment) {
-		// Same escaping-only test as the path. Fragments use FragmentUnescape, whose escaping
-		// rules differ from a path's.
+		// Same escaping-only test as the path, using the same decoder. net/url exports no
+		// FragmentUnescape — url.PathUnescape is the general "%XX except +" decoder and is what
+		// net/url itself uses for fragments (setFragment calls unescape(..., encodeFragment),
+		// which, like a path, leaves "+" alone). QueryUnescape would be wrong here: it turns "+"
+		// into a space, so "#a+b" would decode to "a b" on one side only and the restore would
+		// silently skip.
 		taggedPlain, terr := url.PathUnescape(taggedFragment)
 		origPlain, oerr := url.PathUnescape(origFragment)
 		if terr == nil && oerr == nil && taggedPlain == origPlain {
@@ -273,33 +288,88 @@ func stripUTM(rawQuery string) string {
 	// freshly-appended utm_campaign then lands NEXT TO the stale one, leaving two conflicting
 	// values in the URL for analytics to choose between.
 	//
-	// Re-joining with "&" is deliberate: "&" is the separator Go and every analytics backend
-	// parse, so a rewritten query is strictly more likely to be read correctly than the
-	// semicolon form it replaces. Only queries that actually CONTAIN a utm_ pair are rewritten;
-	// a query with no utm_ pairs is returned byte-identical, semicolons intact (see the early
-	// return below), so this cannot reshape a link it has no reason to touch.
+	// Every KEPT part is re-emitted with the separator that ORIGINALLY followed it, so a value
+	// that legitimately contains ";" survives byte-identical. Re-joining on "&" instead shredded
+	// it: `?sig=a;b;c&utm_term=old` became `sig=a&b&c&utm_…`, silently turning one signature into
+	// three empty-valued parameters. The link still resolved, so the destination just saw a
+	// truncated signature — worse than the untagged link this package exists to avoid.
+	// Signatures, base64 payloads, `redirect=` targets and ad-tracker macros all routinely carry
+	// unencoded semicolons.
 	if !hasUTMPair(rawQuery) {
 		return rawQuery
 	}
-	kept := make([]string, 0, 8)
+	var b strings.Builder
+	b.Grow(len(rawQuery))
+	prevSep := byte('&')
 	for _, part := range splitQuery(rawQuery) {
-		k, _, _ := strings.Cut(part, "=")
-		if strings.HasPrefix(k, "utm_") {
+		if strings.HasPrefix(queryKey(part.token), "utm_") {
 			continue
 		}
-		kept = append(kept, part)
+		if b.Len() > 0 {
+			// The separator that followed the PREVIOUS kept part. Using the previous part's own
+			// trailing byte (rather than this part's) is what keeps ";" attached to the pair it
+			// actually separated when the parts in between were dropped.
+			b.WriteByte(prevSep)
+		}
+		b.WriteString(part.token)
+		prevSep = part.sep
 	}
-	return strings.Join(kept, "&")
+	return b.String()
 }
 
-// splitQuery splits a raw query on BOTH "&" and ";".
+// queryPart is one raw query token plus the separator byte that FOLLOWED it in the original
+// query ('&', ';', or 0 for the final part).
+type queryPart struct {
+	token string
+	sep   byte
+}
+
+// splitQuery splits a raw query on BOTH "&" and ";", keeping each part's trailing separator so a
+// caller can re-emit the query without reshaping it.
 //
 // url.Query() cannot be used anywhere this package inspects a query: Go 1.17+ dropped ";" as a
 // separator, so it silently DISCARDS semicolon-delimited pairs rather than reporting them. A
 // utm_ pair hidden in one is invisible to a Values-based check while remaining very much present
 // in the URL that gets sent.
-func splitQuery(rawQuery string) []string {
-	return strings.FieldsFunc(rawQuery, func(r rune) bool { return r == '&' || r == ';' })
+//
+// Empty parts are skipped (as strings.FieldsFunc did), so "a=1&&b=2" yields two parts, but the
+// separator recorded for each part is the byte that immediately followed its last token
+// character — so re-emitting kept parts reproduces their original delimiters.
+func splitQuery(rawQuery string) []queryPart {
+	var out []queryPart
+	start := 0
+	for i := 0; i <= len(rawQuery); i++ {
+		if i < len(rawQuery) && rawQuery[i] != '&' && rawQuery[i] != ';' {
+			continue
+		}
+		if i > start {
+			var sep byte
+			if i < len(rawQuery) {
+				sep = rawQuery[i]
+			}
+			out = append(out, queryPart{token: rawQuery[start:i], sep: sep})
+		}
+		start = i + 1
+	}
+	return out
+}
+
+// queryKey returns a part's key, PERCENT-DECODED.
+//
+// Keys must be decoded before any comparison. `?utm%5Fcampaign=hand-picked` decodes to
+// `utm_campaign` for every normal query reader (and for the analytics backend), but a raw
+// comparison sees the literal "utm%5Fcampaign": the never-retag guard missed it and Apply
+// appended a SECOND campaign, while the strip left the author's original in place ahead of it —
+// two conflicting utm_campaign values in one link, with the author's the one most readers pick.
+//
+// An undecodable key falls back to its raw form rather than being dropped: a malformed escape is
+// not a reason to stop seeing the parameter.
+func queryKey(part string) string {
+	k, _, _ := strings.Cut(part, "=")
+	if decoded, err := url.QueryUnescape(k); err == nil {
+		return decoded
+	}
+	return k
 }
 
 // rawQueryValues returns every value for key in a raw query, across both separators. Unlike
@@ -307,8 +377,8 @@ func splitQuery(rawQuery string) []string {
 func rawQueryValues(rawQuery, key string) []string {
 	var out []string
 	for _, part := range splitQuery(rawQuery) {
-		k, v, _ := strings.Cut(part, "=")
-		if k != key {
+		_, v, _ := strings.Cut(part.token, "=")
+		if queryKey(part.token) != key {
 			continue
 		}
 		// Decode before comparing: a value that arrives percent-encoded ("%20") is still a
@@ -325,23 +395,39 @@ func rawQueryValues(rawQuery, key string) []string {
 // hasUTMPair reports whether a raw query contains any utm_ pair, across both separators.
 func hasUTMPair(rawQuery string) bool {
 	for _, part := range splitQuery(rawQuery) {
-		if k, _, _ := strings.Cut(part, "="); strings.HasPrefix(k, "utm_") {
+		if strings.HasPrefix(queryKey(part.token), "utm_") {
 			return true
 		}
 	}
 	return false
 }
 
-// hasSkipPrefix reports whether a link is one of the non-web targets that must not be tagged.
-// The check is case-insensitive: "MAILTO:" is as valid as "mailto:" in HTML.
-func hasSkipPrefix(rawURL string) bool {
-	lower := strings.ToLower(strings.TrimSpace(rawURL))
-	for _, p := range skipPrefixes {
-		if strings.HasPrefix(lower, p) {
-			return true
+// isTaggable reports whether a link is a web destination that may carry UTM parameters.
+//
+// It runs BEFORE url.Parse, on the raw string, because a link this rejects must come back
+// byte-identical — round-tripping "MAILTO:A@B.dev" through url.Parse/String would rewrite it
+// even though nothing was tagged.
+//
+// Scheme comparison is case-insensitive (RFC 3986 §3.1 — "MAILTO:" is as valid as "mailto:" in
+// HTML), and a scheme is only recognised when the colon comes before any '/', '?' or '#': in
+// "/path:x" and "?a=b:c" the colon is data, not a scheme delimiter, and treating it as one would
+// wrongly reject an ordinary relative link.
+func isTaggable(rawURL string) bool {
+	s := strings.TrimSpace(rawURL)
+	if strings.HasPrefix(s, "#") {
+		// A bare fragment is an in-page jump, not a destination; a query on it goes nowhere.
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ':':
+			// A scheme must be non-empty; ":foo" is not one.
+			return i > 0 && taggableSchemes[strings.ToLower(s[:i])]
+		case '/', '?', '#':
+			return true // scheme-relative or relative: eligible.
 		}
 	}
-	return false
+	return true // no scheme delimiter at all: a bare relative path.
 }
 
 func orDefault(v, def string) string {

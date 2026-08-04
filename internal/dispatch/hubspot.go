@@ -202,7 +202,12 @@ func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailNa
 		return
 	}
 	if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, tagged); perr != nil {
-		slog.WarnContext(ctx, "could not write tagged links back to the email draft; the email will send untagged",
+		// "MAY send untagged", not "will": a PATCH error does not prove the write did not land.
+		// patchEmail returns an UNCONFIRMED error for a 2xx with a null or undecodable body,
+		// where the update may well have applied. Telling an operator the draft is definitely
+		// untagged would send them to re-tag a draft that is already correct. The draft is a
+		// human-reviewed artefact, so the honest instruction is "check it".
+		slog.WarnContext(ctx, "could not confirm tagged links were written back to the email draft; it may send untagged — verify the draft",
 			"email_id", emailID, "widgets", len(tagged), "error", perr)
 		return
 	}

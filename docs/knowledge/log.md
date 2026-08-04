@@ -1,5 +1,45 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Stopped `stripUTM` from shredding non-UTM query values containing `;` (LFXV2-2775,
+PR #62). `splitQuery` must split on BOTH `&` and `;` so a `utm_` pair hidden behind a semicolon is
+visible to the strip — but the survivors were re-joined with `&`, so any non-utm VALUE that
+legitimately contained a semicolon was torn apart: `?sig=a;b;c&utm_term=old` shipped as
+`?sig=a&b&c&utm_…`, turning one signature into three empty-valued parameters. Signatures, base64
+payloads, `redirect=` targets and ad-tracker macros all routinely carry unencoded semicolons.
+Nothing failed loudly — the link still resolved and the destination merely received a truncated
+signature — which is a worse outcome than the untagged link this package exists to prevent. Each
+query part now carries the separator byte that originally followed it, so only the removed `utm_`
+pairs change the string. The prior doc defence ("a query with no `utm_` pairs is returned
+byte-identical") only decided WHETHER to rewrite, not what the rewrite did to everything else.
+
+**Update** — Narrowed link-tagging eligibility from a scheme DENYLIST to an http/https ALLOWLIST
+(LFXV2-2775, PR #62). The guard skipped `mailto:`, `tel:` and `#`, which let every other non-web
+action through: `javascript:void(0)` — the standard placeholder href marketing tools emit for a
+no-op link — became `javascript:void(0)?utm_source=…`, changing the expression the browser
+evaluates; `sms:`, `data:` and `ftp:` mangled the same way. `isTaggable` now accepts only http/https
+plus schemeless links (relative and protocol-relative, the ordinary case in templated email HTML),
+and runs on the raw string before `url.Parse` so a rejected link comes back byte-identical.
+
+**Update** — Query KEYS are now percent-decoded before comparison (LFXV2-2775, PR #62).
+`?utm%5Fcampaign=hand-picked` decodes to `utm_campaign` for every normal query reader and for the
+analytics backend, but the raw comparison saw the literal `utm%5Fcampaign`: the never-retag guard
+missed it, `Apply` appended a SECOND campaign, and `stripUTM` left the author's original ahead of
+it — two conflicting `utm_campaign` values in one link, with the author's the one a
+first-occurrence reader picks. A shared `queryKey` helper decodes for all three raw-query scans,
+falling back to the raw key when the escape is malformed.
+
+**Update** — Corrected two doc-comment claims in `internal/utm` that no longer matched the code
+(LFXV2-2775, PR #62). The fragment restore said "Fragments use FragmentUnescape" — `net/url`
+exports no such function and the code calls `url.PathUnescape`, which is the correct decoder for a
+fragment (`QueryUnescape` would turn `+` into a space on one side of the comparison only, silently
+skipping the restore). And `TagHTMLLinksFrom`'s "every byte survives verbatim" guarantee holds for
+UNTOUCHED tokens only: a TAGGED anchor is re-serialized from parsed attributes, so its start tag is
+normalized (`download` → `download=""`, names lower-cased, values double-quoted). Spec-equivalent
+and cosmetic, but stating the guarantee too broadly would invite a future change to rely on
+byte-identity that does not hold. Both are now pinned by tests.
+
 ## 2026-08-03
 
 **Update** — Fixed two ways email UTM tagging could ship broken HTML (LFXV2-2775, PR #62).

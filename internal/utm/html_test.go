@@ -251,6 +251,46 @@ func TestTagHTMLLinks_LeavesUntaggedBytesVerbatim(t *testing.T) {
 	}
 }
 
+// TestTagHTMLLinks_TaggedAnchorStartTagIsNormalized pins the LIMIT of the byte-identity contract.
+//
+// A TAGGED anchor is re-serialized from its parsed attributes, so its start tag is normalized:
+// a valueless attribute gains an empty value (`download` -> `download=""`), attribute names are
+// lower-cased, and values are double-quoted. All are spec-equivalent and every email client
+// parses them identically, so the normalization is cosmetic — but it IS a change, and the package
+// doc must not promise byte-identity that a tagged anchor does not deliver. The neighbouring
+// untagged anchor in each case pins the other half: bytes the tagger did not touch are exact.
+func TestTagHTMLLinks_TaggedAnchorStartTagIsNormalized(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "c"}
+
+	t.Run("a valueless attribute on a tagged anchor gains an empty value", func(t *testing.T) {
+		got, n, err := TagHTMLLinksFrom(`<a href="https://lf.dev/f.pdf" download>get</a>`, p, "", 0)
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+		assert.Contains(t, got, `download=""`,
+			"re-serializing from parsed attributes cannot distinguish a valueless attribute "+
+				"from an empty-valued one; both are equivalent per the HTML spec")
+		assert.Contains(t, got, "utm_campaign=c", "the link is still tagged")
+	})
+
+	t.Run("attribute names lower-case and values are double-quoted", func(t *testing.T) {
+		got, n, err := TagHTMLLinksFrom(`<a HREF='https://lf.dev/e' CLASS=btn>go</a>`, p, "", 0)
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+		assert.Contains(t, got, `class="btn"`, "names fold to lower-case, values gain double quotes")
+	})
+
+	t.Run("an UNTAGGED anchor keeps its valueless attribute verbatim", func(t *testing.T) {
+		// The guarantee that DOES hold: nothing the tagger declines to touch is reshaped. A
+		// taggable anchor comes first so the builder path runs rather than the verbatim fast path.
+		got, n, err := TagHTMLLinksFrom(
+			`<a href="https://lf.dev/e">go</a><a href='mailto:a@b.dev' download>get</a>`, p, "", 0)
+		require.NoError(t, err)
+		require.Equal(t, 1, n, "only the http link is tagged")
+		assert.Contains(t, got, `<a href='mailto:a@b.dev' download>`,
+			"an untouched anchor keeps its single quotes AND its valueless attribute")
+	})
+}
+
 // TestTagHTMLLinks_SkippedAnchorsKeepTheirEntities guards the tokenizer's buffer-reuse contract.
 //
 // z.Raw() returns a slice into the TOKENIZER'S OWN buffer, valid only until the next

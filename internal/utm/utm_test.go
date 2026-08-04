@@ -79,6 +79,69 @@ func TestApply_SkipsNonWebTargets(t *testing.T) {
 	}
 }
 
+// TestApply_SkipsEveryNonHTTPScheme pins the ALLOWLIST.
+//
+// The original guard was a DENYLIST of mailto:/tel:/#, which let every other non-web action
+// through. `javascript:void(0)` — the standard placeholder href emitted by marketing tools for a
+// no-op link — became `javascript:void(0)?utm_source=…`, changing the expression the browser
+// evaluates. sms:, data: and ftp: mangled the same way. Only http/https may be tagged.
+func TestApply_SkipsEveryNonHTTPScheme(t *testing.T) {
+	for _, raw := range []string{
+		"javascript:void(0)",
+		"JavaScript:void(0)", // schemes are case-insensitive (RFC 3986 §3.1)
+		"sms:+15551234567",
+		"data:text/html,<b>hi</b>",
+		"ftp://lf.dev/file.zip",
+		"webcal://lf.dev/cal.ics",
+	} {
+		assert.Equal(t, raw, Apply(raw, testParams(), "cta"),
+			"a non-http scheme must come back byte-identical: %q", raw)
+	}
+}
+
+// TestApply_TagsSchemelessWebLinks is the other half of the allowlist: narrowing to http/https
+// must not start REFUSING the ordinary relative links templated email HTML is full of.
+func TestApply_TagsSchemelessWebLinks(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "c"}
+	for _, raw := range []string{
+		"/register",              // root-relative
+		"//events.lfx.dev/x",     // protocol-relative
+		"register",               // bare relative
+		"register?ref=1",         // relative with a query
+		"/agenda:day-1/sessions", // a colon that is PATH data, not a scheme delimiter
+	} {
+		assert.Contains(t, Apply(raw, p, ""), "utm_campaign=c",
+			"a schemeless web link is still eligible: %q", raw)
+	}
+	// An uppercase http scheme is tagged (and normalized by url.Parse, as before).
+	assert.Contains(t, Apply("HTTPS://lf.dev/e", p, ""), "utm_campaign=c")
+}
+
+// TestApply_PercentEncodedUTMKeysAreSeen pins that query KEYS are decoded before comparison.
+//
+// `?utm%5Fcampaign=hand-picked` decodes to utm_campaign for every normal query reader and for the
+// analytics backend, but a raw string comparison sees the literal "utm%5Fcampaign". The
+// never-retag guard missed it and appended a SECOND campaign, while the strip left the author's
+// original in place AHEAD of it — two conflicting utm_campaign values in one link, with the
+// author's the one a first-occurrence reader picks.
+func TestApply_PercentEncodedUTMKeysAreSeen(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "NEW"}
+
+	t.Run("an encoded utm_campaign key trips the never-retag guard", func(t *testing.T) {
+		raw := "https://lf.dev/e?utm%5Fcampaign=hand-picked"
+		assert.Equal(t, raw, Apply(raw, p, ""),
+			"utm%5Fcampaign IS utm_campaign; the author's campaign must not be overwritten")
+	})
+
+	t.Run("an encoded stale utm_ key is stripped, not left to out-rank ours", func(t *testing.T) {
+		got := Apply("https://lf.dev/e?utm%5Fsource=facebook&a=1", p, "")
+		assert.NotContains(t, got, "facebook", "the stale encoded utm_source must be removed")
+		assert.NotContains(t, got, "utm%5Fsource", "the encoded key form must not survive either")
+		assert.Contains(t, got, "a=1", "a non-utm sibling is kept")
+		assert.Contains(t, got, "utm_source=s")
+	})
+}
+
 // TestApply_RefusesWithoutACampaign pins that no campaign means no tagging. Emitting
 // utm_source/utm_medium with an empty utm_campaign is WORSE than leaving the link bare: the
 // session looks tagged in reports while attributing to nothing.
@@ -273,6 +336,40 @@ func TestStripUTM(t *testing.T) {
 	assert.Equal(t, "a=&b=2", stripUTM("a=&b=2"))
 	// A param merely CONTAINING "utm_" is not a utm param.
 	assert.Equal(t, "xutm_source=1", stripUTM("xutm_source=1"))
+}
+
+// TestStripUTM_PreservesOriginalSeparators pins that a kept part is re-emitted with the byte that
+// ORIGINALLY followed it, so only the removed utm_ pairs change the query.
+//
+// splitQuery splits on both "&" and ";" (a utm_ pair hidden behind a semicolon must be visible to
+// the strip). Re-joining everything with "&" then SHREDDED any non-utm VALUE containing a
+// semicolon: "sig=a;b;c&utm_term=old" came back as "sig=a&b&c", turning one signature into three
+// empty-valued parameters. The link still resolves, so nothing fails loudly — the destination just
+// receives a truncated signature. Signatures, base64 payloads, redirect= targets and ad-tracker
+// macros all routinely carry unencoded semicolons.
+func TestStripUTM_PreservesOriginalSeparators(t *testing.T) {
+	assert.Equal(t, "sig=a;b;c", stripUTM("sig=a;b;c&utm_term=old"),
+		"a semicolon inside a non-utm value must not be treated as a separator on the way out")
+	assert.Equal(t, "a=1;b=2", stripUTM("a=1;b=2&utm_source=fb"),
+		"a genuinely semicolon-separated query keeps its semicolons")
+	assert.Equal(t, "a=1&b=2", stripUTM("a=1&b=2&utm_source=fb"),
+		"an ampersand-separated query keeps its ampersands")
+	assert.Equal(t, "a=1;b=2", stripUTM("utm_source=fb;a=1;b=2"),
+		"dropping the leading pair must not promote its separator onto the survivors")
+	assert.Equal(t, "redirect=https://x.dev/p?s=1;t=2", stripUTM("redirect=https://x.dev/p?s=1;t=2&utm_medium=cpc"),
+		"an embedded redirect target survives whole")
+}
+
+// TestApply_SemicolonInsideANonUTMValueSurvives is the end-to-end form of the same bug: the URL
+// that ships must differ from the input only by the utm_ pairs.
+func TestApply_SemicolonInsideANonUTMValueSurvives(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "NEW"}
+
+	got := Apply("https://lf.dev/p?sig=a;b;c&utm_term=old", p, "")
+	assert.Equal(t, "https://lf.dev/p?sig=a;b;c&utm_source=s&utm_medium=m&utm_campaign=NEW", got,
+		"sig=a;b;c must survive as ONE parameter; splitting it truncates the signature silently")
+	assert.NotContains(t, got, "sig=a&b&c", "the value must not be shredded into separate params")
+	assert.NotContains(t, got, "utm_term=old", "the stale utm_ pair is still stripped")
 }
 
 // TestApply_ReplacesStaleUTMValues pins the end-to-end effect: no duplicate utm keys survive, so
