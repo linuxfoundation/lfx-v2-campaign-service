@@ -1,5 +1,26 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Corrected the stated reason for `make_interval` in the stuck-claim scan (LFXV2-2665,
+PR #59 review). The comment in `campaign_repo.go` and `stuck_claims_test.go` claimed Postgres
+REJECTS the `"4m0s"` Go renders for `4 * time.Minute`, and that an earlier `$1::interval` version
+"would have errored on every scan". That is false — verified on PostgreSQL 16.10, `'4m0s'::interval`
+parses to `00:04:00` both as a literal and as a bound parameter.
+
+`make_interval(secs => $1)` is still correct and unchanged; only the justification was wrong, which
+matters because a future reader could "simplify" back to `$1::interval` after finding the stated
+reason doesn't reproduce. The real argument is narrower: it removes a standing dependency on Go's
+duration formatting matching Postgres's interval grammar. They DO diverge, just not at this value —
+Go renders `100ns` and `1µs` (Unicode mu) for smaller durations and Postgres rejects both outright,
+and `1.000000001s` silently truncates to `1s`. So retuning the constant to a sub-microsecond value
+would break the scan at runtime rather than at compile time. Binding numeric seconds sidesteps the
+grammar entirely and matches `JobRepo.FailStuckJobs`.
+
+Also confirmed while verifying: the `000008` partial index is actually chosen by the real query.
+`EXPLAIN ANALYZE` over 200k rows gives `Index Scan using idx_campaigns_stuck_claims`, 102 buffers,
+and no sort node — the index supplies `created_at ASC`, so the `LIMIT` stops early as intended.
+
 ## 2026-08-03
 
 **Update** — Clear an INVALID stuck-claim index (LFXV2-2665, PR #59 review, migration 000009).
