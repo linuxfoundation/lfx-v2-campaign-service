@@ -2,6 +2,30 @@
 
 ## 2026-08-04
 
+**Update** — Added keyword + audience-segment targeting to the Google Ads client (GA-4,
+`internal/platform/googleads/targeting.go`, new file). GA-3 created an ad group with zero
+criteria, which matches no query — this closes that gap: after `createAdGroupAndAd` creates the
+ad, `createAdGroupTargeting` attaches caller-supplied positive Search keywords
+(`Keyword{Text,MatchType}`, EXACT/PHRASE/BROAD, ≤80 runes) and/or existing audience segments
+(EXISTING `.../userLists/{id}` or `.../customAudiences/{id}` resource names — this client does
+not create audiences) as a single `adGroupCriteria:mutate` call, one operation per criterion, all
+`ENABLED` (unlike the PAUSED ad group/ad shell — ancestor gating already blocks serving while
+paused, so pre-enabling criteria means the campaign is serve-ready the instant a human activates
+it). Implemented the audience "observation vs targeting" contract for real rather than just
+flagging it: `CreateCampaign` (`campaign.go`) now sets `targetingSetting.targetRestrictions`
+(`AUDIENCE`, `bidOnly: true`) on the campaign create WHENEVER `AudienceSegments` is non-empty, so
+an audience segment added for bid/reporting doesn't silently narrow delivery to just that segment
+(Google's undeclared default for a Search campaign's AUDIENCE dimension). Factored
+`adGroupAdID`'s composite-resourceName split (`{parentId}~{id}`) into a generic
+`compositeResourceID` helper (`adgroup_ad.go`) since AdGroupCriterion shares the identical shape.
+Duplicate-criterion classification is left unverified for this resource (unlike the
+budget/campaign/ad-group `DUPLICATE_NAME` family) — any 4xx here is a straightforward failure, not
+reconciled by a duplicate predicate. Wired through `internal/dispatch/googleads.go`
+(`googleAdsConfig.keywords`/`.audienceSegments`, mapped 1:1 into `CampaignInput`). Full unit +
+integration coverage in the new `internal/platform/googleads/targeting_test.go`. Updated
+`docs/api-catalog.md`'s `GoogleAdsConfig` section (the `keywords`/`audienceSegments` fields) and
+`docs/knowledge/code/internal-platform-googleads.md` (new GA-4 section + updated Scope) to match.
+
 **Update** — Follow-up fix on the GA-3 slice below, from the post-commit review cycle. Two
 `internal/platform/googleads/adgroup_ad_test.go` subtests for `UpdateAdGroupAndAdStatus`
 wrote a captured request-path slice inside the httptest handler goroutine and read it back

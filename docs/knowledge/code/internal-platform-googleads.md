@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), and ad group + responsive search ad creation (GA-3)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), ad group + responsive search ad creation (GA-3), and keyword/audience-segment targeting on that ad group (GA-4)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -171,11 +171,13 @@ Campaign→AdGroup→Ad hierarchy, in `adgroup_ad.go`: after the campaign
 `:mutate` commits, `createAdGroupAndAd` sends `adGroups:mutate` (a single
 `SEARCH_STANDARD` ad group referencing the campaign's resourceName, status
 `PAUSED`) then `adGroupAds:mutate` (a `PAUSED` Responsive Search Ad on that
-ad group). No keyword/audience criteria are created — the ad group carries no
-targeting, so the campaign still won't serve without a follow-up (tracked as
-GA-4). Both steps run unconditionally after every successful campaign create;
-there is no way to create a campaign shell with no children through this path
-today.
+ad group). After the ad is created, if the caller supplied any
+`Keywords`/`AudienceSegments`, `createAdGroupTargeting` (GA-4, below) attaches
+them to the same ad group before `CreateCampaign` returns — without it, the ad
+group carries no targeting and the campaign can never serve, even once
+enabled. Both the ad-group/ad steps run unconditionally after every
+successful campaign create; there is no way to create a campaign shell with
+no children through this path today.
 
 **Idempotency** mirrors the budget/campaign convention (create-then-catch,
 not Microsoft's find-by-name-first): the ad group has a deterministic
@@ -235,11 +237,80 @@ status update then the ad status update, stopping on the first failure
 without attempting the second (the caller's cascade ordering owns the
 all-or-nothing semantics, not this method).
 
+## Keyword + audience targeting (GA-4)
+
+`createAdGroupTargeting` (in `targeting.go`) attaches positive Search
+keywords and/or existing audience segments to the ad group `createAdGroupAndAd`
+just built, as a SINGLE `adGroupCriteria:mutate` call carrying one operation
+per criterion — batched (not one call per criterion) so the whole set shares
+one atomic outcome, the same "no partial state" reasoning as every other
+mutate here, just extended to N operations. Input is validated up front
+(`validateKeywords`/`validateAudienceSegments`), before any mutate call in
+`createAdGroupAndAd` runs, alongside the existing URL/copy/name checks — a bad
+keyword or audience value must not leave a created ad group + ad with a
+failed targeting step the caller has to puzzle out separately.
+
+**Keywords** (`Keyword{Text, MatchType}`) are positive Search criteria only;
+`MatchType` is one of `EXACT`/`PHRASE`/`BROAD`. `Text` is capped at v23's
+80-rune `KeywordInfo.text` limit. Up to 20 keywords per call (a sanity cap on
+this broker's input, not a Google Ads platform limit); duplicates (same
+matchType+text) are deduped rather than rejected.
+
+**Audience segments** are EXISTING Google Ads audience resource names — this
+client does not create audiences. `audienceCriterionField` infers the mutate
+oneof field from the resource-name's collection segment: `.../userLists/{id}`
+(Customer Match / remarketing list) maps to `userList`, `.../customAudiences/{id}`
+maps to `customAudience`; any other shape (`userInterest`, `combinedAudience`,
+`detailedDemographic`, …) is rejected — deliberately narrow scope matching what
+"a built campaign audience" (the `campaign_audiences` resource,
+`docs/api-catalog.md`) represents. Also capped at 20 per call, deduped by
+resource name.
+
+**Observation vs targeting — the audience-restriction gotcha**: a Search
+campaign's audience criteria default to TARGETING (restrictive — narrows
+delivery to ONLY that audience) unless the campaign explicitly declares
+`targetingSetting.targetRestrictions` with `targetingDimension: "AUDIENCE",
+bidOnly: true`. `CreateCampaign` (`campaign.go`) sets this on the campaign
+`:mutate` create WHENEVER `CampaignInput.AudienceSegments` is non-empty (and
+omits it entirely otherwise) — so an audience segment added for bid/reporting
+purposes doesn't silently narrow delivery to that segment alone. This is the
+highest-risk unverified assumption in this slice, mirroring the AdGroupAd
+composite-resourceName flag from GA-3: verify against a live account that
+`bidOnly: true` actually behaves as observation-only before relying on it.
+
+Every criterion is created `ENABLED` (not `PAUSED` like the ad group/ad
+shell): a criterion's own status is one more gate on top of its ancestors (ad
+group, ad, campaign) already being enabled — Google won't serve it while any
+ancestor is PAUSED, so creating it ENABLED now means the campaign is
+immediately serve-ready the moment a human flips the ad group/ad/campaign to
+ENABLED, with no separate targeting-activation step.
+
+**AdGroupCriterion resource names share AdGroupAd's composite shape**
+(`{adGroupId}~{criterionId}`) — `compositeResourceID` (factored out of GA-3's
+`adGroupAdID` in `adgroup_ad.go`) is reused here to extract the criterion id.
+
+**Duplicate-criterion classification is unverified** for this resource
+(unlike the budget/campaign/ad-group `DUPLICATE_NAME` family): any 4xx on
+`adGroupCriteria:mutate` — including a possible duplicate on retry — is
+reported as a straightforward failure, not reconciled by a duplicate
+predicate. An ambiguous outcome (5xx/429/transport, or a 2xx with a
+malformed/short mutate response) is reported UNCONFIRMED, same convention as
+GA-2/GA-3.
+
+`CampaignResult.KeywordCriteriaIDs`/`AudienceCriteriaIDs` are populated from
+the mutate response only when targeting was attempted and succeeded; both are
+empty if targeting was never attempted (no `Keywords`/`AudienceSegments`
+supplied) or failed before any criterion resource name could be parsed. The
+per-platform dispatcher config (`internal/dispatch/googleads.go`,
+`googleAdsConfig.Keywords`/`.AudienceSegments`) maps the wire JSON shape 1:1
+into `CampaignInput.Keywords`/`.AudienceSegments`.
+
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
-creation (`:mutate`); GA-3 is ad group + responsive search ad creation. The
-orchestrator dispatcher (registering `google-ads` so briefs dispatch upstream)
-is wired in `internal/dispatch/googleads.go` (LFXV2-2636). Keyword/audience
-targeting (GA-4), metrics reads, and keyword actions follow in later GA
+creation (`:mutate`); GA-3 is ad group + responsive search ad creation; GA-4
+is keyword/audience-segment targeting on that ad group. The orchestrator
+dispatcher (registering `google-ads` so briefs dispatch upstream) is wired in
+`internal/dispatch/googleads.go` (LFXV2-2636). Metrics reads and keyword
+actions (pause/adjust an individual keyword post-creation) follow in later GA
 slices.

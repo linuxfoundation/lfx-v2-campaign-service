@@ -69,9 +69,9 @@ const (
 	errCodeDuplicateCampaignName = "DUPLICATE_CAMPAIGN_NAME"
 )
 
-// CampaignInput is the platform-agnostic request to create a Google Ads campaign.
-// Only the fields needed for a PAUSED search-campaign shell are consumed today;
-// targeting/keywords/audience are added in GA-3+.
+// CampaignInput is the platform-agnostic request to create a Google Ads campaign:
+// a PAUSED search-campaign shell (GA-2), an ad group + responsive search ad (GA-3),
+// and keyword/audience targeting on that ad group (GA-4).
 type CampaignInput struct {
 	// EventName is the human-readable campaign subject, folded into the budget and
 	// campaign names. Caller-supplied and otherwise unbounded, so it is trimmed and
@@ -108,6 +108,19 @@ type CampaignInput struct {
 	// retry then reuses the same name and Google rejects it with DUPLICATE_NAME,
 	// which the client reports as UNCONFIRMED-already-exists rather than re-creating.
 	NameSuffix string
+	// Keywords are positive Search keyword criteria attached to the ad group
+	// (GA-4). Optional: an ad group created with none still exists but matches
+	// no query, so a caller that wants the campaign to actually serve once
+	// enabled must supply at least one. See validateKeywords for the
+	// text/match-type/count rules.
+	Keywords []Keyword
+	// AudienceSegments are EXISTING Google Ads audience resource names (a
+	// Customer Match "user list" or a custom audience the caller already built
+	// elsewhere — this client does not create audiences) attached to the ad
+	// group as observation-only criteria (GA-4): see validateAudienceSegments
+	// for the accepted resource-name shapes and createAdGroupTargeting for why
+	// they're observation-only rather than restrictive.
+	AudienceSegments []string
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -127,11 +140,17 @@ type CampaignResult struct {
 	// (createAdGroupAndAd in adgroup_ad.go). AdGroupID/AdID are empty on a
 	// pre-ad-group failure; AdID alone is empty if the ad group was created but
 	// the ad step failed/is unconfirmed.
-	AdGroupName  string   `json:"adGroupName,omitempty"`
-	AdGroupID    string   `json:"adGroupId,omitempty"`
-	AdID         string   `json:"adId,omitempty"`
-	GoogleAdsURL string   `json:"googleAdsUrl"`
-	Steps        []string `json:"steps"`
+	AdGroupName string `json:"adGroupName,omitempty"`
+	AdGroupID   string `json:"adGroupId,omitempty"`
+	AdID        string `json:"adId,omitempty"`
+	// KeywordCriteriaIDs/AudienceCriteriaIDs are set by the GA-4 targeting step
+	// (createAdGroupTargeting in targeting.go) when the corresponding input list
+	// was non-empty. Both are empty if targeting was never attempted or failed
+	// before any criterion resource name could be parsed.
+	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
+	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
+	GoogleAdsURL        string   `json:"googleAdsUrl"`
+	Steps               []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -193,13 +212,33 @@ type campaignBudgetCreate struct {
 // because true would require targetGoogleSearch AND opt this into Search Partners,
 // which a generic broker shouldn't assume.
 type campaignCreate struct {
-	Name                           string          `json:"name"`
-	Status                         string          `json:"status"`
-	AdvertisingChannelType         string          `json:"advertisingChannelType"`
-	CampaignBudget                 string          `json:"campaignBudget"`
-	ContainsEuPoliticalAdvertising string          `json:"containsEuPoliticalAdvertising"`
-	NetworkSettings                networkSettings `json:"networkSettings"`
-	ManualCPC                      json.RawMessage `json:"manualCpc"`
+	Name                           string            `json:"name"`
+	Status                         string            `json:"status"`
+	AdvertisingChannelType         string            `json:"advertisingChannelType"`
+	CampaignBudget                 string            `json:"campaignBudget"`
+	ContainsEuPoliticalAdvertising string            `json:"containsEuPoliticalAdvertising"`
+	NetworkSettings                networkSettings   `json:"networkSettings"`
+	ManualCPC                      json.RawMessage   `json:"manualCpc"`
+	TargetingSetting               *targetingSetting `json:"targetingSetting,omitempty"`
+}
+
+// targetingSetting / targetRestriction declare, per targeting dimension,
+// whether a criterion of that dimension RESTRICTS delivery or only observes
+// it (bids/reports without narrowing reach). Set on the campaign create ONLY
+// when GA-4 attaches audience criteria (see CreateCampaign): with no
+// targetingSetting at all, Google's default for a Search campaign's AUDIENCE
+// dimension is TARGETING (restrictive) — an audience segment added for
+// bid/reporting purposes would otherwise silently narrow delivery to that
+// segment alone, a serious, easy-to-miss behavior change. bidOnly=true keeps
+// AUDIENCE observation-only so keyword targeting (GA-4's other half) remains
+// the thing that actually controls reach.
+type targetingSetting struct {
+	TargetRestrictions []targetRestriction `json:"targetRestrictions"`
+}
+
+type targetRestriction struct {
+	TargetingDimension string `json:"targetingDimension"`
+	BidOnly            bool   `json:"bidOnly"`
 }
 
 // networkSettings selects which networks a campaign's ads serve on. For a SEARCH
@@ -515,7 +554,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Step 2: create the campaign referencing the budget.
-	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreate{
+	campaignCreateVal := campaignCreate{
 		Name:                           campaignName,
 		Status:                         "PAUSED",
 		AdvertisingChannelType:         advertisingChannelSearch,
@@ -523,7 +562,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		NetworkSettings:                networkSettings{TargetGoogleSearch: true},
 		ManualCPC:                      json.RawMessage(`{}`),
-	}}}}
+	}
+	// See targetingSetting's doc comment: an audience criterion added later
+	// (GA-4, createAdGroupAndAd) must not silently restrict delivery to it.
+	// Checked on the RAW input, not a validated list — the flag only declares a
+	// campaign-level setting and costs nothing if the ad-group step later
+	// rejects/omits the segments; the important case is never OMITTING it when
+	// segments are supplied.
+	if len(in.AudienceSegments) > 0 {
+		campaignCreateVal.TargetingSetting = &targetingSetting{
+			TargetRestrictions: []targetRestriction{{TargetingDimension: "AUDIENCE", BidOnly: true}},
+		}
+	}
+	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, campaignPath, campaignReq, false)
 	if err != nil {

@@ -16,11 +16,10 @@ import (
 
 // ---------------------------------------------------------------------------
 // Ad group + responsive search ad creation (GA-3): adGroups:mutate ->
-// adGroupAds:mutate. Keywords/audience targeting are NOT part of this slice —
-// the ad group is created with no criteria, so the campaign still won't serve
-// without a follow-up (tracked as GA-4). This slice's job is to make the
-// campaign->ad group->ad hierarchy real, matching the shape of the reddit and
-// microsoft adapters.
+// adGroupAds:mutate. This makes the campaign->ad group->ad hierarchy real,
+// matching the shape of the reddit and microsoft adapters. Keyword/audience
+// targeting on the resulting ad group is GA-4 (see targeting.go) — this file
+// calls into it after the ad is created.
 // ---------------------------------------------------------------------------
 
 const (
@@ -106,12 +105,20 @@ func isDuplicateAdGroupNameErr(err error) bool {
 }
 
 // adGroupAdID splits an adGroupAd resourceName into its ad group id and ad id.
-// Unlike every other Google Ads resource, AdGroupAd uses a COMPOSITE trailing
+// Unlike most other Google Ads resources, AdGroupAd uses a COMPOSITE trailing
 // segment "{adGroupId}~{adId}" (e.g. "customers/1/adGroupAds/111~222") rather
-// than a single numeric id — resourceID's plain last-slash split returns that
-// whole "111~222" string, so this further splits on "~". Returns ("", "") if
-// the resource name is empty or the trailing segment isn't in that shape.
+// than a single numeric id. AdGroupCriterion (GA-4, targeting.go) shares this
+// same composite shape, so the split logic lives in compositeResourceID.
 func adGroupAdID(resourceName string) (adGroupID, adID string) {
+	return compositeResourceID(resourceName)
+}
+
+// compositeResourceID splits a resourceName's trailing "{parentId}~{id}"
+// segment — the shape AdGroupAd and AdGroupCriterion resource names use,
+// unlike every single-id resource this package otherwise handles via
+// resourceID. Returns ("", "") if the resource name is empty or the trailing
+// segment isn't in that shape.
+func compositeResourceID(resourceName string) (parentID, id string) {
 	trailing := resourceID(resourceName)
 	if trailing == "" {
 		return "", ""
@@ -155,6 +162,18 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, in CampaignInput, campa
 	adGroupName := composeName("Ad Group", in)
 	if err := validateEntityName("ad group", adGroupName, len(adGroupName), maxAdGroupNameBytes, "UTF-8 bytes"); err != nil {
 		return err
+	}
+	// Validate GA-4 targeting input up front too, alongside the URL/copy/name
+	// checks above: a bad keyword or audience-segment value must not leave a
+	// created ad group + ad with a failed targeting step the caller has to
+	// puzzle out separately.
+	keywords, err := validateKeywords(in.Keywords)
+	if err != nil {
+		return fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid keyword input): %w", err)
+	}
+	audienceSegments, err := validateAudienceSegments(in.AudienceSegments)
+	if err != nil {
+		return fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid audience segment input): %w", err)
 	}
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -221,6 +240,17 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, in CampaignInput, campa
 	}
 	res.AdID = adID
 	res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ad created: %s (PAUSED, %d headlines, %d descriptions)", adID, len(headlines), len(descriptions)))
+
+	if len(keywords) == 0 && len(audienceSegments) == 0 {
+		return nil
+	}
+	keywordIDs, audienceIDs, err := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID, keywords, audienceSegments)
+	if err != nil {
+		return err
+	}
+	res.KeywordCriteriaIDs = keywordIDs
+	res.AudienceCriteriaIDs = audienceIDs
+	res.Steps = append(res.Steps, fmt.Sprintf("Keyword/audience targeting attached: %d keyword(s), %d audience segment(s)", len(keywordIDs), len(audienceIDs)))
 	return nil
 }
 
