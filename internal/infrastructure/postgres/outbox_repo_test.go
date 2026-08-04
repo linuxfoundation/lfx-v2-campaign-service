@@ -77,7 +77,7 @@ func TestDrainClaimsOneRowPerResourceInOrder(t *testing.T) {
 // index cannot serve that, so every pass would re-scan retained published history, which is the
 // bulk of the table.
 func TestPendingIndexPartialIndexSupportsTheClaim(t *testing.T) {
-	sql, err := os.ReadFile(filepath.Join("migrations", "000008_index_outbox.up.sql"))
+	sql, err := os.ReadFile(filepath.Join("migrations", "000010_index_outbox.up.sql"))
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}
