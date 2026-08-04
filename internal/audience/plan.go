@@ -85,6 +85,11 @@ type PlanInput struct {
 	// A caller MUST NOT substitute guessed or remembered names — HubSpot matches them exactly,
 	// and a wrong name yields an empty list that is indistinguishable from a correct empty one.
 	PastEditions []string
+	// PastEditionsErr is set when the warehouse lookup FAILED, as distinct from succeeding and
+	// finding none. Both leave PastEditions empty, but they mean opposite things to an operator:
+	// "this event has no history" versus "we could not read its history". The stored
+	// InclusionSummary is the durable record that outlives the logs, so it has to say which.
+	PastEditionsErr error
 }
 
 // BuildPlan derives the inclusion lists for an event.
@@ -132,11 +137,20 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 	// a NOTE, not an error — the audience is still buildable from group 4 alone.
 	editions := nonBlank(in.PastEditions)
 	p.PastEditions = editions
-	if len(editions) == 0 {
+	switch {
+	case len(editions) == 0 && in.PastEditionsErr != nil:
+		// The warehouse could not be read. This audience is NARROWER THAN INTENDED and should be
+		// rebuilt once the lookup works — the opposite conclusion from a first-time event, so it
+		// must not share that note.
+		p.Notes = append(p.Notes,
+			"Past editions could NOT be resolved (warehouse error: "+in.PastEditionsErr.Error()+"). "+
+				"Groups 5 and 7 (past-edition registrants) were not built, so this audience is "+
+				"NARROWER THAN INTENDED for a returning event — rebuild it once the lookup succeeds.")
+	case len(editions) == 0:
 		p.Notes = append(p.Notes,
 			"No past editions resolved: groups 5 and 7 (past-edition registrants) were not built. "+
 				"Expected for a first-time event; otherwise verify the event term used to query Snowflake.")
-	} else {
+	default:
 		regFilter, ferr := EventRegisteredFilter(country, editions)
 		if ferr != nil {
 			return nil, ferr

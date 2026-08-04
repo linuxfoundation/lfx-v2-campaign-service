@@ -167,16 +167,19 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	editions, rerr := builder.ResolvePastEditions(ctx, family, details.Location, year)
 	if rerr != nil {
 		// Degrade rather than fail: group 4 needs no editions, so a warehouse outage still
-		// yields a usable (narrower) audience. The gap is recorded in the plan's notes.
+		// yields a usable (narrower) audience. rerr is carried into the plan (NOT just logged)
+		// so the stored InclusionSummary says "could not read the history" rather than the
+		// first-time-event note — the log line rotates away, the summary does not.
 		slog.WarnContext(ctx, "could not resolve past editions; building a country-only audience",
 			"brief_id", p.BriefID, "event", details.EventName, "error", rerr)
 		editions = nil
 	}
 
 	planInput := audience.PlanInput{
-		EventName:    details.EventName,
-		Country:      details.Country,
-		PastEditions: editions,
+		PastEditionsErr: rerr,
+		EventName:       details.EventName,
+		Country:         details.Country,
+		PastEditions:    editions,
 	}
 	// Validate the plan BEFORE creating the row: a brief that cannot be planned must not leave
 	// a building row behind. The plan is rebuilt below with the row id as its BuildRef.
