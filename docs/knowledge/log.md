@@ -2,6 +2,16 @@
 
 ## 2026-08-03
 
+**Update** — Bounded the PENDING side of the index outbox too (LFXV2-2814, PR #60). The previous
+commit pruned only published rows, so with indexing disabled (`NATS_URL=""`) or unprovisioned
+(the service token is an `optional` chart secret — my own choice) every brief and campaign write
+still co-committed a JSONB row that nothing would ever drain: unbounded growth in a configuration
+the deployment actively permits. Pending rows now age out after 30 days, versus 7 for published
+history — long enough that a row is only discarded well after any realistic outage or rotation
+would have been noticed, at which point a reindex beats replaying a month-old snapshot. Verified
+on live PostgreSQL 16: 30d-published and 40d-pending rows deleted; 1d-published, 29d-PENDING, and
+fresh rows all kept.
+
 **Update** — Closed four more findings on the outbox (LFXV2-2814, PR #60). (1) POOL DEADLOCK: the
 guarded-update paths in `ReplaceBrief`/`Approve`/`ReplaceCampaign` classified a no-row result by
 calling `GetBrief`/`GetCampaign`, which acquires a SECOND pool connection while the transaction

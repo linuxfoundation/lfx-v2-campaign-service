@@ -174,12 +174,44 @@ func truncateErr(s string) string {
 // eligible — a pending row is undelivered work and is never pruned, however old.
 const outboxRetention = 7 * 24 * time.Hour
 
+// pendingAbandonAge is how long an UNPUBLISHED row is kept before it is discarded.
+//
+// Pending rows are undelivered work, so this must be far longer than the published retention:
+// pruning a young one would destroy exactly the recovery the table exists for. But "never" is
+// not a safe answer either. Indexing can be legitimately disabled (NATS_URL="") or unprovisioned
+// (INDEXER_SERVICE_TOKEN is an OPTIONAL secret in the chart), and in both states every brief and
+// campaign write still co-commits a full JSONB row that nothing will ever drain — an unbounded
+// steady state the deployment actively permits.
+//
+// 30 days is chosen so that a row can only be discarded LONG after any realistic outage,
+// credential rotation, or rollout gap has been noticed and fixed. A message that old has no
+// operational value left: the resource has almost certainly been written again since, and if it
+// has not, a full reindex is the correct repair rather than replaying a month-old snapshot.
+const pendingAbandonAge = 30 * 24 * time.Hour
+
 // prunePassLimit bounds one delete so a first prune over a large backlog cannot hold a long
 // transaction or spike replication lag. The relay prunes every pass, so a backlog drains over
 // several passes rather than in one statement.
 const prunePassLimit = 5000
 
-// PrunePublishedIndexMessages deletes published rows older than outboxRetention.
+// pruneQuery deletes both retention classes in ONE statement.
+//
+// A PUBLISHED row is delivered history and gets a short window. A PENDING row is undelivered
+// work and gets a much longer one — it is discarded only once replaying it would be worse than a
+// reindex. Without the second clause a disabled or unprovisioned indexer grows the table
+// forever, which the chart's optional token makes a reachable steady state.
+//
+// Aged by different columns of necessity: a pending row has no published_at.
+const pruneQuery = `DELETE FROM index_outbox WHERE id IN (
+	SELECT id FROM index_outbox
+	WHERE (published_at IS NOT NULL AND published_at < now() - $1::interval)
+	   OR (published_at IS NULL     AND created_at   < now() - $3::interval)
+	ORDER BY id
+	LIMIT $2
+)`
+
+// PrunePublishedIndexMessages deletes published rows older than outboxRetention, and pending
+// rows older than pendingAbandonAge.
 //
 // Without this the table grows with EVERY brief and campaign mutation and never shrinks: each
 // row carries a full JSONB payload, so the table, its backups, and the vacuum workload all grow
@@ -197,13 +229,12 @@ func (r *OutboxRepo) PrunePublishedIndexMessages(ctx context.Context, olderThan 
 	if limit <= 0 {
 		limit = prunePassLimit
 	}
-	q := `DELETE FROM index_outbox WHERE id IN (
-		SELECT id FROM index_outbox
-		WHERE published_at IS NOT NULL AND published_at < now() - $1::interval
-		ORDER BY id
-		LIMIT $2
-	)`
-	tag, err := r.db.Exec(ctx, q, olderThan.String(), limit)
+	// Two windows, one statement. A PUBLISHED row is delivered history (short window). A PENDING
+	// row is undelivered work and gets a much longer one — it is only discarded once it is so
+	// old that replaying it would be worse than a reindex. Without the second clause a disabled
+	// or unprovisioned indexer grows the table forever, which the chart's optional token makes a
+	// reachable steady state rather than a misconfiguration.
+	tag, err := r.db.Exec(ctx, pruneQuery, olderThan.String(), limit, pendingAbandonAge.String())
 	if err != nil {
 		return 0, fmt.Errorf("prune published index messages: %w", err)
 	}
