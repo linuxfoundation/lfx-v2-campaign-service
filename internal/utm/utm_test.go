@@ -228,3 +228,46 @@ func TestRestoreTemplateTokens_OnlyRestoresWhatWasThere(t *testing.T) {
 	plain := "https://events.lfx.dev/x?a=1"
 	assert.Equal(t, plain, restoreTemplateTokens(plain, plain))
 }
+
+// TestApply_PreservesTheOriginalQueryVerbatim pins that tagging APPENDS rather than rebuilds.
+//
+// Rebuilding via url.Values.Encode() broke three things at once: it reordered keys (so a token
+// restored by value could land on the wrong occurrence), dropped anything it could not
+// round-trip (semicolon-separated params vanished entirely), and percent-encoded {{...}}
+// tokens. Appending leaves every original byte of the query untouched.
+func TestApply_PreservesTheOriginalQueryVerbatim(t *testing.T) {
+	t.Run("semicolon params survive", func(t *testing.T) {
+		// url.Values cannot round-trip these: they parsed to nothing and the pairs disappeared.
+		got := Apply("https://events.lfx.dev/x?a=1;b=2", testParams(), "")
+		assert.Contains(t, got, "a=1;b=2", "a param url.Values cannot parse must not be dropped")
+		assert.Contains(t, got, "utm_campaign=kubecon-korea-2026")
+	})
+
+	t.Run("key order is preserved", func(t *testing.T) {
+		got := Apply("https://events.lfx.dev/x?z=1&a=2", testParams(), "")
+		assert.Less(t, strings.Index(got, "z=1"), strings.Index(got, "a=2"),
+			"the original order must survive; Encode() would sort them")
+	})
+
+	t.Run("a live token and a pre-encoded literal stay distinct", func(t *testing.T) {
+		// Restoring by VALUE across the whole URL could not tell these two apart, so the
+		// encoded literal under `a` was revived as a live token while `z` stayed encoded.
+		got := Apply("https://events.lfx.dev/x?z={{contact.id}}&a=%7B%7Bcontact.id%7D%7D", testParams(), "")
+		assert.Contains(t, got, "z={{contact.id}}", "the live token stays live")
+		assert.Contains(t, got, "a=%7B%7Bcontact.id%7D%7D", "the encoded literal stays encoded")
+	})
+}
+
+// TestStripBlankUTM covers the one case where appending is not enough: a blank utm_* already in
+// the query would otherwise take precedence over the appended real value for any reader that
+// takes the FIRST occurrence.
+func TestStripBlankUTM(t *testing.T) {
+	assert.Equal(t, "", stripBlankUTM(""))
+	assert.Equal(t, "a=1", stripBlankUTM("a=1&utm_campaign="))
+	assert.Equal(t, "a=1&b=2", stripBlankUTM("a=1&utm_source=&b=2&utm_medium="))
+	// A utm_* WITH a value is left alone — that is a real tag, and the double-tag guard
+	// upstream decides whether to touch the link at all.
+	assert.Equal(t, "utm_campaign=real", stripBlankUTM("utm_campaign=real"))
+	// Non-utm params are never removed, blank or not.
+	assert.Equal(t, "a=&b=2", stripBlankUTM("a=&b=2"))
+}

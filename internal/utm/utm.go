@@ -106,32 +106,72 @@ func Apply(rawURL string, p Params, content string) string {
 		}
 	}
 
-	q.Set("utm_source", orDefault(p.Source, DefaultSource))
-	q.Set("utm_medium", orDefault(p.Medium, DefaultMedium))
-	q.Set("utm_campaign", p.Campaign)
+	// APPEND to the existing raw query rather than rebuilding it with Encode().
+	//
+	// Encode() re-serializes the whole query, which:
+	//   - REORDERS keys alphabetically, so a token restored "by value" afterwards could land on
+	//     the wrong occurrence (?z={{id}}&a=%7B%7Bid%7D%7D swapped which one was live);
+	//   - DROPS anything it cannot round-trip, notably semicolon-separated params: `a=1;b=2`
+	//     parsed to nothing and vanished from the URL entirely;
+	//   - percent-encodes HubSpot's {{...}} tokens, which then needed undoing.
+	//
+	// Appending sidesteps all three: every original byte of the query survives untouched, and
+	// only the UTM pairs are added.
+	var add []string
+	appendParam := func(k, v string) {
+		add = append(add, url.QueryEscape(k)+"="+url.QueryEscape(v))
+	}
+	appendParam("utm_source", orDefault(p.Source, DefaultSource))
+	appendParam("utm_medium", orDefault(p.Medium, DefaultMedium))
+	appendParam("utm_campaign", p.Campaign)
 	if content != "" {
-		q.Set("utm_content", content)
+		appendParam("utm_content", content)
 	}
 	if p.Term != "" {
-		q.Set("utm_term", p.Term)
+		appendParam("utm_term", p.Term)
 	}
-	u.RawQuery = q.Encode()
+
+	// Drop any BLANK utm_* pairs already present before appending. A `?utm_campaign=` is not a
+	// real tag (the guard above lets it through for exactly that reason), but leaving it in
+	// place would make the FIRST value empty and readers that take the first value would see
+	// nothing — the appended real value would never win.
+	base := stripBlankUTM(u.RawQuery)
+
+	added := strings.Join(add, "&")
+	if base == "" {
+		u.RawQuery = added
+	} else {
+		u.RawQuery = base + "&" + added
+	}
+	// RawQuery is written verbatim by URL.String(), so the original QUERY — tokens, ordering
+	// and separators included — survives untouched. The PATH still needs restoring: String()
+	// re-escapes it, so a token there comes back as %7B%7B…%7D%7D.
 	return restoreTemplateTokens(u.String(), rawURL)
 }
 
 // templateToken matches a HubSpot personalization token: {{contact.firstname}}, {{ event.slug }}.
 var templateToken = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 
-// restoreTemplateTokens undoes url.URL's percent-encoding of personalization tokens.
+// restoreTemplateTokens undoes url.URL's percent-encoding of personalization tokens IN THE PATH.
 //
-// HubSpot substitutes {{...}} at SEND time. url.Parse/String escapes the braces (and any spaces
-// inside), so a tagged link carries %7B%7B…%7D%7D — HubSpot then never recognises the token and
-// every personalized link in the email is broken. Tagging a link must not change where it goes.
+// HubSpot substitutes {{...}} at SEND time, and URL.String() re-escapes the path, so a token
+// there comes back as %7B%7B…%7D%7D and HubSpot never recognises it — every personalized link
+// in the email breaks. Tagging a link must not change where it goes.
 //
-// Only tokens PRESENT IN THE ORIGINAL are restored, and each is restored once per occurrence, so
-// this cannot introduce a token the author did not write.
+// The QUERY is not touched here: it is appended verbatim (see Apply), so its tokens never get
+// escaped in the first place. That distinction matters — restoring by VALUE across the whole
+// URL was wrong when the same token appeared both live and pre-encoded, because the restore
+// could not tell the two occurrences apart.
+//
+// Only tokens present in the ORIGINAL PATH are restored, so this cannot introduce a token the
+// author did not write.
 func restoreTemplateTokens(tagged, original string) string {
-	tokens := templateToken.FindAllString(original, -1)
+	// Scope to the path: everything before the first "?" in the ORIGINAL.
+	origPath := original
+	if i := strings.IndexByte(origPath, '?'); i >= 0 {
+		origPath = origPath[:i]
+	}
+	tokens := templateToken.FindAllString(origPath, -1)
 	for _, tok := range tokens {
 		escaped := (&url.URL{Path: tok}).EscapedPath()
 		if escaped != tok && strings.Contains(tagged, escaped) {
@@ -144,6 +184,24 @@ func restoreTemplateTokens(tagged, original string) string {
 		}
 	}
 	return tagged
+}
+
+// stripBlankUTM removes utm_* pairs that carry no value, preserving every other pair verbatim
+// (including its position and any exotic separator around it).
+func stripBlankUTM(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+	parts := strings.Split(rawQuery, "&")
+	kept := parts[:0]
+	for _, part := range parts {
+		k, v, _ := strings.Cut(part, "=")
+		if strings.HasPrefix(k, "utm_") && strings.TrimSpace(v) == "" {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, "&")
 }
 
 // hasSkipPrefix reports whether a link is one of the non-web targets that must not be tagged.

@@ -33,6 +33,12 @@ invisible.
   looks tagged while attributing to nothing. Without a campaign, `Apply` returns the URL
   unchanged.
 - **Never tag `mailto:`/`tel:`/`#anchor`.** Appending a query string breaks the link.
+- **Append, never rebuild the query.** `url.Values.Encode()` broke three things at once: it
+  REORDERED keys (so a token restored by value could land on the wrong occurrence), DROPPED
+  anything it could not round-trip (semicolon-separated params vanished entirely), and
+  percent-encoded `{{...}}`. Appending leaves every original byte of the query untouched, so
+  only the PATH still needs token restoration. A blank `utm_*` already in the query is stripped
+  first, or it would win over the appended real value for a reader taking the first occurrence.
 - **Never break personalization.** HubSpot substitutes `{{contact.firstname}}` at SEND time, but
   `url.Parse`/`String` percent-encodes the braces — a tagged link would carry `%7B%7B…%7D%7D`,
   HubSpot would not recognise the token, and every personalized link would break. Tokens present
