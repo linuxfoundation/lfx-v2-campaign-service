@@ -1,5 +1,22 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Renumbered the outbox migration `000008_index_outbox` → `000010_index_outbox`
+(LFXV2-2814, PR #60). PR #59 (stuck-claim recovery) also defines a `000008`, plus a `000009` that
+repairs an INVALID index its own `000008` may leave behind, so that pair must stay together;
+`main` is at `000007`. The loud failure was a merge conflict, but the quiet one is why this moved
+ahead of merge rather than at merge time: two files sharing a version means golang-migrate applies
+one and SILENTLY SKIPS the other, so `index_outbox` would never be created in any environment,
+every brief and campaign write would fail its co-commit, and the whole indexing recovery path
+would be dead with nothing in the logs pointing at the cause. Renumbering removes the ordering
+dependency outright — #59 and #60 can now merge in either order, instead of correctness resting on
+a merge sequence the repository does not enforce. `migrations.go` embeds `*.sql` by wildcard, so
+only two hard-coded references needed updating (the test that reads the migration by filename, and
+the indexer concept doc). Verified on a live PostgreSQL 16 by injecting #59's `000008`/`000009`
+alongside this `000010` and running the service's own `postgres.Migrate`: all three apply and the
+schema lands clean at `version=10, dirty=f`, confirming the number gap does not block the runner.
+
 ## 2026-08-03
 
 **Update** — An unusable `NATS_URL` now fails boot (LFXV2-2814, PR #60). The publisher is built
