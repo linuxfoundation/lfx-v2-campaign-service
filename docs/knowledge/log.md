@@ -2,6 +2,15 @@
 
 ## 2026-08-04
 
+**Update** — Follow-up fix on the GA-4 slice below, from its post-commit review cycle.
+`internal/platform/googleads/targeting_test.go`'s `TestCreateAdGroupAndAd_TargetingHappyPath` and
+the new `newTargetingClientCapturingCampaign` helper (used by both campaign-level
+`targetingSetting` tests) captured a decoded request body inside the httptest handler goroutine
+and read it back from the test goroutine with no happens-before edge — the same data-race shape
+already fixed once in `adgroup_ad_test.go`'s `UpdateAdGroupAndAdStatus` tests. Guarded both with a
+`sync.Mutex` (a small `capturedBody` helper for the campaign-capturing case), matching the existing
+pattern.
+
 **Update** — Added keyword + audience-segment targeting to the Google Ads client (GA-4,
 `internal/platform/googleads/targeting.go`, new file). GA-3 created an ad group with zero
 criteria, which matches no query — this closes that gap: after `createAdGroupAndAd` creates the
