@@ -117,6 +117,24 @@ func TestMicrosoft_PreCreateErrorsReleaseClaim(t *testing.T) {
 		"missing connection":     {fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{}},
 		"decrypt fails":          {fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, errEncryptor{}},
 		"incomplete credentials": {fakeConnReader{conn: activeMicrosoftConn(`{"ClientID":"cid"}`)}, identityEncryptor{}},
+		// Whitespace-only credentials must be treated as ABSENT, not present. Without the
+		// trim these reach CreateCampaign, whose first lookup fails on the bad credential and
+		// returns a non-nil partial — classified UNCONFIRMED, wrongly RETAINING the claim for
+		// a local config error where nothing was created upstream. One case per field so a
+		// partial revert of the trim cannot pass silently.
+		"whitespace-only client id": {fakeConnReader{conn: activeMicrosoftConn(
+			`{"ClientID":"   ","ClientSecret":"csec","DeveloperToken":"dev","RefreshToken":"rt"}`)}, identityEncryptor{}},
+		"whitespace-only client secret": {fakeConnReader{conn: activeMicrosoftConn(
+			`{"ClientID":"cid","ClientSecret":" ","DeveloperToken":"dev","RefreshToken":"rt"}`)}, identityEncryptor{}},
+		"whitespace-only developer token": {fakeConnReader{conn: activeMicrosoftConn(
+			`{"ClientID":"cid","ClientSecret":"csec","DeveloperToken":"\t","RefreshToken":"rt"}`)}, identityEncryptor{}},
+		"whitespace-only refresh token": {fakeConnReader{conn: activeMicrosoftConn(
+			`{"ClientID":"cid","ClientSecret":"csec","DeveloperToken":"dev","RefreshToken":"\n"}`)}, identityEncryptor{}},
+		// NOTE: the whitespace cases above are ALSO covered by
+		// TestMicrosoft_WhitespaceCredentialsNeverReachTheAPI, which asserts no upstream
+		// request is made. That distinction matters: without the trim these still produce an
+		// error (the client calls Microsoft and fails), so erroring alone does not prove the
+		// guard — only "no request was sent" does.
 		"inactive connection": {fakeConnReader{conn: &model.Connection{
 			Provider: model.ProviderMicrosoftAds, AccountID: "1234567",
 			EncryptedCredentials: []byte(goodMicrosoftCreds), Status: model.StatusInactive,
@@ -260,18 +278,64 @@ func TestMicrosoft_TrimsWhitespaceAccountID(t *testing.T) {
 	}
 }
 
-// ---- status toggle --------------------------------------------------------
+// TestMicrosoft_WhitespaceCredentialsNeverReachTheAPI proves the credential trim actually
+// guards: a whitespace-only credential must be rejected LOCALLY, with no upstream request.
+//
+// This is the assertion that fails if the trim is reverted. Merely asserting "an error is
+// returned" does not — without the trim the client happily calls Microsoft with the bad
+// credential and errors anyway, so the test would pass for the wrong reason while the real
+// defect (the failure being classified UNCONFIRMED and RETAINING the claim) went uncaught.
+func TestMicrosoft_WhitespaceCredentialsNeverReachTheAPI(t *testing.T) {
+	for name, creds := range map[string]string{
+		"client id":       `{"ClientID":"   ","ClientSecret":"csec","DeveloperToken":"dev","RefreshToken":"rt"}`,
+		"client secret":   `{"ClientID":"cid","ClientSecret":" ","DeveloperToken":"dev","RefreshToken":"rt"}`,
+		"developer token": `{"ClientID":"cid","ClientSecret":"csec","DeveloperToken":"\t","RefreshToken":"rt"}`,
+		"refresh token":   `{"ClientID":"cid","ClientSecret":"csec","DeveloperToken":"dev","RefreshToken":"\n"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Mutex-guarded: the handler goroutine writes this and the test goroutine reads
+			// it, and httptest.Server.Close only synchronizes at the deferred Close — which
+			// runs AFTER the assertion below.
+			var mu sync.Mutex
+			reached := false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				reached = true
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			defer srv.Close()
 
-func microsoftToggleCampaign(campaignID, adGroupID, adID string) *model.Campaign {
-	return &model.Campaign{
-		Platform:           model.ProviderMicrosoftAds,
-		PlatformCampaignID: campaignID,
-		Result:             json.RawMessage(`{"campaignId":"` + campaignID + `","adGroupId":"` + adGroupID + `","adId":"` + adID + `"}`),
+			d := NewMicrosoftDispatcher(
+				fakeConnReader{conn: activeMicrosoftConn(creds)}, identityEncryptor{},
+				microsoft.WithTokenURL(srv.URL), microsoft.WithBaseURL(srv.URL),
+			)
+			// A VALID config is essential: passing nil would fail at the microsoftConfig
+			// budget check BEFORE credentials are consulted, and the test would pass without
+			// exercising the guard at all.
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds,
+				json.RawMessage(`{"microsoftConfig":{"budget":50}}`))
+			if err == nil {
+				t.Fatal("a whitespace-only credential must be rejected")
+			}
+			mu.Lock()
+			sawRequest := reached
+			mu.Unlock()
+			if sawRequest {
+				t.Error("no upstream request may be made — the credential is rejected locally")
+			}
+			if camp != nil {
+				t.Errorf("a pre-create failure must return a nil campaign (claim released), got %+v", camp)
+			}
+			var nuc interface{ NoUpstreamCreate() bool }
+			if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+				t.Errorf("must be NoUpstreamCreate so the claim is RELEASED, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
-// TestMicrosoft_ToggleStatus_CascadesToChildren verifies the dispatcher resolves creds and
-// PUTs Status across the whole tree — the create path PAUSES all three, so toggling only the
 // campaign would not serve.
 func TestMicrosoft_ToggleStatus_CascadesToChildren(t *testing.T) {
 	type call struct{ method, path string }
@@ -402,5 +466,13 @@ func TestMicrosoft_ToggleStatus_RejectsUnsupportedStatus(t *testing.T) {
 	camp := microsoftToggleCampaign("321", "654", "987")
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, "archived"); err == nil {
 		t.Fatal("an unsupported run status must be rejected")
+	}
+}
+
+func microsoftToggleCampaign(campaignID, adGroupID, adID string) *model.Campaign {
+	return &model.Campaign{
+		Platform:           model.ProviderMicrosoftAds,
+		PlatformCampaignID: campaignID,
+		Result:             json.RawMessage(`{"campaignId":"` + campaignID + `","adGroupId":"` + adGroupID + `","adId":"` + adID + `"}`),
 	}
 }

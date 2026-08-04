@@ -324,8 +324,25 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// This DB-only update MUST NOT be a back door for changing the RUN status
+	// (active/paused): that would persist a run state WITHOUT contacting the ad platform,
+	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists
+	// to prevent. `status` stays in the payload so a client can round-trip the row it read
+	// (a name/config edit re-sends the current status unchanged), but an ATTEMPT to flip the
+	// run state here is rejected and routed to the platform toggle.
+	//
+	// This path NEVER writes status, so ANY mismatch must be refused, not just a run-state one:
+	// returning 200 for a PUT whose required `status` field was not applied would tell the
+	// caller a replacement succeeded when it silently did not. Run-state attempts get the
+	// specific toggle-endpoint message; every other mismatch (a provisioning state, or an
+	// unknown value) is rejected as unsupported on this path.
+	if p.Campaign.Status != existing.Status {
+		if model.IsCampaignRunStatus(p.Campaign.Status) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
+		}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "status cannot be changed via update-campaign; re-send the campaign's current status (it is set by the create/dispatch flow and the status-toggle endpoint)"}
+	}
 	existing.CampaignName = p.Campaign.CampaignName
-	existing.Status = p.Campaign.Status
 	// Only overwrite the stored config when the caller actually supplied one.
 	// config is optional in CampaignUpdateInput, so an omitted value must leave
 	// the existing ConfigSnapshot intact rather than wiping it to NULL on a
@@ -385,7 +402,14 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		switch {
 		case errors.Is(terr, ErrToggleUnsupported):
 			// The platform (or its dispatcher) doesn't support toggling — a client error,
-			// the platform was never called.
+			// the platform was never called. Distinguish the two reasons: for the EMAIL
+			// channel there is nothing to pause BY DESIGN (it stages a draft a human sends,
+			// with no run state this service controls), so a generic "not supported" reads
+			// as a missing feature and invites someone to "fix" it. For an ad platform it
+			// genuinely means the toggle capability is not wired yet.
+			if existing.Platform.Kind() == model.ChannelEmail {
+				return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle does not apply to the email channel: it stages a draft for a human to send, so there is no running campaign to pause or resume"}
+			}
 			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
 		case errors.Is(terr, ErrCampaignNotProvisioned):
 			// The campaign is not fully provisioned for this toggle — either it has no upstream

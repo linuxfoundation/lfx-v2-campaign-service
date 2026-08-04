@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/dispatch"
-description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the ad-platform API clients."
+description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel)."
 resource: "internal/dispatch"
 ---
 
@@ -75,9 +75,9 @@ report "no dispatcher registered" (logged as a startup warning via
 `logMissingDispatchers`); adapters land incrementally per platform.
 
 Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**,
-**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **microsoft** (Bing Ads, LFXV2-2805),
-**hubspot** (the email channel, LFXV2-2777). Google Ads follows once its dispatcher
-(PR #41) merges.
+**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **googleads** (LFXV2-2636),
+**microsoft** (Bing Ads, LFXV2-2805), **hubspot** (the email channel, LFXV2-2777) — every
+provider CreateCampaigns accepts now has a dispatcher.
 
 Each adapter interprets its own credential + config shape:
 - **reddit** — OAuth2 (clientId/secret/refreshToken); AccountID from the connection.
@@ -94,6 +94,16 @@ Each adapter interprets its own credential + config shape:
   currency (no FX). Surfaces a `Reused` reuse/config-drift flag and classifies an
   exhausted mutating 429 as UNCONFIRMED; validates the destination URL (https/http, no
   embedded userinfo) up front.
+- **googleads** — OAuth2 application (clientId/secret + refreshToken) PLUS a Google Ads
+  API developer token; AccountConfig from AccountID (the customer id) + an OPTIONAL
+  `login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
+  Budget (`googleAdsConfig.budget`) is in the ACCOUNT's currency (no FX). The client
+  today creates a PAUSED search-campaign shell (budget → campaign); its two-step
+  hierarchy means a PRE-attachment (budget-stage) orphan is reconciled by its deterministic
+  `CampaignBudgetName`, but once the campaign attaches a non-shared budget's name synchronizes
+  to the campaign name, so a campaign-stage partial reconciles the budget by `CampaignBudgetID`
+  instead (the partial carries both). Either way the dispatcher returns a non-nil result
+  (retaining the claim) on an ambiguous/duplicate-name create rather than releasing on an empty id.
 - **microsoft** — OAuth2 app (clientId/secret) + a developer token + refreshToken;
   AccountConfig from the connection's AccountID (the DIGITS-ONLY `CustomerAccountId`, trimmed)
   plus an optional `customer_id` (the manager/`CustomerId` header). The client builds the
@@ -128,16 +138,54 @@ without touching every adapter. **reddit** implements it: `resolveRedditClient` 
 `Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
 then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
 its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
-PAUSES all three, so toggling only the campaign would not serve. **Microsoft** implements it with a FULL cascade, like reddit: the create path builds the whole
-Campaign → AdGroup → Ad tree PAUSED, so toggling only the campaign would leave the children
-paused and nothing serving. `UpdateCampaignAndChildrenStatus` PUTs `Status` on each entity,
-children-first on ACTIVATE and campaign-gate-first on PAUSE, and refuses an ACTIVATE with an
-unknown ad-group or ad id (`ErrCampaignNotProvisioned` → 409, no upstream call). Microsoft's
-Status enum spells the serving state **Active**. Note the platform-specific trap: a REJECTED
-update returns HTTP **200 with a populated PartialErrors**, so every status PUT checks that
-body — a bare `err == nil` would report success for a change that never applied.
+PAUSES all three, so toggling only the campaign would not serve. **meta** implements it too and
+CASCADES: its create PAUSES the campaign, ad set, and ads, so `UpdateCampaignAndChildrenStatus`
+POSTs the status to the campaign, the persisted ad set id, and each ad DISCOVERED via
+`GET /{adSetID}/ads` (Meta persists the ad set id but not the individual ad ids). It needs only
+the access token, not the page id. **linkedin** implements it and also
+CASCADES: its create leaves the campaign PAUSED and its creatives DRAFT, so a full ACTIVATE
+must lift the creatives too (a DRAFT creative never serves, and a creative's EFFECTIVE status
+is gated by its campaign). `UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the campaign
+status, DISCOVERS the creatives via the creatives FINDER (LinkedIn persists only a creative
+count, not ids), and PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE, a definite
+400 on an in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) —
+the campaign is already the effective gate. An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`)
+is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
+package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). 
 
-Meta + LinkedIn toggles follow
-(stacked PR); X/Twitter + Google Ads follow later.
+**Google Ads** implements PAUSE only; **ACTIVATE is refused** with `ErrCampaignNotProvisioned`
+(→409, raised locally without calling Google). The create path provisions only a PAUSED search
+campaign SHELL (budget → campaign) with no ad group, ad, or keywords, so flipping the campaign
+to ENABLED would report success while nothing can serve — the exact lie that sentinel exists to
+prevent. There is no cascade for the same reason: there are no children to cascade to.
+`UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE with `updateMask: "status"`.
+Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE. When GA-3+ adds
+ad groups/ads/keywords, this must grow BOTH a cascade and a real child-id-based activate guard,
+matching the reddit shape.
+
+X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
+separately.
+
+## Channel kinds: paid ads vs email
+
+`model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,
+with `Provider.IsPaidAds()` as the common shorthand). The distinction is BEHAVIOURAL, not
+cosmetic: a paid ad channel CREATES a campaign that spends budget and can be paused/resumed
+mid-flight, whereas the email channel STAGES a draft a human sends — no budget, no delivery
+this service controls, nothing to pause.
+
+HubSpot is the only email provider today. Branch on `Kind()` rather than comparing against
+`ProviderHubSpot`, so a second email provider does not require hunting down every hardcoded
+check. `Kind()` enumerates providers explicitly and returns `""` for an unclassified one, so a
+newly added provider surfaces the omission instead of silently inheriting paid-ads behaviour.
+
+Two places this shows up today:
+
+- `dispatchableProviders` (container) spans BOTH kinds — email is dispatchable even though it
+  is not an ad platform — which is why it is named for dispatch rather than "ad platforms".
+  `logMissingDispatchers` logs each missing provider's kind so an operator can tell a missing
+  paid platform (budget unspent) from a missing email channel (no drafts staged).
+- The `ErrToggleUnsupported` 400 distinguishes the two reasons: email has no run state BY
+  DESIGN, while an ad platform's toggle may simply not be wired yet.
 
 See [internal/dispatch](../../../internal/dispatch).

@@ -133,7 +133,17 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("microsoft campaign creation failed before any upstream create: %w", cerr))
 		}
-		return campaignFromMicrosoft(ctx, result, cfg), fmt.Errorf("microsoft campaign creation UNCONFIRMED: %w", cerr)
+		// A non-nil result means the create got far enough to have produced upstream state
+		// (a campaign, or a campaign + ad group), so the outcome is UNCONFIRMED and the claim
+		// is RETAINED for reconcile rather than released.
+		//
+		// This deliberately does NOT try to separate "definitely rejected" from "genuinely
+		// ambiguous". The client sets AlreadyExisted only on the SUCCESS path
+		// (adgroup_ad.go:363, immediately before `return r, nil`), so it is always false here
+		// — a check on it would be dead code that reads like a real distinction. Making that
+		// separation real needs the client to classify its own partials, which is its own
+		// change.
+		return campaignFromMicrosoft(ctx, result, cfg), fmt.Errorf("microsoft campaign creation UNCONFIRMED (a partial campaign may exist — verify before retrying): %w", cerr)
 	}
 	return campaignFromMicrosoft(ctx, result, cfg), nil
 }
@@ -179,6 +189,15 @@ func validateMicrosoftConnection(projectID string, res *resolved) (microsoftCred
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
 		return creds, "", fmt.Errorf("decode microsoft credentials: %w", err)
 	}
+	// TRIM before the completeness check and RETURN the trimmed values. Without the trim a
+	// whitespace-only credential passes as "present", so CreateCampaign runs and its first
+	// lookup fails on the bad credential — a failure that returns a non-nil partial and is
+	// therefore classified UNCONFIRMED, RETAINING the claim for what is really a local config
+	// error where nothing was ever created upstream.
+	creds.ClientID = strings.TrimSpace(creds.ClientID)
+	creds.ClientSecret = strings.TrimSpace(creds.ClientSecret)
+	creds.DeveloperToken = strings.TrimSpace(creds.DeveloperToken)
+	creds.RefreshToken = strings.TrimSpace(creds.RefreshToken)
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
 		return creds, "", fmt.Errorf("microsoft credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
 	}

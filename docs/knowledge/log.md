@@ -1,5 +1,74 @@
 # Log
 
+## 2026-08-03
+
+**Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the
+adapter but `registerDispatchers` had no `ProviderMicrosoftAds` entry, so a brief selecting
+microsoft recorded a job that finished "failed: no dispatcher registered" — the whole feature
+was unreachable in production. The exact-membership test now covers it, so dropping the wiring
+fails a test rather than shipping silently.
+
+A follow-up attempt to refine the failure classification was REVERTED: it branched on
+`AlreadyExisted`, but the client sets that only on the SUCCESS path (`adgroup_ad.go:363`,
+immediately before `return r, nil`), so on the error path it is always false — dead code that
+read like a real distinction. Separating "definitely rejected" from "genuinely ambiguous" needs
+the client to classify its own partials, which is its own change.
+
+## 2026-08-03
+
+**Update** — Modelled the paid-ads vs email channel distinction (LFXV2-2813). `model.ChannelKind`
+(`paid-ads` / `email`) with `Provider.Kind()` and `Provider.IsPaidAds()`. Previously the split
+existed only implicitly: `adPlatformProviders` was named for ad platforms but CONTAINED hubspot,
+the email channel, and any code needing the distinction had to compare against `ProviderHubSpot`
+directly.
+
+Renamed that roster to `dispatchableProviders` — it gates DISPATCH, and email is dispatchable
+(it stages a draft) even though it is not an ad platform. `logMissingDispatchers` now logs each
+missing provider's channel kind, so a missing paid platform (budget unspent) is
+distinguishable from a missing email channel (no drafts staged).
+
+The `ErrToggleUnsupported` 400 now explains WHY: for email there is nothing to pause by design,
+versus an ad platform whose toggle is not wired yet. A single generic message read as a missing
+feature and invited someone to "fix" the email case.
+
+`Kind()` enumerates providers explicitly rather than defaulting, so an unclassified new provider
+returns `""` and is caught by `TestProviderValidityHoldsForEveryProvider` instead of silently
+inheriting paid-ads behaviour. Also made `TestLogMissingDispatchers_SurfacesGaps` rot-proof: it
+now removes one provider from the real map (a synthetic gap) rather than asserting a specific
+provider is still unregistered, which broke each time an adapter landed.
+
+## 2026-08-02
+
+**Update** — Bounded the Claude fallback's rerun in
+[Local pre-PR review](architecture/local-pre-pr-review.md) (PR #56 review,
+LFXV2-2905). On a role-level host failure the trio is rerun **once**; if the rerun
+also fails, the role-labelled failure is reported and the launcher stops. The
+reviewer-authored `INCOMPLETE — <reason>` result and a host-side fallback failure
+remain separate states — the bound does not merge them.
+
+## 2026-07-31
+
+**Fix** — Corrected two overstatements in
+[Local pre-PR review](architecture/local-pre-pr-review.md) (PR #56 review,
+LFXV2-2905). "Nothing consults a remote, so the cycle works offline" was broader
+than the reviewer skills actually say: they permit optional read-only GitHub
+inspection to inform judgement. The invariant is narrower and is now stated as such
+— nothing fetches or consults a remote to *derive* the reviewed range. Separately,
+"reviews exactly one commit" is the default, not an invariant; the same concept's
+base-pinning section already documented the caller-supplied wider base.
+
+**Update** — Added [Local pre-PR review](architecture/local-pre-pr-review.md)
+(PR #56, LFXV2-2905): the repo-owned local review cycle. Two physical reviewer
+brains under `.claude/skills/` with generic symlink aliases, an empirical knowledge
+base at `docs/reviews/knowledge-base/`, and a `local-review-fallback` launch table
+for three Opus subagents when Pi is unavailable. Reviews exactly
+`git diff <base_sha> <target_sha>` with the target's first parent as the default
+base — no fetch, no remote, no merge-base. The false-positive floor is read at both
+revisions and suppresses only when both agree, so a change cannot waive a finding
+about itself. Ordinary patterns remain target-only; that gap is documented in the
+concept as a deferred, unsolved follow-up rather than presented as handled.
+`local-agents/` is now git-ignored.
+
 ## 2026-07-30
 
 **Update** — Microsoft Ads campaign status toggle (LFXV2-2810), stacked on the MS-3 dispatcher
@@ -22,8 +91,64 @@ is a partial update that cannot clobber budget, schedule, or targeting.
 Connection rules are shared via `validateMicrosoftConnection`, called by BOTH `Dispatch` and
 `ToggleStatus`, so a create and a toggle cannot drift; each caller keeps its own error wrapping.
 
+## 2026-07-30
+
+**Update** — Patched four indirect-dependency CVEs flagged by Dependabot on main
+(LFXV2-2811): `google.golang.org/grpc` 1.82.0→1.82.1 (HIGH, xDS RBAC + HTTP/2, reached via
+`goa.design/clue/debug`), `github.com/apache/thrift` 0.22.0→0.23.0 (HIGH,
+`TFramedTransport` integer overflow, via `gosnowflake`→`arrow-go`),
+`aws-sdk-go-v2/service/s3` 1.53.1→1.97.3 and `aws-sdk-go-v2/aws/protocol/eventstream`
+1.6.2→1.7.8 (MEDIUM, EventStream decoder panic/DoS, via `gosnowflake`).
+
+Manifest-only (`go.mod`/`go.sum`); no source changes. All four are RUNTIME scope, so they
+are patched rather than added to `.grype.yaml` — that ignore list is reserved for the
+test-only `docker/docker` transitives (via migrate/dktest) and must not grow to cover
+shipping code. Recorded in the Grype section of `megalinter-secrets.md`.
+
+**Update** — Google Ads campaign status toggle (LFXV2-2809), stacked on the GA dispatcher
+(PR #41). `GoogleAdsDispatcher` implements `service.StatusToggler`; new client method
+`UpdateCampaignStatus` sends a `campaigns:mutate` UPDATE with `updateMask: "status"`, and a new
+exported `IsOutcomeUnconfirmed` mirrors the reddit/twitter clients for cross-package
+classification.
+
+PAUSE only — ACTIVATE is REFUSED with `ErrCampaignNotProvisioned` (→409, no upstream call),
+because the GA create path provisions only a campaign SHELL (budget → campaign) with no ad
+group, ad, or keywords: enabling the campaign would report success while nothing can serve. No
+cascade for the same reason — there are no children yet. GA-3+ must add both a cascade and a
+real child-id activate guard. Google spells the
+serving state ENABLED, not ACTIVE — `googleAdsRunStatus` maps the service vocabulary across.
+
+`mutateOperation` gained `Update`/`UpdateMask` fields, and `Create` became `omitempty` so an
+update no longer emits `"create":null` alongside its update (a :mutate operation must carry
+exactly ONE of create/update/remove). The create path is unaffected — it always sets Create.
+
+Connection rules are shared via `validateGoogleAdsConnection`, called by BOTH `Dispatch` and
+`ToggleStatus`, so a create and a toggle cannot drift; each caller keeps its own error wrapping
+(`Dispatch` wraps with `notCreated` for claim semantics, the toggle path does not). The
+campaign id is validated digits-only before any request, since it interpolates into a
+resourceName.
+
 ## 2026-07-29
 
+**Update** — Unblocked MegaLinter, which had failed on `main` since ~2026-06-29 and
+blocked every open PR (#41, #46, #47, #50, #51 all showed the identical failure).
+Every other check passed; the sole blocking linter was `secretlint`, with five
+false positives in test code: a userinfo URL in `internal/dispatch/creds_test.go`
+asserting the snapshot sanitizer fails closed, two PEM blocks in
+`internal/platform/snowflake/client_test.go` asserting garbage/malformed PKCS8
+bodies error out (real EC keys there are generated at runtime via
+`ecdsa.GenerateKey`), and two userinfo URLs in
+`internal/platform/twitter/client_test.go` asserting they are stripped and
+rejected. Each flagged literal is the *subject* of its assertion, so it cannot be
+removed or obfuscated. Suppressed them with per-line
+`// secretlint-disable-line -- <reason>` directives, matching the existing
+convention in `internal/infrastructure/config/config_test.go`, and updated the
+`megalinter-secrets.md` concept with a Secretlint section. A `.secretlintignore`
+path exclusion was deliberately rejected: unlike the `*_test.go` allowlist in
+`.gitleaks.toml`, it would silence every rule for all current and future test
+files, letting a real credential in a new test bypass both scanners. Also noted
+that `REPOSITORY_SECRETLINT_FILTER_REGEX_EXCLUDE` is inert here because secretlint
+runs in MegaLinter's `project` CLI lint mode.
 **Update** — Added the HubSpot (email channel) PlatformDispatcher (LFXV2-2777, Capability C —
 staging). `registerDispatchers` now wires `model.ProviderHubSpot` →
 `dispatch.NewHubSpotDispatcher`, which — unlike the ad adapters — STAGES a marketing email
@@ -94,8 +219,49 @@ create) stays UNCONFIRMED — classification reordered so createOutcomeAmbiguous
 a ctx check runs before the ad step so a done context doesn't fire ad HTTP work. (6) Doc fixes:
 `CampaignResult.AdID`/`AlreadyExisted` and `CampaignInput.Headlines/Descriptions` comments
 corrected (RSA, all-three-level AlreadyExisted, width-aware limits).
+**Update** — Registered the Google Ads PlatformDispatcher (LFXV2-2643, PR #41).
+**Update** — Registered the Google Ads PlatformDispatcher (LFXV2-2636, PR #41).
+`registerDispatchers` now wires `model.ProviderGoogleAds` →
+`dispatch.NewGoogleAdsDispatcher`, so Google Ads campaigns dispatch upstream instead of
+recording "no dispatcher registered". The adapter resolves the OAuth2-app + developer-token
+connection (clientId/secret/refreshToken/developerToken, plus AccountID = customer id and
+an optional `login_customer_id` MCC from ProviderConfig), maps the brief + `googleAdsConfig`
+(`budget` in ACCOUNT currency, no FX) onto the client's `CreateCampaign`, and maps the
+result back to a `model.Campaign` (persisting budget/type/config via `applyCampaignConfig`).
+Uses `NameSuffix = brief.ID` for deterministic, at-most-once-retry budget/campaign names.
+Release decision keys on `result == nil` alone so an ambiguous/duplicate-name create (a
+non-nil name-only result) retains the claim; the possibly-orphaned budget is reconcilable by
+`CampaignBudgetName` PRE-attachment, but by `CampaignBudgetID` once the campaign attaches (a
+non-shared budget's name then synchronizes to the campaign name) — the partial carries both.
 
-## 2026-07-23 (2)
+## 2026-07-23 (6)
+
+
+**Update** — LinkedIn status toggle now CASCADES to creatives (LFXV2-2807, PR #47).
+CreateCampaign leaves the campaign PAUSED and its creatives DRAFT, so activating only the
+campaign would not serve (a DRAFT creative never serves; a creative's effective status is
+gated by its campaign). `linkedin.UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the
+campaign status, DISCOVERS the creatives via the creatives FINDER
+(`GET /adAccounts/{acct}/creatives?q=criteria&campaigns=List(urn:li:sponsoredCampaign:{id})`,
+X-RestLi-Method: FINDER — LinkedIn persists only a creative count, not ids), and
+PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE a definite 400 on an in-review
+creative is tolerated (LinkedIn forbids pausing an in-review creative). Verified the finder +
+intendedStatus contracts on learn.microsoft.com.
+
+## 2026-07-23 (5)
+
+
+**Update** — Meta status toggle now CASCADES like Reddit (LFXV2-2807, PR #47 review). Meta's
+CreateCampaign PAUSES the campaign, ad set, AND ads, so toggling only the campaign to ACTIVE
+would not serve. Added `meta.UpdateCampaignAndChildrenStatus`: POST status to the campaign,
+the persisted ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta stores the ad
+set id in CampaignResult but not the individual ad ids). Activate-without-ad-set-id is refused
+before any call; a child failure after the campaign POST is a `partialCascadeError`
+(Unconfirmed → 503-verify). `MetaDispatcher.ToggleStatus` reads the ad set id from the persisted
+`*model.Campaign`. (LinkedIn was single-node at this point; a later entry above adds its
+creative cascade, so all three platforms now cascade.)
+
+## 2026-07-23 (4)
 
 **Update** — Reddit status toggle now CASCADES to child entities (LFXV2-2806, PR #46 review).
 CreateCampaign PAUSES the campaign, ad group, AND ad, so the original toggle (campaign only)
@@ -106,6 +272,30 @@ children; skipping empty child ids) alongside the retained single-entity `Update
 `StatusToggler.ToggleStatus` interface now takes the full persisted `*model.Campaign` (not just
 the platform id) so the reddit adapter reads the child ids from the stored `CampaignResult`
 (`adGroupId`/`adId`); single-node platforms (Meta/LinkedIn) ignore the extra context.
+
+## 2026-07-23 (3)
+
+
+**Update** — Campaign status toggle extended to LinkedIn (LFXV2-2807, on PR #47 with Meta).
+`linkedin.UpdateCampaignStatus` uses LinkedIn's RestLi PARTIAL_UPDATE (POST
+/adAccounts/{acct}/adCampaigns/{id}, header X-Restli-Method: PARTIAL_UPDATE, body
+{"patch":{"$set":{"status": ACTIVE|PAUSED}}}) — VERIFIED against Microsoft Learn LinkedIn
+Marketing API docs. `doRequest` gained an optional per-call headers map to carry the
+X-Restli-Method header (5 existing call sites updated to pass nil). `linkedin.IsOutcomeUnconfirmed`
++ `LinkedInDispatcher.ToggleStatus`. Reddit, Meta, and LinkedIn now implement StatusToggler;
+X/Twitter + GoogleAds follow once their dispatchers land on main (#39/#41). Tests are race-safe
+(channel capture, per the #47 review).
+
+## 2026-07-23 (2)
+
+
+**Update** — Campaign status toggle extended to Meta (LFXV2-2807, follow-up to the Reddit
+toggle #46). `meta.UpdateCampaignStatus` (POST /{campaignID} {"status": ACTIVE|PAUSED} — Meta
+updates a node by POSTing to its id) + `meta.IsOutcomeUnconfirmed` (exposes the shared
+ambiguity classifier) + `MetaDispatcher.ToggleStatus` (resolves creds, wraps an UNCONFIRMED
+outcome in unconfirmedToggleError). Reddit + Meta now implement StatusToggler. X/Twitter's
+toggle is deferred until the TwitterDispatcher lands on main (it's in the unmerged #39) —
+tracked in LFXV2-2807.
 
 ## 2026-07-23
 

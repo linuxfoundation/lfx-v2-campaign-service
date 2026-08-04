@@ -36,6 +36,35 @@ Faster secrets-only check:
 gitleaks detect --source . --config .gitleaks.toml
 ```
 
+## Secretlint
+
+Secretlint runs with MegaLinter's bundled
+`/action/lib/.automation/.secretlintrc.json` (preset-recommend). The repo does
+not ship a `.secretlintrc.json` or `.secretlintignore`, so MegaLinter falls back
+to passing `--secretlintignore .gitignore`.
+
+False positives are suppressed **per line**, with a
+`// secretlint-disable-line -- <reason>` trailing comment:
+
+- `internal/dispatch/creds_test.go` — URL with embedded userinfo, asserting the
+  snapshot sanitizer fails closed
+- `internal/platform/snowflake/client_test.go` (x2) — PEM blocks asserting a
+  garbage body and a malformed PKCS8 body error out. Real EC keys in these tests
+  are generated at runtime via `ecdsa.GenerateKey`, so nothing is committed.
+- `internal/platform/twitter/client_test.go` (x2) — URLs with embedded userinfo,
+  asserting they are stripped from UTM output and rejected by validation
+- `internal/infrastructure/config/config_test.go` — intentional fake DSN
+
+Prefer line directives over path exclusions here. Unlike the `*_test.go`
+allowlist in `.gitleaks.toml`, a secretlint path exclusion would silence
+**every** rule for **all current and future** test files — so a real credential
+committed to a new test would bypass both scanners. Line-scoped directives keep
+new test files fully scanned.
+
+Note that `REPOSITORY_SECRETLINT_FILTER_REGEX_EXCLUDE` has no effect: secretlint
+runs in MegaLinter's `project` CLI lint mode, where the filter-regex variables
+do not apply.
+
 ## Grype
 
 [`.grype.yaml`](../../../.grype.yaml) ignores five known CVEs in
@@ -45,3 +74,13 @@ golang-migrate / `dktest`). MegaLinter is pointed at that config with
 package-scoped so new findings in runtime dependencies still fail CI.
 Engine patches exist, but a remediated Go module is not yet resolvable on
 the path migrate pulls; track a migrate/dktest upgrade separately.
+
+That ignore list is for **test-only** transitives. A **runtime-scope** CVE is
+PATCHED instead, even when the module is indirect — the ignore list must not
+grow to cover code that ships. Four such advisories were remediated by version
+bump on 2026-07-30 (LFXV2-2811): `google.golang.org/grpc` → 1.82.1 (xDS RBAC /
+HTTP2, via `goa.design/clue/debug`), `github.com/apache/thrift` → 0.23.0
+(`TFramedTransport` integer overflow, via `gosnowflake` → `arrow-go`), and
+`aws-sdk-go-v2/service/s3` → 1.97.3 plus
+`aws-sdk-go-v2/aws/protocol/eventstream` → 1.7.8 (EventStream decoder panic /
+DoS, via `gosnowflake`). None was added to `.grype.yaml`.

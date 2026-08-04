@@ -11,7 +11,8 @@ import "time"
 // singleton per provider per project.
 type Provider string
 
-// Supported paid providers. Organic/community channels are added later.
+// Supported providers: six PAID ad platforms plus hubspot, the EMAIL channel (see
+// ChannelKind). Organic/community channels are added later.
 const (
 	ProviderGoogleAds    Provider = "google-ads"
 	ProviderLinkedInAds  Provider = "linkedin-ads"
@@ -44,8 +45,87 @@ func (p Provider) Table() string {
 	}
 }
 
-// Valid reports whether p is a known provider.
-func (p Provider) Valid() bool { return p.Table() != "" }
+// Valid reports whether p is a known, CLASSIFIED provider (see the note on Kind() below for
+// why classification is the gate rather than Table()).
+func (p Provider) Valid() bool { return validFrom(p.Table(), p.Kind()) }
+
+// validFrom is the validity PREDICATE, split out so it is testable on its own. No real
+// provider has a table without a kind — that is the invariant Valid() enforces — so a test
+// written against the constants can never exercise the table-but-unclassified case, and would
+// silently pass even if Valid() stopped consulting Kind(). Feeding the predicate directly is
+// the only way to pin the coupling. See TestValidFromRequiresBothTableAndKind.
+func validFrom(table string, kind ChannelKind) bool { return table != "" && kind != "" }
+
+// ChannelKind classifies what KIND of marketing channel a provider is. The distinction is
+// BEHAVIOURAL, not cosmetic: a paid ad channel CREATES a campaign that spends budget and can
+// be paused/resumed mid-flight, whereas the email channel STAGES a draft a human sends — it
+// has no budget, no delivery this service controls, and nothing to pause. Code that branches
+// on "is this an ad platform?" should ask here rather than comparing against ProviderHubSpot,
+// so adding a second email provider does not mean hunting down every hardcoded check.
+type ChannelKind string
+
+// Channel kinds.
+const (
+	// ChannelPaidAds is an ad platform: budgeted, dispatchable, and pausable.
+	ChannelPaidAds ChannelKind = "paid-ads"
+	// ChannelEmail is the email channel: stages a draft, no budget, not pausable.
+	ChannelEmail ChannelKind = "email"
+)
+
+// Kind reports the channel kind of p. An unknown provider returns "" (mirroring Table()).
+//
+// This deliberately enumerates each provider rather than defaulting: a NEW provider added to
+// the Provider list will return "" here until it is classified, which surfaces the omission
+// instead of silently inheriting the wrong behaviour.
+func (p Provider) Kind() ChannelKind {
+	switch p {
+	case ProviderGoogleAds, ProviderLinkedInAds, ProviderMetaAds,
+		ProviderRedditAds, ProviderTwitterAds, ProviderMicrosoftAds:
+		return ChannelPaidAds
+	case ProviderHubSpot:
+		return ChannelEmail
+	default:
+		return ""
+	}
+}
+
+// Valid is deliberately defined in terms of Kind(), not Table(). Go cannot enumerate a const
+// block, so no test can prove a hand-written list is complete — but tying VALIDITY to
+// CLASSIFICATION makes the compiler's job unnecessary: a provider that Kind() does not
+// classify is not a valid provider at all, so it is rejected by every Valid() check on the
+// request path rather than silently taking a default branch deep inside the service.
+//
+// The practical effect: adding a provider constant and a Table() case without a Kind() case
+// yields a provider the API rejects outright — a loud, immediate failure at the boundary
+// instead of a subtle misclassification. See TestValidFromRequiresBothTableAndKind.
+
+// IsPaidAds reports whether p is a paid ad channel (budgeted, pausable) rather than email.
+func (p Provider) IsPaidAds() bool { return p.Kind() == ChannelPaidAds }
+
+// AllProviders returns every provider this service supports, in a stable order.
+//
+// This is the ENUMERABLE source of truth that makes exhaustiveness testable: Go has no way to
+// iterate a const block, so without it a test can only walk a hand-maintained list — and a new
+// provider omitted from both Kind() and that list would pass silently. Tests iterate this and
+// assert each entry classifies, so adding a provider here (which you must, to make it usable)
+// forces it to be classified too.
+//
+// Keep in sync with the Provider constants above. TestAllProvidersAreValidAndUnique catches a
+// DUPLICATE or a table-less entry here, but it cannot prove completeness: Go cannot enumerate
+// a const block, so a provider constant omitted from this list is not detectable by any test.
+// Valid() requiring Kind() is the real backstop — an unclassified provider is invalid whether
+// or not anyone remembered to list it.
+func AllProviders() []Provider {
+	return []Provider{
+		ProviderGoogleAds,
+		ProviderLinkedInAds,
+		ProviderMetaAds,
+		ProviderRedditAds,
+		ProviderTwitterAds,
+		ProviderMicrosoftAds,
+		ProviderHubSpot,
+	}
+}
 
 // ConnectionStatus is the lifecycle status of a connection.
 type ConnectionStatus string

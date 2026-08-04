@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -354,20 +353,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// otherwise clear this cap and only fail at AddAds, orphaning the PAUSED campaign and ad
 		// group this whole block exists to prevent. Fail CLOSED, as with the parse failure above.
 		host := u.Hostname()
-		uni, ierr := idna.Lookup.ToUnicode(host)
-		if ierr != nil {
-			return nil, fmt.Errorf("microsoft-ads composed ad final URL host %q is not a valid IDNA label: %w", host, ierr)
+		// An IPv6 literal is NOT an IDNA label — ToUnicode fails on it — so skip the decode
+		// entirely rather than fail closed, mirroring canonicalFinalURL's isIPv6 guard.
+		// validateAdURL still accepts IPv6 destinations, so rejecting one here would break a
+		// previously-valid URL with a misleading "not a valid IDNA label" error. Hostname()
+		// already strips the surrounding brackets, leaving the colons that identify it.
+		if !strings.Contains(host, ":") {
+			uni, ierr := idna.Lookup.ToUnicode(host)
+			if ierr != nil {
+				return nil, fmt.Errorf("microsoft-ads composed ad final URL host %q is not a valid IDNA label: %w", host, ierr)
+			}
+			if uni != "" {
+				host = uni
+			}
 		}
-		if uni != "" {
-			host = uni
-		}
-		authority := host
-		// Lower-case the scheme before the default-port test: validateAdURL accepts any scheme
-		// casing and buildAdFinalURL preserves it, so a valid HTTPS://…:443 would otherwise
-		// miss the case-sensitive "https" match and wrongly count :443 against the host length.
-		if port := u.Port(); port != "" && !isDefaultPort(strings.ToLower(u.Scheme), port) {
-			authority = net.JoinHostPort(host, port)
-		}
+		authority := authorityForWidth(u, host)
 		limit := maxDisplayDomainRunes
 		if hasDoubleWidth(authority) {
 			limit = maxDisplayDomainRunesWide

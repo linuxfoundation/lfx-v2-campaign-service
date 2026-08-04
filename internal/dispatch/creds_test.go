@@ -21,7 +21,7 @@ func TestSanitizeSnapshotURL(t *testing.T) {
 		{"https://example.com/path", "https://example.com/path"},
 		{"t3_abc123", "t3_abc123"}, // reddit thing-id, no query — unchanged
 		{"not a url?token=SECRET", "not a url"},
-		{"https://user:pass@example.com/x?token=SECRET", ""}, // userinfo → fail closed
+		{"https://user:pass@example.com/x?token=SECRET", ""}, // secretlint-disable-line -- fixture asserting userinfo fails closed
 	}
 	for _, tc := range cases {
 		if got := sanitizeSnapshotURL(tc.in); got != tc.want {

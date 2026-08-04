@@ -497,7 +497,9 @@ func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign,
 	return c, nil
 }
 
-// UpdateCampaign must NOT wipe the stored config when the caller omits config.
+// UpdateCampaign must NOT wipe the stored config when the caller omits config, and it must
+// leave the run status untouched (the caller round-trips the CURRENT status on a name edit;
+// run-state changes go through the toggle, not this DB-only path).
 func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	camps := &campaignEditRepo{cur: &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 2,
@@ -508,7 +510,7 @@ func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	v := "2"
 	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
 		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
-		Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "paused"}, // Config omitted
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "active"}, // status unchanged; Config omitted
 	})
 	if err != nil {
 		t.Fatalf("UpdateCampaign: %v", err)
@@ -516,8 +518,34 @@ func TestBriefService_UpdateCampaign_PreservesConfigWhenOmitted(t *testing.T) {
 	if string(camps.got.ConfigSnapshot) != `{"budget":100}` {
 		t.Errorf("config was overwritten: %s, want the stored {\"budget\":100}", camps.got.ConfigSnapshot)
 	}
-	if camps.got.CampaignName != "new" || camps.got.Status != "paused" {
-		t.Errorf("name/status not applied: %q/%q", camps.got.CampaignName, camps.got.Status)
+	if camps.got.CampaignName != "new" {
+		t.Errorf("name not applied: %q", camps.got.CampaignName)
+	}
+	if camps.got.Status != "active" {
+		t.Errorf("status must be preserved verbatim by the DB-only update, got %q want %q", camps.got.Status, "active")
+	}
+}
+
+// UpdateCampaign must REFUSE a run-status change (active<->paused): persisting a run state
+// without contacting the ad platform would recreate the DB/platform divergence the toggle
+// endpoint exists to prevent. The refusal is a 400 that routes the caller to the toggle.
+func TestBriefService_UpdateCampaign_RejectsRunStatusChange(t *testing.T) {
+	camps := &campaignEditRepo{cur: &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 2,
+		CampaignName: "old", Status: "active",
+	}}
+	s := &BriefService{briefs: &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}}, campaigns: camps, jobs: newFakeJobRepo(), orch: NewOrchestrator(camps, newFakeJobRepo(), nil)}
+	v := "2"
+	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "old", Status: "paused"}, // active -> paused via DB path
+	})
+	var badReq *briefs.BadRequestError
+	if !errors.As(err, &badReq) {
+		t.Fatalf("a run-status change via update-campaign must be a 400 BadRequestError, got %T: %v", err, err)
+	}
+	if camps.got != nil {
+		t.Error("ReplaceCampaign must NOT be called when the run-status change is rejected")
 	}
 }
 
@@ -886,5 +914,72 @@ func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing
 	}
 	if tog.gotID != "" {
 		t.Error("the platform must NOT be called for a pending campaign")
+	}
+}
+
+// nonTogglerDispatcher is a PlatformDispatcher that does NOT implement StatusToggler, which
+// is exactly the shape of the hubspot (email) adapter: it stages a draft and has no run state.
+type nonTogglerDispatcher struct{}
+
+func (nonTogglerDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("not used in this test")
+}
+
+// TestToggleUnsupported_EmailGetsADistinctMessage drives the REAL handler path — repo,
+// orchestrator, and a dispatcher lacking StatusToggler — and asserts the message a caller
+// actually receives. An earlier version of this test only re-asserted Provider.Kind(), so the
+// email-specific message could have been deleted and it would have stayed green.
+func TestToggleUnsupported_EmailGetsADistinctMessage(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name        string
+		platform    model.Provider
+		wantContain string
+	}{
+		// Email: nothing to pause BY DESIGN. The message must say so, or an operator reads a
+		// generic "not supported" as a missing feature and files a bug.
+		{"email channel", model.ProviderHubSpot, "email channel"},
+		// A paid platform with no toggler wired keeps the generic message — there it really
+		// IS unimplemented, and claiming "email has no run state" would be wrong.
+		{"paid platform", model.ProviderRedditAds, "not supported for this campaign's platform"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+				ID: "b1", ProjectID: "cncf", EventSlug: "ev", Status: model.BriefApproved,
+			}
+			camps := &fakeCampaignRepo{}
+			camps.byID = map[string]*model.Campaign{
+				"c1": {
+					ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: tc.platform,
+					PlatformCampaignID: "up-1", Status: model.CampaignStatusCreated, Version: 1,
+				},
+			}
+			jobs := newFakeJobRepo()
+			// The dispatcher exists (so it is not "no dispatcher registered") but does not
+			// implement StatusToggler — the real hubspot situation.
+			orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+				tc.platform: nonTogglerDispatcher{},
+			})
+			s := NewBriefService(nil, nil, nil, nil)
+			s.SetBackend(repo, camps, jobs, orch)
+
+			etag := `"1"` // matches the campaign's Version, satisfying the If-Match gate
+			_, err := s.ToggleCampaignStatus(ctx, &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+				Status: model.CampaignRunPaused, IfMatch: &etag,
+			})
+			if err == nil {
+				t.Fatal("expected a 400 when the platform has no toggle capability")
+			}
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("want a BadRequestError (400), got %T: %v", err, err)
+			}
+			if !strings.Contains(bad.Message, tc.wantContain) {
+				t.Errorf("message = %q, want it to contain %q", bad.Message, tc.wantContain)
+			}
+		})
 	}
 }
