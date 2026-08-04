@@ -22,6 +22,30 @@ version is a paired `NNNNNN_name.up.sql` / `.down.sql`; applied versions are
 never re-run, so a schema change is always a NEW version, never an edit to an
 applied file.
 
+**Picking a version number when several PRs are open at once.** golang-migrate
+records the HIGHEST version it has applied and afterwards only applies versions
+above it, so a lower-numbered file that lands later is skipped SILENTLY — no
+error, permanently unapplied. Two hazards follow, and neither is caught by CI on
+either PR:
+
+- A *gap*: numbering above versions that are still unmerged in sibling branches.
+  Deploy this PR first and those lower versions never run.
+- A *collision*: two branches independently claiming the same number.
+  `TestMigrations_UniqueNumbering` globs only its OWN branch's embedded FS, so it
+  is green on both PRs and only fails on whichever merges second.
+
+So choose a number by checking `main` AND every open PR branch, not just `main`:
+
+```sh
+for b in $(gh pr list --json headRefName -q '.[].headRefName'); do
+  echo "== $b"; git ls-tree "origin/$b" \
+    internal/infrastructure/postgres/migrations/ --name-only | grep '\.up\.sql'
+done
+```
+
+Take the next consecutive versions above everything already claimed, and prefer
+leaving headroom over reusing a number a sibling branch might renumber into.
+
 - `000001` — connection tables.
 - `000002` — brief, campaign, and async-job tables. Indexes: `campaign_jobs`
   on `brief_id`; `campaigns` on `project_id`. `(brief_id, platform)` /
@@ -63,17 +87,17 @@ applied file.
   expose it under the wrong tenant. The API create path already guards this (`INSERT …
   WHERE EXISTS` an active brief scoped by project+brief); the FK makes the datastore the
   source of truth for all writers.
-- `000014` / `000015` — campaign SOFT DELETE. `000002`'s full
+- `000013` / `000014` — campaign SOFT DELETE. `000002`'s full
   `UNIQUE (brief_id, platform)` made a campaign row occupy its brief's slot for that
   platform PERMANENTLY, so a campaign created with the wrong budget (or one whose
   upstream create failed ambiguously) blocked that pair forever with no recovery.
-  `000014` creates the partial unique index `uq_campaigns_brief_platform_live`
-  (`(brief_id, platform) WHERE status <> 'deleted'`) and `000015` drops the old
+  `000013` creates the partial unique index `uq_campaigns_brief_platform_live`
+  (`(brief_id, platform) WHERE status <> 'deleted'`) and `000014` drops the old
   constraint — mirroring what `000003` did for briefs on archive. Deleting a campaign
   now frees the slot for a re-dispatch while two LIVE campaigns for the pair are still
   rejected.
 
-  The split into two versions is required, not stylistic: `000014` uses
+  The split into two versions is required, not stylistic: `000013` uses
   `CREATE INDEX CONCURRENTLY` (migrations run during a ROLLING startup, so a blocking
   build could stall an in-flight dispatch claim), which cannot share a file with other
   statements — a multi-statement migration is batched, reintroducing the implicit
@@ -81,7 +105,7 @@ applied file.
   free: golang-migrate applies versions ascending, so the replacement index always
   exists before the constraint it replaces is dropped. Dropping first would open a
   window with NO uniqueness, during which two concurrent claims could both win and
-  double-create a paid campaign upstream. `000015` is a guarded `DO` block that
+  double-create a paid campaign upstream. `000014` is a guarded `DO` block that
   REFUSES to drop the constraint unless the new index is present, `indisvalid`, and
   matches its required DEFINITION, because a failed CONCURRENTLY build does not roll
   back — it leaves an INVALID index that `IF NOT EXISTS` would silently skip rebuilding.
@@ -89,8 +113,8 @@ applied file.
   correct outcome.
 
   The guard checks the definition, not just the name, and that distinction is
-  load-bearing. Because `000014` builds with `IF NOT EXISTS`, ANY pre-existing index
-  carrying the name `uq_campaigns_brief_platform_live` makes `000014` a silent no-op —
+  load-bearing. Because `000013` builds with `IF NOT EXISTS`, ANY pre-existing index
+  carrying the name `uq_campaigns_brief_platform_live` makes `000013` a silent no-op —
   and a name-only guard then accepts it and drops the sole real uniqueness constraint,
   leaving the pair with none: every claim wins and concurrent retries double-create paid
   campaigns, silently. So the guard proves `indrelid = public.campaigns`, `indisunique`,
@@ -101,7 +125,7 @@ applied file.
   wrong predicate, an index on another table, and an INVALID index; an equivalent
   predicate spelled `!=` or with an explicit `::text` cast still passes, since the
   comparison uses the text Postgres itself deparses. Pinned by
-  `TestMigration000015_GuardChecksIndexDefinition`.
+  `TestMigration000014_GuardChecksIndexDefinition`.
 
   **Consequence for every `ON CONFLICT (brief_id, platform)`**: PostgreSQL infers the
   arbiter index by matching the conflict target AND its predicate, so once the full

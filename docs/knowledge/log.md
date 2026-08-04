@@ -2,6 +2,26 @@
 
 ## 2026-08-04
 
+**Fix** — Renumbered this branch's migrations `000014`/`000015` → `000013`/`000014`. They had
+been numbered above versions that are still unmerged in sibling PRs, and `000015` COLLIDED
+outright with `000015_index_outbox_lease` on the query-service-indexing branch.
+
+Both failure modes are silent. golang-migrate records the highest applied version and never
+applies a lower one afterwards, so had this PR deployed first, the sibling branches' `000008`–
+`000010` would have been skipped permanently with no error. And a duplicate version means one
+of the two files simply never runs — `TestMigrations_UniqueNumbering` cannot catch that,
+because it globs only its own branch's embedded FS and so passes green on both PRs, failing
+only on whichever merges second.
+
+`000013`/`000014` sit above every version claimed anywhere (`000008`/`000009` on the
+reclaim-claims branch, `000010` on query-service-indexing) and deliberately leave `000011`/
+`000012` free as headroom, so a sibling renumbering its own stray `000015` down cannot collide
+with this pair. Re-verified on PostgreSQL 16.10: the renumbered pair applies ascending to the
+intended end state (partial unique index valid, old constraint dropped), the drop-guard still
+FIRES against a same-named non-unique decoy index and leaves the old constraint protecting the
+table, and the two down-migrations round-trip. Version-selection procedure recorded in the
+`internal/infrastructure/postgres` concept doc.
+
 **Update** — Added campaign DELETE (`DELETE /projects/{id}/briefs/{id}/campaigns/{id}`). There
 was no delete path at any layer: the service could create campaigns and pause them, and that
 was all.
@@ -13,15 +33,15 @@ campaign row occupied that brief's slot for that platform PERMANENTLY. A campaig
 the wrong budget, or one whose upstream create failed ambiguously, blocked that (brief,
 platform) pair forever with no supported recovery.
 
-Fix mirrors what `000003` already did for briefs on archive: `000014` builds the partial unique
-index `uq_campaigns_brief_platform_live` (`WHERE status <> 'deleted'`), `000015` drops the old
+Fix mirrors what `000003` already did for briefs on archive: `000013` builds the partial unique
+index `uq_campaigns_brief_platform_live` (`WHERE status <> 'deleted'`), `000014` drops the old
 constraint. Two versions rather than one is forced — `CREATE INDEX CONCURRENTLY` (needed
 because migrations run during a rolling startup, where a blocking build could stall an
 in-flight dispatch claim) cannot share a file with other statements, since a multi-statement
 migration is batched and reintroduces the transaction CONCURRENTLY forbids. The split also
 gives the required ordering for free: build the replacement BEFORE dropping the constraint, or
 there is a window with no uniqueness at all in which two concurrent claims both win and
-double-create upstream. `000015` refuses to drop unless the new index is present AND
+double-create upstream. `000014` refuses to drop unless the new index is present AND
 `indisvalid`, because a failed CONCURRENTLY build leaves an INVALID index that `IF NOT EXISTS`
 would silently skip rebuilding.
 
@@ -50,7 +70,7 @@ INSERTs rather than updates there is no row conflict to serialize on.
 Verified against a real database on port 55470 (all migrations in order): two live campaigns
 for a pair are still rejected; a soft delete frees the slot and re-dispatch to the same pair
 succeeds; repeated delete/re-dispatch cycles coexist; the predicated ON CONFLICT infers the
-index and the bare one errors; `000015`'s guard fires and leaves the old constraint intact when
+index and the bare one errors; `000014`'s guard fires and leaves the old constraint intact when
 the index is missing; the down path restores the constraint and fails by design once
 soft-deleted duplicates exist.
 
@@ -78,10 +98,10 @@ unexported map in `internal/service`, and postgres may import neither. Both orig
 reference the model constants instead of re-spelling the strings, and the existing
 `TestPartialOrphanStatusValues` drift guard was extended to cover the new copies.
 
-The migration guard was the more dangerous finding. `000015` verified that an index named
-`uq_campaigns_brief_platform_live` existed and was `indisvalid` — nothing more. But `000014`
-builds with `IF NOT EXISTS`, so ANY pre-existing index carrying that name makes `000014` a
-silent no-op and satisfies a name-only guard, after which `000015` drops the sole real
+The migration guard was the more dangerous finding. `000014` verified that an index named
+`uq_campaigns_brief_platform_live` existed and was `indisvalid` — nothing more. But `000013`
+builds with `IF NOT EXISTS`, so ANY pre-existing index carrying that name makes `000013` a
+silent no-op and satisfies a name-only guard, after which `000014` drops the sole real
 uniqueness constraint. The pair is then left with NO enforceable uniqueness: every
 `ClaimCampaignDispatch` wins and concurrent retries double-create paid campaigns, silently,
 because nothing errors. The guard now proves the relation, `indisunique`, `indnkeyatts = 2`

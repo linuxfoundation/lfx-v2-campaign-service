@@ -6,6 +6,8 @@ package postgres
 import (
 	"io/fs"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -14,7 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 )
 
-// livePredicate is the partial-index predicate that migration 000014 attached to
+// livePredicate is the partial-index predicate that migration 000013 attached to
 // uq_campaigns_brief_platform_live. Every ON CONFLICT targeting (brief_id, platform)
 // must repeat it verbatim, and every campaigns read must filter by it.
 const livePredicate = `status <> 'deleted'`
@@ -27,8 +29,8 @@ var onConflictBriefPlatform = regexp.MustCompile(`(?is)ON\s+CONFLICT\s*\(\s*brie
 // TestCampaignRepo_OnConflictCarriesLivePredicate pins the single most dangerous
 // coupling introduced by the soft-delete migration.
 //
-// Migration 000015 DROPS the full `UNIQUE (brief_id, platform)` constraint, leaving
-// only 000014's PARTIAL unique index (`WHERE status <> 'deleted'`). PostgreSQL infers
+// Migration 000014 DROPS the full `UNIQUE (brief_id, platform)` constraint, leaving
+// only 000013's PARTIAL unique index (`WHERE status <> 'deleted'`). PostgreSQL infers
 // an arbiter index for ON CONFLICT by matching the conflict target AND its predicate:
 // once the constraint is gone, a bare `ON CONFLICT (brief_id, platform)` matches
 // NOTHING and the statement fails at runtime with
@@ -50,7 +52,7 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 			require.NotNil(t, m, "query has no ON CONFLICT (brief_id, platform) clause; if the conflict target moved, update this test deliberately:\n%s", q)
 			require.Contains(t, normalizeWS(m[1]), livePredicate,
 				"ON CONFLICT (brief_id, platform) is missing the partial index predicate %q. "+
-					"Migration 000015 drops the full UNIQUE constraint, so a bare conflict target infers no arbiter "+
+					"Migration 000014 drops the full UNIQUE constraint, so a bare conflict target infers no arbiter "+
 					"index and this statement fails at runtime with \"no unique or exclusion constraint matching the "+
 					"ON CONFLICT specification\".", livePredicate)
 		})
@@ -118,12 +120,12 @@ func TestDeleteCampaign_LocksRowBeforeGuards(t *testing.T) {
 		"the locking read must fetch status and version so both guards are evaluated against the locked row")
 }
 
-// TestMigration000015_GuardChecksIndexDefinition pins that the drop-guard verifies the
+// TestMigration000014_GuardChecksIndexDefinition pins that the drop-guard verifies the
 // replacement index's DEFINITION and not merely its name.
 //
-// The hole this closes: 000014 builds uq_campaigns_brief_platform_live with
+// The hole this closes: 000013 builds uq_campaigns_brief_platform_live with
 // CREATE UNIQUE INDEX CONCURRENTLY *IF NOT EXISTS*. Any pre-existing index that happens to
-// carry that name therefore makes 000014 a silent no-op — and a guard that checks only
+// carry that name therefore makes 000013 a silent no-op — and a guard that checks only
 // name/namespace/indisvalid accepts it, after which this migration drops the sole full
 // UNIQUE (brief_id, platform) constraint. The table is then left with NO enforceable
 // uniqueness on the pair: every ClaimCampaignDispatch wins, and concurrent retries
@@ -137,8 +139,8 @@ func TestDeleteCampaign_LocksRowBeforeGuards(t *testing.T) {
 // table, and an INVALID index — while still accepting an equivalent predicate spelled
 // `!=` or with an explicit ::text cast, since the comparison is against the text Postgres
 // itself deparses.
-func TestMigration000015_GuardChecksIndexDefinition(t *testing.T) {
-	b, err := fs.ReadFile(migrations.FS, "000015_drop_campaigns_full_unique_platform.up.sql")
+func TestMigration000014_GuardChecksIndexDefinition(t *testing.T) {
+	b, err := fs.ReadFile(migrations.FS, "000014_drop_campaigns_full_unique_platform.up.sql")
 	require.NoError(t, err)
 	sql := normalizeWS(string(b))
 
@@ -155,7 +157,7 @@ func TestMigration000015_GuardChecksIndexDefinition(t *testing.T) {
 		{`= '(status <> ''deleted''::text)'`, "the predicate must match what Postgres deparses for WHERE status <> 'deleted'; a different predicate covers a different row set"},
 	} {
 		require.Contains(t, sql, want.frag,
-			"migration 000015's drop-guard is missing %q: %s", want.frag, want.why)
+			"migration 000014's drop-guard is missing %q: %s", want.frag, want.why)
 	}
 
 	// The guard must still gate the DROP. A guard that RAISEs correctly but whose
@@ -183,6 +185,98 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 			t.Fatalf("migrations %q and %q share version %s; golang-migrate applies one and silently skips the other", prev, e, version)
 		}
 		seen[version] = e
+	}
+}
+
+// TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do
+// not exist yet in this tree — the sibling of the duplicate-version hazard above, and the
+// one that actually bit this branch (it was numbered 000014/000015 while main was at 000007
+// and 000008-000010 lived in other open PRs).
+//
+// Why a gap is dangerous rather than merely untidy: golang-migrate records the HIGHEST
+// version it has applied and thereafter only applies versions above it. So if a tree
+// carrying a gap deploys first, the migrations that later fill that gap are skipped
+// SILENTLY and permanently — Up() reports success, and the schema is simply missing them.
+//
+// A contiguous sequence makes that impossible to express. It also fails loudly HERE, at
+// commit time on the branch that introduced the gap, instead of after a deploy.
+//
+// Note the limit of this test and the one above: both see only this branch's embedded FS.
+// Neither can detect that a SIBLING branch has claimed the same number, which is why
+// choosing a version requires checking every open PR branch (see the concept doc).
+//
+// allowedVersionGaps records gaps that are KNOWN and transitional: versions claimed by a
+// sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not
+// a numbering bug — this branch must not merge before the PR that fills it, or those
+// migrations are skipped forever. Deleting an entry once its PR merges is the point: the
+// list must shrink to empty, and this test then enforces strict contiguity again.
+//
+// 000008-000012: 000008/000009 belong to feat/LFXV2-2665-reclaim-expired-dispatch-claims
+// (PR #59) and 000010 to feat/LFXV2-2814-query-service-indexing (PR #60); 000011/000012 are
+// intentional headroom so a sibling renumbering its own stray version down cannot collide
+// with this branch's 000013/000014.
+var allowedVersionGaps = map[int]string{
+	8: "PR #59 (000008/000009) and PR #60 (000010) must merge before this branch; 000011/000012 are reserved headroom",
+}
+
+func TestMigrations_NoVersionGaps(t *testing.T) {
+	entries, err := fs.Glob(migrations.FS, "*.up.sql")
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+
+	versions := make([]int, 0, len(entries))
+	byVersion := map[int]string{}
+	for _, e := range entries {
+		v, _, ok := strings.Cut(e, "_")
+		require.True(t, ok, "migration %q does not follow the NNNNNN_name.up.sql convention", e)
+		n, convErr := strconv.Atoi(v)
+		require.NoError(t, convErr, "migration %q has a non-numeric version %q", e, v)
+		versions = append(versions, n)
+		byVersion[n] = e
+	}
+	sort.Ints(versions)
+
+	require.Equal(t, 1, versions[0], "migrations must start at version 1, got %d (%s)", versions[0], byVersion[versions[0]])
+	for i := 1; i < len(versions); i++ {
+		prev, cur := versions[i-1], versions[i]
+		if cur == prev+1 {
+			continue
+		}
+		why, allowed := allowedVersionGaps[prev+1]
+		require.True(t, allowed,
+			"migration versions must be contiguous: %s jumps from %06d to %06d. golang-migrate records the "+
+				"highest applied version and never applies a lower one afterwards, so if this tree deploys first, "+
+				"any migration later filling versions %06d-%06d is skipped silently and permanently. Renumber to "+
+				"the next consecutive version above every version claimed in main AND in every open PR branch, or "+
+				"record the gap in allowedVersionGaps with the sibling PR that fills it.",
+			byVersion[cur], prev, cur, prev+1, cur-1)
+		t.Logf("tolerating known transitional gap %06d-%06d before %s: %s", prev+1, cur-1, byVersion[cur], why)
+	}
+}
+
+// TestMigrations_AllowedVersionGapsAreStillOpen keeps allowedVersionGaps honest. An entry there
+// suppresses a real contiguity failure, so a stale entry silently re-permits the exact hazard
+// the test above exists to catch. Once the sibling PR merges and its migrations land in this
+// tree, the version that opened the gap EXISTS — at which point the entry is dead and must be
+// deleted rather than left to mask a future genuine gap at the same number.
+func TestMigrations_AllowedVersionGapsAreStillOpen(t *testing.T) {
+	entries, err := fs.Glob(migrations.FS, "*.up.sql")
+	require.NoError(t, err)
+
+	present := map[int]bool{}
+	for _, e := range entries {
+		if v, _, ok := strings.Cut(e, "_"); ok {
+			if n, convErr := strconv.Atoi(v); convErr == nil {
+				present[n] = true
+			}
+		}
+	}
+
+	for gapStart, why := range allowedVersionGaps {
+		require.False(t, present[gapStart],
+			"allowedVersionGaps[%d] is stale: version %06d now exists in this tree, so the gap it excused is closed "+
+				"(%s). Delete the entry — leaving it would let a future genuine gap at this version pass unnoticed.",
+			gapStart, gapStart, why)
 	}
 }
 
