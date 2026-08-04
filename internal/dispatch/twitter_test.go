@@ -366,9 +366,17 @@ func twitterToggleCampaign(campaignID, lineItemID string) *model.Campaign {
 // entity_status through the client, cascading campaign + line item in the right order.
 func TestTwitter_ToggleStatus_PutsEntityStatus(t *testing.T) {
 	type put struct{ method, path, status string }
-	var got []put
+	// Guarded: the handler runs on the server's goroutine while the assertions run on the
+	// test's. api.Close() only synchronizes at the deferred call — AFTER the reads below — so an
+	// unguarded slice is a genuine race even when -race happens not to flag it.
+	var (
+		mu  sync.Mutex
+		got []put
+	)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		got = append(got, put{r.Method, r.URL.Path, r.URL.Query().Get("entity_status")})
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
 	}))
@@ -384,6 +392,9 @@ func TestTwitter_ToggleStatus_PutsEntityStatus(t *testing.T) {
 	}
 	// PAUSE flips the campaign gate FIRST (delivery stops now), then the line item. The
 	// promoted tweet is deliberately NOT touched — the line item is X's delivery gate.
+	mu.Lock()
+	got = append([]put(nil), got...)
+	mu.Unlock()
 	if len(got) != 2 {
 		t.Fatalf("issued %d PUTs, want 2 (campaign + line item): %+v", len(got), got)
 	}

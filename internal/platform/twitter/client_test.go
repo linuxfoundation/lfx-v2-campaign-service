@@ -3443,13 +3443,21 @@ func newToggleTestClient(t *testing.T, srvURL string) *Client {
 // the line item must be enabled BEFORE the campaign gate, so the tree never sits in a state
 // where the campaign is serving but its line item is still paused.
 func TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildFirst(t *testing.T) {
-	var order []string
+	// Guarded: written on the server goroutine, read by the test. See the note on `paths`.
+	var (
+		mu    sync.Mutex
+		order []string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/line_items/"):
+			mu.Lock()
 			order = append(order, "line_item")
+			mu.Unlock()
 		case strings.Contains(r.URL.Path, "/campaigns/"):
+			mu.Lock()
 			order = append(order, "campaign")
+			mu.Unlock()
 		}
 		if got := r.URL.Query().Get("entity_status"); got != StatusActive {
 			t.Errorf("entity_status = %q, want %q", got, StatusActive)
@@ -3466,21 +3474,32 @@ func TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildFirst(t *testing.T) 
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", StatusActive); err != nil {
 		t.Fatalf("activate: %v", err)
 	}
-	if len(order) != 2 || order[0] != "line_item" || order[1] != "campaign" {
-		t.Errorf("activate order = %v, want [line_item campaign] (child first, gate last)", order)
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != "line_item" || got[1] != "campaign" {
+		t.Errorf("activate order = %v, want [line_item campaign] (child first, gate last)", got)
 	}
 }
 
 // TestUpdateCampaignAndChildrenStatus_PauseOrdersCampaignFirst pins the PAUSE ordering: the
 // campaign gate stops delivery immediately, before the line item is touched.
 func TestUpdateCampaignAndChildrenStatus_PauseOrdersCampaignFirst(t *testing.T) {
-	var order []string
+	// Guarded: written on the server goroutine, read by the test. See the note on `paths`.
+	var (
+		mu    sync.Mutex
+		order []string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/line_items/"):
+			mu.Lock()
 			order = append(order, "line_item")
+			mu.Unlock()
 		case strings.Contains(r.URL.Path, "/campaigns/"):
+			mu.Lock()
 			order = append(order, "campaign")
+			mu.Unlock()
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
@@ -3491,8 +3510,11 @@ func TestUpdateCampaignAndChildrenStatus_PauseOrdersCampaignFirst(t *testing.T) 
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", StatusPaused); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
-	if len(order) != 2 || order[0] != "campaign" || order[1] != "line_item" {
-		t.Errorf("pause order = %v, want [campaign line_item] (gate first)", order)
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != "campaign" || got[1] != "line_item" {
+		t.Errorf("pause order = %v, want [campaign line_item] (gate first)", got)
 	}
 }
 
@@ -3656,9 +3678,17 @@ func TestPartialCascadeError_NamesTheAppliedEntity(t *testing.T) {
 // as present made the guard reject the call before the campaign gate could pause, which
 // contradicts "pausing needs no child id" — the gate alone stops delivery.
 func TestUpdateCampaignAndChildrenStatus_WhitespaceLineItemStillPauses(t *testing.T) {
-	var paths []string
+	// Guarded: the handler runs on the SERVER's goroutine while the assertions below run on the
+	// test's. srv.Close() only synchronizes at the deferred call — AFTER the reads — so an
+	// unguarded slice is a genuine race even when -race happens not to flag it.
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		paths = append(paths, r.URL.Path)
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
 	}))
@@ -3669,8 +3699,11 @@ func TestUpdateCampaignAndChildrenStatus_WhitespaceLineItemStillPauses(t *testin
 		t.Fatalf("a whitespace-only line-item id must not block a pause: %v", err)
 	}
 	// Only the campaign gate is touched — there is no line item to pause.
-	if len(paths) != 1 || !strings.Contains(paths[0], "/campaigns/cmp1") {
-		t.Errorf("want exactly one campaign PUT, got %v", paths)
+	mu.Lock()
+	got := append([]string(nil), paths...)
+	mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0], "/campaigns/cmp1") {
+		t.Errorf("want exactly one campaign PUT, got %v", got)
 	}
 	// ACTIVATE with the same input must still be refused: nothing would serve.
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "   ", StatusActive); err == nil {
