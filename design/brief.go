@@ -233,8 +233,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// permanently unrecallable — the caller would get a validation error instead of
 			// its saved brief, then collide on re-create.
 			//
-			// MinLength(1) here is SAFE because BriefInput.event_slug now carries the same
-			// constraint. It did not originally: goa's Required() only checks that the JSON
+			// MinLength(1) here is SAFE because BriefWriteInput.event_slug — the CREATE/UPDATE
+			// payload — now carries the same constraint. (Not BriefInput: it stays
+			// unconstrained on purpose, because the Brief RESPONSE type References it and goa
+			// copies validations through Reference, which would make an already-persisted
+			// empty-slug row undecodable by generated clients. See the note on BriefInput.)
+			// It did not originally: goa's Required() only checks that the JSON
 			// key is present, so an explicit "" was creatable and would then have been
 			// unrecallable through this endpoint — a 400 instead of the documented 404/200.
 			// The two contracts must stay in sync; loosening either one reopens that gap.

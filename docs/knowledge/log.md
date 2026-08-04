@@ -23,7 +23,10 @@ So a brief with an empty slug was creatable, occupied the `UNIQUE(project_id, ev
 index, and could then NEVER be recalled through the lookup — the caller got a 400 rather than
 the documented 404 (no brief yet) or 200 (found), and a re-create collided.
 
-`BriefInput.event_slug` now carries `MinLength(1)` so the two contracts agree. The comment on
+`BriefWriteInput.event_slug` — the create/update payload — now carries `MinLength(1)` so the two
+contracts agree. It could NOT go on `BriefInput`: the `Brief` response type `Reference()`s that,
+and goa copies validations through `Reference`, so constraining it would make an
+already-persisted empty-slug row undecodable by generated clients. The comment on
 the lookup asserting that an empty slug "can never match a stored row" was simply FALSE and has
 been replaced with the real reason it is safe: the create side now rejects it. Loosening either
 constraint reopens the gap. `TestBriefInput_RejectsEmptyEventSlug` asserts the GENERATED
