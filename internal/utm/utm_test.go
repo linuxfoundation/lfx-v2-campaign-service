@@ -258,16 +258,48 @@ func TestApply_PreservesTheOriginalQueryVerbatim(t *testing.T) {
 	})
 }
 
-// TestStripBlankUTM covers the one case where appending is not enough: a blank utm_* already in
-// the query would otherwise take precedence over the appended real value for any reader that
-// takes the FIRST occurrence.
-func TestStripBlankUTM(t *testing.T) {
-	assert.Equal(t, "", stripBlankUTM(""))
-	assert.Equal(t, "a=1", stripBlankUTM("a=1&utm_campaign="))
-	assert.Equal(t, "a=1&b=2", stripBlankUTM("a=1&utm_source=&b=2&utm_medium="))
-	// A utm_* WITH a value is left alone — that is a real tag, and the double-tag guard
-	// upstream decides whether to touch the link at all.
-	assert.Equal(t, "utm_campaign=real", stripBlankUTM("utm_campaign=real"))
+// TestStripUTM pins that EVERY existing utm_* pair is removed before the fresh ones are
+// appended. Appending alone leaves the originals first, and url.Values.Get — what most readers
+// use — returns the first occurrence, so a stale `utm_source=facebook` would out-rank the
+// appended `email` and the link would attribute to the wrong channel while looking tagged.
+func TestStripUTM(t *testing.T) {
+	assert.Equal(t, "", stripUTM(""))
+	assert.Equal(t, "a=1", stripUTM("a=1&utm_campaign="))
+	assert.Equal(t, "a=1&b=2", stripUTM("a=1&utm_source=&b=2&utm_medium="))
+	// Non-blank utm_* values are removed too — that is the whole point.
+	assert.Equal(t, "", stripUTM("utm_source=facebook&utm_medium=cpc"))
+	assert.Equal(t, "a=1", stripUTM("utm_source=facebook&a=1&utm_content=x"))
 	// Non-utm params are never removed, blank or not.
-	assert.Equal(t, "a=&b=2", stripBlankUTM("a=&b=2"))
+	assert.Equal(t, "a=&b=2", stripUTM("a=&b=2"))
+	// A param merely CONTAINING "utm_" is not a utm param.
+	assert.Equal(t, "xutm_source=1", stripUTM("xutm_source=1"))
+}
+
+// TestApply_ReplacesStaleUTMValues pins the end-to-end effect: no duplicate utm keys survive, so
+// a first-occurrence reader sees this service's values.
+func TestApply_ReplacesStaleUTMValues(t *testing.T) {
+	got := Apply("https://events.lfx.dev/x?utm_source=facebook&utm_medium=cpc", testParams(), "")
+
+	assert.NotContains(t, got, "facebook", "a stale utm_source must not survive ahead of ours")
+	assert.NotContains(t, got, "cpc")
+	assert.Contains(t, got, "utm_source=email")
+	assert.Contains(t, got, "utm_medium=LF-Events")
+	assert.Equal(t, 1, strings.Count(got, "utm_source="), "no duplicate utm keys")
+	assert.Equal(t, 1, strings.Count(got, "utm_medium="))
+}
+
+// TestApply_PathTokenOccurrencesKeepTheirIdentity pins the occurrence-identity fix.
+//
+// URL.String() encodes an already-encoded literal and a live token IDENTICALLY, so a
+// replace-by-value restore matched the wrong needle and SWAPPED which occurrence was live:
+// `/%7B%7Bcontact.id%7D%7D/{{contact.id}}` came back with the halves reversed. Splicing the
+// original path back wholesale is exact by construction.
+func TestApply_PathTokenOccurrencesKeepTheirIdentity(t *testing.T) {
+	raw := "https://events.lfx.dev/%7B%7Bcontact.id%7D%7D/{{contact.id}}"
+	got := Apply(raw, testParams(), "")
+
+	path, _, _ := strings.Cut(got, "?")
+	assert.Equal(t, "https://events.lfx.dev/%7B%7Bcontact.id%7D%7D/{{contact.id}}", path,
+		"the pre-encoded literal must stay encoded and the live token must stay live")
+	assert.Contains(t, got, "utm_campaign=kubecon-korea-2026", "and the link is still tagged")
 }

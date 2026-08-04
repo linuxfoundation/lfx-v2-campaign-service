@@ -44,6 +44,13 @@ invisible.
   HubSpot would not recognise the token, and every personalized link would break. Tokens present
   in the ORIGINAL url are restored after tagging (`restoreTemplateTokens`), in both path and
   query positions.
+- **Existing `utm_*` pairs are REPLACED, not appended to.** Appending leaves the originals
+  first, and `url.Values.Get` returns the first — so a stale `utm_source=facebook` would
+  out-rank the appended `email` and the link would attribute to the wrong channel while looking
+  correctly tagged.
+- **Path tokens are restored by splicing the ORIGINAL path back**, not by replacing occurrences.
+  `URL.String()` encodes an already-encoded literal and a live token identically, so a
+  replace-by-value restore matched the wrong needle and swapped which occurrence was live.
 - **Never mangle.** An unparseable URL, or HTML that fails to parse or render, is returned
   UNCHANGED. A broken link in a sent email is far worse than an untagged one.
 - **`ParseFragment`, not `Parse`.** Email bodies are fragments; `Parse` would wrap them in a

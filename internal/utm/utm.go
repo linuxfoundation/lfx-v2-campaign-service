@@ -131,11 +131,10 @@ func Apply(rawURL string, p Params, content string) string {
 		appendParam("utm_term", p.Term)
 	}
 
-	// Drop any BLANK utm_* pairs already present before appending. A `?utm_campaign=` is not a
-	// real tag (the guard above lets it through for exactly that reason), but leaving it in
-	// place would make the FIRST value empty and readers that take the first value would see
-	// nothing — the appended real value would never win.
-	base := stripBlankUTM(u.RawQuery)
+	// Drop any existing utm_* pairs before appending. Appending alone leaves the ORIGINAL
+	// values first, and readers taking the first occurrence would see those — a stale
+	// `utm_source=facebook` would out-rank the appended `email`.
+	base := stripUTM(u.RawQuery)
 
 	added := strings.Join(add, "&")
 	if base == "" {
@@ -166,37 +165,56 @@ var templateToken = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 // Only tokens present in the ORIGINAL PATH are restored, so this cannot introduce a token the
 // author did not write.
 func restoreTemplateTokens(tagged, original string) string {
-	// Scope to the path: everything before the first "?" in the ORIGINAL.
-	origPath := original
-	if i := strings.IndexByte(origPath, '?'); i >= 0 {
-		origPath = origPath[:i]
+	// Restore the ORIGINAL path wholesale rather than replacing token occurrences.
+	//
+	// Occurrence-by-occurrence replacement cannot work: URL.String() encodes an
+	// already-encoded literal and a live token IDENTICALLY, so
+	// `/%7B%7Bcontact.id%7D%7D/{{contact.id}}` produced two matching needles and a first-match
+	// replace revived the wrong one — swapping which occurrence was live.
+	//
+	// Splicing the original path back is exact by construction: the path is not something this
+	// function modifies, only something URL.String() re-escaped on the way out.
+	origPath, _, _ := strings.Cut(original, "?")
+	if !templateToken.MatchString(origPath) {
+		return tagged // no tokens in the path: nothing to restore
 	}
-	tokens := templateToken.FindAllString(origPath, -1)
-	for _, tok := range tokens {
-		escaped := (&url.URL{Path: tok}).EscapedPath()
-		if escaped != tok && strings.Contains(tagged, escaped) {
-			tagged = strings.Replace(tagged, escaped, tok, 1)
-			continue
-		}
-		// Query-position escaping differs from path escaping; try that form too.
-		if q := url.QueryEscape(tok); q != tok && strings.Contains(tagged, q) {
-			tagged = strings.Replace(tagged, q, tok, 1)
-		}
+	// Split the TAGGED url at its own query boundary and swap the path half back.
+	taggedPath, taggedQuery, hasQuery := strings.Cut(tagged, "?")
+	// Only splice when the two paths differ purely by ESCAPING. Comparing their unescaped forms
+	// is the check — but unescape BOTH: the original may already contain percent-escapes the
+	// author wrote deliberately, and comparing a decoded tagged path against a raw original
+	// would then never match, silently skipping the restore.
+	taggedPlain, terr := url.PathUnescape(taggedPath)
+	origPlain, oerr := url.PathUnescape(origPath)
+	if terr != nil || oerr != nil || taggedPlain != origPlain {
+		return tagged
 	}
-	return tagged
+	if !hasQuery {
+		return origPath
+	}
+	return origPath + "?" + taggedQuery
 }
 
-// stripBlankUTM removes utm_* pairs that carry no value, preserving every other pair verbatim
-// (including its position and any exotic separator around it).
-func stripBlankUTM(rawQuery string) string {
+// stripUTM removes EVERY utm_* pair, preserving all other pairs verbatim (position and exotic
+// separators included).
+//
+// All of them, not just blank ones: appending duplicates leaves the ORIGINAL values first, and
+// url.Values.Get — what most readers use — returns the first. Tagging
+// `?utm_source=facebook&utm_medium=cpc` would report facebook/cpc while the appended email
+// values sat behind them, so the link looked tagged and attributed to the wrong channel.
+//
+// Safe because Apply has already returned unchanged for any link carrying a real utm_campaign
+// (the never-retag guard): anything reaching here is being tagged, so a leftover partial tag
+// from a previous pass is not an author's deliberate value.
+func stripUTM(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
 	}
 	parts := strings.Split(rawQuery, "&")
 	kept := parts[:0]
 	for _, part := range parts {
-		k, v, _ := strings.Cut(part, "=")
-		if strings.HasPrefix(k, "utm_") && strings.TrimSpace(v) == "" {
+		k, _, _ := strings.Cut(part, "=")
+		if strings.HasPrefix(k, "utm_") {
 			continue
 		}
 		kept = append(kept, part)
