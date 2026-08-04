@@ -6,14 +6,17 @@
 Both were unguarded contracts, not bugs: the code was already correct, but nothing would have
 caught a regression.
 
-The `twitter.IsOutcomeUnconfirmed` branch in `TwitterDispatcher.ToggleStatus` was untested. It
-matters because the client's own errors do NOT implement `Unconfirmed()` — a 5xx surfaces as a
-plain `apiError` and a partial cascade as `partialCascadeError`; the dispatcher's check is what
-wraps them in `unconfirmedToggleError` and so what actually feeds the verify-vs-retry decision.
-Deleting that wrap left every client test green while operators would be told a possibly-applied
-update was "not modified". Twitter was the only toggle-capable dispatcher without this boundary
-test (googleads, reddit and meta all had one). Pinned in BOTH directions — a definite 4xx on the
-first call mutated nothing and must stay definite — so an unconditional wrap fails too.
+The `twitter.IsOutcomeUnconfirmed` branch in `TwitterDispatcher.ToggleStatus` was untested. The
+two ambiguous shapes reach it differently, and only one depends on it to acquire the marker at
+all: a first-call 5xx surfaces as a plain `apiError`, which does NOT implement `Unconfirmed()`
+— `IsOutcomeUnconfirmed` recognizes it structurally via `createOutcomeAmbiguous`, and the
+dispatcher's wrap is what turns that into an error carrying the behavioral marker. A partial
+cascade already implements `Unconfirmed()` itself, so it would survive the branch's removal.
+Deleting the wrap therefore left every client test green while the 5xx outcome silently
+degraded to "not modified". Twitter was the only toggle-capable dispatcher without this
+boundary test (googleads, reddit and meta all had one). Pinned in BOTH directions — a definite
+4xx on the first call mutated nothing and must stay definite — so an unconditional wrap fails
+too.
 
 The deliberate create/toggle credential asymmetry was also undefended: `Dispatch` requires
 `funding_instrument_id`, `validateTwitterConnection` intentionally does not, because
@@ -22,6 +25,23 @@ never puts that field on the wire. Requiring it in the shared validator would re
 otherwise-valid pause. A future refactor folding the check into the shared validator now breaks
 a test instead of silently restoring the rejection the asymmetry exists to avoid. Recorded in
 `internal-dispatch.md` so the constraint is discoverable before someone attempts that tidy-up.
+
+**Fix** — A mutating 429 whose retry backoff is interrupted by the caller's deadline was
+misclassified as DEFINITE. `doRequest` returned the bare `ctx.Err()` from `sleepCtx`, erasing
+the 429 the server had already sent — and a mutating 429 is ambiguous, since X can report the
+throttle at or after the write is accepted. Reachable in production rather than theoretical:
+`maxRetryWait` (90s) exceeds the orchestrator's `toggleCallTimeout` (45s), so a server-declared
+`Retry-After` in between (e.g. 60s) passes the cap check, is accepted for sleeping, and is then
+cut short by the toggle deadline. The operator was told "not modified" about a pause that may
+well have applied — exactly the failure mode `partialCascadeError` exists to prevent, arriving
+through a different door.
+
+The client now returns the 429 as a typed `apiError` with the cancellation cause attached via a
+new `Unwrap`, so `IsOutcomeUnconfirmed` still classifies it while `errors.Is(err,
+context.DeadlineExceeded)` keeps working for callers that distinguish deadlines. `Error()` is
+unchanged and still renders only method/path/status, so nothing body-derived reaches a persisted
+Step. Also corrected `docs/architecture.md`, which still listed the X/Twitter and Google Ads
+toggles as follow-up work after both had landed; Microsoft is now the only outstanding one.
 
 ## 2026-08-03
 

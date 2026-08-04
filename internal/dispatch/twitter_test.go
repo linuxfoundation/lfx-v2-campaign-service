@@ -485,11 +485,21 @@ func TestTwitter_ToggleStatus_RejectsUnsupportedStatus(t *testing.T) {
 
 // TestTwitter_ToggleStatus_UnconfirmedCrossesTheDispatcherBoundary pins the classification
 // branch in ToggleStatus, which is what actually feeds BriefService's verify-vs-retry
-// decision. The client's own errors do NOT implement Unconfirmed(): a 5xx surfaces as a
-// plain apiError and a partial cascade as partialCascadeError, and it is the dispatcher's
-// twitter.IsOutcomeUnconfirmed check that wraps them in unconfirmedToggleError. Without
-// this test, deleting that wrap leaves every client test green while operators are told a
-// possibly-applied update was "not modified".
+// decision.
+//
+// The two ambiguous shapes reach it differently, and only one depends on the branch to
+// acquire the marker at all:
+//   - a first-call 5xx surfaces as a plain apiError, which does NOT implement
+//     Unconfirmed(). twitter.IsOutcomeUnconfirmed recognizes it structurally (via
+//     createOutcomeAmbiguous), and the dispatcher's wrap is what turns that into an error
+//     carrying the behavioral marker. Delete the branch and this outcome silently
+//     degrades to "not modified".
+//   - a partial cascade already implements Unconfirmed() itself (client.go
+//     partialCascadeError), so it would survive the branch's removal.
+//
+// Both are covered because the branch must classify them alike, but the 5xx row is the one
+// that would regress: without it, deleting the wrap leaves every client test green while
+// operators are told a possibly-applied update was "not modified".
 //
 // Both halves matter. A definite 4xx on the FIRST call mutated nothing and must stay
 // definite, otherwise the branch could be replaced by an unconditional wrap and still pass.

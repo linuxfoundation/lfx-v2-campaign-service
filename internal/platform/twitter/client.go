@@ -423,7 +423,19 @@ type apiError struct {
 	// for the bounds applied at parse time. Empty when the body wasn't a
 	// recognizable X error envelope.
 	ErrorCodes []string
+	// Err optionally carries an underlying cause, set when the status is inferred
+	// rather than read straight off a final response — today only when a 429's
+	// retry backoff is cut short by context cancellation. Keeping the cause
+	// attached (via Unwrap) lets callers still match errors.Is(err,
+	// context.DeadlineExceeded) while the 429 status drives the ambiguity
+	// classification. Deliberately NOT rendered by Error(): the status/method/path
+	// line stays the stable, body-free string that gets persisted into Steps.
+	Err error
 }
+
+// Unwrap exposes the cause behind an inferred status (see Err) so errors.Is/As can
+// still reach it. Nil for the ordinary response-derived case.
+func (e *apiError) Unwrap() error { return e.Err }
 
 func (e *apiError) Error() string {
 	// Deliberately DO NOT include e.ErrorCodes (or any body-derived text): the
@@ -765,7 +777,22 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 				}
 			}
 			if err := sleepCtx(ctx, waitDur); err != nil {
-				return nil, err
+				// The 429 already happened; we are only waiting to RETRY it. Returning the
+				// bare ctx.Err() here would erase that, and a mutating 429 is ambiguous —
+				// the throttle can be reported at or after the write is accepted. This is
+				// reachable in production: maxRetryWait (90s) exceeds the orchestrator's
+				// toggleCallTimeout (45s), so a server-declared Retry-After in between is
+				// accepted for sleeping and then interrupted by the deadline. Surfacing
+				// "not modified" there would tell an operator nothing changed after a
+				// pause that may well have applied. Preserve the 429 so
+				// createOutcomeAmbiguous/IsOutcomeUnconfirmed still classify it, and keep
+				// the cancellation cause attached for callers that inspect it.
+				return nil, &apiError{
+					StatusCode: http.StatusTooManyRequests,
+					Method:     method,
+					Path:       path,
+					Err:        err,
+				}
 			}
 			continue
 		}

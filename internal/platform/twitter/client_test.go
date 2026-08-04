@@ -622,6 +622,59 @@ func TestContextCancellationDuringRetry(t *testing.T) {
 	}
 }
 
+// TestMutating429InterruptedByDeadlineStaysUnconfirmed pins the classification of a 429
+// whose retry backoff is cut short by the caller's deadline.
+//
+// This is reachable in production, not theoretical: maxRetryWait (90s) exceeds the
+// orchestrator's toggleCallTimeout (45s), so a server-declared Retry-After in between (60s
+// here) passes the maxRetryWait check, is accepted for sleeping, and is then interrupted by
+// the toggle deadline. Returning the bare ctx.Err() there erased the 429 the server had
+// ALREADY sent, and a mutating 429 is ambiguous — X can report the throttle at or after the
+// write is accepted. The operator was told "not modified" about a pause that may well have
+// applied.
+//
+// The cancellation cause must stay reachable via errors.Is so callers that distinguish
+// deadline-exceeded from other failures still can.
+func TestMutating429InterruptedByDeadlineStaysUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "60") // < maxRetryWait (90s), > toggleCallTimeout (45s)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL), WithAPIVersion("12"), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	// Stands in for toggleCallTimeout expiring during the backoff sleep.
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	err := c.UpdateCampaignAndChildrenStatus(ctx, "cmp1", "li1", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when the deadline interrupts the 429 backoff")
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("a mutating 429 interrupted by the deadline must stay UNCONFIRMED (it may have applied), got %T: %v", err, err)
+	}
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("want the 429 preserved as a typed apiError, got %T: %v", err, err)
+	}
+	// The cause must remain matchable so callers can still tell a deadline apart.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("the cancellation cause must stay reachable via errors.Is, got %T: %v", err, err)
+	}
+	// The stringified error is persisted into Steps: it must stay body-free.
+	if strings.Contains(err.Error(), "Retry-After") {
+		t.Errorf("the error string must not carry response header/body material: %v", err)
+	}
+}
+
 // TestRequestSetsAuthHeader verifies each request carries an OAuth header.
 func TestRequestSetsAuthHeader(t *testing.T) {
 	var gotAuth string

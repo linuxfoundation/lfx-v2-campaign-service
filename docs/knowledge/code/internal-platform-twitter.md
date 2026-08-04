@@ -60,7 +60,14 @@ toward the 1-req/sec limit; it does NOT enforce the account-wide write limit
 across concurrent dispatches or replicas (that needs cross-replica coordination,
 tracked in LFXV2-2665), so operators must not rely on this stateless client for
 cross-dispatch rate limiting. When the account limit is hit anyway, 429s are
-retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. Redirect
+retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. If the caller's
+context expires DURING that backoff sleep, the client returns the 429 as a typed
+`apiError` (with the cancellation cause attached via `Unwrap`) rather than a bare
+`ctx.Err()`: the throttle already happened, and a mutating 429 is ambiguous, so erasing
+it would report "not modified" for a write that may have applied. This is reachable —
+`maxRetryWait` (90s) exceeds the orchestrator's `toggleCallTimeout` (45s), so a
+server-declared `Retry-After` in between is accepted for sleeping and then interrupted.
+Redirect
 following is force-disabled (a shared `noFollow` `CheckRedirect` policy). For a
 `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
 carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
