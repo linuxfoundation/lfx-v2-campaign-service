@@ -21,6 +21,14 @@ stays `building` with an EMPTY `inclusion_summary` while real lists exist upstre
 unreconcilable state the comment says is fixed. The ids now travel in the returned error, so the
 500 body carries them when persistence cannot.
 
+**Fix** — An ambiguous HubSpot outcome was classified in the ROW but not in the RESPONSE (PR #61
+review). `hubspot.IsUnconfirmed` covers four sources — a 2xx-with-no-id, a mutating 429, a
+mutating 5xx, and a mutating transport failure — and all four correctly keep the row `building`.
+But only the 2xx-no-id sentinel spelled out "verify before retrying" in its message; the other
+three returned a plain 500 reading like an ordinary transient error, inviting exactly the blind
+retry that duplicates a list HubSpot may already have created. `unconfirmedNote` now annotates
+the error for every ambiguous outcome.
+
 **Fix** — `audience.titleCase` indexed `w[:1]` by BYTE, so a non-ASCII country name would be
 split mid-rune into mojibake and become an exact `IS_ANY_OF` filter matching nobody. Not
 reachable today (all 30 region-map keys are ASCII) but the map's own comment invites additions.

@@ -7,12 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -269,6 +272,58 @@ func TestBuildAudience_UnpersistedPartialReturnsTheListIDs(t *testing.T) {
 	assert.Equal(t, int64(1), rows[0].Version,
 		"precondition: the update was rejected, so the persisted row still carries no record of "+
 			"the created lists — which is why the error must carry them instead")
+}
+
+// TestBuildAudience_AmbiguousUpstreamSaysUnconfirmed pins that EVERY ambiguous outcome says so
+// in the RESPONSE, not just in the row state.
+//
+// The row logic classifies ambiguity through hubspot.IsUnconfirmed, which covers four sources: a
+// 2xx-with-no-id, a mutating 429, a mutating 5xx, and a mutating transport failure. Only the
+// first spells out "verify before retrying" in its own message — the other three used to surface
+// as a plain 500 reading like an ordinary transient error, inviting the blind retry that
+// duplicates a list HubSpot may already have created.
+//
+// The error here comes from a REAL hubspot.Client against a 429, not a hand-rolled stand-in: the
+// ambiguous error types are unexported, so fabricating one would test the fake rather than the
+// classification that actually runs in production.
+func TestBuildAudience_AmbiguousUpstreamSaysUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// A mutating 429: HubSpot may or may not have applied the create.
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	hc := hubspot.NewClient(
+		hubspot.Credentials{PrivateAppToken: "t"}, hubspot.AccountConfig{PortalID: "8112310"},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	_, upstreamErr := hc.CreateList(context.Background(), "probe", json.RawMessage(`{"filterBranches":[]}`))
+	require.Error(t, upstreamErr)
+	require.True(t, hubspot.IsUnconfirmed(upstreamErr),
+		"fixture precondition: a mutating 429 must classify as ambiguous, else this test proves nothing")
+	require.NotContains(t, upstreamErr.Error(), "UNCONFIRMED",
+		"fixture precondition: the raw error must NOT already carry the warning — that is the gap")
+
+	b := &fakeBuilder{createErr: upstreamErr, failOnNth: 1}
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	var ise *audiences.InternalServerError
+	require.ErrorAs(t, err, &ise)
+	assert.Contains(t, ise.Message, "UNCONFIRMED",
+		"an ambiguous upstream outcome must be labelled in the response, not only in the row")
+	assert.Contains(t, ise.Message, "verify before",
+		"the caller must be told to verify rather than retry blindly into a duplicate list")
+
+	// And the row agrees: ambiguous means BUILDING, never FAILED, even with no ids created.
+	rows := arepo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, model.AudienceBuilding, rows[0].Status,
+		"an ambiguous outcome must not be marked failed: a list may exist upstream")
 }
 
 // TestBuildAudience_UnconfirmedCreateFailsClosed pins the UNCONFIRMED case: a 2xx with no list

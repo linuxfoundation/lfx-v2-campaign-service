@@ -234,7 +234,8 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		// lists that do exist; discarding them (as this originally did) makes the row
 		// unreconcilable — the operator knows a build broke but not what it left behind.
 		created.InclusionSummary = partialSummary(summary, ids, buildErr)
-		if len(ids) == 0 && !hubspot.IsUnconfirmed(buildErr) && !errors.Is(buildErr, errUnconfirmedCreate) {
+		ambiguous := hubspot.IsUnconfirmed(buildErr) || errors.Is(buildErr, errUnconfirmedCreate)
+		if len(ids) == 0 && !ambiguous {
 			created.Status = model.AudienceFailed
 		}
 		// Detached for the same reason as the success path below: lists may exist upstream and
@@ -249,9 +250,9 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 			// above says is fixed. The API response is now the ONLY channel carrying the ids, so
 			// put them in it. Without this the operator learns a build broke and has no handle on
 			// what it left behind, and a blind retry duplicates every list.
-			return nil, audienceBuildErr(unrecordedListsErr(buildErr, created.ID, ids))
+			return nil, audienceBuildErr(unconfirmedNote(unrecordedListsErr(buildErr, created.ID, ids), ambiguous))
 		}
-		return nil, audienceBuildErr(buildErr)
+		return nil, audienceBuildErr(unconfirmedNote(buildErr, ambiguous))
 	}
 
 	created.PlatformMasterListID = master
@@ -280,6 +281,24 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, mapAudienceErr(uerr)
 	}
 	return audienceResult(updated), nil
+}
+
+// unconfirmedNote makes an AMBIGUOUS outcome say so in the response body.
+//
+// The row-state logic classifies ambiguity via hubspot.IsUnconfirmed, but that classification
+// used to stop at the row: only the 2xx-no-id sentinel (errUnconfirmedCreate) spelled out
+// "verify before retrying" in its own message. The other three ambiguous sources — a mutating
+// 429, a mutating 5xx, and a mutating transport failure — surfaced as a plain 500 whose text
+// reads like an ordinary transient error, inviting exactly the blind retry that duplicates a
+// list HubSpot may already have created.
+//
+// Idempotent: the sentinel's message already carries the warning, so it is not repeated.
+func unconfirmedNote(err error, ambiguous bool) error {
+	if !ambiguous || strings.Contains(err.Error(), "UNCONFIRMED") {
+		return err
+	}
+	return fmt.Errorf("%w (UNCONFIRMED: the list may already exist in HubSpot — verify before "+
+		"retrying, a blind retry can duplicate it)", err)
 }
 
 // unrecordedListsErr wraps a build failure whose created-list ids could NOT be persisted.

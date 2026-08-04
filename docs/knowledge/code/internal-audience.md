@@ -134,6 +134,15 @@ while real lists exist — so the ids are appended to the returned error instead
 then the operator's only remaining handle on what the build left in the portal, and the message
 says not to retry blindly (a retry without the ids duplicates every list).
 
+## Every ambiguous outcome says UNCONFIRMED in the RESPONSE
+
+`hubspot.IsUnconfirmed` classifies four ambiguous sources — a 2xx-with-no-id, a mutating 429, a
+mutating 5xx, and a mutating transport failure. All four keep the row `building` (a list may
+exist upstream), but only the first carried "verify before retrying" in its own message. The
+other three surfaced as a plain 500 reading like an ordinary transient error, inviting the blind
+retry that duplicates a list HubSpot may already have created. `unconfirmedNote` now annotates
+the returned error for every ambiguous outcome, so the row state and the response agree.
+
 ## `titleCase` decodes runes, not bytes
 
 Country display names feed `IS_ANY_OF`, an EXACT match. Slicing the first BYTE would split a
