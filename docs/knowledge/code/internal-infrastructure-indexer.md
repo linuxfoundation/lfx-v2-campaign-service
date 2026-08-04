@@ -144,6 +144,13 @@ predecessor died mid-publish.
 - **A publisher that did not send must not retire rows.** `Noop.PublishRaw` therefore reports
   FAILURE — otherwise a pod started with indexing disabled would silently drain every pending
   message as delivered, permanently defeating recovery for messages that never left the process.
+- **A FLUSH IS NOT AN ACK.** `PublishRaw` uses NATS request/reply, not publish-and-flush: a flush
+  only confirms the bytes reached the BROKER. The indexer subscribes to `lfx.index.*` with reply
+  support and answers `"OK"` on success or `"ERROR: ..."` on any envelope/config/data rejection
+  (`IndexingMessageHandler.HandleWithReply`). Only a literal `OK` retires the row; a rejection or
+  a missing responder leaves it PENDING with the reason recorded on it. Treating a flush as
+  delivery silently retired rows for messages the indexer had REFUSED — the same drop the outbox
+  exists to prevent, but harder to see, because every row looked delivered.
 - **Nor may a publisher that never FLUSHED.** `conn.Publish` only buffers, so `PublishRaw`
   returns the context error when the context has already ended rather than reporting a delivery
   it never confirmed. Checked FIRST — before the connection guard and the per-object lock —

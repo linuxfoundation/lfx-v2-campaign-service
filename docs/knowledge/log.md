@@ -2,6 +2,15 @@
 
 ## 2026-08-03
 
+**Update** — `PublishRaw` now uses NATS request/reply instead of publish-and-flush (LFXV2-2814,
+PR #60). A flush only confirms the bytes reached the broker; it says nothing about acceptance.
+Checked the REAL consumer rather than assuming: `lfx-v2-indexer-service` subscribes to
+`lfx.index.*` via `QueueSubscribeWithReply` and its `IndexingMessageHandler.HandleWithReply`
+answers `"OK"` on success and `"ERROR: ..."` on any rejection. So a rejected message was being
+retired as delivered — and, after the retention work, eventually pruned. Only a literal `OK` now
+retires the row. Verified against a live nats-server: accepted → nil, rejected → an error
+carrying the indexer's reason, no responder → `nats: no responders available`.
+
 **Update** — Bounded the PENDING side of the index outbox too (LFXV2-2814, PR #60). The previous
 commit pruned only published rows, so with indexing disabled (`NATS_URL=""`) or unprovisioned
 (the service token is an `optional` chart secret — my own choice) every brief and campaign write

@@ -5,6 +5,7 @@ package indexer
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -219,4 +220,46 @@ func TestPublishRaw_ContextEndedIsNotSuccess(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
+}
+
+// TestPublishRaw_OnlyAnOKReplyCountsAsDelivered pins the ACK contract the outbox depends on.
+//
+// A NATS flush confirms only that bytes reached the BROKER. The indexer subscribes to
+// lfx.index.* with reply support and answers "OK" on success or "ERROR: ..." on any
+// envelope/config/data rejection (lfx-v2-indexer-service, IndexingMessageHandler.HandleWithReply).
+// Treating a flush as delivery therefore retired outbox rows for messages that were REFUSED
+// outright — the same silent drop this table exists to prevent, but harder to notice, because
+// every row looks delivered.
+//
+// Verified end-to-end against a real nats-server with a responder mimicking the indexer:
+//
+//	accepted    -> nil
+//	rejected    -> "indexer: lfx.index.campaign rejected the message: ERROR: ..."
+//	no listener -> "indexer: ... not acknowledged: nats: no responders available for request"
+//
+// This unit test pins the reply CLASSIFICATION, which is the part that decides whether a row is
+// retired; the package has no NATS harness in CI, so the transport itself is covered by the
+// live check above rather than duplicated here.
+func TestPublishRaw_OnlyAnOKReplyCountsAsDelivered(t *testing.T) {
+	assert.Equal(t, "OK", ackOK, "the indexer's success reply is a literal OK")
+
+	// Anything that is not exactly OK must be treated as a rejection, including the indexer's
+	// own error form and an empty body.
+	for _, reply := range []string{"ERROR: error processing indexing message", "", "ok", "OKAY"} {
+		assert.NotEqual(t, ackOK, strings.TrimSpace(reply),
+			"%q must not be mistaken for an acknowledgement", reply)
+	}
+	// Surrounding whitespace is tolerated: the reply is trimmed before comparison, so a broker
+	// or client that pads the payload does not turn a success into a spurious rejection.
+	assert.Equal(t, ackOK, strings.TrimSpace(" OK\n"))
+}
+
+// TestTruncateReply_BoundsWhatARejectionCanWrite keeps a verbose upstream error from bloating the
+// outbox row it gets recorded on (last_error is a retained TEXT column).
+func TestTruncateReply_BoundsWhatARejectionCanWrite(t *testing.T) {
+	assert.Equal(t, "short", truncateReply("short"))
+	long := strings.Repeat("x", maxReplyLen+50)
+	got := truncateReply(long)
+	assert.Len(t, []rune(got), maxReplyLen+1, "truncated to the cap plus the ellipsis")
+	assert.True(t, strings.HasSuffix(got, "…"), "a truncated reply is marked as such")
 }

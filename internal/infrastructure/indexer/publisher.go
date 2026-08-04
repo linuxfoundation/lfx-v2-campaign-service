@@ -190,19 +190,45 @@ func (p *NATSPublisher) PublishRaw(ctx context.Context, subject, objectID string
 		lock.Lock()
 		defer lock.Unlock()
 	}
-	if err := p.conn.Publish(subject, payload); err != nil {
-		return err
-	}
-	// Publish only BUFFERS — without a confirmed flush nothing is on the wire. Returning nil
-	// here would let the relay retire the outbox row for a delivery that may never have
-	// happened, reopening the exact loss window the outbox exists to close. A duplicate on the
-	// next pass is harmless (the indexer overwrites by object id); a dropped message is not.
-	//
+	// REQUEST, not Publish. A flush only confirms the bytes reached the broker — it says nothing
+	// about whether the indexer ACCEPTED them. The indexer replies "OK" on success and
+	// "ERROR: ..." on any envelope/config/data rejection (verified in lfx-v2-indexer-service:
+	// IndexingMessageHandler.HandleWithReply), and it subscribes to lfx.index.* WITH reply
+	// support. Treating a flush as success therefore retired outbox rows for messages that were
+	// rejected outright, which is the same silent-drop this table exists to prevent — only
+	// harder to notice, because everything looks delivered.
 	wait := flushBudget(ctx)
 	if wait <= 0 {
 		return errNoFlushBudget
 	}
-	return p.conn.FlushTimeout(wait)
+	reply, err := p.conn.Request(subject, payload, wait)
+	if err != nil {
+		// Includes nats.ErrNoResponders (no indexer running) and a timeout waiting for the ACK.
+		// Both leave the row PENDING, which is correct: nothing confirmed the message landed.
+		return fmt.Errorf("indexer: %s not acknowledged: %w", subject, err)
+	}
+	if body := strings.TrimSpace(string(reply.Data)); body != ackOK {
+		// The indexer received it and REFUSED it. Retrying verbatim will fail identically, but
+		// the row must not be retired as delivered — RecordIndexMessageFailure writes the
+		// reason onto the row so a persistent rejection is visible rather than silent.
+		return fmt.Errorf("indexer: %s rejected the message: %s", subject, truncateReply(body))
+	}
+	return nil
+}
+
+// ackOK is the indexer's success reply. Anything else — notably its "ERROR: ..." form — means
+// the message was received and REJECTED.
+const ackOK = "OK"
+
+// maxReplyLen bounds how much of a rejection reply is echoed into an error, so a verbose
+// upstream message cannot bloat the outbox row it gets recorded on.
+const maxReplyLen = 200
+
+func truncateReply(s string) string {
+	if len(s) <= maxReplyLen {
+		return s
+	}
+	return s[:maxReplyLen] + "…"
 }
 
 // PublishRaw on a Noop reports FAILURE. Nothing was sent, so reporting success would let the
