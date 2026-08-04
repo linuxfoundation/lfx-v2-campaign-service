@@ -675,6 +675,52 @@ func TestMutating429InterruptedByDeadlineStaysUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestAPIErrorUnwrapDoesNotDisturbClassification guards the blast radius of adding
+// Err/Unwrap to apiError. Unwrap makes an apiError transparent to errors.As, and
+// createOutcomeAmbiguous tests for *transportError BEFORE *apiError — so a cause that
+// happened to be a transport error would silently reroute classification through the wrong
+// branch. Today the only cause ever stored is a bare context error, but nothing structural
+// enforces that, so pin the invariants rather than rely on it.
+func TestAPIErrorUnwrapDoesNotDisturbClassification(t *testing.T) {
+	withCause := &apiError{
+		StatusCode: http.StatusTooManyRequests, Method: http.MethodPut,
+		Path: "campaigns/1", Err: context.DeadlineExceeded,
+	}
+	var te *transportError
+	if errors.As(withCause, &te) {
+		t.Error("an apiError must not satisfy errors.As(*transportError) — that branch precedes it")
+	}
+	if isPreSendDialError(withCause) {
+		t.Error("a throttled write must not be classified as a pre-send dial failure (it reached X)")
+	}
+	if !createOutcomeAmbiguous(withCause) {
+		t.Error("a mutating 429 must stay ambiguous even with a cause attached")
+	}
+	if !errors.Is(withCause, context.DeadlineExceeded) {
+		t.Error("the cancellation cause must stay reachable via errors.Is")
+	}
+	// Error() is persisted into Steps: it must remain the stable, cause-free line.
+	if got, want := withCause.Error(), "x ads api PUT campaigns/1 -> 429"; got != want {
+		t.Errorf("Error() = %q, want %q (the cause must NOT be rendered)", got, want)
+	}
+	// A plain apiError (the overwhelmingly common case) must be unaffected.
+	plain := &apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPut, Path: "campaigns/1"}
+	if errors.Unwrap(plain) != nil {
+		t.Error("an apiError with no cause must unwrap to nil")
+	}
+	if createOutcomeAmbiguous(plain) {
+		t.Error("a definite 4xx must stay definite")
+	}
+	// A 429 on a NON-mutating method stays definite — the read was throttled, nothing wrote.
+	get := &apiError{
+		StatusCode: http.StatusTooManyRequests, Method: http.MethodGet,
+		Path: "campaigns", Err: context.Canceled,
+	}
+	if createOutcomeAmbiguous(get) {
+		t.Error("a 429 on a GET must stay definite even with a cause attached")
+	}
+}
+
 // TestRequestSetsAuthHeader verifies each request carries an OAuth header.
 func TestRequestSetsAuthHeader(t *testing.T) {
 	var gotAuth string
