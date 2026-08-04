@@ -90,6 +90,11 @@ predecessor died mid-publish.
 - **A publisher that did not send must not retire rows.** `Noop.PublishRaw` therefore reports
   FAILURE — otherwise a pod started with indexing disabled would silently drain every pending
   message as delivered, permanently defeating recovery for messages that never left the process.
+- **Nor may a publisher whose message will be REJECTED.** With no `INDEXER_SERVICE_TOKEN` the
+  stamp would write an empty authorization header: NATS accepts the publish, so the row is
+  retired, while `validateV2Headers` drops the message at the far end. `Relay.drain` therefore
+  skips the whole pass (warning once) rather than draining the outbox into a black hole. Rows
+  stay pending and publish once the token is configured.
 - The payload is FROZEN at write time. The relay never re-derives it, so a later contract
   change cannot alter the meaning of a message enqueued under the old one.
 - A publish that succeeds but fails to retire its row REPUBLISHES next pass. Safe: the indexer

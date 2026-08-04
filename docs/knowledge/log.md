@@ -2,6 +2,16 @@
 
 ## 2026-08-03
 
+**Update** — Closed two review findings on the index relay (LFXV2-2814, PR #60). Both were
+consequences of the outbox commit itself. (1) With no `INDEXER_SERVICE_TOKEN`, `stamp` wrote an
+EMPTY authorization header; NATS accepted the publish so `drain` retired the row, while the
+indexer drops empty-auth messages — the outbox would have silently drained itself and terminal
+writes like brief archival would have lost their only recovery path. `drain` now skips the pass
+and warns once, leaving rows pending. Same defect class as the `Noop.PublishRaw` fix. (2)
+`relayStopTimeout` was spent at the start of `Close` but omitted from `ContainerCloseTimeout`,
+so shutdown could overrun `DefaultShutdownTimeout` and reintroduce the SIGKILL-mid-drain risk
+the budget exists to prevent; it is now in the sum and the `init()` assertion still holds.
+
 **Update** — Rebuilt the indexing contract against the REAL indexer (LFXV2-2814, PR #60 review).
 **A reviewer was right and I was wrong, three times.** The flat body this PR published would
 have been REJECTED before indexing — the service would have looked fully wired and indexed

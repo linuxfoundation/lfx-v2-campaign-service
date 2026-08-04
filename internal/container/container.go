@@ -87,15 +87,15 @@ const dispatchDrainTimeout = 4 * time.Second
 
 // ContainerCloseTimeout is the wall-clock budget for Container.Close: the
 // orchestrator drain (dispatchDrainTimeout), its post-cancel grace
-// (service.CancelGracePeriod), AND the index publisher's connection drain
-// (indexer.DrainTimeout). The last term is not optional bookkeeping — Close really
+// (service.CancelGracePeriod), the index publisher's connection drain
+// (indexer.DrainTimeout), AND the index relay's stop wait (relayStopTimeout). The last term is not optional bookkeeping — Close really
 // does drain NATS after the pool closes, so omitting it understated the phase by
 // that much and let the two phases sum PAST DefaultShutdownTimeout (they already
 // consumed all 25s with zero headroom), which is exactly the SIGKILL-mid-drain
 // this budget exists to prevent. The server budgets the HTTP-shutdown phase and
 // this container-close phase separately (see HTTPShutdownTimeout), so the total
 // graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
-const ContainerCloseTimeout = dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout
+const ContainerCloseTimeout = dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout + relayStopTimeout
 
 // HTTPShutdownTimeout is the wall-clock budget for draining in-flight HTTP
 // handlers before the container is closed. It is whatever remains of the overall

@@ -52,7 +52,7 @@ func TestShutdownBudgetComposes(t *testing.T) {
 	// drain, the post-cancel grace, AND the index publisher's connection drain. The last
 	// was originally omitted, which understated the phase and let the two phases sum past
 	// DefaultShutdownTimeout — the SIGKILL-mid-drain this budget exists to prevent.
-	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout, ContainerCloseTimeout)
+	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+relayStopTimeout, ContainerCloseTimeout)
 	// The HTTP phase gets a positive share of the remaining budget.
 	assert.Positive(t, HTTPShutdownTimeout, "HTTP shutdown phase must have a positive budget")
 	// The two phases together stay within the overall budget.

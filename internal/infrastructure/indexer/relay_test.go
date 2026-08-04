@@ -105,3 +105,24 @@ func TestNoopPublishRaw_ReportsFailure(t *testing.T) {
 	err := Noop{}.PublishRaw(context.Background(), "lfx.index.campaign_brief", "b1", []byte("{}"))
 	require.Error(t, err, "a Noop publish must not be reported as delivered")
 }
+
+// TestRelay_WithoutACredentialLeavesRowsPending pins the highest-stakes guard in the relay.
+//
+// With no service token the stamp would write an EMPTY authorization header. NATS accepts that
+// publish, so drain would retire the row as delivered — while the indexer drops every
+// empty-auth message. The outbox would silently drain itself and the recovery it exists for
+// would be permanently lost. Skipping the pass keeps rows pending until the token is set.
+func TestRelay_WithoutACredentialLeavesRowsPending(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{outboxMsg(1, ObjectTypeBrief)}}
+	pub := &capturingPublisher{}
+
+	for _, token := range []string{"", "   "} {
+		out.published, out.failed = nil, nil
+		pub.payloads = nil
+
+		NewRelay(out, pub, token).drain(context.Background())
+
+		assert.Empty(t, pub.payloads, "nothing may be published without a credential (token %q)", token)
+		assert.Empty(t, out.published, "and no row may be retired: the indexer would have dropped it")
+	}
+}

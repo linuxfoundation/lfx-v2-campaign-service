@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,8 @@ type Relay struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	once   sync.Once
+	// warnOnce keeps the missing-credential warning to a single line rather than one per pass.
+	warnOnce sync.Once
 }
 
 // NewRelay constructs a Relay. authorization is the service credential stamped onto every
@@ -105,6 +108,15 @@ func (r *Relay) Stop(wait time.Duration) {
 	})
 }
 
+// warnNoToken logs the missing-credential condition ONCE. Every pass would otherwise log it, and
+// a message repeated every 15s trains operators to ignore it.
+func (r *Relay) warnNoToken() {
+	r.warnOnce.Do(func() {
+		slog.Warn("index relay is idle: no service credential configured (set INDEXER_SERVICE_TOKEN). " +
+			"Outbox rows stay PENDING and will be published once it is set — nothing is lost.")
+	})
+}
+
 // stamp injects the service credential into a stored payload. The stored message deliberately
 // carries no authorization (see Relay.authorization), and the indexer drops any message whose
 // header is missing or empty.
@@ -136,6 +148,15 @@ func (r *Relay) stamp(payload []byte) ([]byte, error) {
 func (r *Relay) drain(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, relayPassTimeout)
 	defer cancel()
+
+	// Without a service credential every message would be REJECTED by the indexer for an empty
+	// authorization header — but NATS would accept the publish, so drain would retire the row
+	// as delivered and the recovery this table exists for would be permanently lost. Skip the
+	// pass instead: rows stay pending until the token is configured.
+	if strings.TrimSpace(r.authorization) == "" {
+		r.warnNoToken()
+		return
+	}
 
 	msgs, err := r.outbox.PendingIndexMessages(ctx, 0)
 	if err != nil {
