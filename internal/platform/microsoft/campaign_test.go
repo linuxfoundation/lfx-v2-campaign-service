@@ -1043,6 +1043,12 @@ func TestUpdateCampaignAndChildrenStatus_RejectsBadInputWithoutCalling(t *testin
 		{"activate without an ad group", "321", "", "987", StatusActive, "cannot activate"},
 		{"activate without an ad", "321", "654", "", StatusActive, "cannot activate"},
 		{"activate with whitespace-only ad group", "321", "   ", "987", StatusActive, "cannot activate"},
+		// An ad id with NO ad-group id is unaddressable: the Ads PUT is scoped by AdGroupId,
+		// and json.Number("") marshals to a bare 0, so sending it would target a nonexistent
+		// ad group and report a no-op as success. Skipping it would leave the ad Active while
+		// returning nil. Both are wrong — refuse the pair.
+		{"pause with an ad but no ad group", "321", "", "987", StatusPaused, "no ad group id"},
+		{"pause with an ad but whitespace-only ad group", "321", "  ", "987", StatusPaused, "no ad group id"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &statusCascadeRecorder{}
@@ -1072,5 +1078,114 @@ func TestUpdateCampaignAndChildrenStatus_UndecodableBodyIsUnconfirmed(t *testing
 	}
 	if !IsOutcomeUnconfirmed(err) {
 		t.Errorf("an undecodable 200 leaves the outcome AMBIGUOUS, want Unconfirmed, got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseWithAdGroupOnly covers the one asymmetric pause
+// shape that IS allowed: an ad group with no ad. The ad group is addressable (its PUT is
+// scoped by CampaignId), so it must be paused and the ad step simply skipped — and the
+// error text for a failure there must not claim the ad group applied when it did.
+func TestUpdateCampaignAndChildrenStatus_PauseWithAdGroupOnly(t *testing.T) {
+	rec := &statusCascadeRecorder{}
+	c := newStatusCascadeClient(t, rec, nil)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "", StatusPaused); err != nil {
+		t.Fatalf("pausing with a known ad group and no ad must succeed, got: %v", err)
+	}
+	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns", "AdGroups"}) {
+		t.Errorf("calls = %v, want [Campaigns AdGroups] — the ad step has nothing to address", got)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_AppliedTextNamesOnlyRealChanges pins the operator-facing
+// text on a PARTIAL cascade. "applied" is read to decide what to verify by hand, so it must
+// never name an entity that was skipped: with no ad group, a failing ad-group step is
+// impossible, but a campaign-only cascade that later fails must say "campaign", not
+// "campaign and ad group".
+func TestUpdateCampaignAndChildrenStatus_AppliedTextNamesOnlyRealChanges(t *testing.T) {
+	rejected := `{"PartialErrors":[{"Code":1234,"Message":"nope"}]}`
+	rec := &statusCascadeRecorder{}
+	c := newStatusCascadeClient(t, rec, map[string]string{"AdGroups": rejected})
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("a rejected ad-group update must not be reported as success")
+	}
+	if strings.Contains(err.Error(), "ad group status changed") {
+		t.Errorf("the ad group was REJECTED, so it must not be listed as applied: %v", err)
+	}
+	if !strings.Contains(err.Error(), "campaign status changed") {
+		t.Errorf("the campaign DID apply and must be named so an operator knows to verify it: %v", err)
+	}
+}
+
+// roundTripperFunc adapts a function to http.RoundTripper so a test can act on the exact
+// moment a response has been fully delivered.
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestUpdateCampaignAndChildrenStatus_CancelledContextStopsCascade pins the ctx check between
+// steps: a cancellation after the gate applied must stop the cascade and report a PARTIAL
+// (Unconfirmed) outcome naming the campaign, not silently dispatch the remaining PUTs.
+func TestUpdateCampaignAndChildrenStatus_CancelledContextStopsCascade(t *testing.T) {
+	rec := &statusCascadeRecorder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	// cancelAfterCampaign is armed by the handler and fired by the RoundTripper wrapper once
+	// the campaign response has been fully delivered. Cancelling inside the handler would
+	// abort the campaign PUT itself — the gate would never apply and this would no longer be
+	// the between-step case under test.
+	var cancelAfterCampaign bool
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		rec.record(r.URL.Path, body)
+		if strings.HasSuffix(r.URL.Path, "Campaigns") {
+			cancelAfterCampaign = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	base := c.httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	c.httpClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		resp, err := base.RoundTrip(r)
+		if err == nil && cancelAfterCampaign {
+			// The campaign PUT completed and its status DID apply; only now cancel, so the
+			// next step is abandoned cleanly between requests.
+			cancelAfterCampaign = false
+			cancel()
+		}
+		return resp, err
+	})
+	err := c.UpdateCampaignAndChildrenStatus(ctx, "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("a cancelled cascade must not report success — the children were never paused")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("want a context.Canceled cause, got %T: %v", err, err)
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("the campaign gate DID apply, so the outcome is partial/Unconfirmed, got: %v", err)
+	}
+	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns"}) {
+		t.Errorf("calls = %v, want the cascade to STOP at the cancellation, not dispatch more PUTs", got)
+	}
+	// NOTE ON WHAT THIS DOES AND DOES NOT PIN: the explicit ctx.Err() check between steps and
+	// a cancelled putStatus produce the SAME partialCascadeError here, so deleting the check
+	// would not fail this test — it only avoids dispatching a request that is already doomed.
+	// What IS pinned, and what would break without the surrounding structure, is the reported
+	// shape: a cancellation after the gate applied must be a partial (Unconfirmed) naming the
+	// campaign, never a bare error implying nothing changed.
+	var partial *partialCascadeError
+	if !errors.As(err, &partial) {
+		t.Fatalf("a between-step cancellation must be a partialCascadeError, got %T: %v", err, err)
+	}
+	if partial.applied != "campaign" {
+		t.Errorf("applied = %q, want %q — only the campaign gate had been applied", partial.applied, "campaign")
+	}
+	if partial.stage != "ad group" {
+		t.Errorf("stage = %q, want %q — the ad group is the step that was abandoned", partial.stage, "ad group")
 	}
 }

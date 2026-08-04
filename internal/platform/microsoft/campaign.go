@@ -934,12 +934,19 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 //
 // FULL CASCADE, like reddit: CreateCampaign builds the whole Campaign -> AdGroup -> Ad tree
 // PAUSED, so toggling only the campaign would leave the children paused and nothing serving.
-// ORDER mirrors reddit — children FIRST on ACTIVATE (nothing serves until the tree is ready),
-// campaign gate FIRST on PAUSE (delivery stops immediately even if a child call then fails).
+//
+// ORDER follows the same INVARIANT as reddit — the campaign is the gate, so it flips LAST on
+// ACTIVATE (nothing serves until the tree is ready) and FIRST on PAUSE (delivery stops
+// immediately even if a child call then fails). The two CHILDREN are order-independent
+// between themselves: while the gate is still Paused nothing serves whichever goes first, so
+// this activates ad group then ad (reddit happens to go deepest-first; that difference is not
+// load-bearing).
 //
 // Activating with an unknown ad-group OR ad id is refused: the missing child would stay
 // Paused and nothing would serve, so reporting "active" would be a lie. Pausing needs no
-// child ids — pausing the parent already stops delivery.
+// child ids — pausing the parent already stops delivery — EXCEPT that an ad id with no
+// ad-group id is refused outright, because the Ads PUT is scoped by AdGroupId and so cannot
+// address the ad at all.
 //
 // Once an entity has been changed, a later failure returns a partialCascadeError
 // (Unconfirmed) so a definite rejection on a child is not misreported as "not modified".
@@ -950,9 +957,18 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if !idRE.MatchString(strings.TrimSpace(campaignID)) {
 		return fmt.Errorf("microsoft-ads: campaign id %q is not a numeric id", campaignID)
 	}
+	cID := strings.TrimSpace(campaignID)
 	agID, aID := strings.TrimSpace(adGroupID), strings.TrimSpace(adID)
 	if status == StatusActive && (agID == "" || aID == "") {
 		return fmt.Errorf("microsoft-ads: cannot activate campaign %s: its ad group and ad ids must both be known, so the tree cannot be made servable", campaignID)
+	}
+	// An ad is addressed BY ITS PARENT (the Ads PUT is scoped by AdGroupId), so an ad id
+	// without an ad-group id cannot be actioned at all. Reject the pair rather than skipping
+	// the ad: silently skipping would leave the ad Active while this call returned nil, and
+	// sending it anyway would marshal the empty parent as a bare 0 (json.Number("") encodes
+	// as 0, not ""), addressing a nonexistent ad group and reporting a no-op as success.
+	if aID != "" && agID == "" {
+		return fmt.Errorf("microsoft-ads: campaign %s has ad %s but no ad group id: the ad is addressed by its ad group, so its status cannot be changed", campaignID, aID)
 	}
 	for _, id := range []struct{ label, val string }{{"ad group", agID}, {"ad", aID}} {
 		if id.val != "" && !idRE.MatchString(id.val) {
@@ -962,24 +978,30 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 
 	campaignReq := updateCampaignsRequest{
 		AccountId: json.Number(c.account.AccountID),
-		Campaigns: []msCampaignStatus{{Id: json.Number(strings.TrimSpace(campaignID)), Status: status}},
+		Campaigns: []msCampaignStatus{{Id: json.Number(cID), Status: status}},
+	}
+	adGroupReq := updateAdGroupsRequest{
+		CampaignId: json.Number(cID),
+		AdGroups:   []msAdGroupStatus{{Id: json.Number(agID), Status: status}},
+	}
+	adReq := updateAdsRequest{
+		AdGroupId: json.Number(agID),
+		Ads:       []msAdStatus{{Id: json.Number(aID), Status: status}},
 	}
 
 	if status == StatusActive {
-		// CHILDREN FIRST, campaign gate LAST.
-		adGroupReq := updateAdGroupsRequest{
-			CampaignId: json.Number(strings.TrimSpace(campaignID)),
-			AdGroups:   []msAdGroupStatus{{Id: json.Number(agID), Status: status}},
-		}
+		// CHILDREN FIRST, campaign gate LAST. Both child ids are guaranteed present above.
 		if err := c.putStatus(ctx, "AdGroups", adGroupReq, "ad group"); err != nil {
 			return err // nothing mutated yet — a definite rejection stays definite
 		}
-		adReq := updateAdsRequest{
-			AdGroupId: json.Number(agID),
-			Ads:       []msAdStatus{{Id: json.Number(aID), Status: status}},
+		if err := ctx.Err(); err != nil {
+			return &partialCascadeError{applied: "ad group", stage: "ad", err: err}
 		}
 		if err := c.putStatus(ctx, "Ads", adReq, "ad"); err != nil {
 			return &partialCascadeError{applied: "ad group", stage: "ad", err: err}
+		}
+		if err := ctx.Err(); err != nil {
+			return &partialCascadeError{applied: "ad group and ad", stage: "campaign", err: err}
 		}
 		if err := c.putStatus(ctx, "Campaigns", campaignReq, "campaign"); err != nil {
 			return &partialCascadeError{applied: "ad group and ad", stage: "campaign", err: err}
@@ -991,22 +1013,24 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if err := c.putStatus(ctx, "Campaigns", campaignReq, "campaign"); err != nil {
 		return err // nothing mutated yet
 	}
+	// applied tracks what ACTUALLY changed, so a later failure names only entities that were
+	// really touched — this text is what an operator reads to decide what to verify by hand.
+	applied := "campaign"
 	if agID != "" {
-		adGroupReq := updateAdGroupsRequest{
-			CampaignId: json.Number(strings.TrimSpace(campaignID)),
-			AdGroups:   []msAdGroupStatus{{Id: json.Number(agID), Status: status}},
+		if err := ctx.Err(); err != nil {
+			return &partialCascadeError{applied: applied, stage: "ad group", err: err}
 		}
 		if err := c.putStatus(ctx, "AdGroups", adGroupReq, "ad group"); err != nil {
-			return &partialCascadeError{applied: "campaign", stage: "ad group", err: err}
+			return &partialCascadeError{applied: applied, stage: "ad group", err: err}
 		}
+		applied = "campaign and ad group"
 	}
 	if aID != "" {
-		adReq := updateAdsRequest{
-			AdGroupId: json.Number(agID),
-			Ads:       []msAdStatus{{Id: json.Number(aID), Status: status}},
+		if err := ctx.Err(); err != nil {
+			return &partialCascadeError{applied: applied, stage: "ad", err: err}
 		}
 		if err := c.putStatus(ctx, "Ads", adReq, "ad"); err != nil {
-			return &partialCascadeError{applied: "campaign and ad group", stage: "ad", err: err}
+			return &partialCascadeError{applied: applied, stage: "ad", err: err}
 		}
 	}
 	return nil

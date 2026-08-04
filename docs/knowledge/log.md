@@ -91,6 +91,23 @@ is a partial update that cannot clobber budget, schedule, or targeting.
 Connection rules are shared via `validateMicrosoftConnection`, called by BOTH `Dispatch` and
 `ToggleStatus`, so a create and a toggle cannot drift; each caller keeps its own error wrapping.
 
+LANGUAGE TRAP worth remembering beyond Microsoft: **`json.Number("")` marshals
+to a bare `0`**, not `""` and not an error. The v13 body-scoped shape addresses
+an ad by its PARENT (`{"AdGroupId": …, "Ads": [{"Id": …}]}`), so a row carrying
+an ad id but no ad-group id would have PUT `"AdGroupId": 0` — targeting a
+nonexistent ad group, returning a clean 200, and reporting a no-op as success
+while the ad kept serving. Both child ids are `omitempty` and independent in
+`CampaignResult`, so that pairing is representable. The pair is now refused up
+front. This is also why reddit's independent `if id != ""` blocks CANNOT be
+copied verbatim: reddit addresses each entity by its OWN id in the path, so it
+never needs the parent.
+
+On ordering, the load-bearing invariant is only that the **campaign gate flips
+last on ACTIVATE and first on PAUSE**. The two children are order-independent
+between themselves (nothing serves while the gate is Paused), so Microsoft's
+ad-group-then-ad and reddit's deepest-first are both correct — an earlier
+comment claiming the order "mirrors reddit" was simply wrong.
+
 ## 2026-07-30
 
 **Update** — Patched four indirect-dependency CVEs flagged by Dependabot on main
