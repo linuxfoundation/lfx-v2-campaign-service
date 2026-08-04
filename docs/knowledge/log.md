@@ -2,6 +2,20 @@
 
 ## 2026-08-04
 
+**Update** — Follow-up fix on the GA-3 slice below, from the post-commit review cycle. Two
+`internal/platform/googleads/adgroup_ad_test.go` subtests for `UpdateAdGroupAndAdStatus`
+wrote a captured request-path slice inside the httptest handler goroutine and read it back
+from the test goroutine with no happens-before edge — a data race the repo's race detector
+(`make test`) would eventually flag. Guarded with a `sync.Mutex`, matching the pattern already
+used elsewhere in this package (`campaign_test.go`, `dispatch/googleads_test.go`'s
+`credCapture`). Also added `internal/dispatch/googleads_test.go` coverage the review flagged as
+missing: `ToggleStatus` cascade tests with ad-group/ad ids actually present (PAUSE order —
+campaign then children; ACTIVATE order — children then campaign; a child-mutate failure mid-
+cascade surfaced as `UNCONFIRMED` rather than swallowed), plus a direct unit test for
+`googleAdsChildIDs` (nil/empty/unparseable/present/absent). `docs/api-catalog.md`'s
+`GoogleAdsConfig` section was also refreshed — it still described the pre-GA-3 budget-only
+contract and was missing the new `headlines`/`descriptions` fields.
+
 **Update** — Extended the Google Ads client from a create-only PAUSED campaign shell to a
 full Campaign→AdGroup→Ad hierarchy (GA-3, `internal/platform/googleads/adgroup_ad.go`,
 new file). `CreateCampaign` now cascades into `createAdGroupAndAd`: a `SEARCH_STANDARD`
