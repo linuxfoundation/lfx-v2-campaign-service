@@ -426,3 +426,42 @@ func TestRawQueryValues_SeesWhatValuesCannot(t *testing.T) {
 		"values are decoded before the caller trims them")
 	assert.Empty(t, rawQueryValues("a=1;b=2", "utm_campaign"))
 }
+
+// TestApply_RestoresFragmentTokens covers personalization tokens in the FRAGMENT.
+//
+// URL.String() escapes the fragment just as it escapes the path, so "#{{contact.id}}" shipped as
+// "#%7B%7Bcontact.id%7D%7D" — which HubSpot never expands, so the link arrives broken. Path and
+// fragment are restored independently: a url may personalize either alone, and gating one on the
+// other would leave the second broken.
+func TestApply_RestoresFragmentTokens(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "c"}
+	cases := []struct{ name, in, want string }{
+		{
+			name: "fragment token only",
+			in:   "https://lf.dev/e#{{contact.id}}",
+			want: "https://lf.dev/e?utm_source=s&utm_medium=m&utm_campaign=c#{{contact.id}}",
+		},
+		{
+			name: "tokens in both path and fragment",
+			in:   "https://lf.dev/e/{{contact.id}}#{{contact.email}}",
+			want: "https://lf.dev/e/{{contact.id}}?utm_source=s&utm_medium=m&utm_campaign=c#{{contact.email}}",
+		},
+		{
+			name: "path token with a plain fragment",
+			in:   "https://lf.dev/e/{{contact.id}}#agenda",
+			want: "https://lf.dev/e/{{contact.id}}?utm_source=s&utm_medium=m&utm_campaign=c#agenda",
+		},
+		{
+			name: "existing query and a fragment token",
+			in:   "https://lf.dev/e?x=1#{{contact.id}}",
+			want: "https://lf.dev/e?x=1&utm_source=s&utm_medium=m&utm_campaign=c#{{contact.id}}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Apply(tc.in, p, "")
+			assert.Equal(t, tc.want, got)
+			assert.NotContains(t, got, "%7B", "no token may ship percent-encoded")
+		})
+	}
+}

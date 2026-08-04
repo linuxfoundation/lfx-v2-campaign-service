@@ -175,7 +175,8 @@ func sameExceptSchemeCase(a, b string) bool {
 	return strings.EqualFold(as, bs) && a[len(as):] == b[len(bs):]
 }
 
-// restoreTemplateTokens undoes url.URL's percent-encoding of personalization tokens IN THE PATH.
+// restoreTemplateTokens undoes url.URL's percent-encoding of personalization tokens in the PATH
+// and the FRAGMENT.
 //
 // HubSpot substitutes {{...}} at SEND time, and URL.String() re-escapes the path, so a token
 // there comes back as %7B%7B…%7D%7D and HubSpot never recognises it — every personalized link
@@ -186,7 +187,12 @@ func sameExceptSchemeCase(a, b string) bool {
 // URL was wrong when the same token appeared both live and pre-encoded, because the restore
 // could not tell the two occurrences apart.
 //
-// Only tokens present in the ORIGINAL PATH are restored, so this cannot introduce a token the
+// The FRAGMENT needs the same treatment for the same reason: URL.String() escapes it too, so
+// "#{{contact.id}}" shipped as "#%7B%7Bcontact.id%7D%7D". Path and fragment are restored
+// INDEPENDENTLY — a url can personalize either one alone, and gating the fragment on the path
+// having tokens (or vice versa) would leave the other broken.
+//
+// Only tokens present in the ORIGINAL url are restored, so this cannot introduce a token the
 // author did not write.
 func restoreTemplateTokens(tagged, original string) string {
 	// Restore the ORIGINAL path wholesale rather than replacing token occurrences.
@@ -202,27 +208,42 @@ func restoreTemplateTokens(tagged, original string) string {
 	// ("/path/{{tok}}#agenda") would otherwise keep "#agenda" inside the "path", the unescape
 	// comparison would never match, and the restore would silently skip — leaving the token
 	// percent-encoded and the personalized link broken at send time.
-	origPath, _, _ := strings.Cut(original, "#")
-	origPath, _, _ = strings.Cut(origPath, "?")
-	if !templateToken.MatchString(origPath) {
-		return tagged // no tokens in the path: nothing to restore
-	}
-	// Split the TAGGED url the same way, keeping the fragment to re-attach below.
-	taggedNoFrag, fragment, hasFragment := strings.Cut(tagged, "#")
+	origNoFrag, origFragment, origHasFragment := strings.Cut(original, "#")
+	origPath, _, _ := strings.Cut(origNoFrag, "?")
+
+	// Split the TAGGED url the same way.
+	taggedNoFrag, taggedFragment, taggedHasFragment := strings.Cut(tagged, "#")
 	taggedPath, taggedQuery, hasQuery := strings.Cut(taggedNoFrag, "?")
-	// Only splice when the two paths differ purely by ESCAPING. Comparing their unescaped forms
-	// is the check — but unescape BOTH: the original may already contain percent-escapes the
-	// author wrote deliberately, and comparing a decoded tagged path against a raw original
-	// would then never match, silently skipping the restore.
-	taggedPlain, terr := url.PathUnescape(taggedPath)
-	origPlain, oerr := url.PathUnescape(origPath)
-	if terr != nil || oerr != nil || !sameExceptSchemeCase(taggedPlain, origPlain) {
-		return tagged
+
+	// Restore each part independently: a url may personalize the path, the fragment, or both.
+	path := taggedPath
+	if templateToken.MatchString(origPath) {
+		// Only splice when the two differ purely by ESCAPING. Comparing their unescaped forms is
+		// the check — but unescape BOTH: the original may already contain percent-escapes the
+		// author wrote deliberately, and comparing a decoded tagged path against a raw original
+		// would then never match, silently skipping the restore.
+		taggedPlain, terr := url.PathUnescape(taggedPath)
+		origPlain, oerr := url.PathUnescape(origPath)
+		if terr == nil && oerr == nil && sameExceptSchemeCase(taggedPlain, origPlain) {
+			// Splice the TAGGED scheme, not the original: url.Parse normalized it, and
+			// re-introducing "HTTPS://" would undo that normalization for no benefit. Only the
+			// path is recovered — everything URL.String() legitimately canonicalized stays so.
+			path = schemeOf(taggedPath) + origPath[len(schemeOf(origPath)):]
+		}
 	}
-	// Splice the TAGGED scheme, not the original: url.Parse normalized it, and re-introducing
-	// "HTTPS://" here would undo that normalization for no benefit. Only the path is being
-	// recovered — everything URL.String() legitimately canonicalized stays canonical.
-	out := schemeOf(taggedPath) + origPath[len(schemeOf(origPath)):]
+
+	fragment, hasFragment := taggedFragment, taggedHasFragment
+	if origHasFragment && templateToken.MatchString(origFragment) {
+		// Same escaping-only test as the path. Fragments use FragmentUnescape, whose escaping
+		// rules differ from a path's.
+		taggedPlain, terr := url.PathUnescape(taggedFragment)
+		origPlain, oerr := url.PathUnescape(origFragment)
+		if terr == nil && oerr == nil && taggedPlain == origPlain {
+			fragment, hasFragment = origFragment, true
+		}
+	}
+
+	out := path
 	if hasQuery {
 		out += "?" + taggedQuery
 	}

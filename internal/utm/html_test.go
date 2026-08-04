@@ -199,3 +199,54 @@ func TestTagHTMLLinks_PreservesOutlookConditionalComments(t *testing.T) {
 		})
 	}
 }
+
+// TestTagHTMLLinks_PreservesTableStructure is the regression test for a fragment that a
+// tree round-trip destroyed.
+//
+// Parsing needs a context element, and the HTML spec's insertion modes DISCARD content invalid
+// for it: "<tr><td><a …>" parsed in a body context loses its row and cell entirely, so
+// re-rendering returned markup with the table structure stripped. Email HTML is written as
+// table layouts, so this is the common case — a tagged campaign email would have shipped with
+// its layout collapsed. Choosing a table context instead would only move the failure to
+// non-table widgets, which is why the implementation rewrites tokens rather than a tree.
+func TestTagHTMLLinks_PreservesTableStructure(t *testing.T) {
+	cases := []struct{ name, in string }{
+		{"row and cell", `<tr><td><a href="https://lf.dev/e">go</a></td></tr>`},
+		{"bare cell", `<td><a href="https://lf.dev/e">go</a></td>`},
+		{"nested table", `<table><tbody><tr><td><a href="https://lf.dev/e">go</a></td></tr></tbody></table>`},
+		{"list item", `<li><a href="https://lf.dev/e">go</a></li>`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, n, err := TagHTMLLinksFrom(tc.in, Params{Source: "s", Medium: "m", Campaign: "c"}, "", 0)
+			require.NoError(t, err)
+			assert.Equal(t, 1, n, "the anchor must still be tagged")
+			// Every structural tag from the input must survive.
+			for _, tag := range []string{"<tr", "<td", "<table", "<tbody", "<li", "</tr", "</td", "</li"} {
+				if strings.Contains(tc.in, tag) {
+					assert.Contains(t, got, tag, "%s must not be dropped from the fragment", tag)
+				}
+			}
+			assert.Contains(t, got, "utm_campaign=c")
+		})
+	}
+}
+
+// TestTagHTMLLinks_LeavesUntaggedBytesVerbatim pins the never-mangle contract in its strongest
+// form: anything the tagger does not deliberately change comes back byte-identical, including
+// markup a parser would "repair".
+func TestTagHTMLLinks_LeavesUntaggedBytesVerbatim(t *testing.T) {
+	// A conditional comment, an unclosed tag, and a single-quoted attribute — all things a
+	// tree round-trip normalizes. None contains a taggable anchor, so all must be untouched.
+	for _, in := range []string{
+		`<!--[if mso]><a href="https://lf.dev/e">o</a><![endif]-->`,
+		`<p>dangling <b>bold`,
+		`<a href='mailto:a@b.c'>mail</a>`,
+		`<div class='x'   data-k=1 >text</div>`,
+	} {
+		got, n, err := TagHTMLLinksFrom(in, Params{Source: "s", Medium: "m", Campaign: "c"}, "", 0)
+		require.NoError(t, err)
+		assert.Zero(t, n)
+		assert.Equal(t, in, got, "an untagged fragment must come back byte-identical")
+	}
+}

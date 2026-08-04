@@ -5,10 +5,10 @@ package utm
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"golang.org/x/net/html"
-	"golang.org/x/net/html/atom"
 )
 
 // DefaultLinkPrefix labels body links in utm_content ("body-link-1", "body-link-2", …), so a
@@ -45,64 +45,100 @@ func TagHTMLLinksFrom(fragment string, p Params, prefix string, startAt int) (st
 		prefix = DefaultLinkPrefix
 	}
 
-	// ParseFragment (not Parse): email bodies are fragments, and Parse would wrap them in a
-	// synthesized html/head/body, changing the content the caller sends.
-	// The context node's DataAtom MUST match its Data, or ParseFragment rejects it as an
-	// "inconsistent Node" and every call silently returns the fragment untagged.
-	nodes, err := html.ParseFragment(strings.NewReader(fragment), &html.Node{
-		Type:     html.ElementNode,
-		Data:     "body",
-		DataAtom: atom.Body,
-	})
-	if err != nil {
-		return fragment, 0, fmt.Errorf("utm: parse email html: %w", err)
-	}
-
+	// TOKENIZE and rewrite hrefs in place; do NOT parse into a tree and re-render.
+	//
+	// A tree round-trip cannot be made safe for arbitrary email HTML. Parsing needs a context
+	// element, and the HTML spec's insertion modes DISCARD content that is invalid for it: a
+	// widget beginning "<tr><td><a …>" parsed in a body context loses its row and cell entirely,
+	// so re-rendering silently returns a fragment with the table structure stripped. Choosing a
+	// table context instead just moves the failure to non-table widgets. Email HTML is written
+	// as table layouts, so this is the common case, not an edge one.
+	//
+	// Rewriting tokens sidesteps the whole problem: every byte the tagger does not deliberately
+	// change survives verbatim — malformed markup, conditional comments, unusual nesting and all.
+	// That is also a stronger form of the never-mangle contract this package already promised.
+	var b strings.Builder
+	b.Grow(len(fragment) + 128)
+	z := html.NewTokenizer(strings.NewReader(fragment))
 	n := startAt
-	for _, root := range nodes {
-		tagAnchors(root, p, prefix, &n)
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			if err := z.Err(); err != nil && err != io.EOF {
+				// Never emit a partial document: return the input untouched.
+				return fragment, 0, fmt.Errorf("utm: tokenize email html: %w", err)
+			}
+			break
+		}
+		raw := z.Raw()
+		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+			b.Write(raw)
+			continue
+		}
+		name, hasAttr := z.TagName()
+		if !hasAttr || string(name) != "a" {
+			b.Write(raw)
+			continue
+		}
+		// Re-emit the tag from its parsed attributes ONLY when an href actually changed, so an
+		// untouched anchor keeps its original bytes (quoting, attribute order, spacing).
+		rewritten, changed := rewriteAnchor(z, string(name), tt == html.SelfClosingTagToken, p, prefix, &n)
+		if changed {
+			b.WriteString(rewritten)
+			continue
+		}
+		b.Write(raw)
 	}
 
-	// Nothing was tagged: return the ORIGINAL fragment rather than the rendered tree.
-	// html.Render canonicalizes markup (attribute order, quoting), so re-serializing an
-	// untouched widget produces a different string — the caller then sees a "change", PATCHes
-	// a draft that gained no UTM parameters, and logs a successful tag. That breaks both the
-	// no-op and the never-mangle contract.
+	// Nothing was tagged: return the ORIGINAL fragment, byte-identical.
 	if n == startAt {
 		return fragment, 0, nil
-	}
-
-	var b strings.Builder
-	for _, root := range nodes {
-		if rerr := html.Render(&b, root); rerr != nil {
-			// Render failing after a successful parse would mean emitting a truncated body;
-			// return the original instead.
-			return fragment, 0, fmt.Errorf("utm: render email html: %w", rerr)
-		}
 	}
 	return b.String(), n - startAt, nil
 }
 
-// tagAnchors walks the tree and rewrites anchor hrefs in place. n is the running count of
-// links actually TAGGED, so utm_content numbering skips links that were left alone.
-func tagAnchors(node *html.Node, p Params, prefix string, n *int) {
-	if node.Type == html.ElementNode && node.Data == "a" {
-		for i := range node.Attr {
-			if !strings.EqualFold(node.Attr[i].Key, "href") {
-				continue
-			}
-			href := node.Attr[i].Val
-			// Compute the candidate content label from the count this link WOULD take, then
-			// only consume the number if the link was actually changed.
+// rewriteAnchor reads the current anchor's attributes and returns its re-serialized start tag,
+// reporting whether the href was actually changed. The caller keeps the ORIGINAL bytes when it
+// was not, so this never reformats an anchor it did not tag.
+func rewriteAnchor(z *html.Tokenizer, name string, selfClosing bool, p Params, prefix string, n *int) (string, bool) {
+	type attr struct{ key, val string }
+	var attrs []attr
+	changed := false
+	for {
+		k, v, more := z.TagAttr()
+		key, val := string(k), string(v)
+		if strings.EqualFold(key, "href") && !changed {
+			// Compute the label from the count this link WOULD take, and only consume the
+			// number if the link actually changed.
 			candidate := fmt.Sprintf("%s-%d", prefix, *n+1)
-			if tagged := Apply(href, p, candidate); tagged != href {
-				node.Attr[i].Val = tagged
+			if tagged := Apply(val, p, candidate); tagged != val {
+				val = tagged
 				*n++
+				changed = true
 			}
-			break // an anchor has at most one href
+		}
+		attrs = append(attrs, attr{key, val})
+		if !more {
+			break
 		}
 	}
-	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		tagAnchors(child, p, prefix, n)
+	if !changed {
+		return "", false
 	}
+	var b strings.Builder
+	b.WriteByte('<')
+	b.WriteString(name)
+	for _, a := range attrs {
+		b.WriteByte(' ')
+		b.WriteString(a.key)
+		b.WriteString(`="`)
+		b.WriteString(html.EscapeString(a.val))
+		b.WriteByte('"')
+	}
+	if selfClosing {
+		b.WriteString("/>")
+	} else {
+		b.WriteByte('>')
+	}
+	return b.String(), true
 }

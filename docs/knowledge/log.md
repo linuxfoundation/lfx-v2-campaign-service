@@ -2,6 +2,16 @@
 
 ## 2026-08-03
 
+**Update** — Fixed two ways email UTM tagging could ship broken HTML (LFXV2-2775, PR #62).
+(1) `TagHTMLLinksFrom` parsed the fragment into a tree and re-rendered it. Parsing needs a context
+element, and the spec's insertion modes DISCARD invalid content: `<tr><td><a …>` parsed in a body
+context lost its row and cell entirely, so a tagged email shipped with its table layout stripped
+— the common case for email HTML, not an edge one. It now rewrites `href` tokens in place, so
+every byte it does not deliberately change survives verbatim and an untagged anchor keeps its
+original bytes. (2) `restoreTemplateTokens` repaired tokens only in the PATH, so
+`#{{contact.id}}` shipped as `#%7B%7B…%7D%7D`, which HubSpot never expands. Path and fragment are
+now restored independently, since a url may personalize either alone.
+
 **Update** — Closed a semicolon-query bypass in email UTM tagging (LFXV2-2775, PR #62). Go 1.17+
 dropped `;` as a query separator, so `url.Query()` silently discards semicolon-delimited pairs:
 the never-retag guard saw no campaign in `?utm_campaign=hand-picked;a=1`, replaced the author's

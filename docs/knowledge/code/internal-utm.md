@@ -51,6 +51,9 @@ invisible.
 - **Path tokens are restored by splicing the ORIGINAL path back**, not by replacing occurrences.
   `URL.String()` encodes an already-encoded literal and a live token identically, so a
   replace-by-value restore matched the wrong needle and swapped which occurrence was live.
+  The FRAGMENT is restored the same way and INDEPENDENTLY: `URL.String()` escapes it too, so
+  `#{{contact.id}}` shipped as `#%7B%7B…%7D%7D`. A url may personalize the path, the fragment, or
+  both — gating one on the other would leave the second broken.
   The splice is gated on the two paths being equal, and that comparison folds the SCHEME
   (`sameExceptSchemeCase`): `url.Parse` lower-cases it, so a template written `HTTPS://…`
   otherwise failed the check, skipped the restore, and shipped `%7B%7Bcontact.id%7D%7D` — which
@@ -66,7 +69,15 @@ invisible.
   contains a `utm_` pair — a query with none is returned byte-identical, semicolons intact.
 - **Never mangle.** An unparseable URL, or HTML that fails to parse or render, is returned
   UNCHANGED. A broken link in a sent email is far worse than an untagged one.
-- **`ParseFragment`, not `Parse`.** Email bodies are fragments; `Parse` would wrap them in a
+- **Tokenize; never round-trip a tree.** Parsing requires a context element, and the HTML spec's
+  insertion modes DISCARD content invalid for it — `<tr><td><a …>` parsed in a body context loses
+  its row and cell, so re-rendering returned a fragment with the table structure stripped. Email
+  HTML is written as table layouts, so that was the common case, not an edge one; a table context
+  would only move the failure to non-table widgets. `TagHTMLLinksFrom` rewrites `href` tokens in
+  place instead, so every byte it does not deliberately change survives verbatim — malformed
+  markup, conditional comments and all. An untagged anchor keeps its ORIGINAL bytes (quoting,
+  attribute order); only an anchor whose href actually changed is re-serialized.
+- **(Historical) `ParseFragment`, not `Parse`.** Email bodies are fragments; `Parse` would wrap them in a
   synthesized `<html>/<head>/<body>` and corrupt the rendered email. The context node's
   `DataAtom` must match its `Data` (`atom.Body`) or `ParseFragment` rejects it and every call
   silently returns the fragment untagged.
