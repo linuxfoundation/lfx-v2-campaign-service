@@ -163,6 +163,7 @@ var registeredProviders = []model.Provider{
 	model.ProviderTwitterAds,
 	model.ProviderGoogleAds,
 	model.ProviderHubSpot,
+	model.ProviderMicrosoftAds,
 }
 
 // TestRegisterDispatchers_RegistersProviders asserts EXACTLY the expected providers map to a
