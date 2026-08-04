@@ -109,6 +109,37 @@ is resolved or created.
 - **Soft** when a country has no region mapping, or the warehouse is down: the country-scoped
   lists are still valid, so the build produces a narrower audience and records why.
 
+## "No warehouse" and "broken warehouse" are DIFFERENT degrades
+
+Both leave `PastEditions` empty, but they warrant opposite operator conclusions, so `PlanInput`
+carries `PastEditionsErr` and `BuildPlan` writes a different note for each:
+
+| Condition | Note | Means |
+|---|---|---|
+| Snowflake unconfigured, or the event genuinely has no prior edition | "No past editions resolved… expected for a first-time event" | benign, final |
+| Snowflake CONFIGURED but unusable, or the query failed | "could NOT be resolved… NARROWER THAN INTENDED — rebuild it once the lookup succeeds" | an outage; the audience is incomplete |
+
+The boot-time client construction error is therefore **carried, not just logged**
+(`dispatch.NewDegradedAudienceBuilder` → `AudienceBuilder.snowErr`). Dropping it left a nil
+resolver, and a nil resolver answers `(nil, nil)` — identical to "unconfigured". A rotated
+`SNOWFLAKE_PRIVATE_KEY` would then make a returning KubeCon lose its entire past-registrant
+audience while the build reported success and stored the first-time-event note. The boot log
+rotates away; `InclusionSummary` is the durable record, so the distinction has to live there.
+
+## A partial build whose RECORD also fails returns the list ids
+
+The partial-build path records created list ids in `InclusionSummary` so orphaned HubSpot lists
+can be reconciled. When that write ALSO fails, the row stays `building` with an empty summary
+while real lists exist — so the ids are appended to the returned error instead. The 500 body is
+then the operator's only remaining handle on what the build left in the portal, and the message
+says not to retry blindly (a retry without the ids duplicates every list).
+
+## `titleCase` decodes runes, not bytes
+
+Country display names feed `IS_ANY_OF`, an EXACT match. Slicing the first BYTE would split a
+non-ASCII name (Türkiye, Côte d'Ivoire) mid-rune into mojibake that matches nobody, with no error
+at any layer. Every key in the region map is ASCII today, but the map invites additions.
+
 List names are **event-scoped AND build-scoped**. HubSpot list names are portal-global, so the
 runbook's bare "Education Enrolled [Country]" collides between two events in the same country —
 and event-scoping alone still collides between two BUILDS of the same brief, which is supported

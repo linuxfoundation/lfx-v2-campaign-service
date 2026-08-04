@@ -5,6 +5,7 @@ package audience
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,4 +115,29 @@ func TestDisplayName_ProducesExactFilterValues(t *testing.T) {
 	// least-surprising behaviour.
 	assert.Equal(t, "Atlantis", DisplayName("Atlantis"))
 	assert.Equal(t, "Atlantis", DisplayName("  Atlantis  "))
+}
+
+// TestTitleCase_IsRuneSafe pins that the first letter is decoded as a RUNE, not sliced as a byte.
+//
+// Not reachable through DisplayName today — all 30 keys in countryToRegion are ASCII — but the
+// map's own comment invites adding countries, and the first non-ASCII one would be split
+// mid-rune. The damage is silent and total: titleCase output is used as an exact IS_ANY_OF
+// filter value, so mojibake builds a HubSpot list matching nobody and reports no error at any
+// layer. Testing titleCase directly is deliberate: it guards the helper before a caller can
+// reach it, which is the only point at which the bug is cheap to catch.
+func TestTitleCase_IsRuneSafe(t *testing.T) {
+	cases := map[string]string{
+		"türkiye":      "Türkiye",
+		"österreich":   "Österreich",
+		"côte divoire": "Côte Divoire",
+		"japan":        "Japan", // the ASCII path must not regress
+		"south korea":  "South Korea",
+	}
+	for in, want := range cases {
+		got := titleCase(in)
+		assert.Equal(t, want, got, "input %q", in)
+		assert.True(t, utf8.ValidString(got),
+			"titleCase must never emit invalid UTF-8: the result is an exact HubSpot filter value, "+
+				"so mojibake silently matches nobody (input %q)", in)
+	}
 }

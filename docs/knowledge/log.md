@@ -1,5 +1,31 @@
 # Log
 
+## 2026-08-04
+
+**Fix** — A nil Snowflake resolver conflated "deliberately unconfigured" with "configured but
+broken at boot" (LFXV2-2774, PR #61). `newAudienceBuilder` logged a client-construction failure
+and then passed `snow = nil`, so `ResolvePastEditions` returned `(nil, nil)` — exactly what an
+unconfigured deployment returns. `BuildAudience` took its SUCCESS branch, never logged the
+degrade, and stored the benign first-time-event note.
+
+A malformed or rotated `SNOWFLAKE_PRIVATE_KEY` was therefore indistinguishable from "no warehouse
+configured": a returning KubeCon would silently lose its entire past-registrant audience while
+every signal reported success. The construction error is now carried on the builder
+(`NewDegradedAudienceBuilder` → `snowErr`) and returned from `ResolvePastEditions`, so the caller
+hits the degrade branch and the stored `InclusionSummary` says "NARROWER THAN INTENDED". The
+plain unconfigured case deliberately KEEPS the benign note — only a real error is an outage.
+
+**Fix** — A failed `UpdateAudience` on the partial-build path lost the created HubSpot list ids,
+contradicting the comment above it claiming they are RECORDED. With the write rejected the row
+stays `building` with an EMPTY `inclusion_summary` while real lists exist upstream — the exact
+unreconcilable state the comment says is fixed. The ids now travel in the returned error, so the
+500 body carries them when persistence cannot.
+
+**Fix** — `audience.titleCase` indexed `w[:1]` by BYTE, so a non-ASCII country name would be
+split mid-rune into mojibake and become an exact `IS_ANY_OF` filter matching nobody. Not
+reachable today (all 30 region-map keys are ASCII) but the map's own comment invites additions.
+Now decodes with `utf8.DecodeRuneInString`.
+
 ## 2026-08-03
 
 **Update** — Moved the year-stripping to the SERVICE boundary (LFXV2-2774, PR #61 review).

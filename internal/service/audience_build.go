@@ -244,6 +244,12 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		if _, uerr := repo.UpdateAudience(partialCtx, created, created.Version); uerr != nil {
 			slog.ErrorContext(ctx, "failed to record a partial audience build",
 				"audience_id", created.ID, "created_lists", strings.Join(ids, ","), "error", uerr)
+			// The persist failed, so the row stays 'building' with an EMPTY inclusion_summary
+			// while REAL HubSpot lists exist — precisely the unreconcilable state the comment
+			// above says is fixed. The API response is now the ONLY channel carrying the ids, so
+			// put them in it. Without this the operator learns a build broke and has no handle on
+			// what it left behind, and a blind retry duplicates every list.
+			return nil, audienceBuildErr(unrecordedListsErr(buildErr, created.ID, ids))
 		}
 		return nil, audienceBuildErr(buildErr)
 	}
@@ -274,6 +280,23 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, mapAudienceErr(uerr)
 	}
 	return audienceResult(updated), nil
+}
+
+// unrecordedListsErr wraps a build failure whose created-list ids could NOT be persisted.
+//
+// It exists because the two failures compound: the build broke AND the record of what it left
+// behind broke. The row is stuck 'building' with an empty summary, so the ids survive only in the
+// logs and in this error. audienceBuildErr interpolates err.Error() into the 500 body, which
+// makes the API response the operator's one reliable handle on the orphaned lists.
+func unrecordedListsErr(buildErr error, audienceID string, ids []string) error {
+	if len(ids) == 0 {
+		// Nothing upstream to reconcile, so there is nothing to carry — do not inflate the
+		// message with a reconcile instruction that names no lists.
+		return buildErr
+	}
+	return fmt.Errorf("%w (recording the build ALSO failed, so audience %s still reads 'building' "+
+		"with no summary; these HubSpot lists EXIST and must be reconciled before retrying: %s)",
+		buildErr, audienceID, strings.Join(ids, ", "))
 }
 
 // partialSummary records what a failed build actually left upstream. The plan summary alone

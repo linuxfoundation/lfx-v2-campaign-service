@@ -428,10 +428,6 @@ func TestNewAudienceBuilder_SnowflakeOptional(t *testing.T) {
 	cases := map[string]*config.Config{
 		"nothing configured": {},
 		"partial config":     {SnowflakeAccount: "acct", SnowflakeUser: "usr"}, // no key
-		"unusable key": {
-			SnowflakeAccount: "acct", SnowflakeUser: "usr",
-			SnowflakePrivateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----", // secretlint-disable-line -- non-key fixture asserting an unusable key degrades
-		},
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -445,6 +441,34 @@ func TestNewAudienceBuilder_SnowflakeOptional(t *testing.T) {
 			assert.Empty(t, names)
 		})
 	}
+}
+
+// TestNewAudienceBuilder_UnusableKeyIsAnOutage_NotSilence pins the DIFFERENCE between the two
+// degrades, which is the part that actually costs an audience.
+//
+// A malformed or rotated SNOWFLAKE_PRIVATE_KEY must not look like "no warehouse configured".
+// Both leave the resolver unusable, but only this one means a returning event's past-registrant
+// groups were LOST. If the construction error is dropped, ResolvePastEditions answers (nil, nil),
+// BuildAudience takes its success branch, and the stored summary claims a first-time event —
+// every signal reports success while a returning KubeCon silently ships a country-only audience.
+//
+// The service-side consequence of this error (the "NARROWER THAN INTENDED" note) is pinned
+// separately in audience.TestBuildPlan_WarehouseErrorGetsTheOutageNote.
+func TestNewAudienceBuilder_UnusableKeyIsAnOutage_NotSilence(t *testing.T) {
+	cfg := &config.Config{
+		SnowflakeAccount: "acct", SnowflakeUser: "usr",
+		SnowflakePrivateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----", // secretlint-disable-line -- non-key fixture asserting an unusable key degrades
+	}
+	b := newAudienceBuilder(nil, nil, cfg)
+	require.NotNil(t, b, "boot must not fail: a read-only enrichment cannot take down dispatch")
+
+	names, err := b.ResolvePastEditions(context.Background(), "KubeCon", "Korea", "2026")
+	require.Error(t, err,
+		"a CONFIGURED but unusable warehouse must report an error; returning (nil, nil) makes it "+
+			"indistinguishable from an unconfigured deployment and loses the audience silently")
+	assert.Contains(t, err.Error(), "snowflake is configured but unusable",
+		"the error must name the cause so the stored summary tells an operator what to fix")
+	assert.Empty(t, names)
 }
 
 // TestNewAudienceService_InjectsBuilder pins the wiring guarantee for the audience service, the

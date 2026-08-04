@@ -29,7 +29,14 @@ type PastEditionResolver interface {
 type AudienceBuilder struct {
 	creds     *credsSource
 	snowflake PastEditionResolver
-	opts      []hubspot.Option
+	// snowErr records that Snowflake WAS configured but the client could not be constructed
+	// (a malformed or rotated private key, say). It is deliberately distinct from a nil
+	// resolver with no error, which means "no warehouse configured". Both leave the resolver
+	// unusable, but only this one is an outage: without it a broken key looks exactly like a
+	// deliberate country-only deployment, and a returning event silently loses its entire
+	// past-registrant audience while every signal reports success.
+	snowErr error
+	opts    []hubspot.Option
 }
 
 // buildScope caches the resolved client for the duration of ONE build. It is created by
@@ -48,12 +55,30 @@ func NewAudienceBuilder(repo connReader, enc domain.Encryptor, snow PastEditionR
 	return &AudienceBuilder{creds: newCredsSource(repo, enc), snowflake: snow, opts: opts}
 }
 
+// NewDegradedAudienceBuilder builds a builder whose warehouse was CONFIGURED but could not be
+// constructed. Every ResolvePastEditions call then reports snowErr, so the caller takes its
+// degrade branch and the stored InclusionSummary says the history could not be read.
+//
+// This is a separate constructor rather than a nil-resolver shortcut precisely because the two
+// must not collapse into one another: NewAudienceBuilder(.., nil) still means "no warehouse
+// configured", which is a legitimate deployment and gets the benign note.
+func NewDegradedAudienceBuilder(repo connReader, enc domain.Encryptor, snowErr error, opts ...hubspot.Option) *AudienceBuilder {
+	return &AudienceBuilder{creds: newCredsSource(repo, enc), snowErr: snowErr, opts: opts}
+}
+
 // ResolvePastEditions returns the VERBATIM names of an event's past editions.
 //
 // The names are used as exact HubSpot filter values, so they must come from the warehouse and
 // never be guessed — a wrong name yields an empty list indistinguishable from a correct one.
 // It returns an empty slice (not an error) when the event has no prior edition.
 func (b *AudienceBuilder) ResolvePastEditions(ctx context.Context, eventTerm, locationTerm, currentYear string) ([]string, error) {
+	if b.snowErr != nil {
+		// CONFIGURED but unusable. Surfacing this as an error (rather than the nil-resolver
+		// silence below) is the whole point: the caller logs the degrade and records the
+		// "could NOT be resolved" note, so a rotated key is distinguishable from a first-time
+		// event instead of both reporting a clean success.
+		return nil, fmt.Errorf("snowflake is configured but unusable: %w", b.snowErr)
+	}
 	if b.snowflake == nil {
 		// Not an error: the caller degrades to a country-only audience and records the gap.
 		return nil, nil

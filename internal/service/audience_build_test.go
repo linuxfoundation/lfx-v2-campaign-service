@@ -223,6 +223,54 @@ func TestBuildAudience_PartialBuildLeavesRowBuilding(t *testing.T) {
 	assert.Len(t, b.names(), 2)
 }
 
+// TestBuildAudience_UnpersistedPartialReturnsTheListIDs pins the COMPOUND failure: the HubSpot
+// build broke midway AND the write that records what it left behind also broke.
+//
+// TestBuildAudience_PartialBuildLeavesRowBuilding above covers the case where that write
+// SUCCEEDS, so the ids live in inclusion_summary. When it fails, the row stays 'building' with an
+// EMPTY summary while real HubSpot lists exist — the exact unreconcilable state the code comment
+// claims is fixed. The API response is then the only channel left carrying the ids, so it must
+// carry them: without this the operator learns a build broke, has no handle on the orphans, and a
+// blind retry duplicates every list.
+func TestBuildAudience_UnpersistedPartialReturnsTheListIDs(t *testing.T) {
+	b := &fakeBuilder{
+		editions:  []string{"KubeCon Korea 2025"},
+		createErr: errors.New("hubspot 429"),
+		failOnNth: 2, // the first list succeeds upstream, the second fails
+	}
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+	arepo.updateE = errors.New("connection reset by peer")
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	// Goa's generated Error() returns "" — assert on Message, or this passes vacuously.
+	var ise *audiences.InternalServerError
+	require.ErrorAs(t, err, &ise)
+
+	created := b.names()
+	require.NotEmpty(t, created, "the fixture must leave at least one list upstream")
+	assert.Contains(t, ise.Message, "list-"+created[0],
+		"the id of a list that EXISTS in HubSpot must reach the caller when the DB write cannot "+
+			"record it; it is the only remaining handle for reconciliation")
+	assert.Contains(t, ise.Message, "reconciled before retrying",
+		"the caller must be told not to retry blindly into duplicate lists")
+	assert.Contains(t, ise.Message, "hubspot 429",
+		"the original build failure must not be swallowed by the persistence failure")
+
+	// Precondition: the write really was rejected, so the DATABASE never received the summary.
+	// (The fake stores the row by pointer, so rows()[0] aliases the in-memory struct the service
+	// mutated — asserting on its InclusionSummary would read the value the real DB never got.
+	// Version is the honest signal: UpdateAudience never ran to completion, so it is still 1.)
+	rows := arepo.rows()
+	require.Len(t, rows, 1, "the row must still exist so the partial build is visible at all")
+	assert.Equal(t, int64(1), rows[0].Version,
+		"precondition: the update was rejected, so the persisted row still carries no record of "+
+			"the created lists — which is why the error must carry them instead")
+}
+
 // TestBuildAudience_UnconfirmedCreateFailsClosed pins the UNCONFIRMED case: a 2xx with no list
 // id means HubSpot MAY have created the list. Treating that as success would point the
 // audience at nothing; treating it as a clean failure would invite a blind retry that

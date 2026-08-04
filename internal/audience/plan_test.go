@@ -4,6 +4,7 @@
 package audience
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -54,6 +55,31 @@ func TestBuildPlan_FirstTimeEventStillBuilds(t *testing.T) {
 	joined := strings.Join(p.Notes, "\n")
 	assert.Contains(t, joined, "No past editions resolved",
 		"the gap must be recorded, not silently omitted")
+}
+
+// TestBuildPlan_WarehouseErrorGetsTheOutageNote pins the note that distinguishes the two empty
+// results. "No past editions" and "could not read past editions" both leave PastEditions empty
+// but mean OPPOSITE things to an operator: the first is expected and final, the second means the
+// audience is narrower than intended and must be rebuilt. The log line rotates away; this note is
+// the durable record, so it has to say which one happened.
+func TestBuildPlan_WarehouseErrorGetsTheOutageNote(t *testing.T) {
+	p, err := BuildPlan(PlanInput{
+		EventName:       "KubeCon Korea 2026",
+		Country:         "South Korea",
+		PastEditionsErr: errors.New("snowflake is configured but unusable: bad private key"),
+	})
+	require.NoError(t, err, "a warehouse outage must still yield the country-only audience")
+
+	assert.Equal(t, []Group{GroupEducationEnrolled}, groupsOf(p))
+
+	joined := strings.Join(p.Notes, "\n")
+	assert.Contains(t, joined, "NARROWER THAN INTENDED",
+		"an operator must be told to rebuild; without this the audience looks final")
+	assert.Contains(t, joined, "bad private key",
+		"the underlying cause must survive into the record, not just the boot log")
+	assert.NotContains(t, joined, "Expected for a first-time event",
+		"a warehouse outage must NOT borrow the first-time-event note: that note tells the "+
+			"operator nothing is wrong, which is the exact wrong conclusion here")
 }
 
 // TestBuildPlan_UnmappedCountryFailsSoft pins the deliberate asymmetry: an unknown country

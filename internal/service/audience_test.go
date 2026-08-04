@@ -20,6 +20,11 @@ type fakeAudienceRepo struct {
 	seq     int
 	createE error
 	getE    error
+	// updateE, when set, makes every UpdateAudience fail. It models the compound failure the
+	// partial-build path has to survive: the build broke AND recording what it left behind
+	// broke, so the row cannot carry the created list ids and the caller's error is the only
+	// remaining channel for them.
+	updateE error
 	// staleAt, when it matches the expectedVersion passed to
 	// CreateAudienceForApprovedBrief, makes that call report ErrStaleApproval.
 	staleAt int64
@@ -73,6 +78,9 @@ func (r *fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*mod
 }
 
 func (r *fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
+	if r.updateE != nil {
+		return nil, r.updateE
+	}
 	cur, ok := r.items[a.ID]
 	if !ok {
 		return nil, domain.ErrNotFound

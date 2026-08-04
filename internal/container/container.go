@@ -314,11 +314,17 @@ func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg
 		if err != nil {
 			// Log and continue: a bad key is a config error, but failing boot over it would
 			// take down campaign dispatch for a read-only enrichment.
+			//
+			// The error is CARRIED, not just logged. Dropping it here (as this originally did)
+			// left a nil resolver, which ResolvePastEditions reports as (nil, nil) — the same
+			// answer as "no warehouse configured". A returning KubeCon would then lose its
+			// entire past-registrant audience while the build reported success and stored the
+			// benign first-time-event note. This boot log rotates away; the audience row does not.
 			slog.Warn("snowflake is configured but unusable; audiences will be built country-only",
 				"error", err)
-		} else {
-			snow = client
+			return dispatch.NewDegradedAudienceBuilder(repo, enc, err)
 		}
+		snow = client
 	} else {
 		slog.Info("snowflake not configured; audiences will be built from the event's country only")
 	}

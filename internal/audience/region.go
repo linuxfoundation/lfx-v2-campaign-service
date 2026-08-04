@@ -11,6 +11,8 @@ package audience
 import (
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Region is a marketing region used to widen an audience beyond the event's own country.
@@ -115,10 +117,21 @@ func DisplayName(country string) string {
 
 // titleCase upper-cases the first letter of each word — sufficient for the single-word and
 // simple two-word names not covered by displayNames.
+//
+// The first letter is decoded as a RUNE, not sliced as a byte. Every key in countryToRegion is
+// ASCII today, so byte-slicing happened to work — but the map's own comment invites adding
+// countries, and the first non-ASCII one (Türkiye, Côte d'Ivoire) would have been split
+// mid-rune into mojibake. That failure is silent and expensive: the result is used as an exact
+// IS_ANY_OF filter value, so it would build a list matching nobody with no error anywhere.
 func titleCase(s string) string {
 	words := strings.Fields(s)
 	for i, w := range words {
-		words[i] = strings.ToUpper(w[:1]) + w[1:]
+		r, size := utf8.DecodeRuneInString(w)
+		if r == utf8.RuneError && size <= 1 {
+			// Invalid UTF-8: leave it exactly as written rather than mangling it further.
+			continue
+		}
+		words[i] = string(unicode.ToUpper(r)) + w[size:]
 	}
 	return strings.Join(words, " ")
 }
