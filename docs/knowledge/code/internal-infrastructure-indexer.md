@@ -75,9 +75,24 @@ user-visible staleness, not a cache miss.
 
 Bounding the publish flush narrows the window but cannot close it: the process can die between
 the commit and the publish regardless. Closing it properly requires delivery to be recoverable
-independently of the write — a transactional outbox with a relay, or a periodic
-database-to-index reconciliation sweep. That is **not implemented**; it is tracked as a known
-gap rather than claimed as handled.
+independently of the write. That is **not implemented** — tracked as a known gap rather than
+claimed as handled.
+
+### What closing it would cost
+
+Recorded so the next person does not re-derive it:
+
+- **Transactional outbox** (the correct answer). Needs an `index_outbox` table written in the
+  SAME transaction as each resource write, plus a relay that publishes and marks rows done.
+  There is no transaction plumbing in the repositories today — every method is a bare statement
+  — so **14 write methods** across the brief/campaign/audience/job repos would need to accept
+  and join a `pgx.Tx`.
+- **Periodic reconciliation sweep** (cheaper, weaker). Needs a list-all method per repository
+  (none exists), a scan strategy that does not table-scan every tick, and a way to know what
+  the index currently holds.
+
+What IS handled: publishes are correct when they succeed, bounded so they cannot overrun
+shutdown, and serialized per resource so a late message cannot overwrite a newer one.
 
 What core NATS does buy is that indexing can never fail a write — the property the service
 actually depends on, since the database is the source of truth.
