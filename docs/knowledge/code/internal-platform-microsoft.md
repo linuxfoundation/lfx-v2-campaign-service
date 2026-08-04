@@ -209,5 +209,6 @@ group, AND ad ALL pre-existed (this run created nothing); creating any level mak
 
 MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PAUSED
 find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group + ad
-(`adgroup_ad.go`). The orchestrator dispatcher (register `microsoft-ads`, use the stored
-`connection-microsoft-ads` credential) follows in MS-3.
+(`adgroup_ad.go`). MS-3 registers `microsoft-ads` and wires the stored
+`connection-microsoft-ads` credential into the orchestrator dispatcher
+(`internal/dispatch/microsoft.go`).

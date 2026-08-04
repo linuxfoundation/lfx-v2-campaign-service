@@ -2,6 +2,20 @@
 
 ## 2026-08-03
 
+**Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the
+adapter but `registerDispatchers` had no `ProviderMicrosoftAds` entry, so a brief selecting
+microsoft recorded a job that finished "failed: no dispatcher registered" — the whole feature
+was unreachable in production. The exact-membership test now covers it, so dropping the wiring
+fails a test rather than shipping silently.
+
+A follow-up attempt to refine the failure classification was REVERTED: it branched on
+`AlreadyExisted`, but the client sets that only on the SUCCESS path (`adgroup_ad.go:363`,
+immediately before `return r, nil`), so on the error path it is always false — dead code that
+read like a real distinction. Separating "definitely rejected" from "genuinely ambiguous" needs
+the client to classify its own partials, which is its own change.
+
+## 2026-08-03
+
 **Update** — Modelled the paid-ads vs email channel distinction (LFXV2-2813). `model.ChannelKind`
 (`paid-ads` / `email`) with `Provider.Kind()` and `Provider.IsPaidAds()`. Previously the split
 existed only implicitly: `adPlatformProviders` was named for ad platforms but CONTAINED hubspot,
@@ -126,6 +140,22 @@ UNCONFIRMED clone → name-only partial (claim retained); post-clone send-list f
 `*postgres.AudienceRepo` arg (both container call sites updated); the container test's
 registered-provider set now includes hubspot. AI body content (LFXV2-2775) and audience building
 (LFXV2-2774) remain separate stories.
+
+## 2026-07-28
+
+**Update** — Added the Microsoft Advertising (Bing) PlatformDispatcher (MS-3, LFXV2-2805,
+PR for feat/LFXV2-2805-microsoft-dispatcher). `registerDispatchers` now wires
+`model.ProviderMicrosoftAds` → `dispatch.NewMicrosoftDispatcher`, so Microsoft campaigns
+dispatch upstream instead of recording "no dispatcher registered". The adapter resolves the
+OAuth2-app + developer-token + refresh-token connection, maps the brief + `microsoftConfig`
+(`budget` in ACCOUNT currency as the DAILY budget, optional `timeZone`) onto the client's
+`CreateCampaign`, which builds the full Campaign → AdGroup → Ad hierarchy (all PAUSED), and
+maps the result back to a `model.Campaign` (budget/type/config persisted via
+`applyCampaignConfig`, parity with the siblings). AccountID → `CustomerAccountId` (digits-only,
+trimmed); `customer_id` → optional `CustomerId`. `NameSuffix = brief.ID` for retry-safe
+idempotency. Non-nil result + error = UNCONFIRMED partial (claim retained); (nil, err) =
+nothing created (claim released). Removed Microsoft from the `logMissingDispatchers` gap list;
+updated the container test's registered-provider set to include it.
 
 ## 2026-07-24
 
