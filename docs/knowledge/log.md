@@ -2,6 +2,17 @@
 
 ## 2026-08-03
 
+**Update** — Routed ALL brief writes through the index outbox (LFXV2-2814, PR #60), not just the
+terminal archive. With create/replace/approve publishing directly after commit and only the
+archive co-committing, the two paths could not be ordered against each other: a replace could
+commit, stall before its publish, and land its update AFTER the archive had been replayed and
+retired — resurrecting a deleted brief in the index with no pending tombstone to repair it. The
+publisher's per-object lock cannot close this (process-local, orders only calls as they arrive).
+`CreateBrief`/`ReplaceBrief`/`Approve` now take an `IndexPayloadFunc` and co-commit like
+`ArchiveBrief` did, giving each brief one ordered sequence carried by the table — correct across
+replicas. Replace and Approve also switched to `RETURNING` so the indexed snapshot is exactly
+what committed, rather than a post-write `GetBrief` that could observe a later concurrent write.
+
 **Update** — Closed four more review findings on the index outbox (LFXV2-2814, PR #60), all
 raised against the previous fix. (1) `INDEXER_SERVICE_TOKEN` was never wired in the Helm chart,
 so the new empty-token guard would have idled the relay in every cluster — added as an

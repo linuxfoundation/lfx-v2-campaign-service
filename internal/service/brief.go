@@ -258,18 +258,35 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
 	}
-	created, err := briefRepo.CreateBrief(ctx, b)
+	// The index message co-commits with the row (see briefIndexPayload); the relay delivers it.
+	created, err := briefRepo.CreateBrief(ctx, b, briefIndexPayload(indexer.ActionCreated))
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
-	// NOTE: brief/campaign lists and revision history are owned by the Query Service
-	// (per the api-catalog). Wiring the Query Service indexer client — so create /
-	// replace / approve / archive and the orchestrator's campaign upserts emit index
-	// events — is a deliberate follow-up (LFXV2-2665), not part of this PR. This
-	// persistence layer is the source of truth the indexer consumes; publishing is
-	// best-effort and never fails the write (see publishIndex).
-	s.publishIndex(ctx, indexer.ActionCreated, indexer.ObjectTypeBrief, created.ID, created.ProjectID, deref(p.BearerToken), briefDoc(briefResult(created)), created.EventSlug)
 	return briefResult(created), nil
+}
+
+// briefIndexPayload builds the outbox payload for a brief write. It is passed INTO the repo so
+// the message is enqueued in the same transaction as the row, giving every brief mutation ONE
+// ordered sequence per resource.
+//
+// This is what makes archival safe. When some writes published directly after commit and only
+// the archive went through the outbox, the two paths could not be ordered against each other: a
+// replace could commit, stall before its publish, and land its update AFTER the archive had been
+// replayed and retired — resurrecting a deleted brief in the index. The publisher's per-object
+// lock could not prevent it, being process-local and only ordering calls as they arrive.
+//
+// NO bearer token is serialized. The outbox is JSONB retained for audit with no pruning, so
+// storing the caller's JWT would persist a live credential indefinitely; the relay stamps a
+// service credential at publish time instead.
+func briefIndexPayload(action string) domain.IndexPayloadFunc {
+	return func(b *model.CampaignBrief) ([]byte, error) {
+		return json.Marshal(indexer.NewTransaction(
+			action, indexer.ObjectTypeBrief,
+			b.ID, b.ProjectID, "",
+			briefDoc(briefResult(b)), b.EventSlug,
+		))
+	}
 }
 
 func (s *BriefService) GetBrief(ctx context.Context, p *briefs.GetBriefPayload) (*briefs.Brief, error) {
@@ -306,11 +323,10 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
 	}
-	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version)
+	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version, briefIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeBrief, updated.ID, updated.ProjectID, deref(p.BearerToken), briefDoc(briefResult(updated)), updated.EventSlug)
 	return briefResult(updated), nil
 }
 
@@ -323,11 +339,10 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if err != nil {
 		return nil, err
 	}
-	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version)
+	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version, briefIndexPayload(indexer.ActionUpdated))
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
-	s.publishIndex(ctx, indexer.ActionUpdated, indexer.ObjectTypeBrief, b.ID, b.ProjectID, deref(p.BearerToken), briefDoc(briefResult(b)), b.EventSlug)
 	return briefResult(b), nil
 }
 
@@ -343,25 +358,10 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// The index message is built INSIDE the archive transaction and co-committed to the
 	// outbox, so a dropped publish is recoverable by the relay. Archiving is terminal: without
 	// this, one lost message leaves the brief searchable forever.
-	b, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, func(archived *model.CampaignBrief) ([]byte, error) {
-		// NO bearer token in the stored payload. The outbox row is JSONB retained for audit
-		// with no pruning, so serializing the caller's JWT would persist a live credential
-		// indefinitely. The relay injects a service credential at PUBLISH time instead
-		// (the relay stamps the header from INDEXER_SERVICE_TOKEN).
-		return json.Marshal(indexer.NewTransaction(
-			indexer.ActionDeleted, indexer.ObjectTypeBrief,
-			archived.ID, archived.ProjectID, "",
-			briefDoc(briefResult(archived)), archived.EventSlug,
-		))
-	})
+	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, briefIndexPayload(indexer.ActionDeleted))
 	if aerr != nil {
 		return mapBriefErr(aerr)
 	}
-	// Archiving is a soft delete that every OTHER write path publishes; without this the
-	// archived brief keeps its stale pre-archive _source and goes on matching searches forever.
-	// Archiving is a SOFT delete, and the indexer's delete action is what removes the
-	// document from search — republishing it as an update would leave it findable.
-	s.publishIndex(ctx, indexer.ActionDeleted, indexer.ObjectTypeBrief, b.ID, b.ProjectID, deref(p.BearerToken), briefDoc(briefResult(b)), b.EventSlug)
 	return nil
 }
 

@@ -78,6 +78,15 @@ the commit and the publish regardless.
 
 ## The outbox closes it
 
+**EVERY brief mutation goes through the outbox** — create, replace, approve AND archive — not
+just the terminal archive. A direct post-commit publish cannot be ordered against an outbox
+replay: a replace could commit, stall before publishing, and land its update AFTER the archive
+had been replayed and its row retired, putting a deleted brief back in the index with no pending
+tombstone left to repair it. The publisher's per-object lock cannot prevent this — it is
+process-local and orders calls only as they arrive, which says nothing about a stalled replica.
+Routing every write through the table gives each brief ONE ordered sequence, which is also what
+makes the ordering correct ACROSS replicas.
+
 `index_outbox` (migration 000008) holds a fully-marshalled message written in the SAME
 transaction as its resource, so it commits if and only if the resource does. `indexer.Relay`
 drains it every 15s and at startup — the likeliest reason rows are pending is that this pod's

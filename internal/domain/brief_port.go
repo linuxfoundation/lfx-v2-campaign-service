@@ -19,25 +19,34 @@ type BriefReader interface {
 type BriefWriter interface {
 	// CreateBrief inserts a brief. Returns ErrConflict on the
 	// UNIQUE(project_id, event_slug) violation.
-	CreateBrief(ctx context.Context, b *model.CampaignBrief) (*model.CampaignBrief, error)
+	CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 	// ReplaceBrief replaces a brief's mutable fields, gating on expectedVersion.
-	ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64) (*model.CampaignBrief, error)
+	ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 	// Approve marks a brief approved, recording the actor. It is gated on
 	// expectedVersion (optimistic concurrency): approving a stale version returns
 	// ErrPreconditionFailed so a concurrent replace can't be approved by accident.
-	Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64) (*model.CampaignBrief, error)
+	Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 	// ArchiveBrief soft-archives a brief (status = archived) and RETURNS the archived row.
 	// Returning it (rather than just an error) is what lets the caller index the state that
 	// was actually committed: a concurrent ReplaceBrief/Approve can commit between a
 	// read-then-archive pair, so a separately-read snapshot would publish stale content and a
 	// version that never existed.
-	//
-	// indexPayload, when non-nil, builds the index message that is enqueued in the SAME
-	// transaction as the archive. Archiving is TERMINAL — there is no later write to repair the
-	// index — so a dropped post-commit publish would leave the brief searchable forever. The
-	// co-committed outbox row is what makes that recoverable.
-	ArchiveBrief(ctx context.Context, projectID, id string, indexPayload func(*model.CampaignBrief) ([]byte, error)) (*model.CampaignBrief, error)
+	ArchiveBrief(ctx context.Context, projectID, id string, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 }
+
+// IndexPayloadFunc builds the index message for a brief that has just been written. It is
+// invoked INSIDE the write transaction and its result is enqueued to the outbox alongside the
+// row, so the message co-commits with the change it describes.
+//
+// EVERY brief mutation takes one — not just the terminal archive. A direct post-commit publish
+// cannot be ordered against an outbox replay: a replace could commit, stall before publishing,
+// and land its update AFTER an archive was replayed and retired, resurrecting a deleted brief in
+// the index. Routing all writes through the outbox gives each row ONE ordered sequence, which is
+// also why this is safe across replicas — ordering comes from the table, not from any
+// process-local lock.
+//
+// A nil func means the caller does not want the write indexed; the write still commits.
+type IndexPayloadFunc func(*model.CampaignBrief) ([]byte, error)
 
 // BriefRepository is the full persistence port for briefs.
 type BriefRepository interface {
