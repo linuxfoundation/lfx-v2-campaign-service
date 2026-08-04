@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -349,18 +348,26 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// decoded wide-host rule (33 runes) at AddAds — the exact orphaning this check prevents.
 		// Conversely a short CJK host inflated by punycode could be false-rejected. idna ToUnicode
 		// decodes `xn--` back to CJK and is a no-op for a plain ASCII or already-percent-decoded
-		// host; on failure keep Hostname() so a malformed label still gets a length check.
+		// host. A decode FAILURE means the host is not a valid IDNA label, so reject it here
+		// rather than measuring the malformed A-label: a short-but-invalid `xn--` host would
+		// otherwise clear this cap and only fail at AddAds, orphaning the PAUSED campaign and ad
+		// group this whole block exists to prevent. Fail CLOSED, as with the parse failure above.
 		host := u.Hostname()
-		if uni, ierr := idna.Lookup.ToUnicode(host); ierr == nil && uni != "" {
-			host = uni
+		// An IPv6 literal is NOT an IDNA label — ToUnicode fails on it — so skip the decode
+		// entirely rather than fail closed, mirroring canonicalFinalURL's isIPv6 guard.
+		// validateAdURL still accepts IPv6 destinations, so rejecting one here would break a
+		// previously-valid URL with a misleading "not a valid IDNA label" error. Hostname()
+		// already strips the surrounding brackets, leaving the colons that identify it.
+		if !strings.Contains(host, ":") {
+			uni, ierr := idna.Lookup.ToUnicode(host)
+			if ierr != nil {
+				return nil, fmt.Errorf("microsoft-ads composed ad final URL host %q is not a valid IDNA label: %w", host, ierr)
+			}
+			if uni != "" {
+				host = uni
+			}
 		}
-		authority := host
-		// Lower-case the scheme before the default-port test: validateAdURL accepts any scheme
-		// casing and buildAdFinalURL preserves it, so a valid HTTPS://…:443 would otherwise
-		// miss the case-sensitive "https" match and wrongly count :443 against the host length.
-		if port := u.Port(); port != "" && !isDefaultPort(strings.ToLower(u.Scheme), port) {
-			authority = net.JoinHostPort(host, port)
-		}
+		authority := authorityForWidth(u, host)
 		limit := maxDisplayDomainRunes
 		if hasDoubleWidth(authority) {
 			limit = maxDisplayDomainRunesWide
