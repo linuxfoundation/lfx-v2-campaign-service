@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -439,11 +440,14 @@ func TestUpdateAdGroupAndAdStatus(t *testing.T) {
 	})
 
 	t.Run("mutates ad group then ad, stopping on the first failure", func(t *testing.T) {
+		var mu sync.Mutex
 		var paths []string
 		tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 		t.Cleanup(tokenSrv.Close)
 		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
 			paths = append(paths, r.URL.Path)
+			mu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		t.Cleanup(apiSrv.Close)
@@ -453,22 +457,28 @@ func TestUpdateAdGroupAndAdStatus(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected an error when the ad group mutate fails")
 		}
-		if len(paths) == 0 || !strings.HasSuffix(paths[0], "adGroups:mutate") {
-			t.Errorf("first call = %v, want an adGroups:mutate", paths)
+		mu.Lock()
+		gotPaths := append([]string(nil), paths...)
+		mu.Unlock()
+		if len(gotPaths) == 0 || !strings.HasSuffix(gotPaths[0], "adGroups:mutate") {
+			t.Errorf("first call = %v, want an adGroups:mutate", gotPaths)
 		}
-		for _, p := range paths {
+		for _, p := range gotPaths {
 			if strings.HasSuffix(p, "adGroupAds:mutate") {
-				t.Errorf("must not attempt the ad mutate after the ad group mutate failed, got %v", paths)
+				t.Errorf("must not attempt the ad mutate after the ad group mutate failed, got %v", gotPaths)
 			}
 		}
 	})
 
 	t.Run("happy path mutates both", func(t *testing.T) {
+		var mu sync.Mutex
 		var paths []string
 		tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 		t.Cleanup(tokenSrv.Close)
 		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
 			paths = append(paths, r.URL.Path)
+			mu.Unlock()
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"ok"}]}`)
 		}))
 		t.Cleanup(apiSrv.Close)
@@ -477,11 +487,14 @@ func TestUpdateAdGroupAndAdStatus(t *testing.T) {
 		if err := c.UpdateAdGroupAndAdStatus(context.Background(), "111", "222", StatusEnabled); err != nil {
 			t.Fatalf("UpdateAdGroupAndAdStatus: %v", err)
 		}
-		if len(paths) != 2 {
-			t.Fatalf("issued %d calls, want 2 (ad group then ad): %v", len(paths), paths)
+		mu.Lock()
+		gotPaths := append([]string(nil), paths...)
+		mu.Unlock()
+		if len(gotPaths) != 2 {
+			t.Fatalf("issued %d calls, want 2 (ad group then ad): %v", len(gotPaths), gotPaths)
 		}
-		if !strings.HasSuffix(paths[0], "adGroups:mutate") || !strings.HasSuffix(paths[1], "adGroupAds:mutate") {
-			t.Errorf("paths = %v, want [adGroups:mutate, adGroupAds:mutate]", paths)
+		if !strings.HasSuffix(gotPaths[0], "adGroups:mutate") || !strings.HasSuffix(gotPaths[1], "adGroupAds:mutate") {
+			t.Errorf("paths = %v, want [adGroups:mutate, adGroupAds:mutate]", gotPaths)
 		}
 	})
 }
