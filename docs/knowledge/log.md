@@ -8,10 +8,11 @@ microsoft recorded a job that finished "failed: no dispatcher registered" — th
 was unreachable in production. The exact-membership test now covers it, so dropping the wiring
 fails a test rather than shipping silently.
 
-Also refined the failure classification: any non-nil result was labelled UNCONFIRMED, including
-a failure against pre-existing objects where `AlreadyExisted` proves this run created NOTHING.
-Telling an operator to verify state that was never created wastes their time and blunts the
-signal on the cases that genuinely need it.
+A follow-up attempt to refine the failure classification was REVERTED: it branched on
+`AlreadyExisted`, but the client sets that only on the SUCCESS path (`adgroup_ad.go:363`,
+immediately before `return r, nil`), so on the error path it is always false — dead code that
+read like a real distinction. Separating "definitely rejected" from "genuinely ambiguous" needs
+the client to classify its own partials, which is its own change.
 
 ## 2026-08-03
 

@@ -156,16 +156,16 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("microsoft campaign creation failed before any upstream create: %w", cerr))
 		}
-		// A non-nil result means SOMETHING is upstream, but not every such failure is
-		// ambiguous. Label only the genuinely unknown ones UNCONFIRMED: telling an operator
-		// to "verify before retrying" for a definitely-rejected create sends them looking for
-		// state that was never created, and blunts the signal on the cases that need it.
+		// A non-nil result means the create got far enough to have produced upstream state
+		// (a campaign, or a campaign + ad group), so the outcome is UNCONFIRMED and the claim
+		// is RETAINED for reconcile rather than released.
 		//
-		// AlreadyExisted means this run created NOTHING (every level matched a pre-existing
-		// object), so a failure alongside it cannot have left a new partial upstream.
-		if result.AlreadyExisted {
-			return campaignFromMicrosoft(ctx, result, cfg), fmt.Errorf("microsoft campaign creation failed against pre-existing objects (nothing new was created): %w", cerr)
-		}
+		// This deliberately does NOT try to separate "definitely rejected" from "genuinely
+		// ambiguous". The client sets AlreadyExisted only on the SUCCESS path
+		// (adgroup_ad.go:363, immediately before `return r, nil`), so it is always false here
+		// — a check on it would be dead code that reads like a real distinction. Making that
+		// separation real needs the client to classify its own partials, which is its own
+		// change.
 		return campaignFromMicrosoft(ctx, result, cfg), fmt.Errorf("microsoft campaign creation UNCONFIRMED (a partial campaign may exist — verify before retrying): %w", cerr)
 	}
 	return campaignFromMicrosoft(ctx, result, cfg), nil
