@@ -176,11 +176,25 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		editions = nil
 	}
 
+	// A blank location means ResolvePastEventNames ran WITHOUT its location predicate, matching
+	// the event family alone. For a multi-city family ("Open Source Summit") that can resolve
+	// other cities' editions. It is recorded rather than refused: the resolved names are only
+	// ever used ANDed with the host country (group 5) or region (group 7), so a stray edition
+	// widens the audience to family alumni already in the target geography instead of reaching
+	// outside it — whereas refusing would discard a correct returning-event audience every time
+	// a brief omits `location`.
+	unnarrowed := strings.TrimSpace(details.Location) == "" && len(editions) > 0
+	if unnarrowed {
+		slog.WarnContext(ctx, "resolved past editions without a location predicate; they may span cities",
+			"brief_id", p.BriefID, "event", details.EventName, "editions", strings.Join(editions, ","))
+	}
+
 	planInput := audience.PlanInput{
-		PastEditionsErr: rerr,
-		EventName:       details.EventName,
-		Country:         details.Country,
-		PastEditions:    editions,
+		PastEditionsErr:    rerr,
+		EventName:          details.EventName,
+		Country:            details.Country,
+		PastEditions:       editions,
+		EditionsUnnarrowed: unnarrowed,
 	}
 	// Validate the plan BEFORE creating the row: a brief that cannot be planned must not leave
 	// a building row behind. The plan is rebuilt below with the row id as its BuildRef.

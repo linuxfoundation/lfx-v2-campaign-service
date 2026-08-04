@@ -90,6 +90,18 @@ type PlanInput struct {
 	// "this event has no history" versus "we could not read its history". The stored
 	// InclusionSummary is the durable record that outlives the logs, so it has to say which.
 	PastEditionsErr error
+	// EditionsUnnarrowed reports that the warehouse lookup ran WITHOUT a location predicate,
+	// because the brief carried no location. ResolvePastEventNames then matches the event family
+	// alone, so for a multi-city family ("Open Source Summit") the resolved editions can include
+	// other cities' events.
+	//
+	// This is recorded, not prevented. The resolved names only ever appear ANDed with the host
+	// country (group 5) or the host region (group 7), so a stray edition cannot email outside the
+	// target geography — it widens the audience to prior attendees of the family who are now in
+	// that geography, which is usually desirable and always geographically contained. Refusing to
+	// build would instead discard a correct returning-event audience whenever `location` is blank,
+	// which is the worse trade. The operator gets the facts and can set a location and rebuild.
+	EditionsUnnarrowed bool
 }
 
 // BuildPlan derives the inclusion lists for an event.
@@ -151,6 +163,18 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 			"No past editions resolved: groups 5 and 7 (past-edition registrants) were not built. "+
 				"Expected for a first-time event; otherwise verify the event term used to query Snowflake.")
 	default:
+		if in.EditionsUnnarrowed {
+			// The lookup had no location predicate, so for a multi-city family these editions may
+			// span cities. Record it against the RESOLVED NAMES (which the summary lists), so an
+			// operator can see exactly what was matched and judge it, rather than discovering the
+			// breadth only from the resulting list sizes.
+			p.Notes = append(p.Notes,
+				"The brief carried no location, so past editions were matched on the event family "+
+					"alone and may include OTHER CITIES' editions of it. Groups 5 and 7 remain scoped "+
+					"to the host country/region, so this widens the audience to prior attendees of the "+
+					"family who are in that geography rather than reaching outside it. Verify the "+
+					"editions listed above; set the brief's location and rebuild to narrow them.")
+		}
 		regFilter, ferr := EventRegisteredFilter(country, editions)
 		if ferr != nil {
 			return nil, ferr

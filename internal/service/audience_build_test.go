@@ -274,6 +274,42 @@ func TestBuildAudience_UnpersistedPartialReturnsTheListIDs(t *testing.T) {
 			"the created lists — which is why the error must carry them instead")
 }
 
+// TestBuildAudience_NoLocationRecordsTheBroadLookup pins that a brief with no location still
+// builds, and says in the durable record that its editions were matched broadly.
+//
+// ResolvePastEventNames omits its location predicate when locationTerm is blank, so a multi-city
+// family resolves other cities' editions. Refusing to build (or degrading to country-only) would
+// throw away a correct returning-event audience every time a brief omits an OPTIONAL field —
+// worse than the imprecision, because groups 5 and 7 AND the host country/region onto every
+// edition branch, so a stray edition widens the audience to family alumni already in the target
+// geography rather than reaching outside it.
+func TestBuildAudience_NoLocationRecordsTheBroadLookup(t *testing.T) {
+	b := &fakeBuilder{editions: []string{"Open Source Summit Milan 2025"}}
+	// No "location" key at all — the optional field a brief may legitimately omit.
+	s, _, _ := newBuildService(t, b, `{"eventName":"Open Source Summit 2026","country":"Japan","year":"2026"}`)
+
+	res, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.NoError(t, err, "a missing optional location must not fail the build")
+	assert.Equal(t, string(model.AudienceBuilt), res.Status)
+
+	require.NotNil(t, res.InclusionSummary)
+	assert.Contains(t, *res.InclusionSummary, "OTHER CITIES",
+		"the summary must disclose that editions were matched on the family alone")
+	assert.Contains(t, *res.InclusionSummary, "Open Source Summit Milan 2025",
+		"and must list the editions actually matched, so the breadth is auditable")
+
+	// A located brief must not carry the note, or it becomes noise on every audience.
+	b2 := &fakeBuilder{editions: []string{"Open Source Summit Tokyo 2025"}}
+	s2, _, _ := newBuildService(t, b2, `{"eventName":"Open Source Summit 2026","country":"Japan","location":"Tokyo","year":"2026"}`)
+	res2, err2 := s2.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.NoError(t, err2)
+	assert.NotContains(t, *res2.InclusionSummary, "OTHER CITIES")
+}
+
 // TestBuildAudience_UnpersistedSuccessReturnsTheListIDs pins the WORST version of the
 // unrecorded-lists problem: the build fully SUCCEEDED upstream and only the write failed.
 //

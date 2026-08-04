@@ -154,6 +154,23 @@ other three surfaced as a plain 500 reading like an ordinary transient error, in
 retry that duplicates a list HubSpot may already have created. `unconfirmedNote` now annotates
 the returned error for every ambiguous outcome, so the row state and the response agree.
 
+## A brief with no location resolves editions BROADLY — recorded, not refused
+
+`ResolvePastEventNames` omits its location predicate when `locationTerm` is blank, so the
+warehouse matches the event FAMILY alone and a multi-city family ("Open Source Summit") can
+resolve other cities' editions.
+
+This is disclosed in the summary rather than prevented, because the containment is structural:
+resolved names are only ever used ANDed with the host country (group 5) or the host region
+(group 7), so a stray Milan edition cannot email people in Italy — it widens the audience to
+prior attendees of the family who are *already in the target geography*. Refusing to build, or
+degrading to country-only, would instead discard a correct returning-event audience every time a
+brief omits an OPTIONAL field, which is the worse trade.
+
+`PlanInput.EditionsUnnarrowed` therefore adds a note listing the risk beside the resolved edition
+names, so an operator can audit the breadth and set a location and rebuild. A located brief does
+not carry the note — a caveat on every audience would stop being read.
+
 ## `titleCase` decodes runes, not bytes
 
 Country display names feed `IS_ANY_OF`, an EXACT match. Slicing the first BYTE would split a

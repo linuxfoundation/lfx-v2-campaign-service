@@ -82,6 +82,45 @@ func TestBuildPlan_WarehouseErrorGetsTheOutageNote(t *testing.T) {
 			"operator nothing is wrong, which is the exact wrong conclusion here")
 }
 
+// TestBuildPlan_UnnarrowedEditionsAreRecorded pins the note for a location-free warehouse lookup.
+//
+// Without a location predicate the warehouse matches the event FAMILY alone, so a multi-city
+// family can resolve other cities' editions. The audience is still built — groups 5 and 7 AND the
+// host country/region onto every edition branch, so a stray edition cannot reach outside the
+// target geography; it widens to family alumni already inside it. That is a judgement call an
+// operator must be able to SEE, so it goes in the durable summary next to the resolved names
+// rather than being inferred later from list sizes.
+func TestBuildPlan_UnnarrowedEditionsAreRecorded(t *testing.T) {
+	p, err := BuildPlan(PlanInput{
+		EventName:          "Open Source Summit 2026",
+		Country:            "Japan",
+		PastEditions:       []string{"Open Source Summit Milan 2025", "Open Source Summit Tokyo 2025"},
+		EditionsUnnarrowed: true,
+	})
+	require.NoError(t, err, "a missing location must not discard a valid returning-event audience")
+
+	// The groups still build: the note is transparency, not a downgrade.
+	assert.Equal(t, []Group{GroupEducationEnrolled, GroupEventRegistered, GroupRegionRegistrants}, groupsOf(p))
+
+	joined := strings.Join(p.Notes, "\n")
+	assert.Contains(t, joined, "no location",
+		"the operator must be told WHY the editions were matched broadly")
+	assert.Contains(t, joined, "OTHER CITIES",
+		"the actual risk — cross-city editions — must be named, not implied")
+	assert.Contains(t, joined, "set the brief's location and rebuild",
+		"the note must say how to narrow it")
+
+	// A located brief must NOT carry the note; otherwise it is noise on every audience and stops
+	// being read at all.
+	located, lerr := BuildPlan(PlanInput{
+		EventName:    "Open Source Summit Tokyo 2026",
+		Country:      "Japan",
+		PastEditions: []string{"Open Source Summit Tokyo 2025"},
+	})
+	require.NoError(t, lerr)
+	assert.NotContains(t, strings.Join(located.Notes, "\n"), "OTHER CITIES")
+}
+
 // TestBuildPlan_UnmappedCountryFailsSoft pins the deliberate asymmetry: an unknown country
 // costs REACH (no region-wide list) but not correctness, because the country-scoped lists are
 // still valid. Failing the whole build would be worse than building a narrower audience.

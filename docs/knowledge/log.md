@@ -21,6 +21,17 @@ stays `building` with an EMPTY `inclusion_summary` while real lists exist upstre
 unreconcilable state the comment says is fixed. The ids now travel in the returned error, so the
 500 body carries them when persistence cannot.
 
+**Update** — A brief with no location now records that its past editions were matched BROADLY
+(PR #61 review). `ResolvePastEventNames` drops its location predicate when `locationTerm` is
+blank, so a multi-city family resolves other cities' editions.
+
+Recorded rather than refused, deliberately. The resolved names are only ever used ANDed with the
+host country (group 5) or region (group 7), so a stray edition cannot reach outside the target
+geography — it widens the audience to family alumni already inside it. Degrading to country-only
+(the reviewer's suggestion) would discard a correct returning-event audience whenever a brief
+omits an OPTIONAL field, which is worse than the imprecision. `PlanInput.EditionsUnnarrowed` adds
+a note beside the resolved names so the breadth is auditable and fixable by setting a location.
+
 **Fix** — The SUCCESS-path persist failure dropped the created list ids (PR #61 review). The
 partial path was fixed to carry them, but a failed `UpdateAudience` after a fully successful
 build still returned `mapAudienceErr`, which has no case for a database error — a pgx failure
