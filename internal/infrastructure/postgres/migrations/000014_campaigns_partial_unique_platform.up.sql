@@ -1,0 +1,64 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Free a deleted campaign's (brief_id, platform) slot, so a brief can be
+-- re-dispatched to a platform after its campaign is deleted.
+--
+-- The problem. 000002 declared `UNIQUE (brief_id, platform)` on campaigns. That
+-- constraint is load-bearing: ClaimCampaignDispatch relies on it to arbitrate a
+-- single-winner dispatch claim across replicas (INSERT ... ON CONFLICT DO
+-- NOTHING), which is what stops a retry from creating a SECOND paid campaign
+-- upstream. But because it covers EVERY row regardless of status, a campaign row
+-- permanently occupies that brief's slot for that platform. A campaign created
+-- with the wrong budget, or one whose upstream create failed ambiguously, blocks
+-- that (brief, platform) pair forever with no supported recovery path.
+--
+-- The fix. Convert the full constraint into a PARTIAL unique index that excludes
+-- soft-deleted rows, so deleting a campaign frees its slot while two LIVE
+-- campaigns for the same pair are still rejected. This mirrors exactly what
+-- 000003 did for campaign_briefs' (project_id, event_slug) on archive — same
+-- problem, same shape, same trick — and it keeps ClaimCampaignDispatch working
+-- unchanged: `ON CONFLICT (brief_id, platform) WHERE status <> 'deleted'` infers
+-- this index (the repo's conflict target is updated to carry the same predicate).
+--
+-- Soft delete, not hard delete, because the row carries platform_campaign_id --
+-- the only local record of a campaign that may still exist (and still be
+-- spending) on the ad platform. Deleting the row would destroy the audit trail
+-- and the sole pointer needed to reconcile it. See the service layer: this
+-- service NEVER deletes upstream.
+--
+-- Ordering: the new index is created BEFORE the old constraint is dropped. Under
+-- a rolling deploy old and new pods share this database, and for the window
+-- between the two statements BOTH are enforced -- which is safe, because the
+-- partial index is strictly weaker than the constraint it replaces (it forbids a
+-- subset of what the constraint forbids), so nothing an old pod does can violate
+-- the new index without also violating the old constraint. Dropping first would
+-- open a window with NO uniqueness at all, during which two concurrent claims
+-- could both win and double-create a paid campaign upstream.
+--
+-- Separate migration (not an edit to 000002/000003): golang-migrate records
+-- applied versions and never re-runs them, so amending an applied migration would
+-- silently skip databases that already ran it.
+--
+-- CONCURRENTLY: a plain CREATE INDEX takes a lock that blocks INSERT/UPDATE/DELETE
+-- on campaigns for the whole build. Migrations run during a ROLLING startup, so
+-- other replicas are still claiming and finalizing dispatches at that moment -- a
+-- blocking build could stall a claim mid-flight and manufacture exactly the
+-- ambiguous outcomes the dispatch path works to avoid.
+--
+-- This is safe with our runner: the pgx/v5 golang-migrate driver executes each
+-- migration with a bare ExecContext and does NOT wrap it in a transaction, and
+-- CONCURRENTLY cannot run inside one. Do NOT add other statements to this file --
+-- a multi-statement migration would be batched and reintroduce the transaction
+-- constraint. That is why dropping the old constraint is a SEPARATE migration
+-- (000015) rather than a second statement here; it also gives the required
+-- ordering for free, since golang-migrate applies versions in order.
+--
+-- A failed CONCURRENTLY build does NOT roll back: it leaves the index marked
+-- INVALID, and the IF NOT EXISTS below would then see that name and skip the
+-- rebuild while reporting success. 000015 refuses to drop the old constraint
+-- unless this index is present AND valid, so a failed build here can never leave
+-- the table with no working uniqueness -- the deploy fails loudly instead.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_campaigns_brief_platform_live
+    ON campaigns (brief_id, platform)
+    WHERE status <> 'deleted';

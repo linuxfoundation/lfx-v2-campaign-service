@@ -69,6 +69,13 @@ const (
 	CampaignStatusPending         = "pending"
 	CampaignStatusCreated         = "created"
 	CampaignStatusCreatedDegraded = "created_degraded"
+	// CampaignStatusDeleted is the terminal SOFT-DELETE state. The row is retained
+	// (it holds platform_campaign_id, the only local pointer to a campaign that may
+	// still exist and still be spending upstream) but is invisible to reads and
+	// excluded from the (brief_id, platform) partial unique index, which frees the
+	// slot for a re-dispatch. Deleting never touches the ad platform — see the
+	// service layer.
+	CampaignStatusDeleted = "deleted"
 )
 
 // CampaignStatusToggleable reports whether a campaign in the given status may have its run

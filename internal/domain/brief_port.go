@@ -70,6 +70,26 @@ type CampaignWriter interface {
 	UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error)
 	// ReplaceCampaign replaces a campaign's mutable fields, gating on version.
 	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64) (*model.Campaign, error)
+	// DeleteCampaign SOFT-deletes a campaign (status = 'deleted'), gating on
+	// expectedVersion. The row is retained: it holds platform_campaign_id, the only
+	// local record of a campaign that may still exist (and still be spending) on the
+	// ad platform, so hard-deleting would destroy both the audit trail and the
+	// pointer needed to reconcile it. Deleting is LOCAL ONLY — it never contacts the
+	// ad platform.
+	//
+	// Its purpose is to free the (brief_id, platform) slot: the partial unique index
+	// added in 000014 excludes deleted rows, so a brief whose campaign was created
+	// with the wrong budget (or whose upstream create failed ambiguously) can be
+	// re-dispatched to that platform instead of being blocked forever.
+	//
+	// Returns ErrNotFound if absent or already deleted, ErrConflict if the campaign
+	// is mid-dispatch (status 'pending' — an active claim owned by an in-flight
+	// dispatch, whose deletion could let a concurrent claim double-create upstream),
+	// and ErrPreconditionFailed on a version mismatch. The guards are evaluated under
+	// a SELECT ... FOR UPDATE row lock, which is required to close the TOCTOU race
+	// against a concurrent claim/finalize under READ COMMITTED (see the
+	// implementation for the full isolation reasoning).
+	DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64) error
 }
 
 // CampaignRepository is the full persistence port for campaigns.
