@@ -1135,14 +1135,25 @@ func TestUpdateCampaignAndChildrenStatus_AcceptsEmptyPartialErrorForms(t *testin
 // so a 429 must be absorbed by the client's bounded retry. Passing idempotent=false turned routine
 // Microsoft throttling into an Unconfirmed toggle the dispatcher then had to verify before
 // retrying — a strictly worse outcome than one retried request.
+// The counter is mutex-guarded like statusCascadeRecorder above: it is written on the httptest
+// server's goroutines and read by the assertion, and neither the client returning nor
+// t.Cleanup(srv.Close) establishes happens-before with that read. The requests happen to be
+// serialized today, so this is a latent race rather than a live one — which is exactly the kind
+// that surfaces as a -race flake after an unrelated change.
 func TestUpdateCampaignAndChildrenStatus_RetriesThrottledStatusPut(t *testing.T) {
-	var campaignAttempts int
+	var (
+		mu               sync.Mutex
+		campaignAttempts int
+	)
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
 		entity := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 		w.Header().Set("Content-Type", "application/json")
 		if entity == "Campaigns" {
+			mu.Lock()
 			campaignAttempts++
-			if campaignAttempts == 1 {
+			first := campaignAttempts == 1
+			mu.Unlock()
+			if first {
 				w.Header().Set("Retry-After", "0")
 				w.WriteHeader(http.StatusTooManyRequests)
 				return
@@ -1153,8 +1164,11 @@ func TestUpdateCampaignAndChildrenStatus_RetriesThrottledStatusPut(t *testing.T)
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
 		t.Fatalf("a throttled status PUT must be retried, not surfaced: %v", err)
 	}
-	if campaignAttempts < 2 {
-		t.Errorf("campaign status PUT attempts = %d, want >= 2 (the 429 must be retried)", campaignAttempts)
+	mu.Lock()
+	attempts := campaignAttempts
+	mu.Unlock()
+	if attempts < 2 {
+		t.Errorf("campaign status PUT attempts = %d, want >= 2 (the 429 must be retried)", attempts)
 	}
 }
 
