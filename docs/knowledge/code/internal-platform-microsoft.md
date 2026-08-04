@@ -211,4 +211,23 @@ MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PA
 find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group + ad
 (`adgroup_ad.go`). MS-3 registers `microsoft-ads` and wires the stored
 `connection-microsoft-ads` credential into the orchestrator dispatcher
-(`internal/dispatch/microsoft.go`).
+(`internal/dispatch/microsoft.go`). The **status toggle** (LFXV2-2810) adds
+`UpdateCampaignAndChildrenStatus` on top: a three-level cascade whose ordering, child-id guard and
+outcome classification are described under Status toggle below.
+
+## Status toggle
+
+`UpdateCampaignAndChildrenStatus` cascades a status across campaign → ad group → ad. The dispatch
+concept covers the ordering and child-id rules; two details belong to this layer:
+
+- **The status PUT is IDEMPOTENT, so a 429 IS retried.** Re-applying `Active`/`Paused` converges on
+  the same state and cannot double-commit a paid resource, unlike the creates — which is exactly why
+  retry eligibility is an explicit parameter here rather than derived from the HTTP method. Passing
+  it as non-idempotent turned routine throttling into an `Unconfirmed` toggle the dispatcher then had
+  to verify before retrying. Matches the sibling reddit status setter.
+- **A DECODABLE success body is not an ANSWERED one.** `{"PartialErrors": null}` is Microsoft
+  affirming no entity failed; `{}` or a top-level `null` never spoke to the question, yet both
+  unmarshal cleanly and leave the field zero. `updateStatusResponse` therefore tracks the field's
+  PRESENCE separately and reports absence as unconfirmed — otherwise a proxy error page that happens
+  to parse would let the service persist a status Microsoft never confirmed. The valid empty forms
+  (`null`, `[]`) are still accepted.

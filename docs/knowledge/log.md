@@ -1,5 +1,28 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Fixed two status-toggle defects and the concepts that still denied the feature existed
+(LFXV2-2810, PR #63). (1) `putStatus` passed `idempotent=false`, so a throttled status PUT was not
+retried and surfaced as `Unconfirmed`. Setting a desired status converges on re-application and
+cannot double-commit a paid resource — the risk that makes creates non-retryable does not apply —
+so ordinary Microsoft rate limits were becoming avoidable toggle failures the dispatcher then had
+to verify before retrying. Now idempotent, matching the reddit status setter. (2) A syntactically
+valid body that OMITS `PartialErrors` (`{}`, a top-level `null`, or any unrelated field) unmarshalled
+without error and left the field zero, which `partialErrorsHaveAny` read as "no rejection" — so a
+proxy error page that happens to parse let the service persist a status Microsoft never confirmed.
+`updateStatusResponse` now tracks the field's PRESENCE separately via a custom `UnmarshalJSON` and
+reports absence as unconfirmed, while still accepting `null`/`[]` as the valid ways of saying no
+entity failed. Both fixes were verified by reverting them against the new tests: the omitted-field
+cases and the 429-then-success case each fail on the old code.
+
+The concepts were the third finding and the most misleading: `internal-dispatch.md` still said
+Microsoft's "status-TOGGLE capability lands separately" and `internal-platform-microsoft.md` ended
+the package scope at creation/dispatcher wiring, so both documented the feature as absent while it
+shipped. They now carry the cascade direction (pause gates the parent first, activate works upward),
+the child-id guard (an `adId` with no `adGroupId` is refused, an ad group with no ad is allowed), the
+per-parent scoping of each child PUT, and the retry/presence rules above.
+
 ## 2026-08-03
 
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the

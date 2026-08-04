@@ -1082,6 +1082,82 @@ func TestUpdateCampaignAndChildrenStatus_UndecodableBodyIsUnconfirmed(t *testing
 	}
 }
 
+// TestUpdateCampaignAndChildrenStatus_OmittedPartialErrorsIsUnconfirmed pins the gap between a
+// DECODABLE body and an ANSWERED one.
+//
+// `{}` and a top-level `null` are valid JSON and unmarshal without error, leaving PartialErrors
+// zero — which reads identically to Microsoft affirming "no entity failed". Before the presence
+// check, both reported SUCCESS and the service persisted a status Microsoft never confirmed. The
+// distinction matters because these are exactly what a proxy error page or a truncated response
+// looks like after it parses.
+func TestUpdateCampaignAndChildrenStatus_OmittedPartialErrorsIsUnconfirmed(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty object":    `{}`,
+		"top-level null":  `null`,
+		"unrelated field": `{"CampaignIds":[321]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &statusCascadeRecorder{}
+			c := newStatusCascadeClient(t, rec, map[string]string{"Campaigns": body})
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+			if err == nil {
+				t.Fatal("a body that never reported PartialErrors must not read as success")
+			}
+			if !IsOutcomeUnconfirmed(err) {
+				t.Errorf("an unanswered PartialErrors leaves the outcome AMBIGUOUS, want Unconfirmed, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_AcceptsEmptyPartialErrorForms is the other half of the
+// presence check: `null` and `[]` ARE Microsoft answering "no per-entity failures", so treating
+// absence as unconfirmed must not also reject the valid empty forms.
+func TestUpdateCampaignAndChildrenStatus_AcceptsEmptyPartialErrorForms(t *testing.T) {
+	for name, body := range map[string]string{
+		"null":         `{"PartialErrors":null}`,
+		"empty array":  `{"PartialErrors":[]}`,
+		"with ids too": `{"CampaignIds":[321],"PartialErrors":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &statusCascadeRecorder{}
+			c := newStatusCascadeClient(t, rec, map[string]string{"Campaigns": body})
+			if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
+				t.Fatalf("an explicitly empty PartialErrors means no failure, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_RetriesThrottledStatusPut pins the status PUT as IDEMPOTENT.
+//
+// Re-applying Active/Paused converges on the same state and cannot double-commit a paid resource,
+// so a 429 must be absorbed by the client's bounded retry. Passing idempotent=false turned routine
+// Microsoft throttling into an Unconfirmed toggle the dispatcher then had to verify before
+// retrying — a strictly worse outcome than one retried request.
+func TestUpdateCampaignAndChildrenStatus_RetriesThrottledStatusPut(t *testing.T) {
+	var campaignAttempts int
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		entity := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		w.Header().Set("Content-Type", "application/json")
+		if entity == "Campaigns" {
+			campaignAttempts++
+			if campaignAttempts == 1 {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
+		t.Fatalf("a throttled status PUT must be retried, not surfaced: %v", err)
+	}
+	if campaignAttempts < 2 {
+		t.Errorf("campaign status PUT attempts = %d, want >= 2 (the 429 must be retried)", campaignAttempts)
+	}
+}
+
 // TestUpdateCampaignAndChildrenStatus_PauseWithAdGroupOnly covers the one asymmetric pause
 // shape that IS allowed: an ad group with no ad. The ad group is addressable (its PUT is
 // scoped by CampaignId), so it must be paused and the ad step simply skipped — and the

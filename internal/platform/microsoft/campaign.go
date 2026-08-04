@@ -874,8 +874,41 @@ type msAdStatus struct {
 // updateStatusResponse is the (subset of the) 200 body every status PUT returns. Microsoft
 // reports a per-entity failure as HTTP 200 with a populated PartialErrors — so a naive
 // err == nil check would silently report success for a REJECTED status change.
+//
+// The field's PRESENCE is tracked separately from its value, because absence and emptiness mean
+// different things here: `{"PartialErrors": null}` is Microsoft affirming no entity failed, while
+// `{}` or a top-level `null` is a body that never spoke to the question. Both leave PartialErrors
+// zero, so without sawPartialErrors an unrecognisable success body reports success and the service
+// persists a status Microsoft never confirmed.
 type updateStatusResponse struct {
-	PartialErrors boundedErrorItems `json:"PartialErrors"`
+	PartialErrors    boundedErrorItems `json:"PartialErrors"`
+	sawPartialErrors bool
+}
+
+// UnmarshalJSON records whether PartialErrors was present, then decodes it normally.
+//
+// A top-level `null` is delivered to UnmarshalJSON as the literal "null" and must leave
+// sawPartialErrors false: it carries no field at all. Decoding into an alias type avoids
+// recursing back into this method.
+func (r *updateStatusResponse) UnmarshalJSON(data []byte) error {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	if _, ok := probe["PartialErrors"]; !ok {
+		// Leaves sawPartialErrors false; putStatus turns that into an unconfirmed outcome.
+		return nil
+	}
+	type alias updateStatusResponse
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	r.PartialErrors = decoded.PartialErrors
+	// `null` and `[]` are Microsoft's valid ways of saying "no per-entity failures", so both
+	// count as the field having been ANSWERED.
+	r.sawPartialErrors = true
+	return nil
 }
 
 // IsOutcomeUnconfirmed reports whether err leaves the mutation's outcome AMBIGUOUS —
@@ -911,8 +944,16 @@ func (e *partialCascadeError) Unconfirmed() bool { return true }
 
 // putStatus issues one status-only PUT and folds Microsoft's 200-with-PartialErrors contract
 // into an ordinary error, so callers can't mistake a rejected update for a success.
+//
+// The PUT is passed as IDEMPOTENT, so a 429 is retried under doRequest's bounded backoff. This
+// request only SETS a desired status — re-applying Active/Paused converges on the same state, and
+// unlike a create it cannot double-commit a paid resource — so the double-write risk that makes
+// creates non-retryable does not exist here. Passing false instead turned ordinary Microsoft
+// throttling into an Unconfirmed toggle that the dispatcher then had to verify before retrying,
+// which is a strictly worse outcome than letting the client absorb the 429. Matches the sibling
+// Reddit status setter (internal/platform/reddit/client.go, updateEntityStatus).
 func (c *Client) putStatus(ctx context.Context, path string, req any, entity string) error {
-	body, err := c.doRequest(ctx, http.MethodPut, path, req, false)
+	body, err := c.doRequest(ctx, http.MethodPut, path, req, true)
 	if err != nil {
 		return err
 	}
@@ -922,6 +963,14 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 		// report success. transportError reports Unconfirmed, matching the create path's
 		// treatment of an undecodable success body.
 		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: %w", entity, uerr)}
+	}
+	// A syntactically valid body that OMITS PartialErrors (`{}`, or a top-level `null`) decodes
+	// without error and leaves the field zero, which partialErrorsHaveAny reads as "no rejection".
+	// That would report success for a status Microsoft never confirmed. The field's ABSENCE is
+	// therefore treated as an unconfirmed outcome; its valid empty forms (`null`, `[]`) are still
+	// accepted, since those are how Microsoft says "no per-entity failures".
+	if !resp.sawPartialErrors {
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: response omitted PartialErrors", entity)}
 	}
 	if partialErrorsHaveAny(resp.PartialErrors) {
 		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors))

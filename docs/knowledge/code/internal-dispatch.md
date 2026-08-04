@@ -163,8 +163,25 @@ Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE. Wh
 ad groups/ads/keywords, this must grow BOTH a cascade and a real child-id-based activate guard,
 matching the reddit shape.
 
-X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
-separately.
+**Microsoft Ads** now implements the toggle as well (`UpdateCampaignAndChildrenStatus`). It is a
+full three-level cascade — campaign, ad group, ad — ordered by DIRECTION, like reddit's:
+
+- **PAUSE gates the parent FIRST** so delivery stops immediately, even if a child call then fails.
+  A failure after the campaign flipped is a PARTIAL apply, reported as `Unconfirmed` rather than a
+  plain error, because the parent change did land and a blind retry would misread the state.
+- **ACTIVATE works upward, children first**, so the campaign is only un-gated once its children are
+  already serving — the reverse would briefly serve nothing under a live campaign.
+- **Unknown children are SKIPPED, not guessed.** An ad can only be addressed when its parent ad-group
+  id is also known, so a persisted `adId` with no `adGroupId` is refused rather than sent with an
+  empty `AdGroupId` (which would address a different entity entirely). An ad group with no ad is the
+  one asymmetric shape that IS allowed: it is addressable via its `CampaignId`.
+- **Each child PUT is scoped to its OWN parent** — the ad group to the campaign, the ad to the AD
+  GROUP. Passing the campaign id as `AdGroupId` would silently toggle the wrong thing.
+- **Outcome classification** folds Microsoft's 200-with-`PartialErrors` contract into an error, and
+  treats an ABSENT `PartialErrors` (a `{}` or top-level `null` body) as unconfirmed rather than
+  success — see the microsoft concept for why decodable is not the same as answered.
+
+X/Twitter has a creation dispatcher; its status-TOGGLE capability lands separately.
 
 ## Channel kinds: paid ads vs email
 
