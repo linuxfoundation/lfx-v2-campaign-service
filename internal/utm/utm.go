@@ -151,6 +151,27 @@ func Apply(rawURL string, p Params, content string) string {
 // templateToken matches a HubSpot personalization token: {{contact.firstname}}, {{ event.slug }}.
 var templateToken = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 
+// schemeOf returns the leading "scheme://" of a url, or "" if there is none.
+func schemeOf(u string) string {
+	if i := strings.Index(u, "://"); i >= 0 {
+		return u[:i+3]
+	}
+	return ""
+}
+
+// sameExceptSchemeCase reports whether two urls are identical once the SCHEME is compared
+// case-insensitively.
+//
+// url.Parse lower-cases the scheme, so a template written "HTTPS://host/{{contact.id}}" produces
+// a tagged url whose scheme no longer matches the original byte-for-byte. A plain == then fails,
+// the path restore is skipped, and the token ships as %7B%7Bcontact.id%7D%7D — a link HubSpot
+// never expands. Schemes are case-insensitive per RFC 3986 §3.1; the rest of the url is not, so
+// only this segment is folded.
+func sameExceptSchemeCase(a, b string) bool {
+	as, bs := schemeOf(a), schemeOf(b)
+	return strings.EqualFold(as, bs) && a[len(as):] == b[len(bs):]
+}
+
 // restoreTemplateTokens undoes url.URL's percent-encoding of personalization tokens IN THE PATH.
 //
 // HubSpot substitutes {{...}} at SEND time, and URL.String() re-escapes the path, so a token
@@ -192,10 +213,13 @@ func restoreTemplateTokens(tagged, original string) string {
 	// would then never match, silently skipping the restore.
 	taggedPlain, terr := url.PathUnescape(taggedPath)
 	origPlain, oerr := url.PathUnescape(origPath)
-	if terr != nil || oerr != nil || taggedPlain != origPlain {
+	if terr != nil || oerr != nil || !sameExceptSchemeCase(taggedPlain, origPlain) {
 		return tagged
 	}
-	out := origPath
+	// Splice the TAGGED scheme, not the original: url.Parse normalized it, and re-introducing
+	// "HTTPS://" here would undo that normalization for no benefit. Only the path is being
+	// recovered — everything URL.String() legitimately canonicalized stays canonical.
+	out := schemeOf(taggedPath) + origPath[len(schemeOf(origPath)):]
 	if hasQuery {
 		out += "?" + taggedQuery
 	}

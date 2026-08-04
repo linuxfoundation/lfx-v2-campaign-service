@@ -2,6 +2,14 @@
 
 ## 2026-08-03
 
+**Update** — Fixed a scheme-case bug in email UTM tagging (LFXV2-2775, PR #62). A template URL
+written with a non-lower-case scheme (`HTTPS://lf.dev/e/{{contact.id}}`) lost its personalization
+tokens: `url.Parse` normalizes the scheme, so the tagged URL no longer matched the original
+byte-for-byte, `restoreTemplateTokens` skipped the path splice, and the link shipped as
+`%7B%7Bcontact.id%7D%7D` — which HubSpot does not expand, so every recipient would have received
+a dead link. The gate now compares with `sameExceptSchemeCase`, folding only the scheme (RFC 3986
+§3.1); host and path case remain significant. The spliced result keeps the normalized scheme.
+
 **Update** — Five UTM fixes (LFXV2-2775, PR #62 review):
 
 - **Never-retag was defeatable.** `url.Values.Get` returns only the FIRST value, so

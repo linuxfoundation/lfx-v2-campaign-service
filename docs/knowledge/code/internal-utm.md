@@ -51,6 +51,11 @@ invisible.
 - **Path tokens are restored by splicing the ORIGINAL path back**, not by replacing occurrences.
   `URL.String()` encodes an already-encoded literal and a live token identically, so a
   replace-by-value restore matched the wrong needle and swapped which occurrence was live.
+  The splice is gated on the two paths being equal, and that comparison folds the SCHEME
+  (`sameExceptSchemeCase`): `url.Parse` lower-cases it, so a template written `HTTPS://…`
+  otherwise failed the check, skipped the restore, and shipped `%7B%7Bcontact.id%7D%7D` — which
+  HubSpot never expands. Only the scheme is folded; host and path case stay significant. The
+  spliced result keeps the NORMALIZED scheme — the restore recovers the path, not the casing.
 - **Never mangle.** An unparseable URL, or HTML that fails to parse or render, is returned
   UNCHANGED. A broken link in a sent email is far worse than an untagged one.
 - **`ParseFragment`, not `Parse`.** Email bodies are fragments; `Parse` would wrap them in a

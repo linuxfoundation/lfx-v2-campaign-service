@@ -328,3 +328,49 @@ func TestApply_PathTokensSurviveFragments(t *testing.T) {
 	got := Apply("https://events.lfx.dev/r#agenda", testParams(), "")
 	assert.True(t, strings.HasSuffix(got, "#agenda"))
 }
+
+// TestApply_UppercaseSchemePreservesTokens covers a template written with a non-lower-case
+// scheme. url.Parse normalizes the scheme, so the tagged url no longer matches the original
+// byte-for-byte; a strict comparison skipped the path restore and shipped the token as
+// %7B%7Bcontact.id%7D%7D — which HubSpot does not expand, so every recipient gets a dead link.
+//
+// The scheme is also expected to come back NORMALIZED: only the token restore is at stake here,
+// and re-introducing "HTTPS://" would undo a canonicalization that is otherwise correct.
+func TestApply_UppercaseSchemePreservesTokens(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{
+			name: "uppercase scheme, no query",
+			in:   "HTTPS://lf.dev/e/{{contact.id}}",
+			want: "https://lf.dev/e/{{contact.id}}?utm_source=s&utm_medium=m&utm_campaign=c",
+		},
+		{
+			name: "mixed-case scheme with an existing query",
+			in:   "Https://lf.dev/e/{{contact.id}}?x=1",
+			want: "https://lf.dev/e/{{contact.id}}?x=1&utm_source=s&utm_medium=m&utm_campaign=c",
+		},
+		{
+			name: "mixed-case scheme with a fragment",
+			in:   "HttpS://lf.dev/e/{{contact.id}}#agenda",
+			want: "https://lf.dev/e/{{contact.id}}?utm_source=s&utm_medium=m&utm_campaign=c#agenda",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Apply(tc.in, Params{Source: "s", Medium: "m", Campaign: "c"}, "")
+			assert.Equal(t, tc.want, got)
+			assert.NotContains(t, got, "%7B", "the token must not ship percent-encoded")
+		})
+	}
+}
+
+// TestSameExceptSchemeCase_OnlyFoldsTheScheme guards the narrow scope of the fold. Host and path
+// case are meaningful (a path is case-sensitive, and a differing host is a different link), so
+// only the scheme segment may be compared case-insensitively.
+func TestSameExceptSchemeCase_OnlyFoldsTheScheme(t *testing.T) {
+	assert.True(t, sameExceptSchemeCase("https://lf.dev/a", "HTTPS://lf.dev/a"))
+	assert.False(t, sameExceptSchemeCase("https://lf.dev/a", "https://lf.dev/A"),
+		"path case is significant and must not be folded")
+	assert.False(t, sameExceptSchemeCase("https://lf.dev/a", "https://LF.dev/a"),
+		"host case must not be folded here: only the scheme is normalized by url.Parse")
+	assert.True(t, sameExceptSchemeCase("/relative/a", "/relative/a"), "schemeless urls still compare")
+}
