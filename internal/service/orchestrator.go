@@ -186,9 +186,11 @@ var (
 )
 
 // MetricsReader is an OPTIONAL dispatcher capability: read live campaign metrics from the
-// platform. Not every platform's dispatcher implements it, so the orchestrator type-asserts
-// for it rather than adding it to PlatformDispatcher — a dispatcher that doesn't implement
-// it yields a clean "not supported" error (ErrMetricsUnsupported → 400).
+// platform. Not every platform's dispatcher implements it, so it is kept separate from
+// PlatformDispatcher rather than added to it — a caller (e.g. the orchestrator's metrics-read
+// path, landing separately) is expected to type-assert for it and yield a clean "not
+// supported" result for a dispatcher that doesn't implement it, mirroring how StatusToggler
+// is consumed.
 type MetricsReader interface {
 	// ReadMetrics returns live campaign metrics for the given campaign during the
 	// specified time window. window must be one of the supported MetricsWindow values.

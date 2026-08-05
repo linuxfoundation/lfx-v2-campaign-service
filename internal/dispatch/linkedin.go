@@ -248,7 +248,9 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 
 // ReadMetrics returns live campaign metrics from LinkedIn's Ad Analytics API for the
 // given campaign during the specified time window. campaign is the persisted row;
-// campaign.PlatformCampaignID (the LinkedIn campaign URN) is used to query the API.
+// campaign.PlatformCampaignID is the BARE numeric LinkedIn campaign id (trailingID of
+// the campaign URN, as persisted by campaignFromLinkedIn) — linkedin.GetCampaignMetrics
+// builds the sponsoredCampaign/sponsoredAccount URNs the Ad Analytics finder requires.
 func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	if campaign.PlatformCampaignID == "" {
 		return nil, fmt.Errorf("campaign has no platform campaign ID")
@@ -266,7 +268,12 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
 		return nil, fmt.Errorf("decode linkedin credentials: %w", err)
 	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
+	// Trimmed once, here, and the trimmed value is what's used for both the
+	// empty-check and the client — passing the raw (possibly whitespace-padded)
+	// token to NewClient would let a token that looks valid still fail
+	// upstream with an invalid Authorization header.
+	accessToken := strings.TrimSpace(creds.AccessToken)
+	if accessToken == "" {
 		return nil, fmt.Errorf("linkedin credentials are incomplete (need accessToken)")
 	}
 
@@ -279,9 +286,9 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		DefaultAccountID: accountID,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
 	}
-	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
+	client := linkedin.NewClient(linkedin.Credentials{AccessToken: accessToken}, runtime, d.opts...)
 
-	// Call GetCampaignMetrics with the campaign URN and account ID.
+	// Call GetCampaignMetrics with the bare campaign id and account id.
 	metrics, err := client.GetCampaignMetrics(ctx, accountID, campaign.PlatformCampaignID, window)
 	if err != nil {
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", err)

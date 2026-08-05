@@ -18,7 +18,7 @@ import (
 )
 
 // AdAnalyticsElement is one analytics record returned by the Ad Analytics API.
-// The API aggregates metrics for the requested campaigns over the given date range.
+// The API aggregates metrics for the requested campaign over the given date range.
 type AdAnalyticsElement struct {
 	// Impressions is the number of times the ad was displayed.
 	Impressions int64 `json:"impressions"`
@@ -30,14 +30,20 @@ type AdAnalyticsElement struct {
 }
 
 // AdAnalyticsResponse is the JSON response from LinkedIn's Ad Analytics endpoint.
-// It contains a slice of analytics elements aggregated over the requested date range.
+// Elements is a pointer so a missing/null "elements" field (malformed response,
+// e.g. an empty body, "{}", or "null") is distinguishable from an explicit empty
+// array (genuinely zero activity in the window) — nil means "we couldn't confirm
+// this is real zero-activity data" and is treated as a decode error, not silently
+// reported as zero metrics.
 type AdAnalyticsResponse struct {
-	Elements []AdAnalyticsElement `json:"elements"`
+	Elements *[]AdAnalyticsElement `json:"elements"`
 }
 
 // GetCampaignMetrics reads live campaign metrics from LinkedIn's Ad Analytics API
-// for the given campaign ID during the specified time window. The campaign ID must
-// be the LinkedIn campaign URN (e.g., "urn:li:sponsoredCampaign:123456").
+// for the given campaign during the specified time window. campaignID is the bare
+// numeric LinkedIn campaign id as persisted by campaignFromLinkedIn (trailingID of
+// the campaign URN returned on creation) — NOT a URN. This method builds the
+// sponsoredCampaign/sponsoredAccount URNs the Ad Analytics finder requires.
 func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	if campaignID == "" {
 		return nil, fmt.Errorf("campaign ID is required")
@@ -51,40 +57,29 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 		return nil, err
 	}
 
-	// Build the ad analytics request. The LinkedIn API expects ISO 8601 timestamps
-	// (e.g., "2025-01-15T00:00:00Z") for the dateRange query parameters.
-	params := map[string]string{
-		"q":               "analytics",
-		"adAccountId":     accountID,
-		"dateRange.start": startDate.Format(time.RFC3339),
-		"dateRange.end":   endDate.Format(time.RFC3339),
-		"campaigns[0]":    campaignID,
-		"fields":          "impressions,clicks,costInUsd",
-	}
-
-	// Make the raw request manually instead of using doRequest to handle the
-	// custom analytics response format (which doesn't match responseElement).
-	resp, err := c.makeAdAnalyticsRequest(ctx, accountID, campaignID, params)
+	resp, err := c.makeAdAnalyticsRequest(ctx, accountID, campaignID, startDate, endDate)
 	if err != nil {
 		return nil, fmt.Errorf("get campaign metrics: %w", err)
 	}
 
-	// Parse the analytics response.
-	// If no elements, we return zero metrics (no activity).
-	if resp == nil || len(resp.Elements) == 0 {
+	// No elements is not an error: the finder returns an empty array (never a
+	// null/missing "elements" field on a well-formed 2xx — that case is rejected
+	// as a decode error inside makeAdAnalyticsRequest) when the campaign had no
+	// activity in the window.
+	if len(*resp.Elements) == 0 {
 		return &model.CampaignMetrics{}, nil
 	}
 
 	// Aggregate metrics from all elements. In practice there should be one element
-	// for a single campaign.
+	// for a single campaign over a single (non-daily) date range.
 	var metrics model.CampaignMetrics
-	for _, elem := range resp.Elements {
+	for _, elem := range *resp.Elements {
 		metrics.Impressions += elem.Impressions
 		metrics.Clicks += elem.Clicks
 		if elem.CostInUsd != nil {
-			// Convert USD to micros (multiply by 1,000,000).
-			costMicros := int64(math.Round(*elem.CostInUsd * 1_000_000))
-			metrics.CostMicros += costMicros
+			// Convert USD to micros (multiply by 1,000,000), rounding rather than
+			// truncating so a value like 25.505 doesn't silently lose a micro.
+			metrics.CostMicros += int64(math.Round(*elem.CostInUsd * 1_000_000))
 		}
 	}
 
@@ -96,32 +91,82 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	return &metrics, nil
 }
 
-// makeAdAnalyticsRequest makes a raw HTTP request to LinkedIn's Ad Analytics endpoint
-// and parses the response into AdAnalyticsResponse. This is separate from doRequest
-// because ad analytics responses have a different JSON structure than other LinkedIn
-// API responses (they use analytics-specific fields like impressions/clicks).
-func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaignID string, params map[string]string) (*AdAnalyticsResponse, error) {
-	// Build the URL manually since doRequest would unmarshal into the wrong type.
+// restLiDate renders a time.Time as a Rest.li 2.0 nested date object literal,
+// e.g. "(day:15,month:1,year:2025)".
+func restLiDate(t time.Time) string {
+	return fmt.Sprintf("(day:%d,month:%d,year:%d)", t.Day(), int(t.Month()), t.Year())
+}
+
+// makeAdAnalyticsRequest makes a raw HTTP request to LinkedIn's Ad Analytics
+// finder and parses the response into AdAnalyticsResponse.
+//
+// This bypasses doRequest (which unmarshals into the campaign/creative-shaped
+// linkedInResponse) because Ad Analytics responses have a different JSON shape,
+// AND because the Ad Analytics finder uses Rest.li 2.0 array/nested-object query
+// parameter syntax (List(...), nested dateRange) that doRequest's flat
+// map[string]string params can't express. It reuses the client's 429 retry
+// policy (parseRetryAfter/retryBaseDelay/maxRetryWait) so an analytics read is
+// retried the same way doRequest retries idempotent GETs — see
+// docs/knowledge/code/internal-platform-linkedin.md.
+//
+// UNVERIFIED ASSUMPTION: the finder name (q=analytics), pivot=CAMPAIGN, and
+// timeGranularity=ALL are LinkedIn's documented Ad Analytics contract, but this
+// has not yet been verified against a live LinkedIn Marketing API account.
+func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaignID string, startDate, endDate time.Time) (*AdAnalyticsResponse, error) {
+	campaignURN := "urn:li:sponsoredCampaign:" + campaignID
+	accountURN := "urn:li:sponsoredAccount:" + accountID
+
 	u, err := url.Parse(c.baseURL + "/" + "adAnalytics")
 	if err != nil {
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
 
-	if len(params) > 0 {
-		q := u.Query()
-		for k, v := range params {
-			q.Set(k, v)
-		}
-		u.RawQuery = q.Encode()
-	}
+	// Rest.li 2.0 List()/nested-object literals are NOT standard query-string
+	// values, so they are appended to RawQuery directly rather than through
+	// url.Values.Encode() (which would percent-encode the structural
+	// parentheses/colons LinkedIn's finder requires literally).
+	rawQuery := "q=analytics" +
+		"&pivot=CAMPAIGN" +
+		"&timeGranularity=ALL" +
+		"&dateRange=(start:" + restLiDate(startDate) + ",end:" + restLiDate(endDate) + ")" +
+		"&campaigns=List(" + url.QueryEscape(campaignURN) + ")" +
+		"&accounts=List(" + url.QueryEscape(accountURN) + ")" +
+		"&fields=impressions,clicks,costInUsd"
+	u.RawQuery = rawQuery
 
-	// Bound attempt with a per-attempt context deadline.
+	idempotent := true // GET is always retried on 429, same as doRequest's SAFE-method rule.
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		resp, retry, wait, err := c.doAdAnalyticsAttempt(ctx, u.String())
+		if err != nil {
+			return nil, err
+		}
+		if retry && attempt < retryMax && idempotent {
+			if wait <= 0 {
+				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
+			}
+			if wait > maxRetryWait {
+				wait = maxRetryWait
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		return resp, nil
+	}
+	panic("linkedin makeAdAnalyticsRequest: unreachable post-loop return")
+}
+
+// doAdAnalyticsAttempt performs a single Ad Analytics GET attempt. It returns
+// (resp, false, 0, nil) on success, (nil, true, wait, nil) when the caller
+// should retry after wait, or (nil, false, 0, err) on a terminal error.
+func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAnalyticsResponse, bool, time.Duration, error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(attemptCtx, "GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
+		return nil, false, 0, fmt.Errorf("new request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
@@ -130,28 +175,33 @@ func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaign
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		// Check if this is a pre-send error.
 		if isPreSendDialError(err) {
-			return nil, fmt.Errorf("linkedin GET adAnalytics: %w", err)
+			return nil, false, 0, fmt.Errorf("linkedin GET adAnalytics: %w", err)
 		}
-		return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: err}
+		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		wait := c.parseRetryAfter(resp)
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+		return nil, true, wait, nil
+	}
 
 	// Read the response body.
 	buf := new(bytes.Buffer)
 	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("read response body: %w", err)}
+			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("read response body: %w", err)}
 		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("read response body: %v", err)}
+		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("read response body: %v", err)}
 	}
 
 	if int64(buf.Len()) > maxResponseBytes {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
+		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -159,65 +209,65 @@ func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaign
 		if len(text) > 400 {
 			text = text[:400]
 		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: text}
+		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: text}
 	}
 
-	// Decode the analytics response.
 	var analytics AdAnalyticsResponse
-	if buf.Len() > 0 {
-		if err := json.Unmarshal(buf.Bytes(), &analytics); err != nil {
-			return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode response: %w", err)}
-		}
+	if err := json.Unmarshal(buf.Bytes(), &analytics); err != nil {
+		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode response: %w", err)}
+	}
+	if analytics.Elements == nil {
+		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode response: missing or null \"elements\" field")}
 	}
 
-	return &analytics, nil
+	return &analytics, false, 0, nil
 }
 
-// dateRangeForWindow computes the start and end times for the given metrics window,
+// dateRangeForWindow computes the start and end dates for the given metrics window,
 // relative to the current time (c.now()). Each window is computed as:
-//   - today: 00:00:00 to 23:59:59 of today (local time)
-//   - last_7_days: 00:00:00 7 days ago to 23:59:59 today
-//   - last_30_days: 00:00:00 30 days ago to 23:59:59 today
-//   - this_month: 00:00:00 of the 1st of this month to 23:59:59 today
-//   - last_month: 00:00:00 of the 1st of last month to 23:59:59 of the last day of last month
+//   - today: today
+//   - last_7_days: 6 days ago through today (7 days inclusive)
+//   - last_30_days: 29 days ago through today (30 days inclusive)
+//   - this_month: the 1st of this month through today
+//   - last_month: the 1st through the last day of the PREVIOUS calendar month
 //
-// All times are converted to UTC for the LinkedIn API.
+// Both boundaries are derived from the first-of-month anchor (never via
+// AddDate(0, -1, 0) on today's day-of-month), since time.AddDate normalizes an
+// invalid day-of-month (e.g. subtracting a month from the 31st) into the
+// following month rather than erroring — that would silently shift both
+// this_month and last_month's boundaries on 29th/30th/31st-of-month days.
 func (c *Client) dateRangeForWindow(window model.MetricsWindow) (start, end time.Time, err error) {
 	now := c.now()
-	// Normalize to start of today in the local timezone.
 	year, month, day := now.Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, now.Location())
-	todayEndOfDay := time.Date(year, month, day, 23, 59, 59, 999999999, now.Location())
+	firstOfThisMonth := time.Date(year, month, 1, 0, 0, 0, 0, now.Location())
 
 	switch window {
 	case model.MetricsWindowToday:
-		start, end = today, todayEndOfDay
+		start, end = today, today
 
 	case model.MetricsWindowLast7Days:
 		start = today.AddDate(0, 0, -6) // 6 days before today = 7 days inclusive
-		end = todayEndOfDay
+		end = today
 
 	case model.MetricsWindowLast30Days:
 		start = today.AddDate(0, 0, -29) // 29 days before today = 30 days inclusive
-		end = todayEndOfDay
+		end = today
 
 	case model.MetricsWindowThisMonth:
-		start = time.Date(year, month, 1, 0, 0, 0, 0, now.Location())
-		end = todayEndOfDay
+		start = firstOfThisMonth
+		end = today
 
 	case model.MetricsWindowLastMonth:
-		// First day of last month.
-		prevMonth := today.AddDate(0, -1, 0)
-		prevYear, prevMonthNum, _ := prevMonth.Date()
-		start = time.Date(prevYear, prevMonthNum, 1, 0, 0, 0, 0, now.Location())
-		// Last day of last month, end of day.
-		lastDayOfLastMonth := today.AddDate(0, 0, -day) // day-1 days ago is the last day of last month
-		end = time.Date(prevYear, prevMonthNum, lastDayOfLastMonth.Day(), 23, 59, 59, 999999999, now.Location())
+		// One day before the first of this month is always the last day of the
+		// previous month, regardless of how many days that month has.
+		lastDayOfLastMonth := firstOfThisMonth.AddDate(0, 0, -1)
+		start = time.Date(lastDayOfLastMonth.Year(), lastDayOfLastMonth.Month(), 1, 0, 0, 0, 0, now.Location())
+		end = lastDayOfLastMonth
 
 	default:
 		return time.Time{}, time.Time{}, fmt.Errorf("unsupported metrics window: %s", window)
 	}
 
-	// Convert to UTC for the API.
 	return start.UTC(), end.UTC(), nil
 }

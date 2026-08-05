@@ -1,5 +1,21 @@
 # Log
 
+## 2026-08-05
+
+**Update** — Rewrote `internal/platform/linkedin` metrics read (LFXV2-2994) after review
+found the original implementation non-functional: `GetCampaignMetrics` was treating the
+persisted `PlatformCampaignID` (a bare numeric id, per `campaignFromLinkedIn`) as if it were
+already a URN, and the Ad Analytics request used a flat `url.Values.Encode()` shape LinkedIn's
+Rest.li 2.0 finder doesn't accept. Rebuilt the URN conversion, the raw Rest.li query
+construction (`List(...)`, nested `dateRange`), a malformed-vs-empty-`elements` response
+distinction, 429 retry reuse, and fixed a `dateRangeForWindow` month-boundary bug
+(`this_month`/`last_month` now anchor off the first-of-month date, not `AddDate(0,-1,0)` on
+today's day-of-month, which silently misnormalizes on the 29th/30th/31st). Documented an
+unverified assumption about the exact finder name (`q=analytics`) pending live-account
+verification. `docs/api-catalog.md`'s per-campaign metrics endpoint section is not present on
+this branch (predates GA-5/#70's merge to main) — left untouched rather than describing an
+endpoint that doesn't exist here yet; will reconcile on rebase.
+
 ## 2026-08-04
 
 **Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where

@@ -9,7 +9,8 @@ tags:
   - linkedin-ads
   - oauth2
   - go-package
-timestamp: "2026-07-13T19:22:00Z"
+  - metrics
+timestamp: "2026-08-05T00:00:00Z"
 ---
 
 # internal/platform/linkedin
@@ -69,5 +70,38 @@ the runtime config (same as create); ids must be numeric. `IsOutcomeUnconfirmed(
 the shared ambiguity classifier (and honors the `Unconfirmed()` behavioral interface) so a
 caller can tell a maybe-applied outcome (including a partial cascade) from a definite rejection.
 `doRequest` gained an optional per-call headers map to carry the `X-Restli-Method` header.
+
+## Metrics read
+
+`GetCampaignMetrics(ctx, accountID, campaignID, window)` implements `service.MetricsReader`
+(the type-asserted, optional capability the orchestrator's live-read metrics endpoint
+discovers per dispatcher — see `internal/service/orchestrator.go`). `campaignID` is the BARE
+NUMERIC id persisted by `campaignFromLinkedIn` (`trailingID` of the creation response's
+campaign URN, not a URN) — this method builds the `urn:li:sponsoredCampaign:{id}` and
+`urn:li:sponsoredAccount:{acctID}` URNs the Ad Analytics finder itself requires.
+
+The Ad Analytics finder (`GET /adAnalytics`) uses Rest.li 2.0 array/nested-object query
+literals — `dateRange=(start:(day:D,month:M,year:Y),end:(...))`, `campaigns=List(urn:...)`,
+`accounts=List(urn:...)` — that are not expressible through `url.Values.Encode()` (which would
+percent-encode the structural parentheses/colons LinkedIn requires literally), so
+`makeAdAnalyticsRequest` builds the raw query string directly and bypasses `doRequest`'s
+flat `map[string]string` param model entirely, going through a dedicated
+`doAdAnalyticsAttempt` GET path instead. It reuses the client's existing 429 retry policy
+(`parseRetryAfter`/`retryBaseDelay`/`maxRetryWait`/`sleepCtx`), the same as `doRequest`'s
+idempotent-method retry rule. **UNVERIFIED ASSUMPTION**: the finder name (`q=analytics`),
+`pivot=CAMPAIGN`, and `timeGranularity=ALL` are LinkedIn's documented Ad Analytics contract,
+flagged in code but not yet verified against a live Marketing API account (mirrors the same
+kind of disclosed assumption in `internal/platform/googleads/metrics.go`).
+
+The response's `elements` field is decoded via a `*[]AdAnalyticsElement` pointer so a
+missing/null field (malformed response — empty body, `{}`, `null`) is distinguishable from an
+explicit `{"elements": []}` (genuine zero activity in the window): a nil pointer is a decode
+error, never silently reported as zero metrics. Spend (`costInUsd`, decimal USD) is rounded —
+not truncated — into micros (`int64(math.Round(spend * 1_000_000))`).
+
+`dateRangeForWindow` anchors both `this_month` and `last_month` off the first-of-month date
+rather than `AddDate(0, -1, 0)` on today's day-of-month, since `time.AddDate` silently
+normalizes an invalid day (e.g. subtracting a month from the 31st) into the following month —
+that would otherwise shift both windows' boundaries on 29th/30th/31st-of-month days.
 
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
