@@ -1,5 +1,19 @@
 # Log
 
+## 2026-08-05 (Fix: split migration 000009's DROP and CONCURRENTLY rebuild into separate files)
+
+**Fix** — Cursor Bugbot correctly flagged that the "migration concurrency" fix below (item 2 of the
+same day's earlier entry) was itself broken: putting the DO-block DROP and
+`CREATE INDEX CONCURRENTLY` in the same file means golang-migrate's pgx/v5 driver sends both
+statements to Postgres in one implicit transaction (it does not wrap migrations in an explicit
+transaction, but multi-statement files are still batched as one transaction block by Postgres
+itself), and `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block — the migration would
+fail on apply. 000008's own comment already documents this constraint explicitly ("Do NOT add other
+statements to this file"). Split 000009 back down to just the DO-block DROP (single statement), and
+moved the `CREATE INDEX CONCURRENTLY IF NOT EXISTS` rebuild into a new migration file,
+`000010_rebuild_stuck_claim_index.up/down.sql`, mirroring 000008's single-statement, non-transactional
+shape.
+
 ## 2026-08-05 (Fix: customAudiences preflight, migration concurrency, timeout budget)
 
 **Fix** — Closed 4 unresolved Copilot comments on GA-4 (`internal/platform/googleads/targeting.go`,

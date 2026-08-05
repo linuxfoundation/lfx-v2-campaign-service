@@ -2,7 +2,14 @@
 -- SPDX-License-Identifier: MIT
 
 -- Clear an INVALID idx_campaigns_stuck_claims left by a failed CONCURRENTLY build in
--- 000008, and rebuild the index itself (not via retry of 000008).
+-- 000008. The rebuild itself lives in 000010, a separate migration file: the pgx/v5
+-- golang-migrate driver executes each file with a bare ExecContext and does NOT wrap
+-- it in a transaction, but it also does not split a file into per-statement
+-- executions — a file with more than one statement is sent to Postgres as one
+-- implicit transaction block, and CREATE INDEX CONCURRENTLY cannot run inside one
+-- (see 000008's own "Do NOT add other statements to this file" warning). Splitting
+-- the drop and the rebuild into separate files is what keeps each as its own
+-- single-statement, non-transactional execution.
 --
 -- Why this is needed at all: a failed `CREATE INDEX CONCURRENTLY` does NOT roll back —
 -- it leaves the index in place marked INVALID, and Postgres refuses to use it. The
@@ -17,20 +24,6 @@
 -- Deliberately a plain DROP, not CONCURRENTLY: an INVALID index is not serving any
 -- query, so dropping it blocks nothing that was working, and DROP INDEX CONCURRENTLY
 -- cannot run inside the DO block this needs for the conditional.
---
--- This migration REBUILDS the index itself as a separate step. 000008 can never do it:
--- recovering the dirty schema requires `force`, which marks version 8 applied WITHOUT
--- running it, so golang-migrate never re-executes 000008 and its `IF NOT EXISTS` would
--- skip regardless. This migration runs on the NEXT deploy (its separate version number
--- ensures golang-migrate will execute it), so recovery requires operator force + a
--- subsequent deploy — "reissue the index build manually" or "wait for the next deploy to
--- apply this migration" are both correct.
---
--- The rebuild is a plain (non-CONCURRENT) CREATE, which is the opposite of 000008's
--- choice and is deliberate. CREATE INDEX CONCURRENTLY cannot run inside this DO block,
--- and it is only reachable at all on the recovery path — where the index is ALREADY
--- absent, so the scan is already degraded and a brief write lock is the cheaper of the
--- two costs. On the normal path (no invalid index) nothing here runs.
 --
 -- The table is schema-qualified. The index name is not: PostgreSQL's CREATE INDEX
 -- grammar does not accept a schema-qualified index name — an index always lands in
@@ -49,16 +42,7 @@ BEGIN
           AND NOT i.indisvalid
     ) THEN
         EXECUTE 'DROP INDEX public.idx_campaigns_stuck_claims';
-        RAISE NOTICE 'dropped INVALID idx_campaigns_stuck_claims from a failed CONCURRENTLY build; will rebuild below';
+        RAISE NOTICE 'dropped INVALID idx_campaigns_stuck_claims from a failed CONCURRENTLY build; 000010 will rebuild it';
     END IF;
 END
 $$;
-
--- Rebuild the index with CONCURRENTLY (outside any transaction) to avoid blocking
--- campaign inserts/updates/deletes during the migration. This mirrors the approach
--- used in 000008, which chose CONCURRENTLY for the same reason: if an invalid
--- copy was dropped above, the index is now absent and will be created; if no invalid
--- copy existed, this becomes a no-op due to IF NOT EXISTS.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_campaigns_stuck_claims
-    ON public.campaigns (created_at)
-    WHERE status = 'pending';
