@@ -611,11 +611,11 @@ func TestMeta_ReadMetrics_HappyPath(t *testing.T) {
 
 	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
 	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
-	m, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, "LAST_30_DAYS")
+	m, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days)
 	if err != nil {
 		t.Fatalf("ReadMetrics: %v", err)
 	}
-	if m.CampaignID != "777" || m.Window != "LAST_30_DAYS" || m.Impressions != 1000 || m.Clicks != 40 || m.CostMicros != 25_000_000 {
+	if m.CampaignID != "777" || m.Window != model.MetricsWindowLast30Days || m.Impressions != 1000 || m.Clicks != 40 || m.CostMicros != 25_000_000 {
 		t.Errorf("got %+v", m)
 	}
 	if want := 0.04; m.Ctr != want {
@@ -635,7 +635,7 @@ func TestMeta_ReadMetrics_HappyPath(t *testing.T) {
 func TestMeta_ReadMetrics_ConnectionUnresolvedPropagates(t *testing.T) {
 	d := NewMetaDispatcher(fakeConnReader{err: errors.New("no connection")}, identityEncryptor{})
 	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
-	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, "LAST_30_DAYS"); err == nil {
+	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days); err == nil {
 		t.Fatal("expected an error when the connection cannot be resolved")
 	}
 }
@@ -649,7 +649,7 @@ func TestMeta_ReadMetrics_InactiveConnectionErrors(t *testing.T) {
 	}
 	d := NewMetaDispatcher(fakeConnReader{conn: conn}, identityEncryptor{})
 	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
-	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, "LAST_30_DAYS"); err == nil {
+	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days); err == nil {
 		t.Fatal("expected an error for an inactive connection")
 	}
 }

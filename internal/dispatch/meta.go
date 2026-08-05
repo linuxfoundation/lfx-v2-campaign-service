@@ -221,13 +221,36 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	return nil
 }
 
+// metaMetricsWindow maps the platform-agnostic model.MetricsWindow vocabulary to Meta's
+// own MetricsWindow literals (Insights date_preset values). All seven shared windows are
+// supported, so this is a pure rename, not a subset like X Ads' 7-day-capped mapping.
+func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
+	switch w {
+	case model.MetricsWindowToday:
+		return meta.WindowToday, nil
+	case model.MetricsWindowYesterday:
+		return meta.WindowYesterday, nil
+	case model.MetricsWindowLast7Days:
+		return meta.WindowLast7Days, nil
+	case model.MetricsWindowLast14Days:
+		return meta.WindowLast14Days, nil
+	case model.MetricsWindowLast30Days:
+		return meta.WindowLast30Days, nil
+	case model.MetricsWindowThisMonth:
+		return meta.WindowThisMonth, nil
+	case model.MetricsWindowLastMonth:
+		return meta.WindowLastMonth, nil
+	default:
+		return "", fmt.Errorf("unsupported metrics window %q", w)
+	}
+}
+
 // ReadMetrics implements service.MetricsReader for Meta. It resolves the same connection
 // ToggleStatus does (no account id or page id required — a metrics read targets the
 // campaign node by id, like the status update) and reads the campaign's live Insights
-// metrics; window is passed through as a meta.MetricsWindow (the client validates it
-// against its own allow-list, so an invalid caller value fails there rather than being
-// re-validated here).
-func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window string) (*model.CampaignMetrics, error) {
+// metrics, mapping the platform-agnostic window to Meta's own vocabulary via
+// metaMetricsWindow before calling the client.
+func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
@@ -242,14 +265,18 @@ func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, plat
 	if strings.TrimSpace(creds.AccessToken) == "" {
 		return nil, fmt.Errorf("meta credentials are incomplete (need accessToken)")
 	}
+	metaWindow, err := metaMetricsWindow(window)
+	if err != nil {
+		return nil, err
+	}
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
-	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, meta.MetricsWindow(window))
+	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, metaWindow)
 	if err != nil {
 		return nil, err
 	}
 	return &model.CampaignMetrics{
 		CampaignID:  m.CampaignID,
-		Window:      string(m.Window),
+		Window:      window,
 		Impressions: m.Impressions,
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
