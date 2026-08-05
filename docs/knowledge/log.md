@@ -10,21 +10,23 @@ infra (the file itself was untouched by that merge).
    But `stripUTM` deletes the matched `utm_` token outright, and under a literal (non-separator)
    reading of `;` that token was never a separate parameter — it was the tail of a neighbour's
    value, keyed or not. `sig=a;utm_source=partner;b=2` was tagged even though stripping
-   `utm_source` deletes text a literal reading of `sig`'s value would have kept. The check is now
-   "does this segment contain any OTHER parameter at all," not "does it contain a bare one" —
-   more conservative, which is the right direction for a fail-safe that already prefers leaving a
-   query untouched over risking corruption. This also flips `utm_campaign=;a=1` from "not
-   ambiguous" to ambiguous, since the same corruption risk applies to it once traced through
-   `stripUTM`'s removal-and-rejoin.
-2. `hasBareKeysInSegmentWith`'s backward scan (renamed `hasOtherParamInSegmentWith`) started
-   looking for the segment boundary at `utmIndex-1` and never checked `parts[utmIndex]` itself. A
-   utm param whose OWN leading separator is `&` — meaning it opens its own segment — was
-   misread as continuing whatever segment preceded it when no earlier `&` existed, so a bare key
-   from a PRIOR, unrelated segment leaked in: `debug&utm_source=facebook;x=1` was left untagged
-   even though `utm_source`'s actual segment (`utm_source=facebook;x=1`) has no `debug` in it.
-   Fixed by starting the backward walk AT `utmIndex` and checking its own separator first.
+   `utm_source` deletes text a literal reading of `sig`'s value would have kept. This also flips
+   `utm_campaign=;a=1` from "not ambiguous" to ambiguous, since the same corruption risk applies
+   to it once traced through `stripUTM`'s removal-and-rejoin.
+2. The segment-boundary scan in the old `hasBareKeysInSegmentWith` had a second bug: its backward
+   walk started at `utmIndex-1` and never checked `parts[utmIndex]`'s own leading separator, so a
+   utm param that OPENS its own segment (leading separator `&`) could still pull in a bare key
+   from the PRIOR, unrelated segment.
 
-Both pinned by new cases in `TestApply_AmbiguousSemicolonQueriesAreNotTagged`; one existing test
+Fixing (1) made the segment-scan itself unnecessary: whichever side triggers the semicolon check
+(`part.sep == ';'` or the next part's) names a specific adjacent part still inside the same
+ampersand-delimited segment (only `&` opens a new one) — so that adjacent part IS the "other
+parameter" the old segment scan was searching for, and checking for it separately, with or
+without bug (2), can never change the answer. `hasAmbiguousSemicolon` now just returns true
+directly off the semicolon-adjacency check, and `hasBareKeysInSegmentWith` /
+`hasOtherParamInSegmentWith` are deleted along with both segment-boundary bugs they carried.
+
+Pinned by new cases in `TestApply_AmbiguousSemicolonQueriesAreNotTagged`; one existing test
 (`TestApply_SurvivorKeepsItsOwnSeparator`) encoded the same now-corrected assumption and was
 narrowed to point at `TestStripUTM_SurvivorKeepsItsOwnSeparator`, which pins the same
 separator-preservation property directly at the `stripUTM` level, unguarded by the ambiguity check.

@@ -433,81 +433,46 @@ func hasUTMPair(rawQuery string) bool {
 	return false
 }
 
-// hasAmbiguousSemicolon reports whether a raw query contains a UTM parameter that sits within
-// a semicolon-delimited parameter group (i.e., shares an ampersand-delimited segment with
-// another parameter, joined only by semicolons), making it ambiguous whether the semicolons
-// are parameter delimiters or parts of parameter values.
+// hasAmbiguousSemicolon reports whether a raw query contains a UTM parameter that is joined to
+// another parameter by a semicolon rather than an ampersand, making it ambiguous whether that
+// semicolon is a parameter delimiter or part of a value.
 //
 // For example, in `sig=a;utm_source=partner;b`, the `utm_source` parameter is only separated
 // from `sig` and `b` by semicolons, not ampersands. We cannot reliably tell if `utm_source`
 // is a real parameter or part of another parameter's value. Without additional encoding, there
-// is no way to know. When such ambiguity exists, the query is unsafe to modify (strip/retag),
-// as doing so risks corrupting innocent values.
+// is no way to know. When such ambiguity exists, the query is unsafe to modify (strip/retag):
+// stripUTM deletes the matched token outright, and under a literal (non-separator) reading of
+// ';' that token was never a separate parameter at all — it was the tail of the adjacent
+// parameter's value. Deleting it removes that text from whatever the neighbour's literal value
+// actually was, keyed or bare.
 //
-// The heuristic: a query is ambiguous if it contains a UTM parameter that:
-//  1. Is separated by a semicolon (not ampersand) in EITHER direction, AND
-//  2. Shares its ampersand-delimited segment with at least one other parameter — keyed or
-//     bare. A keyed neighbour is just as much at risk as a bare one: stripUTM deletes the
-//     whole matched token, and under a literal (non-separator) reading of ';' that token was
-//     never a separate parameter at all — it was the tail of the neighbour's value. Deleting
-//     it removes that text from whatever the neighbour's literal value actually was, keyed or
-//     not.
+// The heuristic: a query is ambiguous if it contains a UTM parameter that is separated by a
+// semicolon (not ampersand) in EITHER direction — the separator recorded on a part is the one
+// that PRECEDED it, so the trailing side is read off the sep of the NEXT part. Whichever side
+// carries the ';' names a specific adjacent part still inside the same ampersand-delimited
+// segment (only '&' opens a new one), so a semicolon on either side is already sufficient: no
+// separate scan for "does the segment contain another parameter" is needed, since that adjacent
+// part IS one.
 //
 // For instance:
-//   - `sig=a;utm_source=partner;b` is ambiguous (utm_source shares its segment with `sig`
-//     and the bare key `b`)
-//   - `sig=a;utm_source=partner;b=2` is ambiguous too (the neighbours are keyed, but stripping
-//     utm_source still deletes text that a literal reading of `sig`'s value would have kept)
-//   - `sig=a;b;c&utm_term=old` is not ambiguous (utm_term is ampersand-separated from the
-//     bare keys, so it's on a different segment)
+//   - `sig=a;utm_source=partner;b` is ambiguous (utm_source is semicolon-adjacent to both)
+//   - `sig=a;utm_source=partner;b=2` is ambiguous too (a keyed neighbour is just as much at
+//     risk as a bare one — stripping utm_source still deletes text that a literal reading of
+//     `sig`'s value would have kept)
+//   - `sig=a;b;c&utm_term=old` is not ambiguous (utm_term is ampersand-separated on both sides)
 func hasAmbiguousSemicolon(rawQuery string) bool {
-	// Scan through the query looking for utm_ parameters.
 	parts := splitQuery(rawQuery)
 	for i, part := range parts {
 		if !strings.HasPrefix(queryKey(part.token), "utm_") {
 			continue // Not a utm param
 		}
-
-		// Found a utm param. Check if it's separated by a semicolon (not ampersand) on
-		// EITHER side — the separator recorded on a part is the one that PRECEDED it, so
-		// the trailing side is read off the sep of the NEXT part.
 		precededBySemicolon := part.sep == ';'
 		followedBySemicolon := i+1 < len(parts) && parts[i+1].sep == ';'
-		if !precededBySemicolon && !followedBySemicolon {
-			// Ampersand (or query-boundary) on both sides: not ambiguous.
-			continue
-		}
-
-		// This utm param has a semicolon on at least one side. Flag as ambiguous if it
-		// shares its segment with any other parameter, keyed or bare.
-		if hasOtherParamInSegmentWith(parts, i) {
+		if precededBySemicolon || followedBySemicolon {
 			return true
 		}
 	}
 	return false
-}
-
-// hasOtherParamInSegmentWith reports whether any parameter other than the one at utmIndex
-// shares its ampersand-delimited segment.
-func hasOtherParamInSegmentWith(parts []queryPart, utmIndex int) bool {
-	// Walk backward from utmIndex to find where this segment starts: a part whose OWN
-	// leading separator is '&' opens a new segment, so it is itself the start — the walk
-	// must check parts[utmIndex] before ever stepping past it, not only the parts before it,
-	// or a segment that utmIndex itself opens is misread as continuing the previous one.
-	segmentStart := utmIndex
-	for segmentStart > 0 && parts[segmentStart].sep != '&' {
-		segmentStart--
-	}
-
-	segmentEnd := len(parts)
-	for i := utmIndex + 1; i < len(parts); i++ {
-		if parts[i].sep == '&' {
-			segmentEnd = i
-			break
-		}
-	}
-
-	return segmentEnd-segmentStart > 1
 }
 
 // isTaggable reports whether a link is a web destination that may carry UTM parameters.

@@ -723,10 +723,11 @@ func TestApply_AmbiguousSemicolonQueriesAreNotTagged(t *testing.T) {
 		"a semicolon-joined utm param with only keyed siblings must still be treated as ambiguous")
 
 	// The utm param itself OPENS its ampersand segment (its own preceding separator is '&'),
-	// with a bare key from the PRIOR segment immediately before it. That prior bare key must
-	// not leak into this segment's boundary.
+	// followed by a semicolon-joined sibling (x=1). Ambiguous on its own merits — x=1 is
+	// semicolon-adjacent to utm_source — regardless of the unrelated bare key ('debug') in the
+	// PRIOR segment, which must play no part in the decision either way.
 	raw7 := "https://lf.dev/p?debug&utm_source=facebook;x=1"
 	got7 := Apply(raw7, p, "")
 	assert.Equal(t, raw7, got7,
-		"a semicolon-joined sibling within the utm param's own segment must still be treated as ambiguous")
+		"a utm param semicolon-joined to its own sibling must not be tagged")
 }
