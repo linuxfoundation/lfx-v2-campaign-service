@@ -1,5 +1,20 @@
 # Log
 
+## 2026-08-05 (continuation: cover the delete tombstone builder)
+
+**Fix** — Resolve outstanding Copilot review thread on PR #64 campaign delete
+(`internal/service/brief.go:675`).
+
+`deleteCampaignRepo` (the service-layer test double for `DeleteCampaign`) discarded its
+`indexPayload` argument entirely, so nothing in the suite would fail if
+`BriefService.DeleteCampaign` stopped passing `s.campaignIndexPayload(indexer.ActionDeleted)` —
+or passed the wrong action — leaving a successful 204 with the old live campaign still
+visible in Query Service. The double now invokes the builder with the deleted row (mirroring
+what `CampaignRepo.DeleteCampaign` does before it commits) and captures the resulting JSON;
+a new test, `TestBriefService_DeleteCampaign_EnqueuesTheDeletedTombstone`, asserts the message
+carries `action: "deleted"` and the campaign's bare id, following the same pattern as the
+existing archive-tombstone test for briefs.
+
 ## 2026-08-05 (continuation: close campaign-resurrection gap in ReplaceCampaign)
 
 **Fix** — Resolve outstanding Copilot review thread on PR #64 campaign delete

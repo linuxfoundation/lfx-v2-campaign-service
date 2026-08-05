@@ -1982,11 +1982,25 @@ type deleteCampaignRepo struct {
 	gotBrief        string
 	gotCampaign     string
 	gotExpectedVers int64
+	// gotIndexPayload is the JSON the builder produced when invoked with the deleted
+	// row, mirroring what the real repo does before it commits (see
+	// CampaignRepo.DeleteCampaign's enqueueCampaignIndex call). nil if the builder
+	// itself was nil (indexing disabled) or was never invoked.
+	gotIndexPayload []byte
 }
 
 func (r *deleteCampaignRepo) DeleteCampaign(_ context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) error {
 	r.called = true
 	r.gotProject, r.gotBrief, r.gotCampaign, r.gotExpectedVers = projectID, briefID, id, expectedVersion
+	if r.err == nil && indexPayload != nil {
+		payload, perr := indexPayload(&model.Campaign{
+			ID: id, BriefID: briefID, ProjectID: projectID, Status: model.CampaignStatusDeleted,
+		})
+		if perr != nil {
+			return perr
+		}
+		r.gotIndexPayload = payload
+	}
 	return r.err
 }
 
@@ -2034,6 +2048,37 @@ func TestBriefService_DeleteCampaign_RequiresIfMatch(t *testing.T) {
 	}
 	if camps.called {
 		t.Error("the repo was called despite a missing If-Match; the delete must be refused before it reaches persistence")
+	}
+}
+
+// TestBriefService_DeleteCampaign_EnqueuesTheDeletedTombstone pins that the service
+// passes a REAL builder producing an ActionDeleted tombstone for the deleted campaign,
+// not just some indexPayload value. Without this, deleteCampaignRepo.DeleteCampaign's
+// indexPayload argument could be dropped or built with the wrong action and every
+// other test here would still pass, leaving a successful 204 with the old live
+// campaign still visible in Query Service.
+func TestBriefService_DeleteCampaign_EnqueuesTheDeletedTombstone(t *testing.T) {
+	s, camps := newDeleteService(nil)
+	im := "1"
+	if err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+	}); err != nil {
+		t.Fatalf("DeleteCampaign: %v", err)
+	}
+
+	if len(camps.gotIndexPayload) == 0 {
+		t.Fatal("no index message was built for the delete: a dropped builder would leave the campaign searchable forever")
+	}
+
+	var msg map[string]any
+	if uerr := json.Unmarshal(camps.gotIndexPayload, &msg); uerr != nil {
+		t.Fatalf("the enqueued payload must be a valid index message: %v", uerr)
+	}
+	if msg["action"] != indexer.ActionDeleted {
+		t.Errorf("action = %v, want %q (a deleted campaign must be REMOVED from the index)", msg["action"], indexer.ActionDeleted)
+	}
+	if msg["data"] != "c1" {
+		t.Errorf("delete data = %v, want the bare object id %q", msg["data"], "c1")
 	}
 }
 

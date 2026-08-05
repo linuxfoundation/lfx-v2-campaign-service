@@ -336,6 +336,12 @@ func enqueueCampaignIndex(ctx context.Context, tx pgx.Tx, c *model.Campaign, ind
 // indexer. Pinned by a test.
 const indexObjectTypeCampaign = "campaign"
 
+// replaceCampaignExistsQuery classifies a guarded ReplaceCampaign UPDATE that matched no row.
+// status <> 'deleted' mirrors replaceCampaignQuery's own guard (and GetCampaign/DeleteCampaign):
+// a soft-deleted row is treated as absent, so a replace against it reports 404 rather than 412.
+// Pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
+const replaceCampaignExistsQuery = `SELECT EXISTS (SELECT 1 FROM campaigns WHERE id = $1 AND brief_id = $2 AND project_id = $3 AND status <> 'deleted')`
+
 // ReplaceCampaign replaces mutable fields, gating on expectedVersion.
 func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	// RETURNING keeps the write and the snapshot that gets indexed in ONE statement, so the
@@ -367,8 +373,7 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		// saturated pool (pool_max_conns=1 makes it certain) an ordinary stale-version request
 		// would block until its context expired instead of returning 412.
 		var exists bool
-		eq := `SELECT EXISTS (SELECT 1 FROM campaigns WHERE id = $1 AND brief_id = $2 AND project_id = $3)`
-		if serr := tx.QueryRow(ctx, eq, c.ID, c.BriefID, c.ProjectID).Scan(&exists); serr != nil {
+		if serr := tx.QueryRow(ctx, replaceCampaignExistsQuery, c.ID, c.BriefID, c.ProjectID).Scan(&exists); serr != nil {
 			// Surface a transient read error rather than masking it as a precondition failure,
 			// which would make the caller retry with a fresh ETag instead of backing off.
 			return nil, fmt.Errorf("replace campaign: classify guarded update: %w", serr)

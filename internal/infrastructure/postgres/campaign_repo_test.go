@@ -66,9 +66,10 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 // deleting the campaign exists to enable.
 func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 	for name, q := range map[string]string{
-		"GetCampaign":           getCampaignQuery,
-		"GetCampaignByPlatform": getCampaignByPlatformQuery,
-		"ReplaceCampaign":       replaceCampaignQuery,
+		"GetCampaign":                         getCampaignQuery,
+		"GetCampaignByPlatform":               getCampaignByPlatformQuery,
+		"ReplaceCampaign":                     replaceCampaignQuery,
+		"ReplaceCampaign (no-row classifier)": replaceCampaignExistsQuery,
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Contains(t, normalizeWS(q), livePredicate,
