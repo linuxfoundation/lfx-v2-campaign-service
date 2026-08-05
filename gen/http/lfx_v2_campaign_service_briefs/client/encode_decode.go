@@ -1448,6 +1448,179 @@ func DecodeGetCampaignResponse(decoder func(*http.Response) goahttp.Decoder, res
 	}
 }
 
+// BuildGetCampaignMetricsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "get-campaign-metrics" endpoint
+func (c *Client) BuildGetCampaignMetricsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.GetCampaignMetricsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-campaign-metrics", "*lfxv2campaignservicebriefs.GetCampaignMetricsPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetCampaignMetricsLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "get-campaign-metrics", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetCampaignMetricsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs get-campaign-metrics server.
+func EncodeGetCampaignMetricsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.GetCampaignMetricsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-campaign-metrics", "*lfxv2campaignservicebriefs.GetCampaignMetricsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetCampaignMetricsResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs get-campaign-metrics endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeGetCampaignMetricsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeGetCampaignMetricsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetCampaignMetricsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			err = ValidateGetCampaignMetricsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			res := NewGetCampaignMetricsCampaignMetricsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetCampaignMetricsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			err = ValidateGetCampaignMetricsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			return nil, NewGetCampaignMetricsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetCampaignMetricsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			err = ValidateGetCampaignMetricsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			return nil, NewGetCampaignMetricsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetCampaignMetricsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			err = ValidateGetCampaignMetricsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			return nil, NewGetCampaignMetricsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetCampaignMetricsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			err = ValidateGetCampaignMetricsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			return nil, NewGetCampaignMetricsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetCampaignMetricsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			err = ValidateGetCampaignMetricsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+			}
+			return nil, NewGetCampaignMetricsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "get-campaign-metrics", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildUpdateCampaignRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "update-campaign" endpoint

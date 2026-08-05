@@ -1455,3 +1455,101 @@ func TestBriefETagIsQuoted(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// metricsOnlyDispatcher implements PlatformDispatcher + MetricsReader, recording the
+// ReadMetrics call. Dispatch is never expected to be exercised by these tests.
+type metricsOnlyDispatcher struct {
+	metrics   *model.CampaignMetrics
+	err       error
+	gotWindow model.MetricsWindow
+}
+
+func (metricsOnlyDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("Dispatch should not be called in these tests")
+}
+
+func (d *metricsOnlyDispatcher) ReadMetrics(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	d.gotWindow = window
+	return d.metrics, d.err
+}
+
+// nonMetricsDispatcher implements only PlatformDispatcher — no MetricsReader — the same
+// shape as a platform with no metrics-read capability wired (e.g. hubspot today).
+type nonMetricsDispatcher struct{}
+
+func (nonMetricsDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("Dispatch should not be called in these tests")
+}
+
+func TestOrchestrator_ReadCampaignMetrics_HappyPath(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+		CampaignID: "555", Window: model.MetricsWindowLast30Days, Impressions: 1000, Clicks: 40, Ctr: 0.04,
+	}}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	campaign := &model.Campaign{PlatformCampaignID: "555"}
+
+	m, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadCampaignMetrics: %v", err)
+	}
+	if m.Impressions != 1000 || m.Clicks != 40 {
+		t.Errorf("got %+v", m)
+	}
+	if disp.gotWindow != model.MetricsWindowLast30Days {
+		t.Errorf("window passed to dispatcher = %q, want last_30_days", disp.gotWindow)
+	}
+}
+
+func TestOrchestrator_ReadCampaignMetrics_NotProvisioned(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	disp := &metricsOnlyDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+
+	if _, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, &model.Campaign{}, model.MetricsWindowLast30Days); !errors.Is(err, ErrCampaignNotProvisioned) {
+		t.Errorf("err = %v, want ErrCampaignNotProvisioned", err)
+	}
+	if _, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, nil, model.MetricsWindowLast30Days); !errors.Is(err, ErrCampaignNotProvisioned) {
+		t.Errorf("err = %v, want ErrCampaignNotProvisioned", err)
+	}
+}
+
+func TestOrchestrator_ReadCampaignMetrics_NoDispatcherRegistered(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{})
+
+	campaign := &model.Campaign{PlatformCampaignID: "555"}
+	if _, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days); !errors.Is(err, ErrMetricsUnsupported) {
+		t.Errorf("err = %v, want ErrMetricsUnsupported", err)
+	}
+}
+
+func TestOrchestrator_ReadCampaignMetrics_DispatcherNotAMetricsReader(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: nonMetricsDispatcher{},
+	})
+
+	campaign := &model.Campaign{PlatformCampaignID: "555"}
+	if _, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days); !errors.Is(err, ErrMetricsUnsupported) {
+		t.Errorf("err = %v, want ErrMetricsUnsupported", err)
+	}
+}
+
+func TestOrchestrator_ReadCampaignMetrics_DispatcherErrorPropagates(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	wantErr := errors.New("boom")
+	disp := &metricsOnlyDispatcher{err: wantErr}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+
+	campaign := &model.Campaign{PlatformCampaignID: "555"}
+	if _, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days); !errors.Is(err, wantErr) {
+		t.Errorf("err = %v, want %v", err, wantErr)
+	}
+}
