@@ -18,6 +18,10 @@ import (
 type Service interface {
 	// Create a brief.
 	CreateBrief(context.Context, *CreateBriefPayload) (res *Brief, err error)
+	// Find the saved brief for an event slug. Returns 404 when the event has no
+	// brief yet, which is the ordinary first-time-generation case — the caller
+	// then generates one and POSTs it to create-brief.
+	FindBrief(context.Context, *FindBriefPayload) (res *Brief, err error)
 	// Get a brief; returns ETag.
 	GetBrief(context.Context, *GetBriefPayload) (res *Brief, err error)
 	// Replace a brief (requires If-Match).
@@ -63,7 +67,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [10]string{"create-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "update-campaign", "toggle-campaign-status", "get-job"}
+var MethodNames = [11]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "update-campaign", "toggle-campaign-status", "get-job"}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -200,6 +204,17 @@ type DeleteBriefPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
+}
+
+// FindBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
+// service find-brief method.
+type FindBriefPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Event slug derived from the event page URL.
+	EventSlug string
 }
 
 // GetBriefPayload is the payload type of the lfx-v2-campaign-service-briefs

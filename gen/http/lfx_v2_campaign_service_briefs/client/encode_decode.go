@@ -193,6 +193,179 @@ func DecodeCreateBriefResponse(decoder func(*http.Response) goahttp.Decoder, res
 	}
 }
 
+// BuildFindBriefRequest instantiates a HTTP request object with method and
+// path set to call the "lfx-v2-campaign-service-briefs" service "find-brief"
+// endpoint
+func (c *Client) BuildFindBriefRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.FindBriefPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "find-brief", "*lfxv2campaignservicebriefs.FindBriefPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: FindBriefLfxV2CampaignServiceBriefsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "find-brief", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeFindBriefRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs find-brief server.
+func EncodeFindBriefRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.FindBriefPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "find-brief", "*lfxv2campaignservicebriefs.FindBriefPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("event_slug", p.EventSlug)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeFindBriefResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-briefs find-brief endpoint. restoreBody controls
+// whether the response body should be restored after having been read.
+// DecodeFindBriefResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeFindBriefResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body FindBriefResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			err = ValidateFindBriefResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			var (
+				etag *string
+			)
+			etagRaw := resp.Header.Get("Etag")
+			if etagRaw != "" {
+				etag = &etagRaw
+			}
+			res := NewFindBriefBriefOK(&body, etag)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body FindBriefBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			err = ValidateFindBriefBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			return nil, NewFindBriefBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body FindBriefConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			err = ValidateFindBriefConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			return nil, NewFindBriefConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body FindBriefServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			err = ValidateFindBriefServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			return nil, NewFindBriefServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body FindBriefInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			err = ValidateFindBriefInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			return nil, NewFindBriefInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body FindBriefNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			err = ValidateFindBriefNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "find-brief", err)
+			}
+			return nil, NewFindBriefNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "find-brief", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetBriefRequest instantiates a HTTP request object with method and path
 // set to call the "lfx-v2-campaign-service-briefs" service "get-brief" endpoint
 func (c *Client) BuildGetBriefRequest(ctx context.Context, v any) (*http.Request, error) {
