@@ -51,4 +51,15 @@ var (
 	// as ErrToggleUnsupported: a platform dispatcher can return it directly without
 	// importing the orchestration layer.
 	ErrMetricsUnsupported = errors.New("metrics reads are not supported for this platform")
+
+	// ErrMetricsWindowUnsupported indicates the requested window is one of the seven
+	// closed model.MetricsWindow values but this platform's MetricsReader does not
+	// support it (e.g. X Ads caps windows at 7 days and rejects last_30_days). This is
+	// caller input, not an upstream failure — the platform is never contacted (X's
+	// client validates before making a request) or the platform rejects synchronously.
+	// Maps to 400, distinct from ErrMetricsUnsupported (platform has no MetricsReader
+	// at all) — this platform IS a MetricsReader, just not for this window. A platform
+	// adapter wraps its own typed "unsupported window" error with this sentinel
+	// (%w) so the service layer can map it without importing every platform package.
+	ErrMetricsWindowUnsupported = errors.New("this window is not supported for the campaign's platform")
 )
