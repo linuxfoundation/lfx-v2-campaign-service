@@ -97,9 +97,10 @@ func (b *AudienceBuilder) ResolvePastEditions(ctx context.Context, eventTerm, lo
 	}
 
 	// Strip the year from the search term. The event name normally CONTAINS its year
-	// ("KubeCon Korea 2026"), and the query is `ILIKE '%term%' AND NOT ILIKE '%year%'` — so
-	// passing the full name asks for rows containing 2026 that do not contain 2026, which
-	// matches nothing. Sibling discovery silently returned zero for every returning event.
+	// ("KubeCon Korea 2026"), and ResolvePastEventNames does an `ILIKE '%term%'` match — so
+	// passing the full name asks for rows containing "KubeCon Korea 2026", which excludes
+	// every past edition (they carry a different year in their name). Sibling discovery
+	// silently returned zero for every returning event.
 	family := strings.TrimSpace(strings.ReplaceAll(eventTerm, year, ""))
 	if family == "" {
 		family = eventTerm

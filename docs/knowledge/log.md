@@ -1,5 +1,32 @@
 # Log
 
+## 2026-08-05 (continuation: close out dealako's round-3 doc/test cleanup on PR #61)
+
+**Fix** — Addressed the five minor + two nit items from dealako's third review round on the
+audience-build PR (LFXV2-2774), all doc/test/comment cleanup with no behavioral change:
+- `internal/platform/snowflake/client_test.go`: added `TestResolvePastEventNames_ExcludesYearlessNames`,
+  pinning the `if extractedYear == "" { continue }` fail-closed exclusion in `client.go`'s
+  past-editions loop, which previously had no direct test coverage.
+- `docs/api-catalog.md`: the `BuildAudience` 503 doc line named "service dependencies
+  (orchestrator, dispatcher)"; the actual `buildDeps()` check
+  (`internal/service/audience_build.go`) only tests `s.briefs`/`s.builder` nil-ness. Corrected the
+  text to name the real dependencies (brief repository, HubSpot/Snowflake builder).
+- `internal/dispatch/audience_builder.go` and its test: the year-stripping comment described a SQL
+  query shape (`ILIKE '%term%' AND NOT ILIKE '%year%'`) that no longer exists — year filtering
+  moved to Go in a prior round (`d545672`). Updated both comments to describe the current
+  ILIKE-only match and why a year-bearing search term still excludes past editions from it.
+- `docs/knowledge/code/internal-platform-snowflake.md`: was stale against the same query change —
+  still described a `NOT ILIKE` year exclusion in SQL and a raw `LIMIT maxEventRows+1`. Updated to
+  describe Go-side year filtering (with the yearless-exclusion rule) and the actual
+  `(maxEventRows+1)*2` raw fetch limit.
+- `internal/container/container.go`'s `newAudienceBuilder()`: its `error` return was always nil and
+  discarded at both call sites (the one real failure path returns a degraded builder with a nil
+  error instead). Dropped the unused return value; updated the two production call sites and four
+  test call sites accordingly.
+
+The last three items came from dealako reconciling against Copilot's suppressed comments on this
+PR (a full-file pass that caught drift a diff-scoped review round didn't).
+
 ## 2026-08-05
 
 **Docs** — Migration `000012_index_outbox_published_at` (PR #60) landed without a log entry,

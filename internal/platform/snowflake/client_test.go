@@ -206,6 +206,27 @@ func TestResolvePastEventNames_QueryShapeAndRows(t *testing.T) {
 	}
 }
 
+func TestResolvePastEventNames_ExcludesYearlessNames(t *testing.T) {
+	// A row whose event name carries no 4-digit year is ambiguous — it cannot be proven
+	// to predate currentYear, so it must be excluded (fail closed) rather than included.
+	drv := &fakeDriver{
+		cols: []string{"EVENT_NAME", "EVENT_ID"},
+		rows: [][]driver.Value{
+			{"KubeCon + CloudNativeCon North America", "ev-yearless"},
+			{"KubeCon + CloudNativeCon North America 2025", "ev-past"},
+		},
+	}
+	c := newFakeClient(t, drv)
+
+	got, err := c.ResolvePastEventNames(context.Background(), "KubeCon", "North America", "2026")
+	if err != nil {
+		t.Fatalf("ResolvePastEventNames: %v", err)
+	}
+	if len(got) != 1 || got[0].EventID != "ev-past" {
+		t.Fatalf("rows = %+v, want only the 2025 edition (yearless row excluded)", got)
+	}
+}
+
 func TestResolvePastEventNames_EscapesLikeMetacharacters(t *testing.T) {
 	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}}
 	c := newFakeClient(t, drv)
