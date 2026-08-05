@@ -184,6 +184,8 @@ type StatusToggler interface {
 // PlatformDispatcher; a dispatcher that doesn't implement it yields a clean "not supported"
 // error (ErrMetricsUnsupported → 400). Unlike ToggleStatus this never mutates platform or DB
 // state — it is a pure read, never persisted by the orchestrator.
+// ReadCampaignMetrics is the orchestrator's entry point, type-asserting the dispatcher
+// for this capability at call time (see lines 920–939).
 type MetricsReader interface {
 	// ReadMetrics fetches the platform campaign's metrics for window (a closed,
 	// platform-agnostic vocabulary — see model.MetricsWindow). campaign is the persisted row

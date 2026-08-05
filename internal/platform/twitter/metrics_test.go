@@ -270,3 +270,77 @@ func TestGetCampaignMetrics_MalformedResponseIsDecodeError(t *testing.T) {
 		t.Fatal("expected a decode error for a malformed response")
 	}
 }
+
+func TestGetCampaignMetrics_EndTimeIsHourAligned(t *testing.T) {
+	// Regression test: end_time must be hour-aligned (whole hour boundary).
+	// X Ads API rejects non-aligned timestamps like T23:59:59Z, so end_time
+	// should use an exclusive next-midnight bound (e.g., T00:00:00Z of the next day).
+	var mu sync.Mutex
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotQuery = r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
+	}))
+	defer server.Close()
+
+	client := testClient(server.URL)
+
+	// Use WindowToday so we can predict the date: if "now" is 2025-01-15,
+	// start should be 2025-01-15T00:00:00Z, end should be 2025-01-16T00:00:00Z (next day, exclusive).
+	fixedNow := time.Date(2025, 1, 15, 14, 30, 0, 0, time.UTC)
+	client.timeFn = func() time.Time { return fixedNow }
+
+	_, err := client.GetCampaignMetrics(context.Background(), "12345", WindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	query := gotQuery
+	mu.Unlock()
+	decoded, _ := url.QueryUnescape(query)
+
+	// Extract start_time and end_time from the query.
+	if !strings.Contains(decoded, "start_time=2025-01-15T00:00:00Z") {
+		t.Errorf("expected start_time=2025-01-15T00:00:00Z in query, got %s", decoded)
+	}
+	// The end_time should be the NEXT day at T00:00:00Z (exclusive end), not the same day at T23:59:59Z.
+	if !strings.Contains(decoded, "end_time=2025-01-16T00:00:00Z") {
+		t.Errorf("expected end_time=2025-01-16T00:00:00Z (next day, hour-aligned, exclusive), got %s", decoded)
+	}
+	if strings.Contains(decoded, "T23:59:59Z") {
+		t.Errorf("end_time should NOT be non-hour-aligned with T23:59:59Z, got %s", decoded)
+	}
+}
+
+func TestGetCampaignMetrics_InvalidAccountID(t *testing.T) {
+	// Regression test: account ID must be validated before interpolating into URL.
+	// Other Twitter client paths guard the stored account ID with accountIDRe to
+	// prevent path injection. GetCampaignMetrics must do the same.
+	client := NewClient(
+		Credentials{
+			ConsumerKey:       "key",
+			ConsumerSecret:    "secret",
+			AccessToken:       "token",
+			AccessTokenSecret: "token_secret",
+		},
+		AccountConfig{AccountID: "account/../etc"}, // path-injection attempt
+		WithBaseURL("http://example.invalid"),
+		WithAPIVersion("12"),
+		WithWriteDelay(0),
+	)
+
+	_, err := client.GetCampaignMetrics(context.Background(), "12345", WindowToday)
+	if err == nil {
+		t.Fatal("expected an error for invalid (path-injection-shaped) account ID")
+	}
+	// The error should be a validation error (context error), not a network error.
+	if strings.Contains(err.Error(), "account") || strings.Contains(err.Error(), "credentials") {
+		// Good — it's caught as a credential/config error, not a network issue.
+	} else {
+		t.Errorf("expected a validation-style error message, got %v", err)
+	}
+}

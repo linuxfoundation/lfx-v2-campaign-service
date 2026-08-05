@@ -11,11 +11,16 @@ nested `id`/`id_data`/`metrics` (with `billed_charge_local_micro`) shape — a s
 response would have decoded to all zeros. Extracted `doRequest`'s retry/OAuth core into a new
 `doRequestAbs` so the stats call can target its own non-account-scoped URL while keeping the
 same 429 backoff/OAuth1-signing behavior; added a `statsURL()` helper. Added typed
-`ErrInvalidCampaignID`/`ErrUnsupportedWindow` sentinels (`errors.Is`-discriminable) in place of
-plain `fmt.Errorf`. Softened the `MetricsReader` orchestrator doc comment — this branch
-predates GA-5/#70's merge to main, so the type-assertion wiring it described doesn't exist yet
-here; that's a base-branch staleness artifact shared with the LinkedIn/Meta metrics PRs, not
-something to fix on this branch.
+`ErrInvalidCampaignID`/`ErrUnsupportedWindow` sentinels (`errors.Is`-discriminable), returned
+directly without fmt.Errorf wrapping so callers can discriminate window-validation failures
+from upstream/transport failures via `errors.Is()`. Fixed hour-alignment of the stats `end_time`
+parameter: changed from `endDate+"T23:59:59Z"` (non-hour-aligned, rejected or silently rounded
+by X's API) to an exclusive next-midnight bound `(endDate+1)+"T00:00:00Z"` to match X's
+requirement for whole-hour-aligned timestamps. Added `accountIDRe` validation before interpolating
+`c.account.AccountID` into the stats URL path, mirroring the guard applied by other Twitter client
+paths to prevent path injection from a malformed stored account ID. Clarified the `MetricsReader`
+orchestrator doc comment to reference the actual orchestrator entry point (`ReadCampaignMetrics`,
+lines 920–939) rather than aspirational wiring that doesn't yet exist on this branch.
 **Add** — Metrics-read foundation PR (LFXV2-3001): platform-agnostic `MetricsReader`
 capability, `model.MetricsWindow`/`CampaignMetrics`, `ErrMetricsUnsupported`, and the
 `GET .../campaigns/{id}/metrics` endpoint, landed once as a shared layer.

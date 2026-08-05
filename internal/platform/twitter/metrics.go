@@ -130,7 +130,14 @@ func dateRangeForWindow(window MetricsWindow, now time.Time) (startDate, endDate
 func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, window MetricsWindow) (*CampaignMetrics, error) {
 	id := strings.TrimSpace(campaignID)
 	if id == "" || !campaignIDRe.MatchString(id) {
-		return nil, fmt.Errorf("get campaign metrics: campaign id %q: %w", campaignID, ErrInvalidCampaignID)
+		return nil, ErrInvalidCampaignID
+	}
+
+	// Validate the account ID before interpolating it into the stats URL path,
+	// using the same guard other Twitter paths apply (see accountIDRe in client.go).
+	// A stored account ID carrying `/`, `?`, or `#` could alter the signed request path.
+	if !accountIDRe.MatchString(c.account.AccountID) {
+		return nil, fmt.Errorf("invalid account id in stored credentials")
 	}
 
 	w := window
@@ -145,11 +152,18 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	case WindowToday, WindowLast7Days:
 		// Valid; proceed
 	default:
-		return nil, fmt.Errorf("get campaign metrics: window %q: %w", w, ErrUnsupportedWindow)
+		return nil, ErrUnsupportedWindow
 	}
 
 	// Compute the date range for the window
 	startDate, endDate := dateRangeForWindow(w, c.timeFn())
+
+	// X Ads API requires whole-hour-aligned timestamps. The end_time must be an
+	// hour boundary; using a non-aligned value like 23:59:59 will be rejected or
+	// silently rounded, causing queries to fail or under-report. Common practice
+	// is to use an exclusive next-midnight bound (the start of the next day).
+	endDateParsed, _ := time.Parse("2006-01-02", endDate)
+	endTimestamp := endDateParsed.AddDate(0, 0, 1).Format("2006-01-02") + "T00:00:00Z"
 
 	// Query the X Ads stats endpoint. Per the X Ads v12 analytics contract:
 	//   - metric_groups is required and selects which metric families are
@@ -165,7 +179,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	// in internal/platform/googleads/metrics.go and internal/platform/linkedin/metrics.go.
 	params := map[string]string{
 		"start_time":    startDate + "T00:00:00Z",
-		"end_time":      endDate + "T23:59:59Z",
+		"end_time":      endTimestamp,
 		"granularity":   "TOTAL",
 		"entity":        "CAMPAIGN",
 		"entity_ids":    id,
