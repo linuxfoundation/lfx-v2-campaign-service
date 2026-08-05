@@ -272,6 +272,9 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 	}
 	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)
 	if err != nil {
+		if errors.Is(err, reddit.ErrUnsupportedWindow) {
+			return nil, fmt.Errorf("get campaign metrics from reddit: %w: %w", domain.ErrMetricsWindowUnsupported, err)
+		}
 		return nil, fmt.Errorf("get campaign metrics from reddit: %w", err)
 	}
 	return metrics, nil

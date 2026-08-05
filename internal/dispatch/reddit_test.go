@@ -603,3 +603,28 @@ func TestReddit_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
 	}
 }
+
+// TestReddit_ReadMetrics_UnsupportedWindowIs400 verifies ReadMetrics wraps the platform
+// client's window-rejection error with domain.ErrMetricsWindowUnsupported, so brief.go's
+// GetCampaignMetrics maps it to 400 (caller input) instead of falling through to 503
+// (upstream failure) — Reddit's reporting endpoint has no "yesterday" or "last_14_days"
+// date-range mapping (see dateRangeForWindow), and the platform is never contacted.
+func TestReddit_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderRedditAds,
+		toggleCampaign("t3_c", "t5_ag", "t6_ad"),
+		model.MetricsWindowYesterday,
+	)
+	if err == nil {
+		t.Fatal("expected an error for a window Reddit cannot map to a date range")
+	}
+	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Errorf("expected err to wrap domain.ErrMetricsWindowUnsupported (so brief.go maps it to 400), got: %v", err)
+	}
+	if !errors.Is(err, reddit.ErrUnsupportedWindow) {
+		t.Errorf("expected err to still wrap reddit.ErrUnsupportedWindow, got: %v", err)
+	}
+}
