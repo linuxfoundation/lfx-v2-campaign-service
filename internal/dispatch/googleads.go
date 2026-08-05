@@ -350,13 +350,16 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// confirmed present by the guard above), campaign last — so the campaign only reports
 	// ENABLED once its ad group/ad already do.
 	if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
-		// Any failure once we're past the guard is a partial cascade.
-		return &unconfirmedToggleError{err: uerr}
+		// A child failure on ACTIVATE is NOT a partial cascade (the campaign hasn't been
+		// attempted yet). Only ambiguous outcomes (5xx/timeout/transport) should be wrapped as
+		// unconfirmed; definite failures (4xx/validation) pass through as ordinary errors.
+		return wrapUnconfirmed(uerr)
 	}
 	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
 		// After the children succeed, a campaign failure is a partial cascade: children are
-		// active but the parent's outcome is unknown.
-		return &unconfirmedToggleError{err: uerr}
+		// active but the parent's outcome is ambiguous (5xx/timeout/transport). Definite
+		// failures (4xx) pass through as ordinary errors.
+		return wrapUnconfirmed(uerr)
 	}
 	return nil
 }

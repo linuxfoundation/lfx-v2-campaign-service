@@ -661,6 +661,63 @@ func TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure_Refused(t 
 	}
 }
 
+// TestGoogleAds_ToggleStatus_ActivateChildDefititeFailureIsNotUnconfirmed verifies that on
+// ACTIVATE (children-first), a definite child failure (4xx) is NOT wrapped as unconfirmed.
+// The child mutate happens before the campaign gate is opened; a definite error means the
+// change was not applied upstream, so the failure is clean (not a partial cascade).
+func TestGoogleAds_ToggleStatus_ActivateChildDefititeFailureIsNotUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		// Ad group/ad mutate fails with definite 4xx (validation error)
+		if strings.HasSuffix(r.URL.Path, "adGroups:mutate") || strings.HasSuffix(r.URL.Path, "adGroupAds:mutate") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid targeting"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	// Must have targeting criteria provisioned for ACTIVATE to be allowed
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		Result:             json.RawMessage(`{"adGroupId":"333","adId":"444","keywordCriteriaIds":["999"]}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when the child ad-group mutate fails")
+	}
+	// Verify the error is NOT wrapped as unconfirmed
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a definite 4xx child failure must NOT be reported UNCONFIRMED, got: %v", err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	// Should only have the child mutate, no campaign mutate (campaign gate never opened)
+	if len(gotPaths) != 1 {
+		t.Fatalf("issued %d calls, want 1 (ad group mutate only — no campaign mutate after definite failure): %v", len(gotPaths), gotPaths)
+	}
+	if !strings.HasSuffix(gotPaths[0], "adGroups:mutate") {
+		t.Errorf("path = %v, want adGroups:mutate", gotPaths[0])
+	}
+}
+
 func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
 	// Verify that the dispatcher wires keywords and audience segments from the config
 	// through to the client, and that both reach the criteria endpoint. A typo or dropped
