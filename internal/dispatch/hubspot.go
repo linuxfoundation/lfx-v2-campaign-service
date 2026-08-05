@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/utm"
 )
 
 // hubspotCreds is the credential shape stored (encrypted) for a HubSpot connection. HubSpot
@@ -34,6 +36,10 @@ type hubspotConfig struct {
 	// — there is no default template. The clone is created in a draft state (a human reviews and
 	// sends it), so staging is safe.
 	SourceEmailID string `json:"sourceEmailId"`
+	// UTMCampaign optionally overrides the utm_campaign applied to the email's links. OPTIONAL:
+	// when unset the campaign is derived from the deterministic email name, so links are always
+	// attributable. Set it to make several briefs' emails roll up to one campaign in reporting.
+	UTMCampaign string `json:"utmCampaign"`
 }
 
 // audienceReader is the narrow read slice of the audience repository the email dispatcher needs:
@@ -138,7 +144,75 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 
+	// STEP 3 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
+	// traffic is attributable in the warehouse. Deliberately LAST and non-fatal: the email is
+	// already cloned and pointed at the right audience, so it is a working campaign. An
+	// untagged email is a reporting gap; failing here would turn that gap into a failed send
+	// and leave a configured draft behind anyway.
+	tagEmailLinks(ctx, client, email.ID, cloneName, cfg.UTMCampaign)
+
 	return campaignFromHubSpot(ctx, email, cfg), nil
+}
+
+// tagEmailLinks rewrites the cloned draft's links to carry UTM parameters. Best-effort by
+// contract: every failure is logged and swallowed, because the campaign is already valid
+// without it (see the call site).
+//
+// campaignUTM is the value configured on the brief's platform config, when set; otherwise the
+// campaign is derived from the deterministic email name.
+func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailName, campaignUTM string) {
+	res := utm.Resolve(campaignUTM, emailName)
+
+	widgets, err := client.GetEmailHTMLWidgets(ctx, emailID)
+	if err != nil {
+		slog.WarnContext(ctx, "could not read the email draft to tag its links; the email will send untagged",
+			"email_id", emailID, "error", err)
+		return
+	}
+
+	// Iterate widgets in a STABLE order and carry the link count across them. Go map order is
+	// randomized, so without sorting the same email would number its links differently on each
+	// run; without carrying the count, every widget would restart at "body-link-1" and a
+	// multi-widget email would emit duplicate utm_content values that no report can tell apart.
+	keys := make([]string, 0, len(widgets))
+	for k := range widgets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	tagged := make(map[string]string, len(widgets))
+	tagCount := 0
+	for _, key := range keys {
+		body := widgets[key]
+		out, n, terr := utm.TagHTMLLinksFrom(body, res.Params, "", tagCount)
+		if terr != nil {
+			// TagHTMLLinks returns the ORIGINAL body alongside its error, so skipping this
+			// widget leaves it exactly as it was rather than writing back something mangled.
+			slog.WarnContext(ctx, "could not tag a widget's links; leaving it untagged",
+				"email_id", emailID, "widget", key, "error", terr)
+			continue
+		}
+		tagCount += n
+		if out != body {
+			tagged[key] = out
+		}
+	}
+	if len(tagged) == 0 {
+		// Nothing to write: no links, or every link was already tagged. Not a failure.
+		return
+	}
+	if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, tagged); perr != nil {
+		// "MAY send untagged", not "will": a PATCH error does not prove the write did not land.
+		// patchEmail returns an UNCONFIRMED error for a 2xx with a null or undecodable body,
+		// where the update may well have applied. Telling an operator the draft is definitely
+		// untagged would send them to re-tag a draft that is already correct. The draft is a
+		// human-reviewed artefact, so the honest instruction is "check it".
+		slog.WarnContext(ctx, "could not confirm tagged links were written back to the email draft; it may send untagged — verify the draft",
+			"email_id", emailID, "widgets", len(tagged), "error", perr)
+		return
+	}
+	slog.InfoContext(ctx, "tagged email links with utm parameters",
+		"email_id", emailID, "widgets", len(tagged), "utm_campaign", res.Params.Campaign, "utm_source_of_campaign", res.Source)
 }
 
 // resolveBuiltAudience finds the brief's most-recent BUILT HubSpot audience and returns its
