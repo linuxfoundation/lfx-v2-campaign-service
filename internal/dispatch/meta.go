@@ -221,6 +221,42 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	return nil
 }
 
+// ReadMetrics implements service.MetricsReader for Meta. It resolves the same connection
+// ToggleStatus does (no account id or page id required — a metrics read targets the
+// campaign node by id, like the status update) and reads the campaign's live Insights
+// metrics; window is passed through as a meta.MetricsWindow (the client validates it
+// against its own allow-list, so an invalid caller value fails there rather than being
+// re-validated here).
+func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window string) (*model.CampaignMetrics, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if res.status != model.StatusActive {
+		return nil, fmt.Errorf("meta connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds metaCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return nil, fmt.Errorf("decode meta credentials: %w", err)
+	}
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return nil, fmt.Errorf("meta credentials are incomplete (need accessToken)")
+	}
+	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, meta.MetricsWindow(window))
+	if err != nil {
+		return nil, err
+	}
+	return &model.CampaignMetrics{
+		CampaignID:  m.CampaignID,
+		Window:      string(m.Window),
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
+	}, nil
+}
+
 // metaAdSetID pulls the ad set id the create path stored in the persisted CampaignResult
 // blob. A missing/unparseable blob yields "" (the campaign is toggled alone — the service
 // already blocks toggling a degraded campaign, and on Meta the CAMPAIGN status is the
