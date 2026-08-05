@@ -17,7 +17,11 @@ import (
 
 // ─── Brief types ───
 
-// BriefInput is the mutable brief payload (create/replace).
+// BriefInput holds the shared brief attributes. It is Reference()d by the Brief RESPONSE type,
+// and by BriefWriteInput (the actual create/replace request payload). Do not add constraints
+// here — they reach the response type through Reference, breaking already-persisted empty-slug
+// rows. Constraints belong in BriefWriteInput only. Keep the two in sync: see BriefWriteInput's
+// doc comment.
 var BriefInput = Type("brief-input", func() {
 	Attribute("program_type", String, "Funnel context", func() {
 		Enum("events", "education", "membership")
