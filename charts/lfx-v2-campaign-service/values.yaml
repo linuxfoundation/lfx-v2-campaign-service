@@ -256,6 +256,27 @@ app:
     SNOWFLAKE_ROLE:
       value: ''
 
+    # INDEXER_SERVICE_TOKEN is the SERVICE credential the index relay stamps onto
+    # messages it replays from the outbox. Outbox rows deliberately store no token
+    # (the table is JSONB retained for audit with no pruning, so a per-request JWT
+    # written there would persist as a live credential), and the indexer REJECTS any
+    # message without a non-empty authorization header.
+    #
+    # Marked optional so a cluster whose secret does not yet carry the key still
+    # starts: the relay detects the missing credential and idles, leaving outbox rows
+    # PENDING rather than draining them into a black hole. Nothing is lost, but
+    # indexing recovery stays DISABLED until this is provisioned — a terminal write
+    # like archiving a brief has no later write to repair the index with.
+    #
+    # Rollout prerequisite: ExternalSecret / secret sync must provision
+    # `indexer-service-token` on lfx-v2-campaign-service-secrets.
+    INDEXER_SERVICE_TOKEN:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: indexer-service-token
+          optional: true
+
     # PostgreSQL connection settings from the ExternalSecret-managed secret
     # (keys: host, port, username, password, dbname, engine). The app composes
     # the DSN in-process so the password is not interpolated into the pod spec.

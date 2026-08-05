@@ -18,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -49,8 +50,11 @@ func shrinkDBTimers(t *testing.T) {
 // can never overrun DefaultShutdownTimeout (which would risk a SIGKILL
 // mid-drain). This guards the invariant the init() in container.go panics on.
 func TestShutdownBudgetComposes(t *testing.T) {
-	// The container-close phase reserves drain + post-cancel grace.
-	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod, ContainerCloseTimeout)
+	// The container-close phase reserves EVERY term Close actually spends: the dispatch
+	// drain, the post-cancel grace, AND the index publisher's connection drain. The last
+	// was originally omitted, which understated the phase and let the two phases sum past
+	// DefaultShutdownTimeout — the SIGKILL-mid-drain this budget exists to prevent.
+	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+relayStopTimeout, ContainerCloseTimeout)
 	// The HTTP phase gets a positive share of the remaining budget.
 	assert.Positive(t, HTTPShutdownTimeout, "HTTP shutdown phase must have a positive budget")
 	// The two phases together stay within the overall budget.
@@ -117,10 +121,10 @@ func (stubCampaignRepo) ClaimCampaignDispatch(context.Context, string, string, m
 func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provider) error {
 	return nil
 }
-func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
+func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
-func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64) (*model.Campaign, error) {
+func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
 
@@ -445,6 +449,167 @@ func TestNewAudienceBuilder_SnowflakeOptional(t *testing.T) {
 	}
 }
 
+// TestNewContainer_AllPathsInjectIndexer pins the wiring bug that made PR #60 publish
+// nothing: SetIndexer was called ONLY on the 503-mode path, while the healthy fast path
+// and the no-database path each constructed their own BriefService and silently kept the
+// Noop. Every path must end up with a real publisher, so asserting one path is not enough
+// — the bug lived precisely in the path that wasn't checked.
+//
+// A reachable NATS server is NOT required: newIndexPublisher returns a live *NATSPublisher
+// after a failed dial (it reconnects in the background), so "not Noop" is the correct
+// signal that wiring happened, independent of broker availability.
+func TestNewContainer_AllPathsInjectIndexer(t *testing.T) {
+	const unreachableNATS = "nats://127.0.0.1:14222"
+
+	t.Run("no-database path", func(t *testing.T) {
+		cont, err := NewContainer(&config.Config{Host: "*", Port: "8080", NATSUrl: unreachableNATS})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cont.Close(context.Background()) })
+
+		bs, ok := cont.Briefs.(*service.BriefService)
+		require.True(t, ok, "briefs service must be the concrete *BriefService")
+		assert.False(t, bs.IndexerIsNoop(), "no-database path kept the Noop indexer: it would serve traffic and index nothing")
+	})
+
+	t.Run("503-mode path", func(t *testing.T) {
+		// An unreachable DB boots in 503 mode and takes the background-retry path.
+		shrinkDBTimers(t)
+		cont, err := NewContainer(&config.Config{
+			Host: "*", Port: "8080", NATSUrl: unreachableNATS,
+			// Port 1 has nothing listening → connection refused (transient, retryable).
+			DatabaseURL:             "postgres://app@127.0.0.1:1/campaign?sslmode=disable",
+			CredentialEncryptionKey: validEncryptionKey(),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cont.Close(context.Background()) })
+
+		bs, ok := cont.Briefs.(*service.BriefService)
+		require.True(t, ok, "briefs service must be the concrete *BriefService")
+		assert.False(t, bs.IndexerIsNoop(), "503-mode path kept the Noop indexer")
+	})
+}
+
+// TestNewBriefService_InjectsSharedPublisher covers the live fast path's constructor
+// directly. The fast path needs a real pool, so exercising NewContainer for it would
+// require a database; calling the helper proves the same guarantee — that the helper
+// every path now routes through actually injects — without one.
+func TestNewBriefService_InjectsSharedPublisher(t *testing.T) {
+	c := &Container{indexPublisher: indexer.Noop{}}
+	assert.True(t, c.newBriefService(nil, nil, nil, nil).IndexerIsNoop(),
+		"a Noop publisher must pass through as a Noop")
+
+	live, err := indexer.NewNATSPublisher("nats://127.0.0.1:14222")
+	require.NotNil(t, live)
+	_ = err // a dial failure still yields a usable publisher; that is not what this asserts
+	c = &Container{indexPublisher: live}
+	t.Cleanup(live.Close)
+	assert.False(t, c.newBriefService(nil, nil, nil, nil).IndexerIsNoop(),
+		"the container's real publisher must reach the BriefService")
+}
+
+// TestNewOrchestrator_InjectsSharedPublisher covers the orchestrator half of the same
+// wiring guarantee. Campaign CREATES are persisted by the orchestrator (dispatchOne),
+// so an orchestrator that kept the Noop would leave every newly created campaign
+// unsearchable until a later update republished it — a gap invisible from BriefService.
+func TestNewOrchestrator_InjectsSharedPublisher(t *testing.T) {
+	c := &Container{indexPublisher: indexer.Noop{}}
+	assert.True(t, c.newOrchestrator(nil, nil, nil).IndexerIsNoop(),
+		"a Noop publisher must pass through as a Noop")
+
+	live, err := indexer.NewNATSPublisher("nats://127.0.0.1:14222")
+	require.NotNil(t, live)
+	_ = err // a dial failure still yields a usable publisher; that is not what this asserts
+	t.Cleanup(live.Close)
+	c = &Container{indexPublisher: live}
+	assert.False(t, c.newOrchestrator(nil, nil, nil).IndexerIsNoop(),
+		"the container's real publisher must reach the Orchestrator")
+}
+
+// TestClose_StopsARelayInstalledByALateInitRetry pins the ORDER of the two shutdown steps.
+//
+// On the 503 cold-start path the DB-init goroutine is what installs the relay. Close therefore
+// has to cancel and JOIN that goroutine before it reads c.indexRelay — reading first loses the
+// race: a retry that succeeds in the gap starts a relay nothing ever stops, and it keeps reading
+// the outbox straight through the pool.Close that follows.
+//
+// The test reproduces the gap directly: the goroutine installs the relay only after Close has
+// begun, so a Close that read the field up front would see nil and stop nothing.
+func TestClose_StopsARelayInstalledByALateInitRetry(t *testing.T) {
+	relay := indexer.NewRelay(&stubOutbox{}, indexer.Noop{}, "token")
+
+	c := &Container{}
+	_, cancel := context.WithCancel(context.Background())
+	c.cancelInit = cancel
+	c.initDone = make(chan struct{})
+
+	closeStarted := make(chan struct{})
+	go func() {
+		defer close(c.initDone)
+		<-closeStarted // the retry lands mid-Close, exactly where the race lives
+		c.setIndexRelay(relay)
+	}()
+
+	close(closeStarted)
+	require.NoError(t, c.Close(context.Background()))
+
+	// Stop is idempotent via sync.Once, so a relay Close already stopped reports done
+	// immediately. A relay Close never saw would still be running its ticker.
+	assert.True(t, relayStopped(relay), "Close must stop a relay installed by a late init retry")
+}
+
+// stubOutbox is an outbox that never has pending work. The relay under test is never expected to
+// publish anything — only to be STOPPED — so the reads just need to succeed.
+type stubOutbox struct{}
+
+func (stubOutbox) DrainPendingIndexMessages(
+	context.Context, int, func(context.Context, *model.OutboxMessage) error,
+) (int, error) {
+	return 0, nil
+}
+func (stubOutbox) PrunePublishedIndexMessages(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+
+// relayStopped reports whether Stop has already run, without exporting relay internals: a second
+// Stop on an already-stopped relay returns immediately, while one on a live relay would block
+// for its full wait.
+func relayStopped(r *indexer.Relay) bool {
+	done := make(chan struct{})
+	go func() {
+		r.Stop(time.Second)
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(200 * time.Millisecond):
+		return false
+	}
+}
+
+// TestNewContainer_MalformedNATSURLIsFatal pins that an unusable NATS configuration fails boot
+// rather than degrading to a silent Noop.
+//
+// The publisher is built with RetryOnFailedConnect, so an ordinary broker outage does NOT reach
+// the error branch — it returns a reconnecting publisher that heals itself. Reaching it means the
+// config can never work, and no retry will fix it.
+//
+// Carrying on with a Noop there is the worst outcome available: NATS_URL is non-empty, so the
+// enqueue gate stays OPEN and every write co-commits an outbox row into a table this process can
+// never drain — and whose pending rows are deliberately never pruned. The service would report
+// healthy while accumulating undeliverable work forever. Failing fast surfaces a config error as
+// a config error, exactly as invalid database settings already do.
+func TestNewContainer_MalformedNATSURLIsFatal(t *testing.T) {
+	cfg := &config.Config{NATSUrl: "://not-a-url"}
+
+	_, err := NewContainer(cfg)
+
+	require.Error(t, err, "an unusable NATS URL must fail boot, not degrade to a Noop")
+	assert.Contains(t, err.Error(), "nats configuration",
+		"the error must name the misconfigured subsystem so an operator knows what to fix")
+	// The raw URL must not leak: NATS_URL can carry credentials.
+	assert.NotContains(t, err.Error(), "not-a-url@", "a credential-bearing URL must stay redacted")
+}
 // countingScanner records how many scans ran, and can report a claim that only becomes
 // visible AFTER the first scan — modelling the exact gap this sweeper exists to close.
 type countingScanner struct {

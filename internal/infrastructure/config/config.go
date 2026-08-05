@@ -27,6 +27,8 @@ type Config struct {
 	Audience string
 	Issuer   string
 
+	// NATSUrl is the NATS server URL. Used to publish Query Service index updates; empty
+	// disables indexing without affecting any other capability.
 	NATSUrl string
 
 	// Snowflake read-only credentials for audience building. Optional as a GROUP: when
@@ -37,6 +39,12 @@ type Config struct {
 	SnowflakePrivateKey string
 	SnowflakeWarehouse  string
 	SnowflakeRole       string
+
+	// IndexerServiceToken is the SERVICE credential the index relay stamps onto replayed
+	// messages. Outbox rows store no token — the table is retained for audit, so a per-request
+	// JWT written there would persist as a live credential — and the indexer requires a
+	// non-empty authorization header on every message.
+	IndexerServiceToken string
 
 	// DatabaseURL is the PostgreSQL DSN. Empty disables the database layer
 	// (e.g. for tests or a metadata-only run). Prefer composing from PG*
@@ -87,7 +95,10 @@ func LoadConfig() *Config {
 		JWKSUrl:  envOrDefault(constants.EnvJWKSURL, constants.DefaultJWKSURL),
 		Audience: envOrDefault(constants.EnvAudience, constants.DefaultAudience),
 		Issuer:   envOrDefault(constants.EnvIssuer, constants.DefaultIssuer),
-		NATSUrl:  envOrDefault(constants.EnvNATSURL, constants.DefaultNATSURL),
+		// NOT envOrDefault: an explicitly-empty NATS_URL is the documented switch
+		// that disables index publishing, and envOrDefault cannot express it (it
+		// collapses unset and empty into the default).
+		NATSUrl: envOrDefaultUnlessSet(constants.EnvNATSURL, constants.DefaultNATSURL),
 
 		SnowflakeAccount:    os.Getenv(constants.EnvSnowflakeAccount),
 		SnowflakeUser:       os.Getenv(constants.EnvSnowflakeUser),
@@ -95,6 +106,7 @@ func LoadConfig() *Config {
 		SnowflakeWarehouse:  os.Getenv(constants.EnvSnowflakeWarehouse),
 		SnowflakeRole:       os.Getenv(constants.EnvSnowflakeRole),
 
+		IndexerServiceToken:     os.Getenv(constants.EnvIndexerServiceToken),
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
 		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),
 	}
@@ -228,7 +240,7 @@ func (c *Config) String() string {
 		c.JWKSUrl,
 		c.Audience,
 		c.Issuer,
-		c.NATSUrl,
+		redactNATSURL(c.NATSUrl),
 		redactDatabaseURL(c.DatabaseURL),
 		redactSecret(c.CredentialEncryptionKey),
 		c.PGHost,
@@ -253,11 +265,41 @@ func redactDatabaseURL(dsn string) string {
 	return "[redacted]"
 }
 
+// redactNATSURL strips any credentials from a NATS URL while KEEPING the host.
+//
+// A NATS URL may carry userinfo (nats://user:pass@host:4222), and String() promises a
+// log-safe representation — so printing it verbatim would put the broker password in the
+// pod logs of anything that logs the config. Unlike redactDatabaseURL this does not mask
+// wholesale: the broker host is genuinely useful when diagnosing an indexing outage, and
+// a NATS URL is always a parseable URL (there is no keyword-DSN form to worry about), so
+// the credential portion can be removed precisely.
+func redactNATSURL(u string) string {
+	at := strings.LastIndexByte(u, '@')
+	if at < 0 {
+		return u // no userinfo: nothing to redact
+	}
+	if scheme := strings.Index(u, "://"); scheme >= 0 && scheme+3 <= at {
+		return u[:scheme+3] + "***@" + u[at+1:]
+	}
+	return "***@" + u[at+1:]
+}
+
 func redactSecret(v string) string {
 	if v == "" {
 		return ""
 	}
 	return "xxxxx"
+}
+
+// envOrDefaultUnlessSet returns def only when key is UNSET. A key that is present
+// but empty returns "" — unlike envOrDefault, which treats empty as absent. Use this
+// for settings where empty is a meaningful operator choice rather than a mistake
+// (NATS_URL="" disables index publishing; see constants.EnvNATSURL).
+func envOrDefaultUnlessSet(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return def
 }
 
 func envOrDefault(key, def string) string {
