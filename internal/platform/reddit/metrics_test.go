@@ -113,36 +113,63 @@ func TestGetCampaignMetrics_NoActivity(t *testing.T) {
 }
 
 func TestGetCampaignMetrics_EmptyCampaignID(t *testing.T) {
+	var mu sync.Mutex
+	var handlerCalled bool
 	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Error("request should not reach the server for an invalid campaign id")
+		mu.Lock()
+		handlerCalled = true
+		mu.Unlock()
 	})
 
 	_, err := client.GetCampaignMetrics(context.Background(), "", model.MetricsWindowToday)
 	if !errors.Is(err, ErrInvalidCampaignID) {
 		t.Fatalf("expected ErrInvalidCampaignID, got %v", err)
 	}
+	mu.Lock()
+	if handlerCalled {
+		t.Error("request should not reach the server for an invalid campaign id")
+	}
+	mu.Unlock()
 }
 
 func TestGetCampaignMetrics_InvalidCampaignIDCharacters(t *testing.T) {
+	var mu sync.Mutex
+	var handlerCalled bool
 	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Error("request should not reach the server for a path-injection-shaped id")
+		mu.Lock()
+		handlerCalled = true
+		mu.Unlock()
 	})
 
 	_, err := client.GetCampaignMetrics(context.Background(), "123/../other", model.MetricsWindowToday)
 	if !errors.Is(err, ErrInvalidCampaignID) {
 		t.Fatalf("expected ErrInvalidCampaignID, got %v", err)
 	}
+	mu.Lock()
+	if handlerCalled {
+		t.Error("request should not reach the server for a path-injection-shaped id")
+	}
+	mu.Unlock()
 }
 
 func TestGetCampaignMetrics_UnsupportedWindow(t *testing.T) {
+	var mu sync.Mutex
+	var handlerCalled bool
 	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Error("request should not reach the server for an unsupported window")
+		mu.Lock()
+		handlerCalled = true
+		mu.Unlock()
 	})
 
 	_, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindow("last_90_days"))
 	if !errors.Is(err, ErrUnsupportedWindow) {
 		t.Fatalf("expected ErrUnsupportedWindow, got %v", err)
 	}
+	mu.Lock()
+	if handlerCalled {
+		t.Error("request should not reach the server for an unsupported window")
+	}
+	mu.Unlock()
 }
 
 func TestGetCampaignMetrics_MalformedResponseIsDecodeError(t *testing.T) {
