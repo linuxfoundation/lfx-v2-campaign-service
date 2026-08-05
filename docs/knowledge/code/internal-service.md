@@ -84,4 +84,30 @@ so the row can't diverge from the platform if the request is cancelled after the
 and a stuck DB can't hang shutdown; a persist failure after the platform changed is logged as a
 divergence reconcile signal.
 
+## Campaign metrics read
+
+`BriefService.GetCampaignMetrics` (backing `GET .../campaigns/{id}/metrics`) reads live
+performance metrics (impressions, clicks, cost, CTR) directly from the campaign's ad
+platform. Unlike `GetCampaign`, this is a pure read — `model.CampaignMetrics` is never
+persisted, so there is no `If-Match`/version to check, mirroring `ToggleCampaignStatus`'s
+always-live-not-cached semantics. `Orchestrator.ReadCampaignMetrics` type-asserts the
+platform's dispatcher for the optional `MetricsReader` capability at call time (the same
+optional-capability pattern as `StatusToggler`) rather than requiring every dispatcher to
+implement it; a dispatcher that isn't a `MetricsReader` — or a platform with no dispatcher
+registered at all — returns `ErrMetricsUnsupported` (400) without ever contacting the
+platform. An unprovisioned campaign (`PlatformCampaignID` empty, or `campaign == nil`)
+returns `ErrCampaignNotProvisioned` (409) before any platform call, same as the toggle. Any
+other error from the dispatcher's `ReadMetrics` call propagates as-is (503) — a read has no
+ambiguous mutation to protect, so there is no UNCONFIRMED classification here. The call is
+bounded by `metricsCallTimeout` (20s, distinct from `toggleCallTimeout`'s 45s — reads should
+fail fast rather than hold a request open).
+
+The `window` query parameter is a closed, platform-agnostic vocabulary
+(`model.MetricsWindow`: `today`, `yesterday`, `last_7_days`, `last_14_days`,
+`last_30_days` [default], `this_month`, `last_month`) — never a platform's own dialect
+(e.g. Google Ads' GAQL `DURING` literals, Meta's Insights `date_preset`). Each platform's
+`MetricsReader` adapter is responsible for mapping this vocabulary to its own platform's
+query syntax; the mapping (and any platform-specific validation, e.g. an allow-list guard
+against GAQL injection) lives in the platform client package, not here.
+
 See [internal/service](../../../internal/service).

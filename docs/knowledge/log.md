@@ -1,5 +1,46 @@
 # Log
 
+## 2026-08-05
+
+**Add** — Metrics-read foundation PR (LFXV2-3001): platform-agnostic `MetricsReader`
+capability, `model.MetricsWindow`/`CampaignMetrics`, `ErrMetricsUnsupported`, and the
+`GET .../campaigns/{id}/metrics` endpoint, landed once as a shared layer.
+
+Four platform-specific metrics PRs (Meta #72, LinkedIn #73, X/Twitter #74, Reddit #75) were
+already written and CI-green, but none could merge: `origin/main` had NO metrics
+infrastructure at all (it lives in the still-unmerged GA-5, buried in the Google Ads stack
+#66→#70), so each of the four PRs independently reinvented it — and diverged into two
+incompatible shapes (Meta/X used an untyped `window string` and a
+`CampaignMetrics{CampaignID, Window, ...}` shape; LinkedIn/Reddit used a typed
+`model.MetricsWindow` with no `CampaignID`/`Window` fields and `CTR` cased differently). All
+four also edit `internal/service/orchestrator.go`, so whichever pair merged first would break
+the other pair's build.
+
+This PR extracts the shared layer ONCE, choosing GA-5's field set (keeps `CampaignID`/`Window`,
+which the Goa result type needs) combined with LinkedIn/Reddit's TYPED window — but replaces
+the GA-5 design's GAQL-flavored enum (`LAST_30_DAYS`, `THIS_MONTH`, Google's own vocabulary)
+with a lowercase, platform-agnostic vocabulary (`last_30_days`, `this_month`, ...), since
+nothing was merged yet and this is the cheapest point to fix a design flaw that would otherwise
+bake one platform's dialect into every adapter permanently. Each platform's `ReadMetrics`
+adapter is responsible for mapping this vocabulary to its own platform's query syntax.
+
+Follows the already-merged `StatusToggler` optional-capability pattern exactly:
+`Orchestrator.ReadCampaignMetrics` type-asserts the platform dispatcher for `MetricsReader`
+at call time rather than requiring every dispatcher to implement it; a dispatcher that isn't
+one returns `ErrMetricsUnsupported` (400) without contacting the platform. `CampaignMetrics`
+is NEVER persisted — every read is a fresh platform call, matching `ToggleStatus`'s
+always-live (never DB-cached) semantics. Bounded by a new `metricsCallTimeout` (20s, distinct
+from the toggle's 45s — a read should fail fast).
+
+Microsoft Ads is explicitly OUT of `MetricsReader` scope: its only reporting surface is the
+Reporting API v13 (SOAP, async submit→poll→download-CSV), which cannot satisfy this
+capability's one-bounded-synchronous-call contract. Deferred pending a design decision
+(bounded submit-and-poll vs. a persisted/sweeper-refreshed snapshot), not attempted here.
+
+Once this lands on `main`, #72–#75 rebase onto it (dropping their duplicated shared-infra
+copies, which is what removes the mutual conflict), and GA-5 (#70) reconciles its own
+duplicate copy the same way.
+
 ## 2026-08-04
 
 **Update** — Every stuck claim now requires an upstream check (LFXV2-2665, PR #59 review).
