@@ -138,11 +138,17 @@ func costInUsdToMicros(s string) (int64, error) {
 	if costUsd < 0 {
 		return 0, fmt.Errorf("negative value: %v", costUsd)
 	}
-	micros := costUsd * 1_000_000
-	if micros > math.MaxInt64 {
+	// math.MaxInt64 is not exactly representable as a float64 (it rounds UP to
+	// 2^63), so comparing the unrounded product against it leaves a gap just below
+	// 2^63 that would pass the guard and then overflow on the int64 conversion
+	// below (implementation-defined, not a caught error). Round first, then
+	// compare the rounded value against float64(math.MaxInt64), mirroring the Meta
+	// client's budget-overflow guard.
+	micros := math.Round(costUsd * 1_000_000)
+	if micros >= float64(math.MaxInt64) {
 		return 0, fmt.Errorf("value overflows int64 micros: %v", costUsd)
 	}
-	return int64(math.Round(micros)), nil
+	return int64(micros), nil
 }
 
 // restLiDate renders a time.Time as a Rest.li 2.0 nested date object literal,

@@ -1,5 +1,24 @@
 # Log
 
+## 2026-08-05 (continuation: fix float64/int64 overflow gap in costInUsdToMicros)
+
+**Fix** — Resolve two outstanding review threads (Cursor Bugbot and Copilot,
+independently reporting the same bug) on PR #73 LinkedIn metrics reads
+(`internal/platform/linkedin/metrics.go`, `costInUsdToMicros`).
+
+`math.MaxInt64` is not exactly representable as a `float64` — it rounds UP to `2^63`
+when widened — so the pre-fix guard `micros > math.MaxInt64` compared the unrounded
+product against that rounded value and let anything up to `2^63` through as "not
+greater than". Converting a product of exactly `2^63` to `int64` is
+implementation-defined, not a caught error, so a sufficiently large `costInUsd` string
+could silently produce a wrong (likely negative) cost instead of the intended decode
+error. Rounded the product FIRST, then compared the rounded value against
+`float64(math.MaxInt64)` with `>=`, mirroring the Meta client's existing
+budget-overflow guard (`internal/platform/meta/client.go`). Added
+`TestCostInUsdToMicros_MaxInt64ItselfOverflows`, verified to fail against the pre-fix
+guard and pass against the fix, plus two supporting tests for the non-overflow and
+rounding-not-truncating paths.
+
 ## 2026-08-05 (continuation: reject malformed costInUsd instead of dropping it)
 
 **Fix** — Resolve outstanding Copilot review thread on PR #73 LinkedIn metrics reads

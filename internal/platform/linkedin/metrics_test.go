@@ -566,3 +566,39 @@ func TestDateRangeForWindow_UTCNegativeOffset(t *testing.T) {
 		t.Errorf("today start year: expected %d, got %d", want, got)
 	}
 }
+
+// TestCostInUsdToMicros_MaxInt64ItselfOverflows pins the float64-representability
+// boundary: math.MaxInt64 (9223372036854775807) is not exactly representable as a
+// float64 — it rounds UP to 2^63 (9223372036854775808). A guard that compares the
+// unrounded product directly against the untyped math.MaxInt64 constant (itself
+// promoted to that same rounded float64) therefore lets a product of exactly 2^63
+// through as "not greater than", after which converting it to int64 overflows
+// (implementation-defined, not a caught error). This input's product lands exactly
+// there: 9223372036854.775808 USD * 1_000_000 = 9223372036854775808 = 2^63.
+func TestCostInUsdToMicros_MaxInt64ItselfOverflows(t *testing.T) {
+	if _, err := costInUsdToMicros("9223372036854.775807"); err == nil {
+		t.Fatal("expected an overflow error for a value converting to exactly math.MaxInt64 micros' neighborhood, got nil")
+	}
+}
+
+func TestCostInUsdToMicros_WellUnderTheLimitSucceeds(t *testing.T) {
+	got, err := costInUsdToMicros("1000000.50")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := int64(1_000_000_500_000); got != want {
+		t.Errorf("micros = %d, want %d", got, want)
+	}
+}
+
+func TestCostInUsdToMicros_RoundsRatherThanTruncates(t *testing.T) {
+	// 25.505 USD -> 25,505,000.0 micros exactly; use a value whose product isn't a
+	// clean integer to prove rounding (not truncation) is what's applied.
+	got, err := costInUsdToMicros("25.5055555")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := int64(25_505_556); got != want {
+		t.Errorf("micros = %d, want %d (round, not truncate)", got, want)
+	}
+}
