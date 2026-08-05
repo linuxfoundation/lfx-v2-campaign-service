@@ -610,6 +610,7 @@ func TestNewContainer_MalformedNATSURLIsFatal(t *testing.T) {
 	// The raw URL must not leak: NATS_URL can carry credentials.
 	assert.NotContains(t, err.Error(), "not-a-url@", "a credential-bearing URL must stay redacted")
 }
+
 // countingScanner records how many scans ran, and can report a claim that only becomes
 // visible AFTER the first scan — modelling the exact gap this sweeper exists to close.
 type countingScanner struct {
