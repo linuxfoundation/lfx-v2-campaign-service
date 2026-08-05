@@ -1,5 +1,21 @@
 # Log
 
+## 2026-08-05 (fix: response body leak in doAdAnalyticsAttempt retry loop)
+
+**Fix** — Cursor Bugbot flagged that the retry loop added in the prior fix (below) never
+closed `resp.Body` on any path through `doAdAnalyticsAttempt` — every attempt, retried or not,
+leaked the underlying connection. Added `defer resp.Body.Close()` immediately after the
+`c.httpClient.Do(req)` call succeeds, covering all return paths (429-retry, oversized-response,
+non-2xx, decode-error, and success).
+
+**Not fixed this pass** — Cursor Bugbot also flagged a separate, pre-existing High-severity
+finding ("Wrong LinkedIn analytics API request"): the Ad Analytics request may not match
+LinkedIn's Rest.li 2.0 contract (nested `dateRange=(start:(day:…),…)` vs. the current dotted
+`dateRange.start`/`end`, `campaigns=List(urn:li:sponsoredCampaign:…)` vs. a bare ID, missing
+required `pivots`/`timeGranularity`). This is a structural question about the whole request
+shape, not a small correction — needs verification against LinkedIn's actual API docs before
+changing, not a blind patch. Left open for a follow-up pass.
+
 ## 2026-08-05 (continued)
 
 **Fix** — Address PR #73 Copilot/human review findings (LFXV2-2994). Seven corrections to

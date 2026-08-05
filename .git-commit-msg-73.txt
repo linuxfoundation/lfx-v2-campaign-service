@@ -1,0 +1,5 @@
+fix(linkedin): close response body in adAnalytics retry loop
+
+Cursor Bugbot flagged that doAdAnalyticsAttempt never closed
+resp.Body on any return path, leaking the underlying connection on
+every attempt. Add defer resp.Body.Close() right after Do succeeds.
