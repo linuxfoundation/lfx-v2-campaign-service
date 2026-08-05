@@ -1,5 +1,36 @@
 # Log
 
+## 2026-08-05 (GA-4 ACTIVATE partial-cascade classification fix)
+
+**Fix** — Closed 5 suppressed Copilot findings on GA-4 (`internal/dispatch/googleads.go`,
+`internal/platform/googleads/targeting.go`):
+
+1. **Real bug** — `ToggleStatus`'s ACTIVATE path wrapped a campaign-mutate failure with
+   `wrapUnconfirmed(uerr)`, which only classifies ambiguous 5xx/timeout/transport outcomes as
+   Unconfirmed and lets a definite 4xx pass through as a clean error. But on ACTIVATE the
+   children (ad group, ad) are mutated FIRST — by the time the campaign mutate runs, a failure
+   of any kind (including a definite 4xx) is a genuine partial cascade: the children already
+   changed, the campaign's outcome is unknown. Changed it to wrap unconditionally via
+   `&unconfirmedToggleError{err: uerr}`, mirroring the PAUSE path's existing child-after-campaign
+   wrap. Added `TestGoogleAds_ToggleStatus_ActivateCampaignDefiniteFailureIsUnconfirmed` to pin
+   this — a fake server returns a definite 400 on `campaigns:mutate` after the two child mutates
+   succeed, and the test asserts the returned error is `Unconfirmed() == true`.
+2. Fixed a misleading comment on the ACTIVATE keyword-provisioning guard that claimed it checked
+   "if both are empty" when only `KeywordCriteriaIDs` is checked (audience criteria alone are
+   observation-only and don't satisfy the gate).
+3. Fixed a stale comment in `targeting.go` that implied `createAdGroupTargeting` sets the ad
+   group's `targetingSetting` itself — it relies on the ad group create having already set it
+   (see the 2026-08-04 entry below).
+4. Fixed two stale comments in `targeting_test.go` still describing campaign-level
+   `targetingSetting` plumbing that moved to the ad group create.
+5. Fixed `docs/api-catalog.md`: "campaign's `targetingSetting`... on create" → "ad group's
+   `targetingSetting`... on the ad group create".
+
+Deferred (test-coverage gaps, not correctness bugs, left for a follow-up): no integration test
+for the `customAudience` targeting serialization branch (`targeting.go:263`, only `userList` is
+exercised end-to-end); no full-success-path ACTIVATE cascade test reaching a successful campaign
+mutate (only the failure path is covered by the new test above).
+
 ## 2026-08-04 (GA-4 audience targetingSetting level fix)
 
 **Update** — Fixed a Copilot-flagged PR #69 review finding: the AUDIENCE/`bidOnly: true`

@@ -344,8 +344,8 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   the caller already built elsewhere — any other resource-name shape
                                   (userInterest, combinedAudience, etc.) is rejected. At most 20
                                   entries; duplicates are deduped. When non-empty, the client sets the
-                                  campaign's `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly)
-                                  on create so these segments stay observation-only rather than
+                                  ad group's `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly)
+                                  on the ad group create so these segments stay observation-only rather than
                                   Google's default of restricting delivery to the audience alone.
 ```
 

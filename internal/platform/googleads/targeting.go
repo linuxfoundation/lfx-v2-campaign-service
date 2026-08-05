@@ -220,11 +220,12 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 // campaign is immediately serve-ready the moment a human flips the ad
 // group/ad/campaign to ENABLED, with no separate targeting-activation step.
 //
-// Audience criteria rely on CreateCampaign having already set the campaign's
+// Audience criteria rely on the ad group create having already set its
 // targetingSetting to observation-only for the AUDIENCE dimension (see
-// targetingSetting's doc comment in campaign.go) — this function does not
-// re-check that here, so a caller invoking createAdGroupTargeting outside
-// that flow (there is none today) would need to set it itself.
+// targetingSetting's doc comment in campaign.go, and its use in
+// adgroup_ad.go) — this function does not re-check that here, so a caller
+// invoking createAdGroupTargeting outside that flow (there is none today)
+// would need to set it itself.
 //
 // This is the highest-risk unverified assumption in this slice, mirroring the
 // AdGroupAd composite-resourceName flag from GA-3: verify against a live

@@ -301,9 +301,10 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	}
 	// Refuse ACTIVATE if targeting was not successfully provisioned: GA-4 requires at least
 	// one keyword criterion before allowing activation (audience criteria alone are
-	// observation-only and do not qualify for activation). Check the persisted targeting
-	// IDs in the Result blob; if both are empty, targeting was never attempted or failed
-	// before any criterion resource name could be parsed.
+	// observation-only and do not qualify for activation, so they don't satisfy this gate).
+	// Checked below via the persisted KeywordCriteriaIDs in the Result blob — empty means
+	// keyword targeting was never attempted or failed before any criterion resource name
+	// could be parsed.
 	adGroupID, adID := googleAdsChildIDs(campaign)
 	if gaStatus == googleads.StatusEnabled {
 		// Refuse ACTIVATE if the ad group/ad were never fully provisioned: a duplicate-name
@@ -362,10 +363,11 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return wrapUnconfirmed(uerr)
 	}
 	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
-		// After the children succeed, a campaign failure is a partial cascade: children are
-		// active but the parent's outcome is ambiguous (5xx/timeout/transport). Definite
-		// failures (4xx) pass through as ordinary errors.
-		return wrapUnconfirmed(uerr)
+		// After the children succeed, a campaign failure (even a definite 4xx) is a partial
+		// cascade: the children already changed but the campaign's outcome is unknown. Wrap it
+		// as Unconfirmed unconditionally so the caller knows to verify state before retry —
+		// mirrors the PAUSE path's child-after-campaign wrap above.
+		return &unconfirmedToggleError{err: uerr}
 	}
 	return nil
 }

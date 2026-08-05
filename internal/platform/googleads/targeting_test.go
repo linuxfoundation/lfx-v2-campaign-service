@@ -182,11 +182,11 @@ func decodeErr(r *http.Request) (map[string]any, error) {
 }
 
 // newTargetingClientWith wires a token server + an API server whose
-// campaignBudgets/adGroups/adGroupAds mutates all succeed, whose
+// campaignBudgets/campaigns/adGroupAds mutates all succeed, whose
 // adGroupCriteria:mutate handler is supplied per-test, and whose
-// campaigns:mutate handler succeeds but first hands its decoded body to
-// onCampaign (if non-nil) — the shared plumbing behind newTargetingClient and
-// newTargetingClientCapturingCampaign.
+// adGroups:mutate handler succeeds but first hands its decoded body to
+// onAdGroup (if non-nil) — the shared plumbing behind newTargetingClient and
+// newTargetingClientCapturingAdGroup.
 func newTargetingClientWith(t *testing.T, onAdGroup func(map[string]any), criteriaH http.HandlerFunc) *Client {
 	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
@@ -223,7 +223,7 @@ func newTargetingClientWith(t *testing.T, onAdGroup func(map[string]any), criter
 		withRetryBaseDelay(time.Millisecond))
 }
 
-// newTargetingClient is newTargetingClientWith with no campaign-body capture.
+// newTargetingClient is newTargetingClientWith with no ad-group-body capture.
 func newTargetingClient(t *testing.T, criteriaH http.HandlerFunc) *Client {
 	return newTargetingClientWith(t, nil, criteriaH)
 }

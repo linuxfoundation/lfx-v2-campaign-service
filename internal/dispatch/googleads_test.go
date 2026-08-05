@@ -743,6 +743,61 @@ func TestGoogleAds_ToggleStatus_ActivateChildDefititeFailureIsNotUnconfirmed(t *
 	}
 }
 
+// TestGoogleAds_ToggleStatus_ActivateCampaignDefiniteFailureIsUnconfirmed pins the reverse
+// case of the test above: on ACTIVATE, once the children have already succeeded, ANY campaign
+// mutate failure — including a definite 4xx — is a genuine partial cascade (the children
+// already changed, the campaign's outcome is unknown) and must be reported Unconfirmed, the
+// same as the PAUSE path's child-after-campaign wrap.
+func TestGoogleAds_ToggleStatus_ActivateCampaignDefiniteFailureIsUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "campaigns:mutate") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid campaign status"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		Result:             json.RawMessage(`{"adGroupId":"333","adId":"444","keywordCriteriaIds":["999"]}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when the campaign mutate fails")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a definite 4xx campaign failure after the children already succeeded must be reported UNCONFIRMED, got %T: %v", err, err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	// adGroups + adGroupAds mutate (children) then the failing campaigns mutate.
+	if len(gotPaths) != 3 {
+		t.Fatalf("issued %d calls, want 3 (adGroups, adGroupAds, then the failing campaign mutate): %v", len(gotPaths), gotPaths)
+	}
+	if !strings.HasSuffix(gotPaths[2], "campaigns:mutate") {
+		t.Errorf("path = %v, want campaigns:mutate", gotPaths[2])
+	}
+}
+
 func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
 	// Verify that the dispatcher wires keywords and audience segments from the config
 	// through to the client, and that both reach the criteria endpoint. A typo or dropped
