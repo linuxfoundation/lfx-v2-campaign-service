@@ -50,6 +50,38 @@ func TestIsDuplicateAdGroupNameErr(t *testing.T) {
 	}
 }
 
+// ---- precomputeAdGroupAdInputs: name length unit ----------------------------
+
+// AdGroup.name must be measured in CHARACTERS (like Campaign.name), not UTF-8
+// bytes (like CampaignBudget.name): a multibyte EventName is the discriminator
+// since it produces a different byte count than rune count. A byte-based check
+// would reject an ad-group name Google would accept.
+func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
+	// "é" is 2 UTF-8 bytes / 1 rune. 200 of them: composed name adds a few ASCII
+	// header/delimiter runes on top ("LFX Ad Group | CNCF | " + 200 é's), so byte
+	// count is well over 255 while rune count stays under 255.
+	multibyte := strings.Repeat("é", 200)
+	in := CampaignInput{Project: "CNCF", EventName: multibyte, RegistrationURL: "https://example.com/event"}
+	_, _, _, adGroupName, err := precomputeAdGroupAdInputs(in)
+	if err != nil {
+		t.Fatalf("a multibyte ad group name under 255 characters must be accepted (rune-measured), got: %v", err)
+	}
+	if len(adGroupName) <= 255 {
+		t.Fatalf("test setup invalid: composed name must exceed 255 UTF-8 bytes to discriminate byte vs rune measurement, got %d bytes", len(adGroupName))
+	}
+}
+
+// A 256+ character ad-group name (well past any byte-vs-rune ambiguity) must
+// still be rejected preflight, so the rune-based fix does not silently drop the
+// cap altogether.
+func TestPrecomputeAdGroupAdInputs_OversizedNameRejected(t *testing.T) {
+	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 300), RegistrationURL: "https://example.com/event"}
+	_, _, _, _, err := precomputeAdGroupAdInputs(in)
+	if err == nil || !strings.Contains(err.Error(), "name exceeds") {
+		t.Errorf("an over-length ad group name must be rejected preflight, got: %v", err)
+	}
+}
+
 // ---- createAdGroupAndAd integration paths ----------------------------------
 
 func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
