@@ -39,11 +39,6 @@ const (
 	defaultMetricsWindow = WindowLast7Days
 )
 
-var validMetricsWindows = map[MetricsWindow]struct{}{
-	WindowToday:     {},
-	WindowLast7Days: {},
-}
-
 // CampaignMetrics is the aggregated performance snapshot for one campaign over
 // one MetricsWindow. It is a live read-through of X Ads — this client never
 // persists it.

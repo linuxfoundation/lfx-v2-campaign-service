@@ -22,7 +22,7 @@ func TestGetCampaignMetricsHappyPath(t *testing.T) {
 
 		// Return a mock stats response
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"1000","clicks":"50","spend":"100.00"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"1000","clicks":"50","spend":"100.00"}]}`)
 	}))
 	defer server.Close()
 
@@ -68,7 +68,7 @@ func TestGetCampaignMetricsDefaultWindow(t *testing.T) {
 	// Test that empty window defaults to WindowLast7Days
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"0","clicks":"0","spend":"0"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"0","clicks":"0","spend":"0"}]}`)
 	}))
 	defer server.Close()
 
@@ -99,7 +99,7 @@ func TestGetCampaignMetricsZeroActivity(t *testing.T) {
 	// Test campaign with no activity (empty response)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[]}`)
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
 	}))
 	defer server.Close()
 
@@ -139,7 +139,7 @@ func TestGetCampaignMetricsZeroImpressionsDivideByZero(t *testing.T) {
 	// Test that CTR is 0 when impressions is 0 (no divide-by-zero)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"0","clicks":"5","spend":"10.00"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"0","clicks":"5","spend":"10.00"}]}`)
 	}))
 	defer server.Close()
 
@@ -171,7 +171,7 @@ func TestGetCampaignMetricsEmptyFieldsAreZero(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return response with empty metric fields
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"","clicks":"","spend":""}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"","clicks":"","spend":""}]}`)
 	}))
 	defer server.Close()
 
@@ -299,7 +299,7 @@ func TestGetCampaignMetricsNonNumericFieldTransportError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return response with invalid numeric field
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"not-a-number","clicks":"50","spend":"100"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"not-a-number","clicks":"50","spend":"100"}]}`)
 	}))
 	defer server.Close()
 
@@ -331,7 +331,7 @@ func TestGetCampaignMetricsUpstreamError(t *testing.T) {
 	// Test that upstream errors are propagated
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"error":"internal server error"}`)
+		_, _ = fmt.Fprint(w, `{"error":"internal server error"}`)
 	}))
 	defer server.Close()
 
@@ -358,7 +358,7 @@ func TestGetCampaignMetricsSupportedWindowToday(t *testing.T) {
 	// Test that TODAY window is supported and works
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"500","clicks":"25","spend":"50.00"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"campaign_id":"12345","impressions":"500","clicks":"25","spend":"50.00"}]}`)
 	}))
 	defer server.Close()
 
