@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle, and live campaign metrics reads."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -130,5 +130,21 @@ accepted values; ids are validated numeric (`numericIDRE`) before interpolation.
 building block. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classifier (and honors
 the `Unconfirmed()` behavioral interface) so a caller can tell a maybe-applied outcome
 (transport/5xx/3xx-mutating, or a partial cascade) from a definite rejection.
+
+## Metrics reads
+
+`GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, spend (cost), and
+CTR for one campaign over a predefined date-range window (e.g. `LAST_30_DAYS`) via a single
+Graph API `GET /{campaignID}/insights` read with a `date_preset` parameter. The window and
+campaign id are both validated against an allow-list of supported values BEFORE string
+interpolation into the request, since Meta's insights endpoint has fixed preset values.
+Numeric metric fields (`impressions`/`clicks`/`spend`) arrive as JSON strings and are parsed
+via `parseMetricInt`, which treats empty strings (Meta omits zero-valued optional fields) as
+zeros rather than parse errors. Cost is expressed in micros of the ad account's currency
+(consistent with the Google Ads metrics path, so a platform-agnostic dispatcher can normalize
+all platforms to the same unit), derived by multiplying spend by 1,000,000. CTR is computed
+client-side (Clicks/Impressions, 0 when Impressions is 0 — never divides by zero). The return
+type `CampaignMetrics` is distinct from the domain type `model.CampaignMetrics` (an
+application-level platform-agnostic staging area), converted at the dispatcher boundary.
 
 See [internal/platform/meta](../../../internal/platform/meta).

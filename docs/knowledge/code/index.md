@@ -8,7 +8,7 @@
 * [internal/middleware](internal-middleware.md) - Package middleware provides HTTP middleware for the service.
 * [internal/platform/reddit](internal-platform-reddit.md) - Reddit Ads API v3 client: OAuth2 token refresh and Campaign -> Ad Group -> Ad creation.
 * [internal/platform/linkedin](internal-platform-linkedin.md) - LinkedIn Marketing API client: OAuth2 dark-post campaigns with targeting and up-front validation.
-* [internal/platform/meta](internal-platform-meta.md) - Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation.
+* [internal/platform/meta](internal-platform-meta.md) - Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle cascade over ad set and ads, and live campaign metrics reads.
 * [internal/platform/twitter](internal-platform-twitter.md) - X (Twitter) Ads v12 client: OAuth 1.0a signing and the campaign -> line_item -> promoted_tweet creation flow.
 * [internal/platform/googleads](internal-platform-googleads.md) - Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), and PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2).
 * [internal/platform/hubspot](internal-platform-hubspot.md) - HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def operations.
