@@ -115,10 +115,19 @@ func isDuplicateAdGroupNameErr(err error) bool {
 // is rejected as malformed rather than silently accepted, since the extra/
 // non-numeric text would otherwise be carried into res.AdGroupID/AdID and
 // later interpolated into a resourceName path by UpdateAdGroupAndAdStatus.
-// Returns ("", "") if the resource name is empty or the trailing segment
-// isn't in that exact shape. AdGroupCriterion (GA-4, targeting.go) shares
-// this same composite shape, so the split logic lives in compositeResourceID.
+// ALSO validates that the resource KIND is "adGroupAds" (not e.g. "campaigns"),
+// so a malformed resource of a wrong type (e.g. "customers/1/campaigns/111~222")
+// is correctly rejected rather than incorrectly accepted as a confirmed AdGroupAd.
+// Returns ("", "") if the resource name is empty, the resource kind is not
+// "adGroupAds", or the trailing segment isn't in that exact shape. AdGroupCriterion
+// (GA-4, targeting.go) uses compositeResourceID directly for the same composite shape.
 func adGroupAdID(resourceName string) (adGroupID, adID string) {
+	// Validate the full resource path structure: customers/<id>/adGroupAds/<composite-id>
+	// Split by "/" to validate the resource kind is "adGroupAds" and not something else.
+	pathParts := strings.Split(resourceName, "/")
+	if len(pathParts) < 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupAds" {
+		return "", ""
+	}
 	return compositeResourceID(resourceName)
 }
 

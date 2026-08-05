@@ -31,6 +31,8 @@ func TestAdGroupAdID(t *testing.T) {
 		{"extra tildes rejected as malformed", "customers/1/adGroupAds/111~222~333", "", ""},
 		{"non-numeric adGroup half rejected", "customers/1/adGroupAds/abc~222", "", ""},
 		{"non-numeric ad half rejected", "customers/1/adGroupAds/111~abc", "", ""},
+		{"wrong resource kind (campaigns instead of adGroupAds) rejected", "customers/1/campaigns/111~222", "", ""},
+		{"missing adGroupAds segment rejected", "customers/1/111~222", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

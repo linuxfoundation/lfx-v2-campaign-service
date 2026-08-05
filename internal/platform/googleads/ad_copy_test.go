@@ -152,7 +152,7 @@ func TestDefaultHeadlinesAndDescriptions(t *testing.T) {
 	if len(withoutProject) == 0 {
 		t.Errorf("defaultDescriptions without a project must still return entries")
 	}
-	if len(withoutProject) >= len(withProject) && withProject[0] == withoutProject[0] {
+	if len(withoutProject) >= len(withProject) || withProject[0] == withoutProject[0] {
 		t.Errorf("omitting the project should drop the project-specific description")
 	}
 }

@@ -129,6 +129,27 @@ requirement, replacing the misleading "no fully-created ad group + ad" message. 
 (`TestGoogleAds_ToggleStatus_ActivateCascadesChildrenFirst` and
 `TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure` renamed and updated to verify
 ACTIVATE is refused).
+## 2026-08-05
+
+**Update** — Fixed resource-kind validation in `adGroupAdID`
+(`internal/platform/googleads/adgroup_ad.go`): the parser validated only the trailing
+numeric segment (`111~222`) of an AdGroupAd resourceName, so a resource of the wrong kind
+(e.g. `customers/1/campaigns/111~222` instead of `customers/1/adGroupAds/111~222`) would be
+incorrectly accepted as a confirmed AdGroupAd. This defeated the malformed-success handling
+that prevents an ad ID from a wrong-type response being persisted. Fixed by validating the
+resource KIND (the path segment must be `adGroupAds`, not `campaigns` or another type) before
+accepting the composite numeric IDs. Added test cases for wrong-resource-kind and missing-kind
+scenarios. All tests (`go test ./... -race`), linters (`go vet`, `gofmt`), and builds
+(`go build ./...`) pass clean. Address PR #67 review feedback.
+**Fix** — Closed 5 suppressed Copilot findings on GA-3a (`internal/platform/googleads/ad_copy.go`):
+corrected the `composeAdCopy`/RSA doc comment and the concept doc
+(`internal-platform-googleads.md`) to describe weight-capping (CJK/full-width runes count double,
+per `truncateWeighted`) instead of plain rune-capping; fixed the `minDescriptions` error message
+to name only `eventName` as a remedy, since `defaultDescriptions` returns nil whenever `eventName`
+is empty regardless of `project`; fixed `TestComposeAdCopy`'s project-omission assertion (`&&` →
+`||`) so it actually fails when the project-specific description survives; and repaired the split
+`nolint:unused` directive/rationale comment on `adTextAsset` whose two sentences had been
+transposed.
 
 ## 2026-08-04
 
@@ -177,6 +198,8 @@ pattern.
 
 **Update** — Follow-up fix on the GA-3 slice below, from the post-commit review cycle. Two
 `internal/platform/googleads/adgroup_ad_test.go` subtests for `UpdateAdGroupAndAdStatus`
+**Update** — Follow-up fix on the GA-3b slice below, from the post-commit review cycle. A
+`internal/platform/googleads/adgroup_ad_test.go` subtest for `UpdateAdGroupAndAdStatus`
 wrote a captured request-path slice inside the httptest handler goroutine and read it back
 from the test goroutine with no happens-before edge — a data race the repo's race detector
 (`make test`) would eventually flag. Guarded with a `sync.Mutex`, matching the pattern already
