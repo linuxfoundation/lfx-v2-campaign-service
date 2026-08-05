@@ -32,9 +32,12 @@
 -- absent, so the scan is already degraded and a brief write lock is the cheaper of the
 -- two costs. On the normal path (no invalid index) nothing here runs.
 --
--- Both object names are schema-qualified. Unqualified names resolve through search_path,
--- which is fine today (single schema) but would let a future multi-schema setup inspect
--- one index and drop another.
+-- The table is schema-qualified. The index name is not: PostgreSQL's CREATE INDEX
+-- grammar does not accept a schema-qualified index name — an index always lands in
+-- whatever schema its parent table is in, so qualifying the table is correct and
+-- sufficient. DROP INDEX is the one statement where qualifying the object itself is
+-- both legal and meaningful, since DROP has no parent-table context to infer the
+-- schema from.
 DO $$
 BEGIN
     IF EXISTS (
@@ -46,7 +49,7 @@ BEGIN
           AND NOT i.indisvalid
     ) THEN
         EXECUTE 'DROP INDEX public.idx_campaigns_stuck_claims';
-        EXECUTE 'CREATE INDEX public.idx_campaigns_stuck_claims '
+        EXECUTE 'CREATE INDEX idx_campaigns_stuck_claims '
              || 'ON public.campaigns (created_at) WHERE status = ''pending''';
         RAISE NOTICE 'rebuilt idx_campaigns_stuck_claims (an INVALID copy from a failed CONCURRENTLY build was dropped)';
     END IF;
