@@ -74,10 +74,12 @@ constraint landed in all five response validators (12 generated checks). Any alr
 empty-slug row then became undecodable by generated clients — breaking even `get-brief` for
 exactly the rows the fix exists to prevent going forward.
 
-`BriefWriteInput` now carries the constraint for create/update only. Verified by counting the
-generated checks: **0** response-side, **2** request-side. Redeclaring the attribute on `Brief`
-does NOT work — goa merges rather than overrides, so the constraint survives; a separate type is
-required.
+Created `BriefData` (unconstrained, for responses) and kept `BriefInput` (constrained, for
+create/update). Verified by counting the generated checks: **0** response-side, **2** request-side.
+Redeclaring the attribute on `Brief` does NOT work — goa merges rather than overrides, so the
+constraint survives; a separate type is required. This approach also preserves backward
+compatibility: `BriefInput` stays the same generated type name, and tooling referencing the
+OpenAPI component doesn't break.
 
 **Update** — Closed an event_slug validation gap (LFXV2-2812, PR #55 review, @dealako). The
 find-brief lookup enforces `MinLength(1)` on `event_slug`, but `BriefInput.event_slug` — the
@@ -88,8 +90,8 @@ So a brief with an empty slug was creatable, occupied the `UNIQUE(project_id, ev
 index, and could then NEVER be recalled through the lookup — the caller got a 400 rather than
 the documented 404 (no brief yet) or 200 (found), and a re-create collided.
 
-`BriefWriteInput.event_slug` — the create/update payload — now carries `MinLength(1)` so the two
-contracts agree. It could NOT go on `BriefInput`: the `Brief` response type `Reference()`s that,
+`BriefInput.event_slug` — the create/update payload — now carries `MinLength(1)` so the two
+contracts agree. It could NOT go on `BriefData`: the `Brief` response type `Reference()`s that,
 and goa copies validations through `Reference`, so constraining it would make an
 already-persisted empty-slug row undecodable by generated clients. The comment on
 the lookup asserting that an empty slug "can never match a stored row" was simply FALSE and has
