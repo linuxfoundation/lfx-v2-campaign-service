@@ -972,6 +972,13 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 	if !resp.sawPartialErrors {
 		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: response omitted PartialErrors", entity)}
 	}
+	// A present but malformed PartialErrors array such as `[null]` or `[{}]` decodes without
+	// error but contains no valid error codes — partialErrorsHaveAny returns false, which would
+	// report success for a status Microsoft never confirmed. Reject any non-empty list that
+	// yields no valid codes (mirroring the create path's handling of null-only error responses).
+	if len(resp.PartialErrors) > 0 && !partialErrorsHaveAny(resp.PartialErrors) {
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: PartialErrors present but contains no valid error codes", entity)}
+	}
 	if partialErrorsHaveAny(resp.PartialErrors) {
 		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors))
 	}

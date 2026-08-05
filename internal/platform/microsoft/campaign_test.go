@@ -1283,3 +1283,125 @@ func TestUpdateCampaignAndChildrenStatus_CancelledContextStopsCascade(t *testing
 		t.Errorf("stage = %q, want %q — the ad group is the step that was abandoned", partial.stage, "ad group")
 	}
 }
+
+// TestUpdateCampaignAndChildrenStatus_CancelledDuring429BackoffReportsUnconfirmed pins the
+// fix for the context cancellation during 429 backoff bug: a cancelled context while
+// doRequest is sleeping out a 429 retry must wrap the ctx.Err() in a transportError so
+// that IsOutcomeUnconfirmed correctly classifies it as ambiguous (the PUT may have already
+// applied), not as a definite failure. Without the wrap, the bare ctx.Err() would match
+// neither transportError nor apiError, misleading the cascade into thinking nothing changed.
+func TestUpdateCampaignAndChildrenStatus_CancelledDuring429BackoffReportsUnconfirmed(t *testing.T) {
+	var (
+		mu               sync.Mutex
+		campaignAttempts int
+	)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		entity := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		w.Header().Set("Content-Type", "application/json")
+		if entity == "Campaigns" {
+			mu.Lock()
+			campaignAttempts++
+			first := campaignAttempts == 1
+			mu.Unlock()
+			if first {
+				// Return 429 with a long retry so the RoundTripper wrapper has time to cancel
+				// the context while doRequest is sleeping.
+				w.Header().Set("Retry-After", "10")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	base := c.httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var cancelledDuring429 atomic.Bool
+	c.httpClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		resp, err := base.RoundTrip(r)
+		// If this is a 429 on the Campaigns endpoint, arm a separate goroutine to cancel
+		// the context after a short delay (allowing the 429 retry loop to enter time.After).
+		if err == nil && resp.StatusCode == http.StatusTooManyRequests &&
+			strings.HasSuffix(r.URL.Path, "Campaigns") &&
+			cancelledDuring429.CompareAndSwap(false, true) {
+			go func() {
+				time.Sleep(10 * time.Millisecond) // Let the 429 backoff start
+				cancel()
+			}()
+		}
+		return resp, err
+	})
+	err := c.UpdateCampaignAndChildrenStatus(ctx, "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("a cancellation during 429 backoff must report an error — the outcome is ambiguous")
+	}
+	// The key check: the cancellation during backoff must be classified as ambiguous/Unconfirmed.
+	// Without the fix (wrapping ctx.Err() in transportError), the bare context.Canceled would
+	// match neither transportError nor apiError, so IsOutcomeUnconfirmed would return false.
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("a 429 that was received and then cancelled during backoff is ambiguous (the PUT may have applied), want IsOutcomeUnconfirmed==true, got: %v", err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_MalformedPartialErrorsList pins the fix for the
+// malformed PartialErrors array bug: a response like {"PartialErrors":[null]} decodes
+// without error, but the array contains no valid error codes and should be treated as an
+// unconfirmed outcome (the status Microsoft returned is unusable), not as success.
+func TestUpdateCampaignAndChildrenStatus_MalformedPartialErrorsList(t *testing.T) {
+	tests := []struct {
+		name      string
+		respBody  string
+		wantError bool
+	}{
+		{
+			name:      "null-only-list",
+			respBody:  `{"PartialErrors":[null]}`,
+			wantError: true, // Malformed array with null should be rejected
+		},
+		{
+			name:      "empty-object-in-list",
+			respBody:  `{"PartialErrors":[{}]}`,
+			wantError: true, // Malformed array with {} should be rejected
+		},
+		{
+			name:      "empty-list",
+			respBody:  `{"PartialErrors":[]}`,
+			wantError: false, // Empty list is a valid "no errors" response
+		},
+		{
+			name:      "null-field",
+			respBody:  `{"PartialErrors":null}`,
+			wantError: false, // null field is a valid "no errors" response
+		},
+		{
+			name:      "valid-error",
+			respBody:  `{"PartialErrors":[{"Code":1234}]}`,
+			wantError: true, // Real error should be rejected
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tt.respBody)
+			})
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+			if tt.wantError && err == nil {
+				t.Errorf("response %q should be rejected but was accepted", tt.respBody)
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("response %q should be accepted but got error: %v", tt.respBody, err)
+			}
+			// The null-only and empty-object cases should specifically be Unconfirmed,
+			// not generic rejections.
+			if (tt.name == "null-only-list" || tt.name == "empty-object-in-list") && err != nil {
+				if !IsOutcomeUnconfirmed(err) {
+					t.Errorf("malformed PartialErrors should be Unconfirmed, got: %v", err)
+				}
+			}
+		})
+	}
+}
