@@ -23,16 +23,43 @@ type BriefReader interface {
 type BriefWriter interface {
 	// CreateBrief inserts a brief. Returns ErrConflict on the
 	// UNIQUE(project_id, event_slug) violation.
-	CreateBrief(ctx context.Context, b *model.CampaignBrief) (*model.CampaignBrief, error)
+	CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 	// ReplaceBrief replaces a brief's mutable fields, gating on expectedVersion.
-	ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64) (*model.CampaignBrief, error)
+	ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 	// Approve marks a brief approved, recording the actor. It is gated on
 	// expectedVersion (optimistic concurrency): approving a stale version returns
 	// ErrPreconditionFailed so a concurrent replace can't be approved by accident.
-	Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64) (*model.CampaignBrief, error)
-	// ArchiveBrief soft-archives a brief (status = archived).
-	ArchiveBrief(ctx context.Context, projectID, id string) error
+	Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
+	// ArchiveBrief soft-archives a brief (status = archived) and RETURNS the archived row.
+	// Returning it (rather than just an error) is what lets the caller index the state that
+	// was actually committed: a concurrent ReplaceBrief/Approve can commit between a
+	// read-then-archive pair, so a separately-read snapshot would publish stale content and a
+	// version that never existed.
+	ArchiveBrief(ctx context.Context, projectID, id string, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 }
+
+// CampaignIndexPayloadFunc builds the index message for a campaign that has just been written,
+// co-committed with the row like IndexPayloadFunc does for briefs.
+//
+// Campaign creation is ASYNC: the dispatch runs on the orchestrator's root context, long after
+// the request returned. Publishing directly with the caller's captured JWT could therefore fail
+// on an EXPIRED token — and with no outbox row there was nothing to retry, leaving a new
+// campaign permanently unsearchable. The relay stamps a service credential at publish time.
+type CampaignIndexPayloadFunc func(*model.Campaign) ([]byte, error)
+
+// IndexPayloadFunc builds the index message for a brief that has just been written. It is
+// invoked INSIDE the write transaction and its result is enqueued to the outbox alongside the
+// row, so the message co-commits with the change it describes.
+//
+// EVERY brief mutation takes one — not just the terminal archive. A direct post-commit publish
+// cannot be ordered against an outbox replay: a replace could commit, stall before publishing,
+// and land its update AFTER an archive was replayed and retired, resurrecting a deleted brief in
+// the index. Routing all writes through the outbox gives each row ONE ordered sequence, which is
+// also why this is safe across replicas — ordering comes from the table, not from any
+// process-local lock.
+//
+// A nil func means the caller does not want the write indexed; the write still commits.
+type IndexPayloadFunc func(*model.CampaignBrief) ([]byte, error)
 
 // BriefRepository is the full persistence port for briefs.
 type BriefRepository interface {
@@ -71,9 +98,9 @@ type CampaignReader interface {
 type CampaignWriter interface {
 	// UpsertCampaign inserts or updates the campaign row for a (brief, platform).
 	// Campaigns are updated in place when a brief changes after they exist.
-	UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error)
+	UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 	// ReplaceCampaign replaces a campaign's mutable fields, gating on version.
-	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64) (*model.Campaign, error)
+	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 }
 
 // CampaignRepository is the full persistence port for campaigns.
