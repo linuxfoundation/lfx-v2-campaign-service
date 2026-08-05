@@ -205,6 +205,9 @@ var (
 	ErrCampaignNotProvisioned = domain.ErrCampaignNotProvisioned
 	// ErrMetricsUnsupported: the campaign's platform has no metrics-read capability wired.
 	ErrMetricsUnsupported = domain.ErrMetricsUnsupported
+	// ErrMetricsWindowUnsupported: this platform IS a MetricsReader but rejects the
+	// specific requested window (e.g. X Ads' 7-day cap).
+	ErrMetricsWindowUnsupported = domain.ErrMetricsWindowUnsupported
 )
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
