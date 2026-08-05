@@ -1,5 +1,33 @@
 # Log
 
+## 2026-08-05 (Fix: customAudiences preflight, migration concurrency, timeout budget)
+
+**Fix** — Closed 4 unresolved Copilot comments on GA-4 (`internal/platform/googleads/targeting.go`,
+`docs/api-catalog.md`, `internal/infrastructure/postgres/migrations/000009_drop_invalid_stuck_claim_index.up.sql`,
+`internal/container/container.go`):
+
+1. **customAudiences preflight rejection** — This client always creates SEARCH campaigns, which do
+   not support Custom Audiences per Google's documentation (limited to Display, Demand Gen, Gmail,
+   Video, and Performance Max). Updated `validateAudienceSegments` to reject `customAudiences`
+   resource names with a clear error message before any Google Ads requests are made. Updated
+   `docs/api-catalog.md` to document the restriction and remove `customAudiences` from the
+   supported audience types. Updated `targeting_test.go` to reject custom audiences and verify the
+   error message.
+
+2. **Migration 000009 blocking behavior** — The recovery rebuild was using plain `CREATE INDEX`
+   inside a DO block (transaction), which blocks campaign inserts/updates/deletes during the
+   entire build. Migrations run during rolling startup when other replicas are still active,
+   stalling claims/finalization and manufacturing ambiguous outcomes. Refactored to keep the
+   conditional INVALID-index drop inside the DO block (safe, as the index is not serving queries)
+   and moved the CREATE INDEX statement outside to use `CREATE INDEX CONCURRENTLY IF NOT EXISTS`,
+   matching the approach in 000008. The rebuild is now non-blocking.
+
+3. **Container shutdown timeout budget** — The sweeper-stop wait (`sweeperStopTimeout`) was not
+   included in `ContainerCloseTimeout`, so if the wait reached its 250ms bound, the orchestrator's
+   post-cancel grace phase (reserved for detached campaign-persist and job-finalize writes) would
+   be shortened below its documented window. Extended `ContainerCloseTimeout` to include
+   `sweeperStopTimeout`. Updated the container_test.go assertion to verify the new budget.
+
 ## 2026-08-05 (GA-4 ACTIVATE partial-cascade classification fix)
 
 **Fix** — Closed 5 suppressed Copilot findings on GA-4 (`internal/dispatch/googleads.go`,
