@@ -30,11 +30,22 @@ type googleAdsCreds struct {
 	RefreshToken   string
 }
 
+// googleAdsKeywordConfig is one entry in googleAdsConfig.Keywords — the JSON shape a
+// caller supplies for a positive Search keyword criterion (GA-4). Maps 1:1 to
+// googleads.Keyword; kept as a separate JSON-tagged type here rather than importing
+// googleads' struct directly, mirroring how the rest of this file keeps the wire
+// shape and the platform client's Go type independently named.
+type googleAdsKeywordConfig struct {
+	Text      string `json:"text"`
+	MatchType string `json:"matchType"`
+}
+
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
-// in CreateCampaigns' Input.Config (delivered here as the Dispatch `config`). Today the
-// GA client creates a PAUSED search campaign with an ad group + a Responsive Search Ad
-// (GA-3b); keyword/audience targeting land in GA-4. Budget is in whole units of the ad
-// ACCOUNT's currency (NOT USD — the client does no FX), mirroring the meta client.
+// in CreateCampaigns' Input.Config (delivered here as the Dispatch `config`). The GA
+// client creates a PAUSED search campaign with an ad group + a Responsive Search Ad
+// (GA-3b) and can attach keyword/audience targeting to that ad group (GA-4). Budget is
+// in whole units of the ad ACCOUNT's currency (NOT USD — the client does no FX),
+// mirroring the meta client.
 type googleAdsConfig struct {
 	Budget float64 `json:"budget"`
 	// Headlines/Descriptions are optional Responsive Search Ad copy overrides (GA-3b).
@@ -42,6 +53,15 @@ type googleAdsConfig struct {
 	// brief's EventName/Project (see googleads.composeAdCopy).
 	Headlines    []string `json:"headlines"`
 	Descriptions []string `json:"descriptions"`
+	// Keywords are optional positive Search keyword criteria (GA-4). Left empty, the
+	// ad group created by GA-3 gets no criteria and can never serve — see
+	// googleads.Keyword/validateKeywords.
+	Keywords []googleAdsKeywordConfig `json:"keywords"`
+	// AudienceSegments are optional EXISTING Google Ads audience resource names (GA-4)
+	// — a Customer Match user list or custom audience the caller already built
+	// elsewhere (e.g. this project's campaign_audiences resource), not created by this
+	// dispatcher. See googleads.validateAudienceSegments for the accepted shapes.
+	AudienceSegments []string `json:"audienceSegments"`
 }
 
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
@@ -87,11 +107,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// never from caller JSON — the Project name segment is the data pipeline's
 		// attribution join key (docs/api-catalog.md), so it must be the canonical LFX
 		// slug (matches reddit/meta/twitter).
-		Project:         brief.ProjectID,
-		Budget:          cfg.Budget,
-		RegistrationURL: bf.RegistrationURL,
-		Headlines:       cfg.Headlines,
-		Descriptions:    cfg.Descriptions,
+		Project:          brief.ProjectID,
+		Budget:           cfg.Budget,
+		RegistrationURL:  bf.RegistrationURL,
+		Headlines:        cfg.Headlines,
+		Descriptions:     cfg.Descriptions,
+		Keywords:         googleAdsKeywords(cfg.Keywords),
+		AudienceSegments: cfg.AudienceSegments,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix hits Google's DUPLICATE_NAME (reported
@@ -149,6 +171,20 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return campaignFromGoogleAds(ctx, result, cfg), fmt.Errorf("google-ads dispatch: %w", cerr)
 	}
 	return campaignFromGoogleAds(ctx, result, cfg), nil
+}
+
+// googleAdsKeywords maps the wire-shaped keyword config to the platform client's
+// Keyword type. Returns nil for an empty input so an omitted "keywords" field stays
+// nil end-to-end rather than becoming an empty-but-non-nil slice.
+func googleAdsKeywords(in []googleAdsKeywordConfig) []googleads.Keyword {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.Keyword, len(in))
+	for i, kw := range in {
+		out[i] = googleads.Keyword{Text: kw.Text, MatchType: kw.MatchType}
+	}
+	return out
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The
