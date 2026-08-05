@@ -537,6 +537,33 @@ func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, _ strin
 	return &cp, nil
 }
 
+// UpdateCampaign must validate status before claiming the version, so a rejected
+// request (400 validation error) does not bump the version. If validation failed
+// after claiming, a retry of the same rejected request would get 412
+// PreconditionFailed instead of the original validation error, and other callers
+// with the prior version would be wrongly rejected.
+func TestBriefService_UpdateCampaign_ValidationBeforeClaim(t *testing.T) {
+	camps := &campaignEditRepo{cur: &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 5,
+		CampaignName: "old", Status: "created",
+	}}
+	s := &BriefService{briefs: &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}}, campaigns: camps, jobs: newFakeJobRepo(), orch: NewOrchestrator(camps, newFakeJobRepo(), nil)}
+	v := "5"
+	// Attempt a status change (run status), which should fail validation before claiming
+	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "old", Status: "active"}, // invalid: run status change
+	})
+	var badReq *briefs.BadRequestError
+	if !errors.As(err, &badReq) {
+		t.Fatalf("expected 400 BadRequestError, got %T: %v", err, err)
+	}
+	// Verify that ClaimCampaignVersion was NOT called (version should still be 5)
+	if camps.cur.Version != 5 {
+		t.Errorf("version was bumped even though validation failed: got %d, want 5 (unchanged)", camps.cur.Version)
+	}
+}
+
 // UpdateCampaign must NOT wipe the stored config when the caller omits config, and it must
 // leave the run status untouched (the caller round-trips the CURRENT status on a name edit;
 // run-state changes go through the toggle, not this DB-only path).

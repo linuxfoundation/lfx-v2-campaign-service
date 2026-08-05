@@ -288,29 +288,44 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 }
 
 // ClaimCampaignVersion atomically bumps a campaign's version, gated on
-// expectedVersion, and returns the row at its new version. It shares
-// ReplaceCampaign's version-gated UPDATE + RowsAffected==0 disambiguation
-// (not-found vs. precondition-failed) but touches no content column, so it can
-// run before a side-effecting call whose outcome isn't known yet.
+// expectedVersion, and returns the row at its new version. The UPDATE and row
+// read are atomic via RETURNING, so no separate re-fetch can be interleaved by
+// a concurrent writer.
+//
+// KNOWN LIMITATION: This provides serialization only for callers reading the
+// SAME version. If caller A claims version 3 and then makes a long-running
+// external call (e.g., orch.ToggleCampaignStatus), caller B can read the newly
+// bumped version 4 during A's call, claim it, and enter its own external call.
+// Both can then proceed concurrently, and if both succeed, one's final
+// ReplaceCampaign may fail, leaving the platform and DB diverged. A complete fix
+// would require durable in-flight ownership (e.g., a lease token or explicit
+// "in-flight" status visible to all readers). This is accepted for now as the
+// window is small in practice, but should be addressed if concurrent platform
+// mutations become a problem. See internal/service/brief.go ToggleCampaignStatus
+// for the context in which this is called.
 func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, error) {
 	q := `UPDATE campaigns SET version=version+1, updated_at=now()
-		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
-	tag, err := r.db.Exec(ctx, q, campaignID, briefID, projectID, expectedVersion)
+		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4
+		RETURNING ` + campaignCols
+	c, err := scanCampaign(r.db.QueryRow(ctx, q, campaignID, briefID, projectID, expectedVersion))
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Disambiguate: not-found vs. precondition-failed by checking if the row exists
+			// at any version. If GetCampaign returns not-found, the row is gone; if it
+			// returns a row, the version mismatch is the issue.
+			_, gerr := r.GetCampaign(ctx, projectID, briefID, campaignID)
+			switch {
+			case errors.Is(gerr, domain.ErrNotFound):
+				return nil, domain.ErrNotFound
+			case gerr != nil:
+				return nil, gerr
+			default:
+				return nil, domain.ErrPreconditionFailed
+			}
+		}
 		return nil, fmt.Errorf("claim campaign version: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		_, gerr := r.GetCampaign(ctx, projectID, briefID, campaignID)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
-		}
-	}
-	return r.GetCampaign(ctx, projectID, briefID, campaignID)
+	return c, nil
 }
 
 func scanCampaign(row pgx.Row) (*model.Campaign, error) {

@@ -346,6 +346,27 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// This DB-only update MUST NOT be a back door for changing the RUN status
+	// (active/paused): that would persist a run state WITHOUT contacting the ad platform,
+	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists
+	// to prevent. `status` stays in the payload so a client can round-trip the row it read
+	// (a name/config edit re-sends the current status unchanged), but an ATTEMPT to flip the
+	// run state here is rejected and routed to the platform toggle.
+	//
+	// This path NEVER writes status, so ANY mismatch must be refused, not just a run-state one:
+	// returning 200 for a PUT whose required `status` field was not applied would tell the
+	// caller a replacement succeeded when it silently did not. Run-state attempts get the
+	// specific toggle-endpoint message; every other mismatch (a provisioning state, or an
+	// unknown value) is rejected as unsupported on this path.
+	//
+	// VALIDATION MUST HAPPEN BEFORE CLAIMING. If validation fails and returns 400, we must not
+	// bump the version; otherwise a rejected request unexpectedly invalidates the caller's ETag.
+	if p.Campaign.Status != existing.Status {
+		if model.IsCampaignRunStatus(p.Campaign.Status) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
+		}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "status cannot be changed via update-campaign; re-send the campaign's current status (it is set by the create/dispatch flow and the status-toggle endpoint)"}
+	}
 	// Claim write ownership at the read version BEFORE building the edit, not just
 	// at the final ReplaceCampaign. This path itself has no I/O in between, so a
 	// bare ReplaceCampaign(version) would already be race-free against another
@@ -361,24 +382,6 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 		return nil, mapBriefErr(cerr)
 	}
 	existing.Version = claimed.Version
-	// This DB-only update MUST NOT be a back door for changing the RUN status
-	// (active/paused): that would persist a run state WITHOUT contacting the ad platform,
-	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists
-	// to prevent. `status` stays in the payload so a client can round-trip the row it read
-	// (a name/config edit re-sends the current status unchanged), but an ATTEMPT to flip the
-	// run state here is rejected and routed to the platform toggle.
-	//
-	// This path NEVER writes status, so ANY mismatch must be refused, not just a run-state one:
-	// returning 200 for a PUT whose required `status` field was not applied would tell the
-	// caller a replacement succeeded when it silently did not. Run-state attempts get the
-	// specific toggle-endpoint message; every other mismatch (a provisioning state, or an
-	// unknown value) is rejected as unsupported on this path.
-	if p.Campaign.Status != existing.Status {
-		if model.IsCampaignRunStatus(p.Campaign.Status) {
-			return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
-		}
-		return nil, &briefs.BadRequestError{Code: "400", Message: "status cannot be changed via update-campaign; re-send the campaign's current status (it is set by the create/dispatch flow and the status-toggle endpoint)"}
-	}
 	existing.CampaignName = p.Campaign.CampaignName
 	// Only overwrite the stored config when the caller actually supplied one.
 	// config is optional in CampaignUpdateInput, so an omitted value must leave
