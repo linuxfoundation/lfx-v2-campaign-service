@@ -462,9 +462,6 @@ func (c *Container) startStuckClaimSweeper(repo stuckClaimScanner) {
 	}()
 }
 
-// logMissingDispatchers warns about ad providers that have no adapter yet — those
-// platforms record jobs that finish "failed" with "no dispatcher registered".
-
 // logMissingDispatchers warns about providers that have no adapter yet — those channels
 // record jobs that finish "failed" with "no dispatcher registered".
 //
