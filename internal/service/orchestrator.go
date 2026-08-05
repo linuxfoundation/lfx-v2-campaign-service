@@ -18,6 +18,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 )
 
 // maxParallelDispatch bounds concurrent per-platform campaign creation.
@@ -209,6 +210,16 @@ type Orchestrator struct {
 	jobs        domain.JobRepository
 	dispatchers map[model.Provider]PlatformDispatcher
 
+	// indexerMu guards indexer, which SetIndexer late-binds from the container.
+	// Campaign CREATES land here (dispatchOne persists them), not in BriefService,
+	// so without this a new campaign would stay invisible to search until some
+	// later update happened to republish it. Never nil: defaults to Noop.
+	indexerMu sync.RWMutex
+	indexer   indexer.Publisher
+	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
+	// publisher — a Noop also appears when the broker is unreachable. See DisableIndexing.
+	indexingDisabled bool
+
 	// wg tracks in-flight dispatch runs so Shutdown can wait for them before the
 	// process (and the DB pool) goes away. mu guards the shutting-down flag so a
 	// Start racing with Shutdown either registers on wg or is rejected, never
@@ -246,6 +257,73 @@ type Orchestrator struct {
 
 // NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
 // platform with no registered dispatcher is recorded as a failed result.
+// SetIndexer injects the Query Service index publisher. Separate from the constructor
+// so existing NewOrchestrator call sites (mostly tests) are unaffected and default to
+// Noop, mirroring BriefService.SetIndexer.
+func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
+	if p == nil {
+		return
+	}
+	o.indexerMu.Lock()
+	defer o.indexerMu.Unlock()
+	o.indexer = p
+}
+
+// IndexerIsNoop reports whether this orchestrator would publish nothing. Exported for
+// the container's wiring tests — see BriefService.IndexerIsNoop for why this is needed.
+func (o *Orchestrator) IndexerIsNoop() bool {
+	o.indexerMu.RLock()
+	defer o.indexerMu.RUnlock()
+	_, isNoop := o.indexer.(indexer.Noop)
+	return isNoop
+}
+
+// campaignIndexPayload builds the outbox payload for a campaign write, co-committed with the
+// row by the repo. Used by EVERY campaign write — create, update and status toggle.
+//
+// Mixing paths does not work: while creates went through the outbox and updates published
+// directly, a replayed create could land AFTER a newer update or toggle and overwrite it in the
+// index, leaving search stale until some later write happened to repair it. One ordered sequence
+// per row removes that, exactly as for briefs.
+//
+// It carries NO bearer token. Campaign creation is ASYNC — the dispatch runs on the
+// orchestrator's root context, long after the request returned — so a captured JWT could be
+// EXPIRED by publish time, and the indexer rejects an expired token. With no outbox row there
+// was nothing to retry, so a slow dispatch left a new campaign permanently unsearchable. The
+// relay stamps a service credential at publish time instead, which also keeps a live credential
+// out of a JSONB table retained for audit with no pruning.
+func (o *Orchestrator) campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
+	// Nothing is enqueued when indexing is DELIBERATELY disabled (NATS_URL=""). Gated on the
+	// CONFIG flag, not on the publisher type: a Noop also appears when the broker is merely
+	// unreachable, and skipping the enqueue then would permanently lose the write. See
+	// BriefService.DisableIndexing.
+	if o.indexingIsDisabled() {
+		return nil
+	}
+	return func(c *model.Campaign) ([]byte, error) {
+		return json.Marshal(indexer.NewTransaction(
+			action, indexer.ObjectTypeCampaign,
+			c.ID, c.ProjectID, "",
+			campaignDoc(campaignResult(c)), c.CampaignName,
+		))
+	}
+}
+
+// DisableIndexing marks indexing as DELIBERATELY off (NATS_URL empty), so dispatch writes skip
+// the outbox. A configuration fact, NOT an observation of the publisher — see
+// BriefService.DisableIndexing for why that distinction prevents permanent data loss.
+func (o *Orchestrator) DisableIndexing() {
+	o.indexerMu.Lock()
+	defer o.indexerMu.Unlock()
+	o.indexingDisabled = true
+}
+
+func (o *Orchestrator) indexingIsDisabled() bool {
+	o.indexerMu.RLock()
+	defer o.indexerMu.RUnlock()
+	return o.indexingDisabled
+}
+
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
 	if dispatchers == nil {
 		dispatchers = map[model.Provider]PlatformDispatcher{}
@@ -256,6 +334,7 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 		campaigns:     campaigns,
 		jobs:          jobs,
 		dispatchers:   dispatchers,
+		indexer:       indexer.Noop{},
 		rootCtx:       rootCtx,
 		rootCancel:    rootCancel,
 		sweeperCtx:    sweeperCtx,
@@ -430,6 +509,9 @@ type platformResult struct {
 // The dispatch goroutine runs under the orchestrator's root context (not the
 // request context), so it survives the request ending but can still be cancelled
 // by Shutdown when the drain deadline expires.
+// It takes NO caller token. Dispatch results are indexed by co-committing an outbox row (see
+// campaignIndexPayload), which the relay publishes with the SERVICE credential — deliberately,
+// because by publish time the originating request is long gone and its JWT may have expired.
 func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage) (string, error) {
 	// Register the run with the drain WaitGroup under the lock so a concurrent
 	// Shutdown can't start waiting between the draining check and wg.Add (which
@@ -741,7 +823,10 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 					campaign.Status = campaignStatusPending
 				}
 				persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
-				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign); perr != nil {
+				// Index the RETAINED PARTIAL too: it is a real row an operator must be able to
+				// find in order to reconcile it. Indexing only clean successes would hide
+				// exactly the campaigns that need attention.
+				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); perr != nil {
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
 				} else {
@@ -790,17 +875,21 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// while still bounding it so it can never hang shutdown.
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancelPersist()
-	if _, err := o.campaigns.UpsertCampaign(persistCtx, campaign); err != nil {
+	if _, uerr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); uerr != nil {
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
 		// and the orphaned upstream id; keep the id in the result.
 		slog.ErrorContext(ctx, "persist campaign failed after upstream create — pending claim retained",
-			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", err)
+			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr)
 		res.Error = "created upstream campaign but failed to record it; see logs"
 		res.CampaignID = campaign.PlatformCampaignID
 		return res
 	}
+	// The index message co-committed with the row (see campaignIndexPayload), so the campaign
+	// is searchable once the relay delivers it — no dependency on this goroutine's token still
+	// being valid, and no lost message if the process dies here.
+
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID
 	return res

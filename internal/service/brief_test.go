@@ -18,6 +18,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	goahttp "goa.design/goa/v3/http"
 )
 
@@ -27,6 +28,11 @@ type fakeBriefRepo struct {
 	// onGet, when set, fires once after the next GetBrief read, modelling a
 	// concurrent brief mutation that commits in the approve→dispatch window.
 	onGet func()
+	// lastIndexPayload is the outbox payload built during the last ArchiveBrief.
+	lastIndexPayload []byte
+	// indexPayloads records EVERY co-committed message, so a test can assert that a write was
+	// indexed at all rather than only inspecting the most recent one.
+	indexPayloads [][]byte
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -66,19 +72,19 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 	return &cp, nil
 }
 
-func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief) (*model.CampaignBrief, error) {
+func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	b.ID = "b-new"
 	b.Version = 1
 	r.briefs[briefKey(b.ProjectID, b.ID)] = b
-	return b, nil
+	return b, r.enqueue(b, indexPayload)
 }
 
-func (r *fakeBriefRepo) ReplaceBrief(_ context.Context, b *model.CampaignBrief, _ int64) (*model.CampaignBrief, error) {
+func (r *fakeBriefRepo) ReplaceBrief(_ context.Context, b *model.CampaignBrief, _ int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	r.briefs[briefKey(b.ProjectID, b.ID)] = b
-	return b, nil
+	return b, r.enqueue(b, indexPayload)
 }
 
-func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *model.Actor, expectedVersion int64) (*model.CampaignBrief, error) {
+func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *model.Actor, expectedVersion int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -87,13 +93,37 @@ func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *mode
 		return nil, domain.ErrPreconditionFailed
 	}
 	b.Status = model.BriefApproved
-	return b, nil
+	return b, r.enqueue(b, indexPayload)
 }
 
-func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string) error {
-	if _, ok := r.briefs[briefKey(projectID, id)]; !ok {
-		return domain.ErrNotFound
+// ArchiveBrief mirrors the real repo's single-statement semantics: it applies the archive AND
+// returns the committed row. Modelling the mutation (status + version bump) matters — a fake
+// that only reported success would let a caller publishing a stale snapshot pass.
+func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+	b, ok := r.briefs[briefKey(projectID, id)]
+	if !ok || b.Status == model.BriefArchived {
+		// The real query guards on status <> 'archived', so a second archive is ErrNotFound.
+		return nil, domain.ErrNotFound
 	}
+	b.Status = model.BriefArchived
+	b.Version++
+	return b, r.enqueue(b, indexPayload)
+}
+
+// enqueue mirrors the real repo's co-commit: the payload builder runs INSIDE the "transaction",
+// after the row is updated, and a build error fails the write. Recording every payload is what
+// lets tests assert that a mutation is indexed at all — the whole point of routing writes
+// through the outbox is that no write publishes outside it.
+func (r *fakeBriefRepo) enqueue(b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) error {
+	if indexPayload == nil {
+		return nil
+	}
+	payload, err := indexPayload(b)
+	if err != nil {
+		return err
+	}
+	r.lastIndexPayload = payload
+	r.indexPayloads = append(r.indexPayloads, payload)
 	return nil
 }
 
@@ -506,6 +536,9 @@ func TestBriefService_CreateCampaigns_ApprovedAtVersionSucceeds(t *testing.T) {
 type campaignEditRepo struct {
 	got *model.Campaign // the campaign passed to ReplaceCampaign
 	cur *model.Campaign // the stored campaign returned by GetCampaign
+	// indexPayloads records the co-committed index messages, so a test can assert the update
+	// is indexed rather than only persisted.
+	indexPayloads [][]byte
 }
 
 func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -521,12 +554,26 @@ func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string
 func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider) error {
 	return nil
 }
-func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
+func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
-func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64) (*model.Campaign, error) {
+func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
-	return c, nil
+	return c, r.recordIndex(c, indexPayload)
+}
+
+// recordIndex runs the payload builder the way the real repo does — inside the "transaction",
+// after the row is written — so a test can assert the update is actually indexed.
+func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) error {
+	if indexPayload == nil {
+		return nil
+	}
+	payload, err := indexPayload(c)
+	if err != nil {
+		return err
+	}
+	r.indexPayloads = append(r.indexPayloads, payload)
+	return nil
 }
 func (r *campaignEditRepo) DeleteCampaign(context.Context, string, string, string, int64) error {
 	return nil
@@ -741,6 +788,8 @@ type toggleCampaignRepo struct {
 	got      *model.Campaign
 	replaced *model.Campaign
 	getErr   error
+	// indexPayloads records the co-committed index messages for the toggle path.
+	indexPayloads [][]byte
 }
 
 func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -750,8 +799,16 @@ func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string
 	cp := *r.got
 	return &cp, nil
 }
-func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64) (*model.Campaign, error) {
+func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.replaced = c
+	if indexPayload == nil {
+		return c, nil
+	}
+	payload, err := indexPayload(c)
+	if err != nil {
+		return nil, err
+	}
+	r.indexPayloads = append(r.indexPayloads, payload)
 	return c, nil
 }
 
@@ -778,7 +835,12 @@ func newToggleService(camp *model.Campaign, tog *stubToggler) (*BriefService, *t
 	camps := &toggleCampaignRepo{got: camp}
 	jobs := newFakeJobRepo()
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
-	return NewBriefService(repo, camps, jobs, orch), camps
+	s := NewBriefService(repo, camps, jobs, orch)
+	// A real (non-Noop) publisher: a Noop service deliberately enqueues nothing, which is the
+	// disabled-deployment path rather than the behaviour these tests exercise.
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
+	return s, camps
 }
 
 func TestBriefService_ToggleCampaignStatus_PlatformThenPersist(t *testing.T) {
@@ -949,6 +1011,292 @@ func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing
 	}
 	if tog.gotID != "" {
 		t.Error("the platform must NOT be called for a pending campaign")
+	}
+}
+
+// newIndexTestBriefService wires a BriefService with live collaborators around repo.
+func newIndexTestBriefService(repo *fakeBriefRepo) *BriefService {
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	s := NewBriefService(nil, nil, nil, nil)
+	orch := NewOrchestrator(camps, jobs, nil)
+	s.SetBackend(repo, camps, jobs, orch)
+	// Inject a real (non-Noop) publisher: these tests assert INDEXING behaviour, and a service
+	// left on the default Noop deliberately enqueues nothing — that is the disabled-deployment
+	// path (NATS_URL=""), not the one under test here.
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
+	return s
+}
+
+// failingIndexer records calls and models a publisher whose delivery fails. Publish has no
+// error return by contract, so a real failure is invisible to the caller — which is exactly
+// the property under test.
+type failingIndexer struct{ calls int }
+
+func (f *failingIndexer) Publish(context.Context, indexer.Transaction) { f.calls++ }
+func (f *failingIndexer) Close()                                       {}
+
+// TestCreateBrief_IndexingNeverFailsTheWrite pins the contract that a broker problem can never
+// become a write failure: the database is the source of truth, and indexing costs
+// discoverability at worst. If indexing could fail a write, a NATS outage would become a
+// campaign-service outage.
+//
+// The MECHANISM changed with the outbox — a create no longer publishes directly at all, it
+// co-commits an outbox row that the relay delivers — so the assertion is now that the write
+// succeeds and enqueued its message while the broker is failing, and that NOTHING was published
+// on the request path. That is stronger than the old "exactly one publish": a direct publish
+// here would be the ordering hazard the outbox exists to remove.
+func TestCreateBrief_IndexingNeverFailsTheWrite(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+	idx := &failingIndexer{}
+	s.SetIndexer(idx)
+
+	res, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("a broken indexer must not fail the write: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected the created brief to be returned")
+	}
+	if len(repo.indexPayloads) != 1 {
+		t.Fatalf("expected the create to co-commit exactly one index message, got %d", len(repo.indexPayloads))
+	}
+	if idx.calls != 0 {
+		t.Errorf("a brief write must publish only via the outbox relay, got %d direct publishes", idx.calls)
+	}
+	// The co-committed message must describe a CREATE of this brief, not merely exist.
+	var msg struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(repo.indexPayloads[0], &msg); err != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", err)
+	}
+	if msg.Action != indexer.ActionCreated {
+		t.Errorf("action = %q, want %q", msg.Action, indexer.ActionCreated)
+	}
+}
+
+// TestBriefService_DefaultsToNoopIndexer guards the nil path: every write calls publishIndex
+// unconditionally, so a service constructed without SetIndexer must not panic.
+func TestBriefService_DefaultsToNoopIndexer(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo) // no SetIndexer call
+
+	if _, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "no-indexer"},
+	}); err != nil {
+		t.Fatalf("a service with no indexer configured must still write: %v", err)
+	}
+}
+
+// TestDeleteBrief_CoCommitsAnArchivedTombstone pins the archive path against leaving a stale
+// search document. Archiving is a SOFT delete: if it doesn't emit an index event the brief
+// keeps its pre-archive _source and goes on matching searches forever, and archiving is
+// TERMINAL — there is no later write to repair it.
+//
+// The message is now CO-COMMITTED to the outbox rather than published on the request path, so
+// the assertions read the enqueued payload. Everything the old direct-publish test pinned still
+// holds: the action must be a DELETE (republishing as an update leaves the document findable),
+// the data must be the bare object id (the indexer type-asserts delete data to a string and
+// rejects an object with "expected string"), and the object type must route to the brief index.
+func TestDeleteBrief_CoCommitsAnArchivedTombstone(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	// A failing indexer proves the tombstone does not depend on the broker being up: the row
+	// is what carries it, and the relay delivers it later.
+	idx := &failingIndexer{}
+	s.SetIndexer(idx)
+	before := len(repo.indexPayloads)
+
+	if err := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); err != nil {
+		t.Fatalf("DeleteBrief: %v", err)
+	}
+
+	if len(repo.indexPayloads) != before+1 {
+		t.Fatalf("archiving must co-commit exactly one index message, got %d (a stale search document survives)",
+			len(repo.indexPayloads)-before)
+	}
+	if idx.calls != 0 {
+		t.Errorf("the archive must publish only via the relay, got %d direct publishes", idx.calls)
+	}
+
+	var got indexer.Transaction
+	if uerr := json.Unmarshal(repo.indexPayloads[len(repo.indexPayloads)-1], &got); uerr != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", uerr)
+	}
+	// Archiving is a soft DELETE: republishing it as an update would leave the document
+	// findable, which is the whole failure this test guards.
+	if got.Action != indexer.ActionDeleted {
+		t.Errorf("action = %q, want %q — an archived brief must be removed from the index", got.Action, indexer.ActionDeleted)
+	}
+	if got.IndexingConfig == nil || got.IndexingConfig.ObjectID != created.ID {
+		t.Errorf("indexing_config.object_id = %+v, want %q", got.IndexingConfig, created.ID)
+	}
+	// A DELETE carries the bare object id, not a document: the indexer type-asserts delete
+	// data to a string and rejects an object with "expected string", so passing a document
+	// means the archived brief is never removed from search.
+	id, ok := got.Data.(string)
+	if !ok {
+		t.Fatalf("co-committed data = %T, want the bare object id string", got.Data)
+	}
+	if id != created.ID {
+		t.Errorf("co-committed id = %q, want %q", id, created.ID)
+	}
+	// The stored payload must carry NO credential: the outbox is JSONB retained for audit with
+	// no pruning, so a token written here would persist as a live credential indefinitely.
+	if auth := got.Headers["authorization"]; auth != "" {
+		t.Errorf("stored payload carries an authorization header (%q); the relay must stamp it at publish time", auth)
+	}
+}
+
+// TestDeleteBrief_ArchiveReturnsTheCommittedRow pins that the archive and the read of its
+// result are ONE statement. That is what closes the read-then-archive race: a concurrent
+// ReplaceBrief/Approve committing between a separate read and the archive would make the
+// archive apply to the newer row while the index received the older snapshot.
+//
+// It asserts on the REPOSITORY CONTRACT (ArchiveBrief returns the row it committed) rather
+// than on published version numbers. An in-memory fake hands back the same pointer for both
+// the read and the archive, so racy and correct implementations produce identical published
+// versions — a version-based assertion passes either way. (Verified: an earlier version of
+// this test did exactly that and stayed green against a deliberately racy DeleteBrief.) The
+// real guarantee lives in the SQL — UPDATE ... RETURNING — and in the port's signature, which
+// no longer makes a separate read possible.
+func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	// The port returns the archived row, so a caller cannot publish a separately-read snapshot.
+	archived, aerr := repo.ArchiveBrief(ctx, "cncf", created.ID, nil)
+	if aerr != nil {
+		t.Fatalf("ArchiveBrief: %v", aerr)
+	}
+	if archived == nil {
+		t.Fatal("ArchiveBrief must return the committed row, not just an error")
+	}
+	if archived.Status != model.BriefArchived {
+		t.Errorf("returned status = %q, want %q", archived.Status, model.BriefArchived)
+	}
+
+	// Archiving twice must be ErrNotFound: the real query guards on status <> 'archived', so a
+	// second archive commits nothing and therefore has no row to return.
+	if _, second := repo.ArchiveBrief(ctx, "cncf", created.ID, nil); !errors.Is(second, domain.ErrNotFound) {
+		t.Errorf("second archive = %v, want ErrNotFound (nothing was committed, so nothing to index)", second)
+	}
+}
+
+// TestIndexedDocsUseSnakeCase pins the INDEXED wire shape.
+//
+// The generated goa types carry no json tags, so publishing them directly emitted Go field
+// names ("ProjectID", "EventSlug") instead of the snake_case the HTTP API uses. Such a document
+// indexes cleanly and then matches nothing for a consumer filtering on the API's field names —
+// indistinguishable from indexing being broken.
+func TestIndexedDocsUseSnakeCase(t *testing.T) {
+	url := "https://events.lfx.dev/k"
+	raw, err := json.Marshal(briefDoc(&briefs.Brief{
+		ID: "b1", ProjectID: "cncf", ProgramType: "events",
+		EventSlug: "kubecon-eu-2026", URL: &url, Status: "approved", Version: 3,
+	}))
+	if err != nil {
+		t.Fatalf("marshal brief doc: %v", err)
+	}
+	for _, want := range []string{`"project_id":"cncf"`, `"event_slug":"kubecon-eu-2026"`, `"program_type":"events"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("brief doc missing %s\ngot: %s", want, raw)
+		}
+	}
+	for _, bad := range []string{`"ProjectID"`, `"EventSlug"`, `"ProgramType"`} {
+		if strings.Contains(string(raw), bad) {
+			t.Errorf("brief doc leaks the Go field name %s: consumers filtering on the API shape match nothing\ngot: %s", bad, raw)
+		}
+	}
+
+	pcid := "pc-9"
+	raw, err = json.Marshal(campaignDoc(&briefs.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: "hubspot",
+		PlatformCampaignID: &pcid, CampaignName: "n", Status: "created", Version: 1,
+	}))
+	if err != nil {
+		t.Fatalf("marshal campaign doc: %v", err)
+	}
+	for _, want := range []string{`"project_id":"cncf"`, `"brief_id":"b1"`, `"platform_campaign_id":"pc-9"`, `"campaign_name":"n"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("campaign doc missing %s\ngot: %s", want, raw)
+		}
+	}
+	for _, bad := range []string{`"ProjectID"`, `"BriefID"`, `"PlatformCampaignID"`} {
+		if strings.Contains(string(raw), bad) {
+			t.Errorf("campaign doc leaks the Go field name %s\ngot: %s", bad, raw)
+		}
+	}
+
+	// A nil optional must not become "null" in the document.
+	raw, _ = json.Marshal(campaignDoc(&briefs.Campaign{ID: "c2"}))
+	if strings.Contains(string(raw), "null") {
+		t.Errorf("nil optionals must be omitted, not emitted as null\ngot: %s", raw)
+	}
+}
+
+// TestBriefDoc_CarriesRevisableContent pins that the indexed projection includes the fields an
+// edit actually changes. The Query Service serves revision history from these documents, so a
+// projection limited to identity fields would make a copy-only revision indistinguishable from
+// a no-op: the version increments and nothing visible differs.
+func TestBriefDoc_CarriesRevisableContent(t *testing.T) {
+	doc := briefDoc(&briefs.Brief{
+		ID: "b1", ProjectID: "cncf", ProgramType: "events", EventSlug: "kubecon",
+		Status: "approved", Version: 2,
+		Platforms:    []string{"hubspot"},
+		EventDetails: map[string]any{"eventName": "KubeCon"},
+		Copy:         map[string]any{"headline": "Join us"},
+		Keywords:     []any{"cloud"},
+		Targeting:    map[string]any{"geo": "KR"},
+	})
+
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{"platforms", "event_details", "copy", "keywords", "targeting"} {
+		if !strings.Contains(string(raw), `"`+want+`"`) {
+			t.Errorf("indexed brief is missing %q — revision history would show a new version with nothing changed\ngot: %s", want, raw)
+		}
+	}
+	if !strings.Contains(string(raw), "Join us") {
+		t.Errorf("the revised copy must reach the index\ngot: %s", raw)
+	}
+
+	// Absent optionals stay out of the document rather than appearing as null.
+	raw, _ = json.Marshal(briefDoc(&briefs.Brief{ID: "b2"}))
+	if strings.Contains(string(raw), "null") {
+		t.Errorf("absent optionals must be omitted, not null\ngot: %s", raw)
 	}
 }
 
@@ -1251,6 +1599,368 @@ func TestToggleUnsupported_EmailGetsADistinctMessage(t *testing.T) {
 				t.Errorf("message = %q, want it to contain %q", bad.Message, tc.wantContain)
 			}
 		})
+
+	}
+}
+
+// TestDeleteBrief_EnqueuesTheIndexMessageWithTheArchive pins the outbox co-commit for the
+// TERMINAL write. Archiving has no "next write" to repair the index, so if the post-commit
+// publish is dropped the brief stays searchable forever. The outbox row is written in the SAME
+// transaction as the archive, so the relay can deliver it even if the process dies immediately
+// after the commit.
+func TestDeleteBrief_EnqueuesTheIndexMessageWithTheArchive(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026", ProgramType: "events"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("DeleteBrief: %v", derr)
+	}
+
+	if len(repo.lastIndexPayload) == 0 {
+		t.Fatal("no index message was enqueued with the archive: a dropped publish would leave the brief searchable forever")
+	}
+
+	var msg map[string]any
+	if uerr := json.Unmarshal(repo.lastIndexPayload, &msg); uerr != nil {
+		t.Fatalf("the enqueued payload must be a valid index message: %v", uerr)
+	}
+	// The payload is frozen at write time under the CURRENT contract, so the relay never
+	// re-derives it — assert the parts the indexer requires.
+	if msg["action"] != indexer.ActionDeleted {
+		t.Errorf("action = %v, want %q (an archived brief must be REMOVED from the index)", msg["action"], indexer.ActionDeleted)
+	}
+	if msg["data"] != created.ID {
+		t.Errorf("delete data = %v, want the bare object id %q", msg["data"], created.ID)
+	}
+	if _, ok := msg["indexing_config"]; !ok {
+		t.Error("the enqueued message must carry indexing_config or the indexer drops it")
+	}
+}
+
+// TestBriefWrites_AllGoThroughTheOutbox pins the property that closes the resurrection race.
+//
+// While SOME brief writes published directly after commit and only the archive went through the
+// outbox, the two paths could not be ordered against each other: a replace could commit, stall
+// before its publish, and land its update AFTER the archive had been replayed and its row
+// retired — putting a deleted brief back in the index with no pending tombstone left to repair
+// it. The publisher's per-object lock cannot prevent this; it is process-local and only orders
+// calls in the order they arrive, which says nothing about a replica that stalled.
+//
+// The fix is structural rather than a tighter lock: every mutation co-commits its message, so
+// each brief has ONE ordered sequence carried by the table — which is also what makes it correct
+// across replicas. This test therefore asserts on the MECHANISM (nothing publishes directly),
+// because that is the only thing that actually rules the interleaving out.
+func TestBriefWrites_AllGoThroughTheOutbox(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+	idx := &failingIndexer{}
+	s.SetIndexer(idx)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	v1 := "1"
+	if _, uerr := s.UpdateBrief(ctx, &briefs.UpdateBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID, IfMatch: &v1,
+		Brief: &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	}); uerr != nil {
+		t.Fatalf("UpdateBrief: %v", uerr)
+	}
+
+	// The fake stores the replacement brief as-is, so its version is 0 after the replace.
+	// Approve gates on the CURRENT version; a mismatch here would be a precondition failure,
+	// which is not what this test is about.
+	v0 := "0"
+	if _, aerr := s.ApproveBrief(ctx, &briefs.ApproveBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID, IfMatch: &v0,
+	}); aerr != nil {
+		t.Fatalf("ApproveBrief: %v", aerr)
+	}
+
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("DeleteBrief: %v", derr)
+	}
+
+	if len(repo.indexPayloads) != 4 {
+		t.Fatalf("create, replace, approve and archive must each co-commit one index message, got %d",
+			len(repo.indexPayloads))
+	}
+	if idx.calls != 0 {
+		t.Errorf("no brief write may publish on the request path (got %d): a direct publish cannot be "+
+			"ordered against an outbox replay, which is how an archived brief got resurrected", idx.calls)
+	}
+
+	// The sequence must END in a delete. That is the ordering the outbox guarantees and the
+	// direct-publish path could not: whatever else happened, the brief finishes archived.
+	var last indexer.Transaction
+	if uerr := json.Unmarshal(repo.indexPayloads[len(repo.indexPayloads)-1], &last); uerr != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", uerr)
+	}
+	if last.Action != indexer.ActionDeleted {
+		t.Errorf("final index action = %q, want %q — the archive must be the last event for the brief",
+			last.Action, indexer.ActionDeleted)
+	}
+}
+
+// TestCampaignWrites_UpdateAndToggleCoCommitTheirIndex closes the last direct-publish path.
+//
+// Creates went through the outbox while UpdateCampaign and ToggleCampaignStatus still published
+// after ReplaceCampaign. Mixing the two cannot be ordered: a replayed create could land AFTER a
+// newer update or toggle and overwrite it in the index, leaving search stale until some later
+// write happened to repair it — the same interleaving already fixed for briefs.
+//
+// The toggle case carries a second hazard. Its write is deliberately detached (persistCtx) so a
+// cancelled request still records a platform change that already happened; publishing on the
+// REQUEST context dropped exactly those index events, leaving the status right in the database
+// and stale in search for the requests most likely to need reconciling. Co-committing means the
+// row and its message share one fate.
+func TestCampaignWrites_UpdateAndToggleCoCommitTheirIndex(t *testing.T) {
+	t.Run("update", func(t *testing.T) {
+		cur := &model.Campaign{
+			ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			CampaignName: "old", Status: "created", Version: 1,
+		}
+		repo := &campaignEditRepo{cur: cur}
+		s := &BriefService{briefs: newFakeBriefRepo(), campaigns: repo, jobs: newFakeJobRepo(),
+			orch: NewOrchestrator(repo, newFakeJobRepo(), nil)}
+		s.SetIndexer(&failingIndexer{})
+		im := "1"
+
+		if _, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+			Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "created"},
+		}); err != nil {
+			t.Fatalf("UpdateCampaign: %v", err)
+		}
+		assertOneCampaignIndexMessage(t, repo.indexPayloads)
+	})
+
+	t.Run("status toggle", func(t *testing.T) {
+		camp := &model.Campaign{
+			ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+			PlatformCampaignID: "t3_c", Status: "created", Version: 1,
+		}
+		s, camps := newToggleService(camp, &stubToggler{})
+		im := "1"
+		if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+		}); err != nil {
+			t.Fatalf("ToggleCampaignStatus: %v", err)
+		}
+		assertOneCampaignIndexMessage(t, camps.indexPayloads)
+	})
+}
+
+// assertOneCampaignIndexMessage checks that exactly one message was co-committed, that it
+// describes an update, and that it carries NO caller credential — the relay stamps a service
+// token at publish time, and the outbox is retained for audit with no pruning, so a JWT written
+// there would persist as a live credential.
+func assertOneCampaignIndexMessage(t *testing.T, payloads [][]byte) {
+	t.Helper()
+	if len(payloads) != 1 {
+		t.Fatalf("expected exactly one co-committed index message, got %d", len(payloads))
+	}
+	var msg indexer.Transaction
+	if err := json.Unmarshal(payloads[0], &msg); err != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", err)
+	}
+	if msg.Action != indexer.ActionUpdated {
+		t.Errorf("action = %q, want %q", msg.Action, indexer.ActionUpdated)
+	}
+	// NOT asserted: msg.ObjectType(). It is unexported state that does not survive the JSON
+	// round-trip by design — the indexer derives the type from the SUBJECT, and the relay routes
+	// from the outbox row's object_type column rather than the payload.
+	if auth := msg.Headers["authorization"]; auth != "" {
+		t.Errorf("stored payload carries an authorization header (%q); the relay must stamp it at publish time", auth)
+	}
+}
+
+// TestUpdateBrief_CoCommitsIndexMessage pins that an update operation co-commits an index message
+// the same way CreateBrief and ArchiveBrief do. A future refactor that drops the index-payload
+// argument from the ReplaceBrief call would compile and pass the existing suite; this assertion
+// catches that regression before it makes updates unsearchable.
+func TestUpdateBrief_CoCommitsIndexMessage(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	// Pre-populate a brief to update
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefDraft, Version: 1,
+		EventSlug: "kubecon-eu-2026", ProgramType: model.ProgramEvents,
+	}
+	s := newIndexTestBriefService(repo)
+	s.SetIndexer(&failingIndexer{})
+
+	ver := "1"
+	updated, err := s.UpdateBrief(ctx, &briefs.UpdateBriefPayload{
+		ProjectID: "cncf", BriefID: "b1", IfMatch: &ver,
+		Brief: &briefs.BriefInput{
+			EventSlug:   "kubecon-north-america-2026",
+			ProgramType: "events",
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateBrief: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected the updated brief to be returned")
+	}
+	if len(repo.indexPayloads) == 0 {
+		t.Fatal("expected UpdateBrief to co-commit an index message")
+	}
+	// Assertion on the last payload: if there were multiple, we want the update's message, not an earlier one
+	var msg struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(repo.indexPayloads[len(repo.indexPayloads)-1], &msg); err != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", err)
+	}
+	if msg.Action != indexer.ActionUpdated {
+		t.Errorf("action = %q, want %q", msg.Action, indexer.ActionUpdated)
+	}
+}
+
+// TestApproveBrief_CoCommitsIndexMessage pins that an approve operation co-commits an index
+// message. A future refactor that drops the index-payload argument from the Approve call would
+// compile and pass the existing suite; this assertion catches that regression before it makes
+// approvals unsearchable.
+func TestApproveBrief_CoCommitsIndexMessage(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	// Pre-populate a brief to approve
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefDraft, Version: 2,
+		EventSlug: "kubecon-eu-2026", ProgramType: model.ProgramEvents,
+	}
+	s := newIndexTestBriefService(repo)
+	s.SetIndexer(&failingIndexer{})
+
+	ver := "2"
+	approved, err := s.ApproveBrief(ctx, &briefs.ApproveBriefPayload{
+		ProjectID: "cncf", BriefID: "b1", IfMatch: &ver,
+	})
+	if err != nil {
+		t.Fatalf("ApproveBrief: %v", err)
+	}
+	if approved == nil {
+		t.Fatal("expected the approved brief to be returned")
+	}
+	if len(repo.indexPayloads) == 0 {
+		t.Fatal("expected ApproveBrief to co-commit an index message")
+	}
+	// Assertion on the last payload
+	var msg struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(repo.indexPayloads[len(repo.indexPayloads)-1], &msg); err != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", err)
+	}
+	if msg.Action != indexer.ActionUpdated {
+		t.Errorf("action = %q, want %q", msg.Action, indexer.ActionUpdated)
+	}
+}
+
+// TestDisabledIndexing_EnqueuesNothing pins the source-level answer to unbounded outbox growth.
+//
+// Pending rows are NEVER pruned — they are undelivered work and this service has no reindex
+// path, so discarding one is unrecoverable (a terminal brief archive has no later write to
+// repair it). That makes it essential that rows which can never be delivered are not written in
+// the first place. When indexing is DELIBERATELY disabled (NATS_URL="" → the Noop publisher),
+// the payload builder is nil and the repo skips the enqueue entirely.
+//
+// A missing CREDENTIAL is deliberately NOT treated this way: that is a provisioning gap, the
+// rows are real work, and the relay drains them once the token lands.
+func TestDisabledIndexing_EnqueuesNothing(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	// DisableIndexing is the CONFIG signal the container sets when NATS_URL is empty — the same
+	// call production makes. Deliberately not "construct without SetIndexer": that state also
+	// arises from a wiring bug or a broker outage, and those must still enqueue.
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	s.SetIndexer(&failingIndexer{}) // a real publisher, to prove the gate is the CONFIG flag
+	s.DisableIndexing()
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("a disabled indexer must not fail the write: %v", err)
+	}
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("nor the archive: %v", derr)
+	}
+
+	if n := len(repo.indexPayloads); n != 0 {
+		t.Errorf("wrote %d outbox row(s) that can never be delivered; pending rows are never "+
+			"pruned, so this grows without bound", n)
+	}
+}
+
+// TestBrokerDown_StillEnqueues is the counterpart to TestDisabledIndexing_EnqueuesNothing, and
+// guards the distinction the whole gate rests on.
+//
+// NewNATSPublisher returns a Noop for BOTH an empty NATS_URL and an unreachable broker. If the
+// enqueue were gated on "is the publisher a Noop", a pod that happened to start during a broker
+// restart would skip the outbox for its ENTIRE life — the publisher is built once and never
+// re-dialled — and those writes would be lost permanently, since pending rows are never pruned
+// and there is no reindex path. That is strictly worse than the unbounded growth the gate exists
+// to prevent.
+//
+// So the gate keys on CONFIG (DisableIndexing), and a service with a dead publisher but indexing
+// configured must still write its outbox row. The relay delivers it once NATS reconnects.
+func TestBrokerDown_StillEnqueues(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	// Exactly what the container does when NATS is unreachable at boot: a Noop publisher, but
+	// NO DisableIndexing, because NATS_URL is configured.
+	s.SetIndexer(indexer.Noop{})
+	if !s.IndexerIsNoop() {
+		t.Fatal("precondition: the publisher must be a Noop, modelling an unreachable broker")
+	}
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("DeleteBrief: %v", derr)
+	}
+
+	if n := len(repo.indexPayloads); n != 2 {
+		t.Errorf("wrote %d outbox rows, want 2: a broker outage must not skip the enqueue, or "+
+			"the write is lost forever once the pod's publisher never recovers", n)
 	}
 }
 
