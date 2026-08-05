@@ -476,6 +476,13 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 			return "", fmt.Errorf("meta campaign lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
 		}
 		if len(*resp.Data) > 0 {
+			// Multiple matches mean name is not a unique identifier — we can't
+			// tell which is the intended campaign. Fail closed rather than
+			// silently pick the first one, which could attach to an unrelated
+			// campaign.
+			if len(*resp.Data) > 1 {
+				return "", fmt.Errorf("meta campaign lookup for %q matched %d existing campaigns; cannot disambiguate which is intended: %w", name, len(*resp.Data), errLookupAmbiguous)
+			}
 			id := strings.TrimSpace((*resp.Data)[0].ID)
 			if id == "" {
 				return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id: %w", name, errLookupAmbiguous)
@@ -531,6 +538,13 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 			return "", fmt.Errorf("meta ad set lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
 		}
 		if len(*resp.Data) > 0 {
+			// Multiple matches mean name is not a unique identifier — we can't
+			// tell which is the intended ad set. Fail closed rather than
+			// silently pick the first one, which could attach newly created ads
+			// to an unrelated ad set.
+			if len(*resp.Data) > 1 {
+				return "", fmt.Errorf("meta ad set lookup for %q matched %d existing ad sets; cannot disambiguate which is intended: %w", name, len(*resp.Data), errLookupAmbiguous)
+			}
 			id := strings.TrimSpace((*resp.Data)[0].ID)
 			if id == "" {
 				return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id: %w", name, errLookupAmbiguous)

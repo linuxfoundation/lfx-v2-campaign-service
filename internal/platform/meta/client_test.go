@@ -4601,3 +4601,34 @@ func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
 		t.Errorf("id = %q, want camp_found", id)
 	}
 }
+
+// TestFindCampaignByName_MultipleMatchesAmbiguous verifies that when multiple
+// campaigns have the same name, the lookup fails closed (returns error) rather
+// than silently selecting the first one. This prevents attaching to an unrelated
+// campaign when names are not unique.
+func TestFindCampaignByName_MultipleMatchesAmbiguous(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"data":[{"id":"camp_1"},{"id":"camp_2"}]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign")
+	if err == nil {
+		t.Fatal("findCampaignByName error = nil, want non-nil error for multiple matches")
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty string on error", id)
+	}
+	if !strings.Contains(err.Error(), "matched 2 existing campaigns") {
+		t.Errorf("error message = %q, want 'matched 2 existing campaigns'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "cannot disambiguate") {
+		t.Errorf("error message = %q, want 'cannot disambiguate'", err.Error())
+	}
+}
