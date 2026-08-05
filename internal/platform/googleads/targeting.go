@@ -17,9 +17,8 @@ import (
 // ad group with zero criteria, which matches no query — this closes that gap
 // by attaching positive Search keywords and/or existing audience segments to
 // the ad group createAdGroupAndAd just built. This client does not create
-// audiences: AudienceSegments are resource names for a Customer Match "user
-// list" or a custom audience the caller already built elsewhere (e.g. via the
-// campaign_audiences resource — see docs/api-catalog.md), supplied the same
+// audiences: AudienceSegments are resource names for existing Customer Match
+// user lists that the caller has already built elsewhere, supplied the same
 // way reddit's dispatcher passes through cfg.Keywords/cfg.Interests.
 // ---------------------------------------------------------------------------
 
@@ -197,7 +196,7 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 		}
 		field, ok := audienceCriterionField(s)
 		if !ok {
-			return nil, fmt.Errorf("google-ads: audience segment %q is not a recognized resource name (want a .../userLists/{id} or .../customAudiences/{id} resource name)", s)
+			return nil, fmt.Errorf("google-ads: audience segment %q is not a recognized resource name (want a .../userLists/{id} Customer Match user-list resource name)", s)
 		}
 		// Reject customAudiences: this client only creates SEARCH campaigns,
 		// which do not support Custom Audiences per Google's documentation.
@@ -290,9 +289,9 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 	keywordIDs = make([]string, 0, len(keywords))
 	audienceIDs = make([]string, 0, len(audienceSegments))
 	for i, r := range mr.Results {
-		returnedAdGroupID, critID := compositeResourceID(r.ResourceName)
+		returnedAdGroupID, critID := adGroupCriterionID(r.ResourceName)
 		if critID == "" || returnedAdGroupID == "" {
-			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; malformed criterion resource name %q at index %d — verify in Google Ads before retrying)", adGroupID, r.ResourceName, i)
+			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; malformed/wrong-kind criterion resource name %q at index %d — verify in Google Ads before retrying)", adGroupID, r.ResourceName, i)
 		}
 		// The adGroupCriterion resourceName's ad-group-id half must match the ad group this
 		// criterion was created under — a mismatch means the response doesn't describe the

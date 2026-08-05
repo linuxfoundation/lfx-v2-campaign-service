@@ -58,9 +58,9 @@ type googleAdsConfig struct {
 	// googleads.Keyword/validateKeywords.
 	Keywords []googleAdsKeywordConfig `json:"keywords"`
 	// AudienceSegments are optional EXISTING Google Ads audience resource names (GA-4)
-	// — a Customer Match user list or custom audience the caller already built
-	// elsewhere (e.g. this project's campaign_audiences resource), not created by this
-	// dispatcher. See googleads.validateAudienceSegments for the accepted shapes.
+	// — Customer Match user-list resources the caller has already built elsewhere,
+	// not created by this dispatcher. See googleads.validateAudienceSegments for the
+	// accepted shapes.
 	AudienceSegments []string `json:"audienceSegments"`
 }
 
@@ -357,9 +357,12 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// confirmed present by the guard above), campaign last — so the campaign only reports
 	// ENABLED once its ad group/ad already do.
 	if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
-		// A child failure on ACTIVATE is NOT a partial cascade (the campaign hasn't been
-		// attempted yet). Only ambiguous outcomes (5xx/timeout/transport) should be wrapped as
-		// unconfirmed; definite failures (4xx/validation) pass through as ordinary errors.
+		// UpdateAdGroupAndAdStatus tries ad group first, then ad (children-first ordering).
+		// A definite first-child failure (4xx from adGroups:mutate) is NOT a partial cascade
+		// (nothing changed). A definite second-child failure (4xx from adGroupAds:mutate after
+		// adGroups succeeded) IS a partial cascade and returns partialCascadeError, which
+		// wrapUnconfirmed correctly classifies as unconfirmed. Ambiguous outcomes (5xx/timeout)
+		// are also wrapped as unconfirmed.
 		return wrapUnconfirmed(uerr)
 	}
 	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {

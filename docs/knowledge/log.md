@@ -196,8 +196,6 @@ already fixed once in `adgroup_ad_test.go`'s `UpdateAdGroupAndAdStatus` tests. G
 `sync.Mutex` (a small `capturedBody` helper for the campaign-capturing case), matching the existing
 pattern.
 
-**Update** — Follow-up fix on the GA-3 slice below, from the post-commit review cycle. Two
-`internal/platform/googleads/adgroup_ad_test.go` subtests for `UpdateAdGroupAndAdStatus`
 **Update** — Follow-up fix on the GA-3b slice below, from the post-commit review cycle. A
 `internal/platform/googleads/adgroup_ad_test.go` subtest for `UpdateAdGroupAndAdStatus`
 wrote a captured request-path slice inside the httptest handler goroutine and read it back

@@ -120,12 +120,32 @@ func isDuplicateAdGroupNameErr(err error) bool {
 // is correctly rejected rather than incorrectly accepted as a confirmed AdGroupAd.
 // Returns ("", "") if the resource name is empty, the resource kind is not
 // "adGroupAds", or the trailing segment isn't in that exact shape. AdGroupCriterion
-// (GA-4, targeting.go) uses compositeResourceID directly for the same composite shape.
+// (GA-4, targeting.go) uses adGroupCriterionID for the same composite shape.
 func adGroupAdID(resourceName string) (adGroupID, adID string) {
 	// Validate the full resource path structure: customers/<id>/adGroupAds/<composite-id>
 	// Split by "/" to validate the resource kind is "adGroupAds" and not something else.
 	pathParts := strings.Split(resourceName, "/")
 	if len(pathParts) < 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupAds" {
+		return "", ""
+	}
+	return compositeResourceID(resourceName)
+}
+
+// adGroupCriterionID splits an adGroupCriterion resourceName into its ad group id
+// and criterion id. Like AdGroupAd, AdGroupCriterion uses a COMPOSITE trailing
+// segment "{adGroupId}~{criterionId}" (e.g. "customers/1/adGroupCriteria/111~222")
+// rather than a single numeric id. Requires EXACTLY two components and BOTH must be
+// a non-empty run of ASCII digits (numericID) — a third tilde-separated component
+// or a non-numeric half is rejected as malformed. ALSO validates that the resource
+// KIND is "adGroupCriteria" (not e.g. "campaigns" or "adGroupAds"), so a malformed
+// resource of a wrong type is correctly rejected. Returns ("", "") if the resource
+// name is empty, the resource kind is not "adGroupCriteria", or the trailing segment
+// isn't in that exact shape.
+func adGroupCriterionID(resourceName string) (adGroupID, criterionID string) {
+	// Validate the full resource path structure: customers/<id>/adGroupCriteria/<composite-id>
+	// Split by "/" to validate the resource kind is "adGroupCriteria" and not something else.
+	pathParts := strings.Split(resourceName, "/")
+	if len(pathParts) < 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupCriteria" {
 		return "", ""
 	}
 	return compositeResourceID(resourceName)

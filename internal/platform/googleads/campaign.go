@@ -114,12 +114,12 @@ type CampaignInput struct {
 	// enabled must supply at least one. See validateKeywords for the
 	// text/match-type/count rules.
 	Keywords []Keyword
-	// AudienceSegments are EXISTING Google Ads audience resource names (a
-	// Customer Match "user list" or a custom audience the caller already built
-	// elsewhere — this client does not create audiences) attached to the ad
-	// group as observation-only criteria (GA-4): see validateAudienceSegments
-	// for the accepted resource-name shapes and createAdGroupTargeting for why
-	// they're observation-only rather than restrictive.
+	// AudienceSegments are EXISTING Google Ads audience resource names (Customer
+	// Match "user list" resources the caller has already built elsewhere — this
+	// client does not create audiences) attached to the ad group as observation-only
+	// criteria (GA-4): see validateAudienceSegments for the accepted resource-name
+	// shapes and createAdGroupTargeting for why they're observation-only rather than
+	// restrictive.
 	AudienceSegments []string
 }
 

@@ -793,11 +793,68 @@ func TestGoogleAds_ToggleStatus_ActivateChildDefititeFailureIsNotUnconfirmed(t *
 	}
 }
 
+// TestGoogleAds_ToggleStatus_ActivateSecondChildDefiniteFailureIsUnconfirmed verifies that a
+// definite second-child failure (adGroupAds:mutate 4xx) on ACTIVATE is a partial cascade: the
+// first child (ad group) has already been changed, so the outcome of the second child is
+// definitively unknown — must be wrapped as unconfirmed.
+func TestGoogleAds_ToggleStatus_ActivateSecondChildDefiniteFailureIsUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		// Only the second child (adGroupAds:mutate) fails; ad group succeeds
+		if strings.HasSuffix(r.URL.Path, "adGroupAds:mutate") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid ad status"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/adGroups/333"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	// Must have targeting criteria provisioned for ACTIVATE to be allowed
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		Result:             json.RawMessage(`{"adGroupId":"333","adId":"444","keywordCriteriaIds":["999"]}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when the second child (ad) mutate fails")
+	}
+	// Verify the error IS wrapped as unconfirmed (partial cascade)
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a definite 4xx second-child failure must be reported UNCONFIRMED, got: %v", err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	// Should have ad-group mutate and ad mutate, but no campaign mutate (stopped by ad failure)
+	if len(gotPaths) != 2 {
+		t.Fatalf("issued %d calls, want 2 (ad group, then ad — no campaign mutate after ad failure): %v", len(gotPaths), gotPaths)
+	}
+	if !strings.HasSuffix(gotPaths[0], "adGroups:mutate") || !strings.HasSuffix(gotPaths[1], "adGroupAds:mutate") {
+		t.Errorf("paths = %v, want [adGroups:mutate, adGroupAds:mutate]", gotPaths)
+	}
+}
+
 // TestGoogleAds_ToggleStatus_ActivateCampaignDefiniteFailureIsUnconfirmed pins the reverse
-// case of the test above: on ACTIVATE, once the children have already succeeded, ANY campaign
-// mutate failure — including a definite 4xx — is a genuine partial cascade (the children
-// already changed, the campaign's outcome is unknown) and must be reported Unconfirmed, the
-// same as the PAUSE path's child-after-campaign wrap.
+// case: on ACTIVATE, once the children have already succeeded, ANY campaign mutate failure —
+// including a definite 4xx — is a genuine partial cascade (the children already changed, the
+// campaign's outcome is unknown) and must be reported Unconfirmed, the same as the PAUSE
+// path's child-after-campaign wrap.
 func TestGoogleAds_ToggleStatus_ActivateCampaignDefiniteFailureIsUnconfirmed(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string

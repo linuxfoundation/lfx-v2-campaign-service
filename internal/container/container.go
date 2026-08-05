@@ -698,17 +698,18 @@ func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
 var migrateMu sync.Mutex
 
 // Close releases any resources held by the container. It first stops the background
-// DB-init goroutine (if a cold start is still retrying), then drains in-flight
-// campaign dispatch so a dispatch that already created an upstream campaign isn't
-// cut off before it persists, THEN closes the database pool.
+// DB-init goroutine (if a cold start is still retrying), then stops the periodic
+// stuck-claim sweeper, then drains in-flight campaign dispatch so a dispatch that
+// already created an upstream campaign isn't cut off before it persists, THEN closes
+// the database pool.
 //
-// Orchestrator.Shutdown runs two separately-budgeted phases: a clean drain
-// bounded by dispatchDrainTimeout, then (only if that elapses) a post-cancel
-// grace bounded by CancelGracePeriod. Both must fit within ctx, so ctx MUST
-// carry the full ContainerCloseTimeout (= dispatchDrainTimeout +
-// CancelGracePeriod), not just the drain timeout — otherwise the grace phase
-// would have zero budget and the pool could close while a just-cancelled
-// dispatch is still finalizing job/campaign state.
+// Orchestrator.Shutdown runs three separately-budgeted phases: the sweeper stop
+// (sweeperStopTimeout), a clean dispatch drain (dispatchDrainTimeout), then (only
+// if that elapses) a post-cancel grace (CancelGracePeriod). All three must fit
+// within ctx, so ctx MUST carry the full ContainerCloseTimeout (= sweeperStopTimeout
+// + dispatchDrainTimeout + CancelGracePeriod), not just the drain timeout — otherwise
+// the grace phase would have zero budget and the pool could close while a
+// just-cancelled dispatch is still finalizing job/campaign state.
 func (c *Container) Close(ctx context.Context) error {
 	// Stop the background DB-init goroutine first (if the container booted in 503
 	// mode and is still retrying), and wait for it to exit so it can't open/swap a

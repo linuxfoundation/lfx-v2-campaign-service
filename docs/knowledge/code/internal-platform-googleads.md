@@ -328,14 +328,12 @@ this broker's input, not a Google Ads platform limit); duplicates (same
 matchType+text) are deduped rather than rejected.
 
 **Audience segments** are EXISTING Google Ads audience resource names — this
-client does not create audiences. `audienceCriterionField` infers the mutate
-oneof field from the resource-name's collection segment: `.../userLists/{id}`
-(Customer Match / remarketing list) maps to `userList`, `.../customAudiences/{id}`
-maps to `customAudience`; any other shape (`userInterest`, `combinedAudience`,
-`detailedDemographic`, …) is rejected — deliberately narrow scope matching what
-"a built campaign audience" (the `campaign_audiences` resource,
-`docs/api-catalog.md`) represents. Also capped at 20 per call, deduped by
-resource name.
+client does not create audiences. For SEARCH campaigns, only `.../userLists/{id}`
+(Customer Match / remarketing list) resource names are accepted; any other shape
+(`customAudiences`, `userInterest`, `combinedAudience`, `detailedDemographic`, …)
+is rejected — deliberately narrow scope limiting to externally built user lists
+that have already been provisioned outside this service. Also capped at 20 per
+call, deduped by resource name.
 
 **Observation vs targeting — the audience-restriction gotcha**: a Search ad
 group's audience criteria default to TARGETING (restrictive — narrows
