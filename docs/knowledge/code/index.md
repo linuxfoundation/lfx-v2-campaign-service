@@ -19,3 +19,4 @@
 * [pkg/log](pkg-log.md) - Package log provides structured logging utilities for context-aware logging.
 * [pkg/utils](pkg-utils.md) - Package utils provides OpenTelemetry SDK setup utilities.
 * [design](design.md) - Package design contains the DSL for the campaign service Goa API generation.
+* [Local git hooks (DCO enforcement)](dev-git-hooks.md) - commit-msg hook rejecting commits without a DCO Signed-off-by trailer, installed via `make setup`.

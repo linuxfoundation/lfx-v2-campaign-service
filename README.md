@@ -344,6 +344,7 @@ make helm-install-local HELM_NAMESPACE="$HELM_NS"
 Common workflow targets (see the `Makefile` for the full list):
 
 ```sh
+make setup         # go mod download/tidy + install local git hooks (DCO check)
 make all           # clean → apigen → fmt → lint → test → build
 make clean         # remove bin/ and coverage.out
 make apigen        # generate API code from design/ (required before first build)
@@ -355,6 +356,14 @@ make build         # build a local binary
 make build-release # build a static release binary for Linux
 make run           # build and run locally (needs PG* env; see above)
 ```
+
+### DCO sign-off
+
+Every commit must carry a `Signed-off-by:` trailer (`git commit -s`), enforced
+in CI by the DCO check. Run `make setup` once to also enforce it locally via
+a `commit-msg` git hook (`.githooks/commit-msg`, wired in through
+`core.hooksPath`) — a commit without sign-off is rejected before it's even
+made, instead of failing the DCO check later on a pushed PR.
 
 ### MegaLinter (local)
 

@@ -54,6 +54,8 @@ setup: ## Setup development environment
 	@echo "Setting up development environment..."
 	go mod download
 	go mod tidy
+	@echo "Installing local git hooks (DCO sign-off check)..."
+	git config core.hooksPath .githooks
 
 .PHONY: deps
 deps: ## Install dependencies

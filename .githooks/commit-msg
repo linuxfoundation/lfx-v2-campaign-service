@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+#
+# DCO enforcement: rejects a commit locally unless it carries a
+# "Signed-off-by:" trailer matching the committer's configured name/email
+# (git commit -s). CI's DCO check catches this too, but only after a push
+# and a PR review cycle; this hook catches it before the commit is even
+# made, so a missing -s never reaches a PR in the first place.
+#
+# Installed via `make setup` (core.hooksPath=.githooks). Applies only to
+# this repo — does not touch global git config.
+
+set -euo pipefail
+
+commit_msg_file="$1"
+commit_msg=$(cat "$commit_msg_file")
+
+# Merge commits carry their own DCO trail via the merged commits; skip.
+if [[ "$commit_msg" == Merge* ]]; then
+  exit 0
+fi
+
+committer_name=$(git config user.name || true)
+committer_email=$(git config user.email || true)
+
+if [[ -z "$committer_name" || -z "$committer_email" ]]; then
+  echo "error: git user.name/user.email must be set to verify DCO sign-off" >&2
+  exit 1
+fi
+
+expected_trailer="Signed-off-by: ${committer_name} <${committer_email}>"
+
+if ! grep -qF "$expected_trailer" "$commit_msg_file"; then
+  echo "error: commit message is missing the required DCO sign-off trailer:" >&2
+  echo "  $expected_trailer" >&2
+  echo "" >&2
+  echo "Commit with 'git commit -s' (or add the trailer manually) to sign off," >&2
+  echo "per this repo's DCO requirement." >&2
+  exit 1
+fi
+
+exit 0

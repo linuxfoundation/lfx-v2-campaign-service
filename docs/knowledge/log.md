@@ -1,5 +1,37 @@
 # Log
 
+## 2026-08-04 (DCO hook)
+
+**Update** — Added a local `commit-msg` git hook (`.githooks/commit-msg`) enforcing the DCO
+`Signed-off-by:` trailer before a commit is even made, wired in via `git config core.hooksPath
+.githooks` in `make setup`. Previously the only DCO enforcement was the CI probot check, which
+only surfaces a missing sign-off after a push and a PR review round. Also fixed two Bugbot
+findings surfaced by a fresh 12-PR review sweep: PR #67's `maxFinalURLRunes` measured the composed
+Final URL in runes/characters (2,048) but Google Ads' actual System Limit is 2,084 UTF-8 bytes
+(renamed to `maxFinalURLBytes`, switched to `len()`); PR #69's `validateKeywords` deduped keyword
+text without case-folding, so case-variant duplicates (e.g. "Kubernetes"/"kubernetes") passed
+preflight as distinct and could fail `adGroupCriteria:mutate` as a definite 4xx after the
+budget/campaign/ad group/ad already existed. Both fixes propagated through the GA stack
+(#67→#68→#69→#70).
+
+## 2026-08-05
+
+**Update** — Review fixes for GA-3c dispatcher-level status-toggle cascade (PR #68). Two issues
+addressed from the review cycle: (1) Partial-cascade wrapping — after the PAUSE path's
+`UpdateCampaignStatus` succeeds, any subsequent failure from `UpdateAdGroupAndAdStatus` (even a
+definite 4xx) is now wrapped as `unconfirmedToggleError` to signal that the state is ambiguous
+(parent changed but child outcome is unknown), matching the pattern sibling adapters use. This
+fix applies to both PAUSE (line 299) and ACTIVATE (lines 307, 310) paths; ACTIVATE is currently
+unreachable but will be re-enabled in GA-4. (2) ACTIVATE servability guard — reverted to refusing
+ACTIVATE unconditionally in GA-3c. GA-3b provisions ad group + ad but no keyword/audience targeting
+criteria, so activating would report false success (the exact scenario `ErrCampaignNotProvisioned`
+prevents). The check now refuses ACTIVATE with a message referencing GA-4's targeting provisioning
+requirement, replacing the misleading "no fully-created ad group + ad" message. Updated
+`GoogleAdsDispatcher.ToggleStatus` guard (line 271) and test expectations
+(`TestGoogleAds_ToggleStatus_ActivateCascadesChildrenFirst` and
+`TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure` renamed and updated to verify
+ACTIVATE is refused).
+
 ## 2026-08-04
 
 **Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where
