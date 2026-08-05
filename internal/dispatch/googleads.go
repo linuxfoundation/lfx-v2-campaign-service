@@ -304,7 +304,14 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// observation-only and do not qualify for activation). Check the persisted targeting
 	// IDs in the Result blob; if both are empty, targeting was never attempted or failed
 	// before any criterion resource name could be parsed.
+	adGroupID, adID := googleAdsChildIDs(campaign)
 	if gaStatus == googleads.StatusEnabled {
+		// Refuse ACTIVATE if the ad group/ad were never fully provisioned: a duplicate-name
+		// orphan or unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
+		// enabling just the campaign would report success while nothing can serve.
+		if strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "" {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
 		var result googleads.CampaignResult
 		if campaign.Result != nil {
 			_ = json.Unmarshal(campaign.Result, &result)
@@ -313,7 +320,6 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 	}
-	adGroupID, adID := googleAdsChildIDs(campaign)
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
 	if err != nil {
 		return err

@@ -62,7 +62,7 @@ func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
 	// count is well over 255 while rune count stays under 255.
 	multibyte := strings.Repeat("é", 200)
 	in := CampaignInput{Project: "CNCF", EventName: multibyte, RegistrationURL: "https://example.com/event"}
-	_, _, _, adGroupName, err := precomputeAdGroupAdInputs(in)
+	_, _, _, adGroupName, _, _, err := precomputeAdGroupAdInputs(in)
 	if err != nil {
 		t.Fatalf("a multibyte ad group name under 255 characters must be accepted (rune-measured), got: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
 // cap altogether.
 func TestPrecomputeAdGroupAdInputs_OversizedNameRejected(t *testing.T) {
 	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 300), RegistrationURL: "https://example.com/event"}
-	_, _, _, _, err := precomputeAdGroupAdInputs(in)
+	_, _, _, _, _, _, err := precomputeAdGroupAdInputs(in)
 	if err == nil || !strings.Contains(err.Error(), "name exceeds") {
 		t.Errorf("an over-length ad group name must be rejected preflight, got: %v", err)
 	}

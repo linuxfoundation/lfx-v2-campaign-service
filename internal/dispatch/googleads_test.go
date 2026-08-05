@@ -532,6 +532,31 @@ func provisionedGoogleAdsCampaign() *model.Campaign {
 	}
 }
 
+// TestGoogleAds_ToggleStatus_ActivateRefusedWhenChildIDsMissing pins the multi-entity cascade
+// rule for the case Bugbot flagged: keyword targeting alone is not enough to activate. A
+// campaign whose ad group/ad create hit a duplicate-name orphan or unconfirmed outcome (see
+// createAdGroupAndAd) has keyword criteria recorded but no ad group/ad id to cascade to.
+// ACTIVATE must refuse locally with ErrCampaignNotProvisioned rather than reaching
+// UpdateAdGroupAndAdStatus with an empty id, which would surface as a plain client error.
+func TestGoogleAds_ToggleStatus_ActivateRefusedWhenChildIDsMissing(t *testing.T) {
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		// Keyword targeting is provisioned, but the ad group/ad ids are absent.
+		Result: json.RawMessage(`{"keywordCriteriaIds":["111"]}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected ACTIVATE to be refused when ad group/ad ids are missing")
+	}
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Errorf("expected ErrCampaignNotProvisioned, got %T: %v", err, err)
+	}
+}
+
 // TestGoogleAds_ToggleStatus_PauseCascadesToChildren pins the PAUSE ordering contract: campaign
 // first (stops delivery immediately), then the ad group/ad — mirroring the reddit adapter.
 func TestGoogleAds_ToggleStatus_PauseCascadesToChildren(t *testing.T) {
