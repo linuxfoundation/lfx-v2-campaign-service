@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/okf"
 )
@@ -135,6 +136,12 @@ func validateLogFragment(path string) []error {
 	m := logFragmentNamePattern.FindStringSubmatch(filepath.Base(path))
 	if m == nil {
 		return []error{fmt.Errorf("%s: log fragment filename must match \"YYYY-MM-DD-<slug>.md\"", path)}
+	}
+	// The pattern only validates digit SHAPE (\d{4}-\d{2}-\d{2}), so e.g.
+	// "2026-99-99-ticket.md" matches it despite not being a real calendar date.
+	// Parse it to confirm it actually is one.
+	if _, terr := time.Parse("2006-01-02", m[1]); terr != nil {
+		return []error{fmt.Errorf("%s: filename date %q is not a valid calendar date: %w", path, m[1], terr)}
 	}
 
 	data, err := os.ReadFile(path)

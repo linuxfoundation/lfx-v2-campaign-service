@@ -108,8 +108,26 @@ func run() error {
 			Description: "Go package structure of the service."},
 		{Title: "Specs", Link: "specs/index.md",
 			Description: "Feature specs tracked via speckit."},
+		{Title: "Log", Link: "log/",
+			Description: "Dated change log; one file per entry, so concurrent PRs never\n  edit the same log file."},
 	}); err != nil {
 		return fmt.Errorf("write root index: %w", err)
+	}
+	// WriteIndex only renders title+bullets, so the OKF-deviation note that
+	// explains WHY this bundle keeps log/ instead of a single log.md (see
+	// docs/knowledge/index.md) has no place in that generic rendering and must
+	// be appended separately, or a re-run of this tool would silently drop it.
+	if err := okfgen.AppendNote(bundleRoot+"/index.md",
+		"**OKF deviation:** OKF v0.1 §7 reserves a single `log.md` newest-first\n"+
+			"changelog. This bundle instead keeps `docs/knowledge/log/`, one dated fragment\n"+
+			"per entry (`YYYY-MM-DD-<slug>.md`), because a single append-at-top file was the\n"+
+			"dominant source of merge conflicts between concurrent PRs. Each fragment still\n"+
+			"carries an ISO date in its name, so a conformant `log.md` can be regenerated any\n"+
+			"time an external OKF consumer needs one: normalize each fragment's own H1 into a\n"+
+			"`## YYYY-MM-DD` entry under one shared `# Log` heading, newest first — not plain\n"+
+			"concatenation, since every fragment starts with its own H1 and the legacy format\n"+
+			"requires exactly one.\n"); err != nil {
+		return fmt.Errorf("append root index deviation note: %w", err)
 	}
 
 	if err := okfgen.SeedLog(bundleRoot, "2026-07-09",
