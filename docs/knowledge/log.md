@@ -1,5 +1,19 @@
 # Log
 
+## 2026-08-04 (DCO hook review fixes)
+
+**Update** — Fixed three Copilot/Bugbot findings on the `.githooks/commit-msg` DCO hook (PR #71):
+(1) the trailer check was a fixed-string substring search, so text merely mentioning
+"Signed-off-by: ..." anywhere in the message (body, comment, longer line) would pass — switched
+to `git interpret-trailers --parse` with an exact trailer-block match; (2) the merge exemption
+keyed off the message text starting with "Merge", so an ordinary commit with that subject would
+wrongly skip the check while a real merge with a custom subject wouldn't be exempted — switched
+to checking `MERGE_HEAD` for an actual in-progress merge; (3) the expected trailer was built from
+`git config user.name`/`user.email` directly, which can diverge from the identity `git commit -s`
+actually writes (`GIT_COMMITTER_NAME`/`EMAIL` env vars and `committer.*` config take precedence
+over `user.*`) — switched to `git var GIT_COMMITTER_IDENT`, the same resolution git itself uses.
+All three verified against positive/negative/bypass-attempt cases in a scratch repo.
+
 ## 2026-08-04 (DCO hook)
 
 **Update** — Added a local `commit-msg` git hook (`.githooks/commit-msg`) enforcing the DCO

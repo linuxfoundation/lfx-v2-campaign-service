@@ -14,24 +14,35 @@
 set -euo pipefail
 
 commit_msg_file="$1"
-commit_msg=$(cat "$commit_msg_file")
 
-# Merge commits carry their own DCO trail via the merged commits; skip.
-if [[ "$commit_msg" == Merge* ]]; then
+# Merge commits carry their own DCO trail via the merged commits; skip. Detected
+# via MERGE_HEAD (an actual in-progress merge), not the commit message text —
+# an ordinary commit whose subject happens to start with "Merge" is not a real
+# merge, and a real merge with a custom subject wouldn't match a text check.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
   exit 0
 fi
 
-committer_name=$(git config user.name || true)
-committer_email=$(git config user.email || true)
+# `git var GIT_COMMITTER_IDENT` resolves the exact identity `git commit -s`
+# writes into the trailer (GIT_COMMITTER_NAME/EMAIL env vars, then
+# committer.*, then user.* config, in that precedence) — reading only
+# user.name/user.email here could diverge from what -s actually wrote and
+# reject a correctly signed commit.
+committer_ident=$(git var GIT_COMMITTER_IDENT)
+committer_name_email=$(sed -E 's/ [0-9]+ [-+][0-9]{4}$//' <<<"$committer_ident")
 
-if [[ -z "$committer_name" || -z "$committer_email" ]]; then
-  echo "error: git user.name/user.email must be set to verify DCO sign-off" >&2
+if [[ -z "$committer_name_email" ]]; then
+  echo "error: could not resolve committer identity to verify DCO sign-off" >&2
   exit 1
 fi
 
-expected_trailer="Signed-off-by: ${committer_name} <${committer_email}>"
+expected_trailer="Signed-off-by: ${committer_name_email}"
 
-if ! grep -qF "$expected_trailer" "$commit_msg_file"; then
+# Parsed via `git interpret-trailers`, not a fixed-string search over the
+# whole message: a substring match would also accept that text appearing in
+# the commit body, a comment, or an unrelated longer line, none of which are
+# an actual trailer.
+if ! git interpret-trailers --parse "$commit_msg_file" | grep -qFx "$expected_trailer"; then
   echo "error: commit message is missing the required DCO sign-off trailer:" >&2
   echo "  $expected_trailer" >&2
   echo "" >&2
