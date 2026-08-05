@@ -27,6 +27,22 @@ const (
 	EnvPGPassword = "PGPASSWORD"
 	EnvPGDatabase = "PGDATABASE"
 	EnvPGEngine   = "PGENGINE"
+
+	// Campaign-metrics sweeper settings.
+	//
+	// EnvMetricsSweepEnabled gates the background sweeper. It defaults to FALSE so
+	// the feature ships dark: enabling it starts polling every configured ad
+	// platform's reporting API for every campaign in every project, which is a
+	// deliberate operational decision rather than something a deploy should begin
+	// doing on its own.
+	EnvMetricsSweepEnabled = "METRICS_SWEEP_ENABLED"
+	// EnvMetricsSweepInterval is how often the sweeper refreshes metrics (a Go
+	// duration, e.g. "1h"). Empty uses the built-in default.
+	EnvMetricsSweepInterval = "METRICS_SWEEP_INTERVAL"
+	// EnvMetricsRestatementWindow is how far back each sweep re-reads (a Go
+	// duration, e.g. "72h"). It must span several days because platforms restate
+	// recent conversions as they mature. Empty uses the built-in default.
+	EnvMetricsRestatementWindow = "METRICS_RESTATEMENT_WINDOW"
 )
 
 // Default PostgreSQL port when PGPORT is unset.

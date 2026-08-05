@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -42,6 +43,18 @@ type Config struct {
 	PGUser     string
 	PGDatabase string
 	PGEngine   string
+	// MetricsSweepEnabled gates the background campaign-metrics sweeper. It defaults
+	// to FALSE: enabling it starts polling every ad platform's reporting API for
+	// every campaign, so it is switched on per environment rather than by a deploy.
+	MetricsSweepEnabled bool
+	// MetricsSweepInterval is how often the sweeper runs. Zero uses the default.
+	MetricsSweepInterval time.Duration
+	// MetricsRestatementWindow is how far back each sweep re-reads. Zero uses the
+	// default. It must span several days: platforms restate recent conversions as
+	// they mature, so a shorter window would freeze earlier days at provisional
+	// values.
+	MetricsRestatementWindow time.Duration
+
 	// passwordPresent is true when PGPASSWORD was non-empty (value is not retained).
 	passwordPresent bool
 	// pgPortPresent is true when PGPORT was explicitly set (before applying the default).
@@ -82,6 +95,13 @@ func LoadConfig() *Config {
 
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
 		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),
+
+		// Metrics sweeper knobs. Enabled defaults to false (ship dark); the two
+		// durations default to zero, which the sweeper reads as "use the built-in
+		// default" rather than as a literal zero interval.
+		MetricsSweepEnabled:      strings.EqualFold(strings.TrimSpace(os.Getenv(constants.EnvMetricsSweepEnabled)), "true"),
+		MetricsSweepInterval:     parseDurationEnv(constants.EnvMetricsSweepInterval),
+		MetricsRestatementWindow: parseDurationEnv(constants.EnvMetricsRestatementWindow),
 	}
 
 	if os.Getenv(constants.EnvDebug) == "true" {
@@ -250,4 +270,31 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseDurationEnv reads a Go duration from the environment, returning 0 when the
+// variable is unset, empty, or unparseable.
+//
+// An unparseable value falls back to the DEFAULT rather than failing startup: these
+// knobs only tune a background refresh cadence, so a typo in one should not stop the
+// pod from serving traffic. It is logged so the mistake is visible rather than silent.
+// A non-positive value is treated the same way — "0s" or "-1h" would otherwise mean a
+// ticker that panics or never fires.
+func parseDurationEnv(key string) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		slog.Warn("ignoring unparseable duration environment variable; using the default",
+			"env", key, "value", raw, "error", err)
+		return 0
+	}
+	if d <= 0 {
+		slog.Warn("ignoring non-positive duration environment variable; using the default",
+			"env", key, "value", raw)
+		return 0
+	}
+	return d
 }

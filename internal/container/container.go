@@ -14,6 +14,7 @@ import (
 	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	metricssvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_metrics"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -54,6 +55,13 @@ type briefBackendSetter interface {
 // *AudienceService implements it.
 type audienceBackendSetter interface {
 	SetBackend(domain.AudienceRepository)
+}
+
+// metricsBackendSetter is the late-binding seam for the metrics service, so a
+// cold-start DB retry brings the metrics route live without a pod restart.
+// *MetricsService implements it.
+type metricsBackendSetter interface {
+	SetBackend(domain.MetricsRepository)
 }
 
 // notReady is a ReadinessChecker that always reports not-ready. It is wired as
@@ -119,12 +127,16 @@ type Container struct {
 	Connections connsvc.Service
 	Briefs      briefsvc.Service
 	Audiences   audiencesvc.Service
+	Metrics     metricssvc.Service
 
 	// mu guards pool, which the background DB-init goroutine sets once the pool
 	// opens and Close reads on shutdown.
 	mu   sync.Mutex
 	pool *postgres.Pool
 	orch *service.Orchestrator
+	// metricsSweeper refreshes stored campaign metrics; nil when the feature is
+	// disabled or the database never came up.
+	metricsSweeper *service.MetricsSweeper
 
 	// cancelInit stops the background DB-init goroutine (nil when none runs).
 	cancelInit context.CancelFunc
@@ -171,6 +183,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		c.Connections = service.NewConnectionService(nil, nil)
 		c.Briefs = service.NewBriefService(nil, nil, nil, nil)
 		c.Audiences = service.NewAudienceService(nil)
+		c.Metrics = service.NewMetricsService(nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
 	}
@@ -223,15 +236,17 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	connections := service.NewConnectionService(nil, enc)
 	briefs := service.NewBriefService(nil, nil, nil, nil)
 	auds := service.NewAudienceService(nil)
+	mets := service.NewMetricsService(nil)
 	c.Service = campaign
 	c.Connections = connections
 	c.Briefs = briefs
 	c.Audiences = auds
+	c.Metrics = mets
 
 	initCtx, cancel := context.WithCancel(context.Background())
 	c.cancelInit = cancel
 	c.initDone = make(chan struct{})
-	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections, briefs, auds)
+	go c.retryDatabaseInit(initCtx, cfg, enc, campaign, connections, briefs, auds, mets)
 
 	return c, nil
 }
@@ -327,6 +342,8 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
 	c.Audiences = service.NewAudienceService(audienceRepo)
+	metricsRepo := postgres.NewMetricsRepo(pool)
+	c.Metrics = service.NewMetricsService(metricsRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
 	// dispatch goroutine lived only in that process, so fail them forward now
@@ -344,6 +361,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// stale cutoff (too new to look stuck at boot, never re-examined). A periodic
 	// sweep catches those; it stops on Shutdown via the orchestrator's root ctx.
 	orch.StartRecoverySweeper()
+	c.startMetricsSweeper(metricsRepo, dispatchers, cfg)
 
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
@@ -355,7 +373,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 // readiness — and runs the same stuck-job recovery + periodic sweeper the fast path
 // does, so /readyz flips to healthy AND the connection + brief/job routes go live
 // without a pod restart.
-func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter, bb briefBackendSetter, ab audienceBackendSetter) {
+func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, enc domain.Encryptor, r readinessSetter, b backendSetter, bb briefBackendSetter, ab audienceBackendSetter, mb metricsBackendSetter) {
 	defer close(c.initDone)
 
 	for attempt := 1; ; attempt++ {
@@ -382,6 +400,8 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			c.orch = orch
 			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
 			ab.SetBackend(audienceRepo)
+			metricsRepo := postgres.NewMetricsRepo(pool)
+			mb.SetBackend(metricsRepo)
 			// Derive from ctx (the init context Close cancels), NOT context.Background():
 			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
 			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the
@@ -395,6 +415,10 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			}
 			cancelRecover()
 			orch.StartRecoverySweeper()
+			// Start the metrics sweeper on the retry path too. Omitting it here would
+			// leave metrics permanently stale in exactly the case the retry path exists
+			// for (a database that was slow to come up), with no error anywhere.
+			c.startMetricsSweeper(metricsRepo, dispatchers, cfg)
 			// Flip readiness LAST, so /readyz only reports healthy after the brief
 			// service is fully wired (avoids a window where /readyz is OK but brief
 			// routes still 503).
@@ -490,6 +514,33 @@ func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
 	return pool, nil
 }
 
+// startMetricsSweeper starts the background campaign-metrics refresh when it is
+// enabled in config. Shared by the fast path and the cold-start retry path so the
+// two cannot drift — a sweeper started in only one of them would leave metrics
+// permanently stale in exactly the case the retry path exists for, with no error
+// anywhere.
+//
+// The sweeper is DISABLED by default (METRICS_SWEEP_ENABLED): turning it on begins
+// polling every wired platform's reporting API for every campaign in every project,
+// which is an operational decision, not a side effect of deploying.
+func (c *Container) startMetricsSweeper(repo domain.MetricsRepository, dispatchers map[model.Provider]service.PlatformDispatcher, cfg *config.Config) {
+	if !cfg.MetricsSweepEnabled {
+		slog.Info("campaign metrics sweeper is disabled; stored metrics will not refresh",
+			"env", constants.EnvMetricsSweepEnabled)
+		return
+	}
+	sw := service.NewMetricsSweeper(repo, dispatchers, service.MetricsSweeperConfig{
+		Interval:    cfg.MetricsSweepInterval,
+		Restatement: cfg.MetricsRestatementWindow,
+	})
+	// Safe without a lock on the retry path for the same reason c.orch is: Close
+	// waits on <-c.initDone before reading this field, so the write happens-before
+	// that read.
+	c.metricsSweeper = sw
+	sw.Start()
+	slog.Info("campaign metrics sweeper started")
+}
+
 // migrateMu serializes golang-migrate runs so a retry never starts a second
 // migration while a prior (possibly deadline-abandoned) one is still finishing.
 var migrateMu sync.Mutex
@@ -520,6 +571,16 @@ func (c *Container) Close(ctx context.Context) error {
 	// failure — dispatches still running when the pool was closed — observable to
 	// the caller's "container close error" branch and its logs.
 	var shutdownErr error
+	// Stop the metrics sweeper BEFORE the dispatch drain, mirroring how the
+	// orchestrator cancels its own recovery sweeper first. It is maintenance work,
+	// not in-flight user work, so it stops immediately; doing it up front means its
+	// shutdown never draws down the drain budget. It is bounded by ctx so a wedged
+	// sweep cannot block shutdown past the caller's budget.
+	if c.metricsSweeper != nil {
+		if err := c.metricsSweeper.Shutdown(ctx); err != nil {
+			slog.Warn("timed out stopping the metrics sweeper on shutdown", "error", err)
+		}
+	}
 	if c.orch != nil {
 		if err := c.orch.Shutdown(ctx, dispatchDrainTimeout); err != nil {
 			slog.Warn("timed out draining in-flight dispatch on shutdown", "error", err)

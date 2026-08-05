@@ -18,10 +18,12 @@ import (
 	audiencesvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audiences/server"
 	briefsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
+	metricssvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_metrics/server"
 	svcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/server"
 	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	metricssvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_metrics"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/container"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -68,8 +70,12 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("container misconfigured: Audiences service is nil")
 	}
 	audienceEndpoints := audiencesvc.NewEndpoints(cont.Audiences)
+	if cont.Metrics == nil {
+		return fmt.Errorf("container misconfigured: Metrics service is nil")
+	}
+	metricEndpoints := metricssvc.NewEndpoints(cont.Metrics)
 
-	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, cont)
+	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, metricEndpoints, cont)
 }
 
 // buildMux constructs the Goa muxer and mounts the campaign, connection, and
@@ -77,7 +83,7 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 // actually reachable (the bug this fixes — routes that compile but are never
 // mounted return 404) without standing up a full server. It returns an error
 // only for a programmer-level mis-wiring (nil endpoints).
-func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints) (goahttp.Muxer, error) {
+func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, metricEndpoints *metricssvc.Endpoints) (goahttp.Muxer, error) {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
@@ -129,11 +135,17 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
 	audiencesvcsvr.Mount(mux, audienceServer)
 
+	if metricEndpoints == nil {
+		return nil, fmt.Errorf("buildMux: metricEndpoints is nil (metrics routes would be unmounted)")
+	}
+	metricServer := metricssvcsvr.New(metricEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	metricssvcsvr.Mount(mux, metricServer)
+
 	return mux, nil
 }
 
-func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, cont *container.Container) error {
-	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints)
+func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, metricEndpoints *metricssvc.Endpoints, cont *container.Container) error {
+	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, metricEndpoints)
 	if err != nil {
 		return err
 	}
