@@ -268,7 +268,7 @@ Actions to adjust running campaigns.
 
 **Current:**
 - **Keyword Management** (Google Ads) — bulk pause underperforming keywords, bulk remove irrelevant keywords
-- **Campaign Status Toggle** (Reddit, Meta, LinkedIn; adding the toggle to the X/Twitter + Google Ads dispatchers is remaining follow-up work) — ACTIVE ↔ PAUSED
+- **Campaign Status Toggle** (Reddit, Meta, LinkedIn, X/Twitter, Google Ads; the Microsoft Ads dispatcher creates campaigns but its toggle is remaining follow-up work) — ACTIVE ↔ PAUSED
 
 **Tentative:**
 - **Budget & Bidding** — adjust daily/lifetime budget, change bid strategy, update keyword bids
