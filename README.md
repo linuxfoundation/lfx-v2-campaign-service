@@ -363,7 +363,10 @@ Every commit must carry a `Signed-off-by:` trailer (`git commit -s`), enforced
 in CI by the DCO check. Run `make setup` once to also enforce it locally via
 a `commit-msg` git hook (`.githooks/commit-msg`, wired in through
 `core.hooksPath`) — a commit without sign-off is rejected before it's even
-made, instead of failing the DCO check later on a pushed PR.
+made, instead of failing the DCO check later on a pushed PR. The hook exempts
+merge commits (already made by git during merge operations) and replayed commits
+from `git rebase` and `git cherry-pick` (which already carry the original
+author's sign-off).
 
 ### MegaLinter (local)
 

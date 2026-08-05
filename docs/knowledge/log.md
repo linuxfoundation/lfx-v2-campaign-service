@@ -1,5 +1,12 @@
 # Log
 
+## 2026-08-05 (README exemption docs)
+
+**Fix** — Closed a suppressed Copilot finding: the README section on DCO sign-off said the hook
+rejects unsigned commits "before it's even made" but didn't document that merge/rebase/cherry-pick
+commits are exempt from this check (they carry the original author's signature). Added an
+explanatory sentence about the exemptions.
+
 ## 2026-08-05 (DCO hook rebase/cherry-pick exemption)
 
 **Fix** — Cursor Bugbot found the hook's merge exemption (`MERGE_HEAD`) had no equivalent for
