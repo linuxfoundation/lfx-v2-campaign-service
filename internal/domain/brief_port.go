@@ -96,7 +96,14 @@ type CampaignWriter interface {
 	// bumped version out from under the in-flight toggle, so the toggle's own
 	// persist would then lose (a real divergence between the platform and the row,
 	// even though every individual write was individually consistent).
+	//
+	// Callers MUST call ReleaseCampaignLock after claiming to allow other writers
+	// to proceed. Use defer for guaranteed release, even on panic or cancellation.
 	ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, error)
+	// ReleaseCampaignLock releases the advisory lock held by ClaimCampaignVersion.
+	// It is a no-op if no lock is held for this campaign. Callers MUST call this
+	// after claiming, either directly or via defer, to allow other writers to proceed.
+	ReleaseCampaignLock(ctx context.Context, campaignID string) error
 }
 
 // CampaignRepository is the full persistence port for campaigns.

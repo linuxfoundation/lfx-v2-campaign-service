@@ -392,6 +392,8 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if cerr != nil {
 		return nil, mapBriefErr(cerr)
 	}
+	// Ensure lock is released even if a panic or context cancellation occurs.
+	defer campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID) //nolint:errcheck
 	existing.Version = claimed.Version
 	existing.CampaignName = p.Campaign.CampaignName
 	// Only overwrite the stored config when the caller actually supplied one.
@@ -441,6 +443,18 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not in a toggleable state (it is still provisioning or needs reconciliation); resolve its status before toggling"}
 	}
 
+	// VALIDATION MUST HAPPEN BEFORE CLAIMING. If validation fails and returns 400/409, we
+	// must not bump the version; otherwise a rejected request unexpectedly invalidates the
+	// caller's ETag. A stale If-Match on retry would then get 412 instead of the original
+	// validation error. Check platform-independent errors here; platform-specific errors
+	// (like UNCONFIRMED from transport) must still go through the platform call.
+	if existing.Platform.Kind() == model.ChannelEmail {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle does not apply to the email channel: it stages a draft for a human to send, so there is no running campaign to pause or resume"}
+	}
+	if existing.PlatformCampaignID == "" {
+		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned for activation — it has no platform campaign id yet, or it lacks the child entities needed to serve (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
+	}
+
 	// Claim write ownership at the read version BEFORE the (side-effecting, paid) platform
 	// call, atomically via the repository rather than by comparing existing.Version in memory.
 	// An in-memory comparison only rejects THIS caller if it's already stale; it does nothing
@@ -454,6 +468,9 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	if cerr != nil {
 		return nil, mapBriefErr(cerr)
 	}
+	// Ensure lock is released even if a panic or context cancellation occurs. The lock
+	// guards the platform-call window, so it must not outlive this function.
+	defer campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID) //nolint:errcheck
 	existing.Version = claimed.Version
 
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
@@ -463,25 +480,20 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		switch {
 		case errors.Is(terr, ErrToggleUnsupported):
 			// The platform (or its dispatcher) doesn't support toggling — a client error,
-			// the platform was never called. Distinguish the two reasons: for the EMAIL
-			// channel there is nothing to pause BY DESIGN (it stages a draft a human sends,
-			// with no run state this service controls), so a generic "not supported" reads
-			// as a missing feature and invites someone to "fix" it. For an ad platform it
-			// genuinely means the toggle capability is not wired yet.
-			if existing.Platform.Kind() == model.ChannelEmail {
-				return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle does not apply to the email channel: it stages a draft for a human to send, so there is no running campaign to pause or resume"}
-			}
+			// the platform was never called. This is a platform-specific error that should
+			// have been caught earlier if the dispatcher wiring was complete; it indicates
+			// the toggle capability is not wired yet for this provider.
 			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
 		case errors.Is(terr, ErrCampaignNotProvisioned):
-			// The campaign is not fully provisioned for this toggle — either it has no upstream
-			// platform id yet (still creating / ambiguous create), OR (on ACTIVATE) it lacks the
-			// child entities needed to serve. The specific missing entity is platform-dependent
-			// (Reddit: an ad group/ad; Meta: an ad set; LinkedIn: creatives), so the message stays
+			// The campaign lacks child entities needed to serve (e.g., ad group/ad, ad set,
+			// creatives) even though it has a platform campaign id. This is a platform-specific
+			// validation error that goes deeper than just the platform_campaign_id check we did
+			// above. The specific missing entity is platform-dependent, so the message stays
 			// platform-NEUTRAL rather than naming one provider's shape for all. A client/state
 			// error, NOT a platform rejection: a retry now would fail the same way, so this is a
 			// 409, not a 503. It avoids "wait" (a campaign missing a child never gains one by
 			// waiting) and points at the actual remedy.
-			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned for activation — it has no platform campaign id yet, or it lacks the child entities needed to serve (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned for activation — it lacks the child entities needed to serve (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
 		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
 			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
 			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT

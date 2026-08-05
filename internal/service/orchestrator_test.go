@@ -204,6 +204,10 @@ func (r *fakeCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaig
 	return &cp, nil
 }
 
+func (r *fakeCampaignRepo) ReleaseCampaignLock(context.Context, string) error {
+	return nil
+}
+
 // okDispatcher always succeeds.
 type okDispatcher struct{}
 
