@@ -900,6 +900,19 @@ func TestUpdateCampaignAndChildrenStatus_PauseGatesParentFirst(t *testing.T) {
 		t.Fatalf("pause order = %v, want [Campaigns AdGroups Ads] (gate first)", got)
 	}
 	assertCascadeParentIDs(t, rec.snapshot(), StatusPaused)
+	// Verify the Status value is actually sent as Paused for all three entities
+	for _, call := range rec.snapshot() {
+		for _, key := range []string{"Campaigns", "AdGroups", "Ads"} {
+			list, ok := call.body[key].([]any)
+			if !ok || len(list) == 0 {
+				continue
+			}
+			entry, _ := list[0].(map[string]any)
+			if entry["Status"] != StatusPaused {
+				t.Errorf("%s entry Status = %v, want %s", call.entity, entry["Status"], StatusPaused)
+			}
+		}
+	}
 }
 
 // assertCascadeParentIDs pins each child PUT to its OWN parent: the ad group scopes to the
@@ -1040,6 +1053,17 @@ func TestUpdateCampaignAndChildrenStatus_PauseWithoutChildIDs(t *testing.T) {
 	}
 	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns"}) {
 		t.Errorf("calls = %v, want only the campaign gate when no child ids are known", got)
+	}
+	// Verify Status is actually Paused for the campaign
+	for _, call := range rec.snapshot() {
+		list, ok := call.body["Campaigns"].([]any)
+		if !ok || len(list) == 0 {
+			continue
+		}
+		entry, _ := list[0].(map[string]any)
+		if entry["Status"] != StatusPaused {
+			t.Errorf("Campaigns entry Status = %v, want %s", entry["Status"], StatusPaused)
+		}
 	}
 }
 
@@ -1198,6 +1222,19 @@ func TestUpdateCampaignAndChildrenStatus_PauseWithAdGroupOnly(t *testing.T) {
 	}
 	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns", "AdGroups"}) {
 		t.Errorf("calls = %v, want [Campaigns AdGroups] — the ad step has nothing to address", got)
+	}
+	// Verify Status is actually Paused for both sent entities
+	for _, call := range rec.snapshot() {
+		for _, key := range []string{"Campaigns", "AdGroups"} {
+			list, ok := call.body[key].([]any)
+			if !ok || len(list) == 0 {
+				continue
+			}
+			entry, _ := list[0].(map[string]any)
+			if entry["Status"] != StatusPaused {
+				t.Errorf("%s entry Status = %v, want %s", call.entity, entry["Status"], StatusPaused)
+			}
+		}
 	}
 }
 

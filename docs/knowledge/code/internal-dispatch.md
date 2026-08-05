@@ -216,10 +216,10 @@ full three-level cascade — campaign, ad group, ad — ordered by DIRECTION, li
   before any upstream call, since a missing child would stay paused while the row claimed "active".
   **PAUSE only refuses the orphan-ad case** (an `adId` with no `adGroupId`): the Ads PUT is scoped
   by `AdGroupId`, so the ad cannot be addressed; sending the campaign anyway would report success
-  while the ad kept serving. A missing `adGroupId` without an `adId` does not block PAUSE — the
-  campaign and ad group can pause without their child ads. In both directions, a persisted value is
-  refused rather than sent empty (which would address a different entity entirely). An ad group with
-  no ad is the one asymmetric shape that IS allowed: it is addressable via its `CampaignId`.
+  while the ad kept serving. **PAUSE with a missing `adGroupId` also skips the ad group**: only the
+  campaign PUT runs — no ad group PUT is sent. In both directions, a persisted value is refused
+  rather than sent empty (which would address a different entity entirely). An ad group with no ad
+  is the one asymmetric shape that IS allowed: it is addressable via its `CampaignId`.
 - **Each child PUT is scoped to its OWN parent** — the ad group to the campaign, the ad to the AD
   GROUP. Passing the campaign id as `AdGroupId` would silently toggle the wrong thing.
 - **Outcome classification** folds Microsoft's 200-with-`PartialErrors` contract into an error, and

@@ -286,10 +286,10 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if msStatus == microsoft.StatusActive && (adGroupID == "" || adID == "") {
 		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
-	// An ad with no known parent cannot be paused (the client refuses the pair), and sending
-	// the campaign anyway would report success while the ad kept serving.
+	// An ad with no known parent cannot be changed (the client refuses the pair), and sending
+	// the campaign anyway would report success while the ad's status remained unchanged.
 	if adID != "" && adGroupID == "" {
-		return fmt.Errorf("%w: microsoft campaign %s records ad %s but no ad group id, so the ad's status cannot be changed", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, adID)
+		return fmt.Errorf("%w: microsoft campaign %s records ad %s but no ad group id, so the orphaned ad cannot be addressed in a status update", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, adID)
 	}
 	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
 	if err != nil {
