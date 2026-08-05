@@ -5,6 +5,7 @@ package googleads
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,6 +156,17 @@ func TestValidateAudienceSegments(t *testing.T) {
 
 // ---- createAdGroupTargeting integration paths -------------------------------
 
+// decodeErr decodes a request body into a map, returning an error instead of
+// calling Fatalf. This is safe for use inside handler goroutines (unlike the
+// test-helper decode function which calls t.Fatalf).
+func decodeErr(r *http.Request) (map[string]any, error) {
+	var m map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // newTargetingClientWith wires a token server + an API server whose
 // campaignBudgets/adGroups/adGroupAds mutates all succeed, whose
 // adGroupCriteria:mutate handler is supplied per-test, and whose
@@ -171,7 +183,13 @@ func newTargetingClientWith(t *testing.T, onCampaign func(map[string]any), crite
 			okBudget(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			if onCampaign != nil {
-				onCampaign(decode(t, r))
+				body, err := decodeErr(r)
+				if err != nil {
+					t.Errorf("decode campaign request body: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				onCampaign(body)
 			}
 			okCampaign(w, r)
 		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
@@ -196,6 +214,35 @@ func newTargetingClient(t *testing.T, criteriaH http.HandlerFunc) *Client {
 	return newTargetingClientWith(t, nil, criteriaH)
 }
 
+// newTargetingClientFull is newTargetingClient with all mutate handlers supplied per-test,
+// for tests that need to assert on the call sequence (e.g. preflight validation ordering).
+func newTargetingClientFull(t *testing.T, budgetH, campaignH, adGroupH, adGroupAdH, criteriaH http.HandlerFunc) *Client {
+	t.Helper()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			budgetH(w, r)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			campaignH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			adGroupH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			adGroupAdH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate"):
+			criteriaH(w, r)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+	return NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+}
+
 func okAdGroupCriteria(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, `{"results":[`+
 		`{"resourceName":"customers/1234567890/adGroupCriteria/333~1"},`+
@@ -206,7 +253,12 @@ func TestCreateAdGroupAndAd_TargetingHappyPath(t *testing.T) {
 	var mu sync.Mutex
 	var criteriaBody map[string]any
 	c := newTargetingClient(t, func(w http.ResponseWriter, r *http.Request) {
-		body := decode(t, r)
+		body, err := decodeErr(r)
+		if err != nil {
+			t.Errorf("decode criteria request body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
 		criteriaBody = body
 		mu.Unlock()
@@ -308,9 +360,40 @@ func TestCreateAdGroupAndAd_TargetingMalformedResponse(t *testing.T) {
 }
 
 func TestCreateAdGroupAndAd_InvalidKeywordAbortsBeforeAnyMutate(t *testing.T) {
-	c := newTargetingClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("adGroupCriteria:mutate must not be called when keyword validation fails")
-	})
+	var mu sync.Mutex
+	var mutateCount int
+	c := newTargetingClientFull(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			okBudget(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			okCampaign(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			okAdGroup(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			okAdGroupAd(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			t.Error("adGroupCriteria:mutate must not be called when keyword validation fails")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
 	in := sampleInput()
 	in.Keywords = []Keyword{{Text: "kubernetes", MatchType: "BOGUS"}}
 	_, err := c.CreateCampaign(context.Background(), in)
@@ -320,12 +403,49 @@ func TestCreateAdGroupAndAd_InvalidKeywordAbortsBeforeAnyMutate(t *testing.T) {
 	if !strings.Contains(err.Error(), "invalid keyword input") {
 		t.Errorf("error = %v, want it to mention invalid keyword input", err)
 	}
+	mu.Lock()
+	count := mutateCount
+	mu.Unlock()
+	if count != 0 {
+		t.Errorf("mutate call count = %d, want 0 (preflight validation must abort before any mutate)", count)
+	}
 }
 
 func TestCreateAdGroupAndAd_InvalidAudienceSegmentAbortsBeforeAnyMutate(t *testing.T) {
-	c := newTargetingClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("adGroupCriteria:mutate must not be called when audience segment validation fails")
-	})
+	var mu sync.Mutex
+	var mutateCount int
+	c := newTargetingClientFull(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			okBudget(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			okCampaign(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			okAdGroup(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			okAdGroupAd(w, nil)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			mutateCount++
+			mu.Unlock()
+			t.Error("adGroupCriteria:mutate must not be called when audience segment validation fails")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
 	in := sampleInput()
 	in.AudienceSegments = []string{"customers/1/userInterests/2"}
 	_, err := c.CreateCampaign(context.Background(), in)
@@ -334,6 +454,12 @@ func TestCreateAdGroupAndAd_InvalidAudienceSegmentAbortsBeforeAnyMutate(t *testi
 	}
 	if !strings.Contains(err.Error(), "invalid audience segment input") {
 		t.Errorf("error = %v, want it to mention invalid audience segment input", err)
+	}
+	mu.Lock()
+	count := mutateCount
+	mu.Unlock()
+	if count != 0 {
+		t.Errorf("mutate call count = %d, want 0 (preflight validation must abort before any mutate)", count)
 	}
 }
 

@@ -338,8 +338,7 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   the segment without narrowing delivery to it. This client does not
                                   create audiences; each entry must be a Customer Match user list
                                   (`.../userLists/{id}`) or a custom audience (`.../customAudiences/{id}`)
-                                  the caller already built elsewhere (e.g. this service's
-                                  `campaign_audiences` resource) — any other resource-name shape
+                                  the caller already built elsewhere — any other resource-name shape
                                   (userInterest, combinedAudience, etc.) is rejected. At most 20
                                   entries; duplicates are deduped. When non-empty, the client sets the
                                   campaign's `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly)

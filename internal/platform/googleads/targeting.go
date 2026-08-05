@@ -123,15 +123,38 @@ func validateKeywords(keywords []Keyword) ([]Keyword, error) {
 // two that match what "a built campaign audience" (docs/api-catalog.md's
 // campaign_audiences resource) represents — a Customer Match list or a custom
 // audience the caller already built, not a Google-defined category.
+// Validates that the resource name has the exact shape .../userLists/{id} or
+// .../customAudiences/{id}, where {id} is numeric.
 func audienceCriterionField(resourceName string) (field string, ok bool) {
+	const userListPattern = "/userLists/"
+	const customAudiencePattern = "/customAudiences/"
+
+	var field_name string
+	var pattern string
+
 	switch {
-	case strings.Contains(resourceName, "/userLists/"):
-		return "userList", true
-	case strings.Contains(resourceName, "/customAudiences/"):
-		return "customAudience", true
+	case strings.Contains(resourceName, userListPattern):
+		field_name = "userList"
+		pattern = userListPattern
+	case strings.Contains(resourceName, customAudiencePattern):
+		field_name = "customAudience"
+		pattern = customAudiencePattern
 	default:
 		return "", false
 	}
+
+	// Extract the ID portion after the pattern to validate it's numeric
+	// and there's nothing after it.
+	parts := strings.Split(resourceName, pattern)
+	if len(parts) != 2 {
+		return "", false // Multiple occurrences or no occurrence after trim
+	}
+	id := parts[1]
+	if id == "" || !numericID(id) {
+		return "", false // Empty or non-numeric ID
+	}
+
+	return field_name, true
 }
 
 // validateAudienceSegments trims/validates each caller-supplied audience
@@ -240,9 +263,16 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 	keywordIDs = make([]string, 0, len(keywords))
 	audienceIDs = make([]string, 0, len(audienceSegments))
 	for i, r := range mr.Results {
-		_, critID := compositeResourceID(r.ResourceName)
-		if critID == "" {
+		returnedAdGroupID, critID := compositeResourceID(r.ResourceName)
+		if critID == "" || returnedAdGroupID == "" {
 			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; malformed criterion resource name %q at index %d — verify in Google Ads before retrying)", adGroupID, r.ResourceName, i)
+		}
+		// The adGroupCriterion resourceName's ad-group-id half must match the ad group this
+		// criterion was created under — a mismatch means the response doesn't describe the
+		// criterion this call just created (a malformed/substituted resourceName), so the
+		// returned criterion ID cannot be trusted enough to persist.
+		if returnedAdGroupID != adGroupID {
+			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; adGroupCriterion resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, r.ResourceName, returnedAdGroupID)
 		}
 		if i < len(keywords) {
 			keywordIDs = append(keywordIDs, critID)

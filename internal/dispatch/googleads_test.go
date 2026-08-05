@@ -661,6 +661,91 @@ func TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure_Refused(t 
 	}
 }
 
+func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
+	// Verify that the dispatcher wires keywords and audience segments from the config
+	// through to the client, and that both reach the criteria endpoint. A typo or dropped
+	// mapping in either field would leave this test green while the feature was broken.
+	var sawCriteria bool
+	var criteriaOps []map[string]any
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate"):
+			sawCriteria = true
+			var body struct {
+				Operations []map[string]any `json:"operations"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			criteriaOps = body.Operations
+			_, _ = io.WriteString(w, `{"results":[`+
+				`{"resourceName":"customers/1234567890/adGroupCriteria/333~1"},`+
+				`{"resourceName":"customers/1234567890/adGroupCriteria/333~2"},`+
+				`{"resourceName":"customers/1234567890/adGroupCriteria/333~3"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+	opts = append(opts, googleads.WithBaseURL(apiSrv.URL))
+
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{
+		"googleAdsConfig":{
+			"budget":50,
+			"keywords":[
+				{"text":"kubernetes","matchType":"EXACT"},
+				{"text":"go programming","matchType":"PHRASE"}
+			],
+			"audienceSegments":["customers/123/userLists/456"]
+		}
+	}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil {
+		t.Fatal("expected a campaign result")
+	}
+	if !sawCriteria {
+		t.Error("adGroupCriteria:mutate must be called when keywords/audience segments are supplied")
+	}
+	if len(criteriaOps) != 3 {
+		t.Fatalf("criteria operations count = %d, want 3 (2 keywords + 1 audience segment)", len(criteriaOps))
+	}
+	// Verify the keyword operations have the correct shape
+	kw1 := criteriaOps[0]["create"].(map[string]any)
+	if kw, ok := kw1["keyword"].(map[string]any); !ok || kw["text"] != "kubernetes" || kw["matchType"] != "EXACT" {
+		t.Errorf("keyword[0] = %v, want {text: kubernetes, matchType: EXACT}", kw1["keyword"])
+	}
+	kw2 := criteriaOps[1]["create"].(map[string]any)
+	if kw, ok := kw2["keyword"].(map[string]any); !ok || kw["text"] != "go programming" || kw["matchType"] != "PHRASE" {
+		t.Errorf("keyword[1] = %v, want {text: go programming, matchType: PHRASE}", kw2["keyword"])
+	}
+	// Verify the audience segment operation has the correct shape
+	aud := criteriaOps[2]["create"].(map[string]any)
+	if ul, ok := aud["userList"].(map[string]any); !ok || ul["userList"] != "customers/123/userLists/456" {
+		t.Errorf("audience segment = %v, want {userList: customers/123/userLists/456}", aud["userList"])
+	}
+}
+
 // ---- googleAdsChildIDs ------------------------------------------------------
 
 func TestGoogleAdsChildIDs(t *testing.T) {
