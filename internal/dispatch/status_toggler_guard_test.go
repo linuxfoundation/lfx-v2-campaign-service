@@ -17,6 +17,7 @@ var (
 	_ service.StatusToggler = (*RedditDispatcher)(nil)
 	_ service.StatusToggler = (*MetaDispatcher)(nil)
 	_ service.StatusToggler = (*LinkedInDispatcher)(nil)
+	_ service.StatusToggler = (*TwitterDispatcher)(nil)
 	_ service.StatusToggler = (*GoogleAdsDispatcher)(nil)
 	_ service.StatusToggler = (*MicrosoftDispatcher)(nil)
 )
