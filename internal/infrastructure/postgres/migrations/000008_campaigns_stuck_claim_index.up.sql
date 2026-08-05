@@ -1,0 +1,52 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Support the stuck-claim scan (CampaignRepo.StuckDispatchClaims), which runs on
+-- startup AND every stuckClaimSweepInterval (5m) on EVERY replica:
+--
+--   SELECT ... FROM campaigns WHERE status = 'pending'
+--                               AND created_at < now() - <cutoff>
+--                             ORDER BY created_at ASC LIMIT $2;
+--
+-- Without this the predicate scans all of campaigns on every sweep. Campaigns are
+-- append-mostly and terminal rows (created / created_degraded / failed) accumulate
+-- forever, so that scan grows unbounded — while the set the sweep actually cares
+-- about ('pending' claims) stays tiny and is usually EMPTY.
+--
+-- A PARTIAL index on created_at restricted to status = 'pending' keeps the index
+-- small (it never grows with terminal history) and also serves the ORDER BY
+-- created_at ASC directly, so the LIMIT can stop early instead of sorting the
+-- whole match set. Transparent to behavior — purely a performance fix.
+--
+-- This mirrors idx_campaign_jobs_recovery (000004), which exists for the same
+-- reason on the analogous stuck-JOB sweep.
+--
+-- Separate migration (not an edit to an earlier one): golang-migrate records
+-- applied versions and never re-runs them, so amending an applied migration would
+-- silently skip databases that already ran it.
+--
+-- CONCURRENTLY: a plain CREATE INDEX takes a lock that blocks INSERT/UPDATE/DELETE on
+-- campaigns for the whole build. Migrations run during a ROLLING startup, so other
+-- replicas are still claiming and finalizing dispatches at that moment — a blocking
+-- build could stall a claim mid-flight and manufacture exactly the ambiguous
+-- outcomes this diagnostic exists to report.
+--
+-- This is safe with our runner: the pgx/v5 golang-migrate driver executes each
+-- migration with a bare ExecContext and does NOT wrap it in a transaction (verified
+-- in database/pgx/v5/pgx.go), and CONCURRENTLY cannot run inside one. Do NOT add
+-- other statements to this file — a multi-statement migration would be batched and
+-- reintroduce the transaction constraint.
+--
+-- A failed CONCURRENTLY build does NOT roll back: it leaves the index marked INVALID,
+-- and the IF NOT EXISTS below would then see that name and skip the rebuild while
+-- reporting success — Postgres refuses to use an invalid index, so the scans would keep
+-- full-scanning forever with no error anywhere. Recovering a dirty migration with
+-- `force` does not run the down migration, so nothing clears it implicitly either.
+-- Migration 000009 drops an INVALID copy AND rebuilds it in the same step. It has to do
+-- both: recovering the dirty schema needs `force`, which marks THIS version applied
+-- without running it, so golang-migrate never re-executes this file and the IF NOT
+-- EXISTS below would skip anyway. Leaving the rebuild to "the next deploy" would mean it
+-- never happens.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_campaigns_stuck_claims
+    ON campaigns (created_at)
+    WHERE status = 'pending';

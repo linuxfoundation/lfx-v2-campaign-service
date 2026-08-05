@@ -16,7 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 )
 
-// livePredicate is the partial-index predicate that migration 000012 attached to
+// livePredicate is the partial-index predicate that migration 000010 attached to
 // uq_campaigns_brief_platform_live. Every ON CONFLICT targeting (brief_id, platform)
 // must repeat it verbatim, and every campaigns read must filter by it.
 const livePredicate = `status <> 'deleted'`
@@ -29,8 +29,8 @@ var onConflictBriefPlatform = regexp.MustCompile(`(?is)ON\s+CONFLICT\s*\(\s*brie
 // TestCampaignRepo_OnConflictCarriesLivePredicate pins the single most dangerous
 // coupling introduced by the soft-delete migration.
 //
-// Migration 000013 DROPS the full `UNIQUE (brief_id, platform)` constraint, leaving
-// only 000012's PARTIAL unique index (`WHERE status <> 'deleted'`). PostgreSQL infers
+// Migration 000011 DROPS the full `UNIQUE (brief_id, platform)` constraint, leaving
+// only 000010's PARTIAL unique index (`WHERE status <> 'deleted'`). PostgreSQL infers
 // an arbiter index for ON CONFLICT by matching the conflict target AND its predicate:
 // once the constraint is gone, a bare `ON CONFLICT (brief_id, platform)` matches
 // NOTHING and the statement fails at runtime with
@@ -52,7 +52,7 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 			require.NotNil(t, m, "query has no ON CONFLICT (brief_id, platform) clause; if the conflict target moved, update this test deliberately:\n%s", q)
 			require.Contains(t, normalizeWS(m[1]), livePredicate,
 				"ON CONFLICT (brief_id, platform) is missing the partial index predicate %q. "+
-					"Migration 000013 drops the full UNIQUE constraint, so a bare conflict target infers no arbiter "+
+					"Migration 000011 drops the full UNIQUE constraint, so a bare conflict target infers no arbiter "+
 					"index and this statement fails at runtime with \"no unique or exclusion constraint matching the "+
 					"ON CONFLICT specification\".", livePredicate)
 		})
@@ -120,12 +120,12 @@ func TestDeleteCampaign_LocksRowBeforeGuards(t *testing.T) {
 		"the locking read must fetch status and version so both guards are evaluated against the locked row")
 }
 
-// TestMigration000013_GuardChecksIndexDefinition pins that the drop-guard verifies the
+// TestMigration000011_GuardChecksIndexDefinition pins that the drop-guard verifies the
 // replacement index's DEFINITION and not merely its name.
 //
-// The hole this closes: 000012 builds uq_campaigns_brief_platform_live with
+// The hole this closes: 000010 builds uq_campaigns_brief_platform_live with
 // CREATE UNIQUE INDEX CONCURRENTLY *IF NOT EXISTS*. Any pre-existing index that happens to
-// carry that name therefore makes 000012 a silent no-op — and a guard that checks only
+// carry that name therefore makes 000010 a silent no-op — and a guard that checks only
 // name/namespace/indisvalid accepts it, after which this migration drops the sole full
 // UNIQUE (brief_id, platform) constraint. The table is then left with NO enforceable
 // uniqueness on the pair: every ClaimCampaignDispatch wins, and concurrent retries
@@ -139,8 +139,8 @@ func TestDeleteCampaign_LocksRowBeforeGuards(t *testing.T) {
 // table, and an INVALID index — while still accepting an equivalent predicate spelled
 // `!=` or with an explicit ::text cast, since the comparison is against the text Postgres
 // itself deparses.
-func TestMigration000013_GuardChecksIndexDefinition(t *testing.T) {
-	b, err := fs.ReadFile(migrations.FS, "000013_drop_campaigns_full_unique_platform.up.sql")
+func TestMigration000011_GuardChecksIndexDefinition(t *testing.T) {
+	b, err := fs.ReadFile(migrations.FS, "000011_drop_campaigns_full_unique_platform.up.sql")
 	require.NoError(t, err)
 	sql := normalizeWS(string(b))
 
@@ -157,7 +157,7 @@ func TestMigration000013_GuardChecksIndexDefinition(t *testing.T) {
 		{`= '(status <> ''deleted''::text)'`, "the predicate must match what Postgres deparses for WHERE status <> 'deleted'; a different predicate covers a different row set"},
 	} {
 		require.Contains(t, sql, want.frag,
-			"migration 000013's drop-guard is missing %q: %s", want.frag, want.why)
+			"migration 000011's drop-guard is missing %q: %s", want.frag, want.why)
 	}
 
 	// The guard must still gate the DROP. A guard that RAISEs correctly but whose
@@ -211,13 +211,10 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // migrations are skipped forever. Deleting an entry once its PR merges is the point: the
 // list must shrink to empty, and this test then enforces strict contiguity again.
 //
-// 000008-000011: 000008/000009 belong to feat/LFXV2-2665-reclaim-expired-dispatch-claims
-// (PR #59) and 000010/000011 to feat/LFXV2-2814-query-service-indexing (PR #60). This
-// branch's own migrations start at 000012, immediately above them — no reserved headroom
-// is needed once both predecessors' actual claimed versions are accounted for.
-var allowedVersionGaps = map[int]string{
-	8: "PR #59 (000008/000009) and PR #60 (000010/000011) must merge before this branch",
-}
+// Empty: PR #59 (000008/000009) and PR #60 (000010/000011) have both merged into main, and
+// this branch's own migrations were renumbered to 000010/000011 directly above them — no gap
+// remains.
+var allowedVersionGaps = map[int]string{}
 
 func TestMigrations_NoVersionGaps(t *testing.T) {
 	entries, err := fs.Glob(migrations.FS, "*.up.sql")

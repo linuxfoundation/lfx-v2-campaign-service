@@ -15,7 +15,7 @@ metadata:
 spec:
   replicas: {{ .Values.replicaCount }}
   # Recreate, not the RollingUpdate default, because this service runs its OWN schema
-  # migrations at boot and migration 000014 makes a BACKWARD-INCOMPATIBLE change: it drops
+  # migrations at boot and migration 000011 makes a BACKWARD-INCOMPATIBLE change: it drops
   # UNIQUE (brief_id, platform), after which the previous release's bare
   # `ON CONFLICT (brief_id, platform)` matches no index and fails with "there is no unique
   # or exclusion constraint matching the ON CONFLICT specification" on every dispatch claim.
@@ -25,7 +25,7 @@ spec:
   # still serving writes against it. Recreate terminates the old pod first, so the
   # incompatible schema is never live under the old code.
   #
-  # This is the correct shape for THIS migration specifically: 000013 and 000014 cannot be
+  # This is the correct shape for THIS migration specifically: 000010 and 000011 cannot be
   # staged apart. Verified on PostgreSQL 16.10 -- with the drop deferred, the old full
   # constraint still covers soft-deleted rows, so a re-dispatch after delete hits
   # ON CONFLICT DO NOTHING and is SILENTLY swallowed (RowsAffected 0, read back as "already
