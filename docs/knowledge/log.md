@@ -1,5 +1,18 @@
 # Log
 
+## 2026-08-05 (DCO hook: compare trailer to GIT_AUTHOR_IDENT, not just presence)
+
+**Fix** — Cursor Bugbot flagged that the prior fix (below) still had a gap: checking only
+for a Signed-off-by trailer's *presence* during a rebase/cherry-pick replay is fooled by
+`git commit --amend --reset-author` at an `edit` stop, which rewrites the commit's AUTHOR
+to the current user while leaving the ORIGINAL author's trailer text untouched — the hook
+would still skip, but CI's author-based DCO check would then reject the commit. Changed the
+check to compare the trailer against `git var GIT_AUTHOR_IDENT` (what `--reset-author`
+actually changes) instead of just checking for any trailer: an untouched replay's author
+identity still matches its original trailer (skip, correctly), while a `--reset-author`
+replay's author identity no longer matches the stale trailer (falls through to require a
+fresh sign-off, correctly). Manually verified both paths against a sandbox repo.
+
 ## 2026-08-05 (DCO hook rebase exemption narrowed for new commits)
 
 **Fix** — Resolved Cursor Bugbot Medium-severity finding: the hook's `REBASE_HEAD` early-exit
