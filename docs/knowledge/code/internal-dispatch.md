@@ -62,6 +62,30 @@ revoked or deleted.
 
 ## The claim contract (release vs retain)
 
+The claim is PERMANENT until released — deliberately NOT auto-reclaimed on a timer. `pending`
+is overloaded: it marks both a claim merely in flight AND an AMBIGUOUS dispatch outcome, which
+the orchestrator persists as `pending` precisely because the provider MAY already have created
+a paid campaign. No column distinguishes the two, so a time-based reclaim would eventually
+authorize a DUPLICATE paid create against a campaign that already exists upstream — the exact
+failure the claim exists to prevent. Safe automatic recovery needs provider idempotency keys or
+an authoritative reconcile first (LFXV2-2665).
+
+The cost is that a pod crashing between claim and release strands a `pending` row that blocks
+every future dispatch for that pair, recoverable only by a human. `StuckDispatchClaims` makes
+those rows VISIBLE (read-only, `stuckClaimReportAge` = 4m, bounded by `providerCallTimeout` so a
+healthy in-flight claim is never reported) instead of leaving them silently invisible until
+someone notices a campaign will not dispatch.
+
+**Every stuck claim requires an upstream-platform check before deletion — including a bare
+`version = 1` row with no platform id and no result blob.** That shape is NOT evidence the
+provider was never called: `dispatchOne` retains the claim WITHOUT upserting when a dispatcher
+returns `(nil, nil)`, when it returns an empty upstream id, and when it returns a non-pre-create
+`(nil, err)`. In each case a paid campaign may already exist upstream while the row remains
+byte-for-byte identical to an abandoned pre-create claim. Confirming that no worker is running
+is therefore NOT sufficient to delete: the schema cannot distinguish the two, so the only safe
+floor is to check the platform. The `remediation` field on each logged claim states this, and
+`version`/`platform_campaign_id`/`has_result` only sharpen WHY the check is owed, never waive it.
+
 The orchestrator single-flight-claims a `(brief, platform)` pair before dispatch and
 decides, from the returned error, whether to RELEASE the claim (retry-safe) or RETAIN
 it (a blind retry could double-create). Adapters drive that decision:
