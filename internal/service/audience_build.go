@@ -85,18 +85,9 @@ func audienceUnavailableErr() error {
 // response. Reconciliation IDs and the UNCONFIRMED marker (if present) are preserved as they
 // are safe and necessary for operators to reconcile orphaned state.
 func audienceBuildErr(err error) error {
-	// Check if the error is a safely-wrapped error (from unrecordedListsErr or unconfirmedNote).
-	// These wrappers contain reconciliation IDs or UNCONFIRMED markers, which are safe and useful.
-	// Pass those through; otherwise use only the safe fixed message. The raw cause is in the logs.
-	errMsg := err.Error()
-	isSafeWrapped := strings.Contains(errMsg, "recording the result failed") ||
-		strings.Contains(errMsg, "UNCONFIRMED") ||
-		strings.Contains(errMsg, "HubSpot lists EXIST")
-
 	msg := "the audience build failed upstream"
-	if isSafeWrapped && errMsg != "" {
-		// Error chain carries safe reconciliation context; preserve it.
-		msg = "the audience build failed upstream: " + errMsg
+	if safe := reconciliationText(err); safe != "" {
+		msg += ": " + safe
 	}
 	return &audiences.InternalServerError{
 		Code:    "500",
@@ -117,17 +108,9 @@ func audienceBuildErr(err error) error {
 // via slog and never exposed in the public API response. Reconciliation IDs (list ids) are
 // preserved as they are essential for operators to reconcile orphaned HubSpot lists.
 func audiencePersistErr(err error) error {
-	// Check if the error is a safely-wrapped error (from unrecordedListsErr).
-	// This wrapper contains reconciliation IDs (HubSpot list ids), which are safe and essential.
-	// Pass it through; otherwise use only the safe fixed message. The raw cause is in the logs.
-	errMsg := err.Error()
-	isSafeWrapped := strings.Contains(errMsg, "recording the result failed") ||
-		strings.Contains(errMsg, "HubSpot lists EXIST")
-
 	msg := "the audience lists were created but recording them failed"
-	if isSafeWrapped && errMsg != "" {
-		// Error chain carries safe reconciliation context (list IDs); preserve it.
-		msg = "the audience lists were created but recording them failed: " + errMsg
+	if safe := reconciliationText(err); safe != "" {
+		msg += ": " + safe
 	}
 	return &audiences.InternalServerError{
 		Code:    "500",
@@ -317,7 +300,7 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 			// above says is fixed. The API response is now the ONLY channel carrying the ids, so
 			// put them in it. Without this the operator learns a build broke and has no handle on
 			// what it left behind, and a blind retry duplicates every list.
-			return nil, audienceBuildErr(unconfirmedNote(unrecordedListsErr(buildErr, created.ID, ids), ambiguous))
+			return nil, audienceBuildErr(unconfirmedNote(unrecordedListsErr(buildErr, created.ID, ids, true), ambiguous))
 		}
 		return nil, audienceBuildErr(unconfirmedNote(buildErr, ambiguous))
 	}
@@ -359,9 +342,67 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		if !slices.Contains(reported, master) {
 			reported = append(slices.Clone(ids), master)
 		}
-		return nil, audiencePersistErr(unrecordedListsErr(uerr, created.ID, reported))
+		return nil, audiencePersistErr(unrecordedListsErr(uerr, created.ID, reported, false))
 	}
 	return audienceResult(updated), nil
+}
+
+// reconciliationDetail carries the facts about a build outcome that must reach the caller — which
+// HubSpot lists exist and must be reconciled, whether the outcome is confirmed, and (only when
+// exposeCause says it is safe) the underlying cause's own text.
+//
+// This replaces an earlier design where unrecordedListsErr/unconfirmedNote used fmt.Errorf("%w
+// (...)", cause, ...) and audienceBuildErr/audiencePersistErr decided whether the resulting
+// combined message was safe to return by checking whether it CONTAINED a marker substring like
+// "recording the result failed". Because %w places cause's own text first, and unrecordedListsErr
+// always appends that marker itself, the check was tautological — true for every error that went
+// through the wrapper, regardless of what cause actually was. cause was buildErr (a HubSpot/
+// Snowflake failure, already redacted by its own client's safeCause before it reaches here — see
+// hubspot.Client) in the build-failure path, but the raw *pgx/driver* error in the persist-failure
+// path — and the same tautological check let both through identically. exposeCause makes that
+// distinction explicit and structural instead of inferred from text, and errors.As (rather than
+// substring-matching err.Error()) is what proves an error actually came from these wrappers.
+type reconciliationDetail struct {
+	cause       error
+	exposeCause bool // true only when cause is known pre-redacted (a builder/platform failure)
+	audienceID  string
+	ids         []string
+	unconfirmed bool
+}
+
+func (d *reconciliationDetail) Error() string { return d.safeText() }
+
+func (d *reconciliationDetail) Unwrap() error { return d.cause }
+
+// safeText renders the text safe to expose publicly: cause's own text ONLY when exposeCause is
+// true, plus the curated reconciliation facts (list ids, the UNCONFIRMED marker).
+func (d *reconciliationDetail) safeText() string {
+	var parts []string
+	if d.exposeCause && d.cause != nil {
+		parts = append(parts, d.cause.Error())
+	}
+	if d.unconfirmed {
+		parts = append(parts, "UNCONFIRMED: the list may already exist in HubSpot — verify before "+
+			"retrying, a blind retry can duplicate it")
+	}
+	if len(d.ids) > 0 {
+		parts = append(parts, fmt.Sprintf("recording the result failed, so audience %s still reads "+
+			"'building' with no summary; these HubSpot lists EXIST and must be reconciled before "+
+			"retrying: %s", d.audienceID, strings.Join(d.ids, ", ")))
+	}
+	return strings.Join(parts, " ")
+}
+
+// reconciliationText extracts the text a *reconciliationDetail carries that is safe to expose, via
+// errors.As rather than substring-matching err.Error(). Returns "" for any error that is not (or
+// does not wrap) a *reconciliationDetail, or that carries nothing to show — callers fall back to
+// their own generic, fixed message in that case.
+func reconciliationText(err error) string {
+	var d *reconciliationDetail
+	if !errors.As(err, &d) {
+		return ""
+	}
+	return d.safeText()
 }
 
 // unconfirmedNote makes an AMBIGUOUS outcome say so in the response body.
@@ -373,13 +414,19 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 // reads like an ordinary transient error, inviting exactly the blind retry that duplicates a
 // list HubSpot may already have created.
 //
-// Idempotent: the sentinel's message already carries the warning, so it is not repeated.
+// Idempotent: mutates an existing *reconciliationDetail in place (preserving its cause and any
+// ids already attached by unrecordedListsErr) rather than wrapping again. Only ever called with a
+// buildErr-derived err (see call sites), so a freshly-created detail exposes cause.
 func unconfirmedNote(err error, ambiguous bool) error {
-	if !ambiguous || strings.Contains(err.Error(), "UNCONFIRMED") {
+	if !ambiguous {
 		return err
 	}
-	return fmt.Errorf("%w (UNCONFIRMED: the list may already exist in HubSpot — verify before "+
-		"retrying, a blind retry can duplicate it)", err)
+	var d *reconciliationDetail
+	if errors.As(err, &d) {
+		d.unconfirmed = true
+		return d
+	}
+	return &reconciliationDetail{cause: err, exposeCause: true, unconfirmed: true}
 }
 
 // unrecordedListsErr carries the ids of HubSpot lists that EXIST upstream but could not be
@@ -388,23 +435,52 @@ func unconfirmedNote(err error, ambiguous bool) error {
 // Used on both exits, for the same reason and with different urgency:
 //
 //   - the PARTIAL path, where the build broke midway and the record of what it left behind also
-//     broke, and
+//     broke — cause is buildErr, already redacted by the platform client, so exposeCause must be
+//     true; and
 //   - the SUCCESS path, where every list including the MASTER was created and only the write
-//     failed — worse, because a blind retry then duplicates the entire set.
+//     failed — worse, because a blind retry then duplicates the entire set — but cause is a raw
+//     repository error, so exposeCause must be false.
 //
-// Either way the row is stuck 'building' with no summary, so the ids survive only in the logs
-// and in this error. audienceBuildErr interpolates err.Error() into the 500 body, which makes
-// the API response the operator's one reliable handle on the orphaned lists. The wording is
-// deliberately neutral about WHICH step failed, since the wrapped error already says that.
-func unrecordedListsErr(cause error, audienceID string, ids []string) error {
+// Either way the row is stuck 'building' with no summary, so the ids survive only in the logs and
+// in this error's curated (reconciliationText) form.
+func unrecordedListsErr(cause error, audienceID string, ids []string, exposeCause bool) error {
 	if len(ids) == 0 {
 		// Nothing upstream to reconcile, so there is nothing to carry — do not inflate the
 		// message with a reconcile instruction that names no lists.
 		return cause
 	}
-	return fmt.Errorf("%w (recording the result failed, so audience %s still reads 'building' "+
-		"with no summary; these HubSpot lists EXIST and must be reconciled before retrying: %s)",
-		cause, audienceID, strings.Join(ids, ", "))
+	var d *reconciliationDetail
+	if errors.As(cause, &d) {
+		d.audienceID = audienceID
+		d.ids = ids
+		return d
+	}
+	return &reconciliationDetail{cause: cause, exposeCause: exposeCause, audienceID: audienceID, ids: ids}
+}
+
+// safeBuildCause renders a redacted description of a builder failure (HubSpot list creation) for
+// persistence in InclusionSummary, which a later GET reads back through the public API.
+//
+// A builder failure is not always an HTTP transport error already redacted by the hubspot
+// client's own safeCause: it can fail before any request — e.g. resolving stored HubSpot
+// credentials from the repository — and that error text has not passed through any redaction.
+// Collapsing unknown causes to a generic description here, rather than persisting err.Error()
+// verbatim, keeps a credential-store or driver error from reaching a stored, publicly-readable
+// field. Mirrors audience.SafeErrorCause's pattern for warehouse errors.
+func safeBuildCause(err error) string {
+	if err == nil {
+		return "build failed"
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "build request canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "build request deadline exceeded"
+	}
+	if hubspot.IsUnconfirmed(err) {
+		return "build outcome unconfirmed (the request may have succeeded upstream)"
+	}
+	return "build failed (see server logs for details)"
 }
 
 // partialSummary records what a failed build actually left upstream. The plan summary alone
@@ -414,7 +490,7 @@ func partialSummary(planSummary string, ids []string, buildErr error) string {
 	var b strings.Builder
 	b.WriteString(planSummary)
 	b.WriteString("\nBuild incomplete: ")
-	b.WriteString(buildErr.Error())
+	b.WriteString(safeBuildCause(buildErr))
 	if len(ids) == 0 {
 		b.WriteString("\nNo HubSpot lists were created.")
 		return b.String()

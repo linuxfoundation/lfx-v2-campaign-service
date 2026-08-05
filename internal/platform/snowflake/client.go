@@ -267,8 +267,12 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 	// Parse currentYear once for filtering below. We already validated it's a 4-digit year.
 	currentYearInt, _ := parseYear(currentYear)
 
+	const rawLimit = (maxEventRows + 1) * 2
+
 	var out []Event
+	var rawFetched int
 	for rows.Next() {
+		rawFetched++
 		var e Event
 		var id sql.NullString
 		if err := rows.Scan(&e.EventName, &id); err != nil {
@@ -292,6 +296,15 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("snowflake: iterate event rows: %w", err)
+	}
+	// The raw SQL LIMIT is applied BEFORE year filtering (see the query comment above), and
+	// ORDER BY EVENT_NAME is alphabetical, not chronological — so hitting the raw limit does
+	// NOT mean we've seen every past edition; a past edition could sort alphabetically after
+	// the cutoff and never have been fetched at all. Fail closed rather than silently return
+	// a truncated (incomplete) audience: we cannot prove completeness once the raw fetch was
+	// itself capped.
+	if rawFetched >= rawLimit {
+		return nil, fmt.Errorf("snowflake: event term %q matched at least %d rows before year filtering; narrow the search term", eventTerm, rawLimit)
 	}
 	if len(out) > maxEventRows {
 		// More than the cap matched (after year filtering): fail closed rather than return

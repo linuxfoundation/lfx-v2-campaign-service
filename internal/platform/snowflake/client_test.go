@@ -296,6 +296,31 @@ func TestResolvePastEventNames_FailsClosedOnTruncation(t *testing.T) {
 	}
 }
 
+func TestResolvePastEventNames_FailsClosedOnRawLimitEvenWhenFewRowsArePast(t *testing.T) {
+	// The raw SQL LIMIT is hit before year filtering, and ORDER BY EVENT_NAME is alphabetical,
+	// not chronological. So a raw fetch that hits the limit can still yield FEW past editions
+	// after filtering (e.g. most matches are future editions that happen to sort first) — the
+	// old post-filter-only check (len(out) > maxEventRows) would not catch this, and would
+	// silently return an incomplete "success" even though a past edition sorting after the
+	// truncated raw fetch was never seen at all.
+	rows := make([][]driver.Value, (maxEventRows+1)*2)
+	for i := range rows {
+		if i == 0 {
+			// The one past edition, sorted first alphabetically ("Event 2000" < "Event 2027").
+			rows[i] = []driver.Value{"Event 2000 A", "ev-past"}
+			continue
+		}
+		// All the rest are future editions (year >= currentYear 2026), filtered out.
+		rows[i] = []driver.Value{fmt.Sprintf("Event 2027 %d", i), fmt.Sprintf("ev-future-%d", i)}
+	}
+	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}, rows: rows}
+	c := newFakeClient(t, drv)
+	_, err := c.ResolvePastEventNames(context.Background(), "Event", "", "2026")
+	if err == nil || !strings.Contains(err.Error(), "narrow the search term") {
+		t.Errorf("hitting the raw limit must fail closed regardless of how many rows survive year filtering, got: %v", err)
+	}
+}
+
 func TestResolvePastEventNames_RequiresValidCurrentYear(t *testing.T) {
 	c := newFakeClient(t, &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}})
 	// A blank or malformed currentYear must be rejected — otherwise the past-editions
