@@ -136,7 +136,7 @@ func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaign
 		}
 		return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read the response body.
 	buf := new(bytes.Buffer)

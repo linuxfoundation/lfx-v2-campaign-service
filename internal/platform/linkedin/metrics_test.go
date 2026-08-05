@@ -28,7 +28,7 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 
 		// Return a successful analytics response
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"elements": [
 				{
 					"impressions": 1000,
@@ -72,7 +72,7 @@ func TestGetCampaignMetrics_NoActivity(t *testing.T) {
 	// Mock server returning empty analytics
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"elements": []}`)
+		_, _ = fmt.Fprint(w, `{"elements": []}`)
 	}))
 	defer server.Close()
 
@@ -97,7 +97,7 @@ func TestGetCampaignMetrics_ZeroImpressions(t *testing.T) {
 	// Zero impressions should result in zero CTR (no divide-by-zero)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"elements": [{"impressions": 0, "clicks": 0, "costInUsd": 0}]}`)
+		_, _ = fmt.Fprint(w, `{"elements": [{"impressions": 0, "clicks": 0, "costInUsd": 0}]}`)
 	}))
 	defer server.Close()
 
@@ -122,7 +122,7 @@ func TestGetCampaignMetrics_MissingCostUSD(t *testing.T) {
 	// Cost can be omitted (nil)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"elements": [{"impressions": 100, "clicks": 10}]}`)
+		_, _ = fmt.Fprint(w, `{"elements": [{"impressions": 100, "clicks": 10}]}`)
 	}))
 	defer server.Close()
 
