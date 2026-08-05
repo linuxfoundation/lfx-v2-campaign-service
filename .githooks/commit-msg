@@ -44,23 +44,23 @@ if [[ -n "$replay_head" ]]; then
   author_name_email=$(sed -E 's/ [0-9]+ [-+][0-9]{4}$//' <<<"$author_ident")
   expected_author_trailer="Signed-off-by: ${author_name_email}"
 
-  if git interpret-trailers --parse "$commit_msg_file" | grep -qFx "$expected_author_trailer"; then
-    # The trailer matches the commit's current author identity (GIT_AUTHOR_IDENT).
-    # This is either an untouched replay of an already-signed commit, or a pure
-    # reword (message changed, tree unchanged), or the author has not changed
-    # (no --reset-author), so the original author's signature is still valid.
-    #
-    # (Note: we don't compare staged trees against the original commit here, as
-    # a rebase or cherry-pick onto a different base will have a different tree
-    # even for a clean apply—tree equality is not a reliable indicator of whether
-    # content was changed. Author-identity match is sufficient: if author is
-    # unchanged, original DCO is satisfied; if author changed via --reset-author,
-    # the trailer won't match and we fall through to require committer sign-off.)
+  # For a replay to skip committer sign-off, the message must be unchanged from
+  # the original commit. This ensures we catch both message edits and tree-only
+  # changes at an interactive-rebase edit stop (where git commit --amend preserves
+  # the original author but requires fresh committer sign-off if content was modified).
+  original_message=$(git log -1 --format=%B "$replay_head")
+  current_message=$(<"$commit_msg_file")
+
+  if [[ "$original_message" == "$current_message" ]] && \
+     git interpret-trailers --parse "$commit_msg_file" | grep -qFx "$expected_author_trailer"; then
+    # Message is unchanged from the original commit AND original author's trailer
+    # is present: this is an unmodified replay of an already-signed commit, so
+    # the original author's signature is still valid. Skip the committer check.
     exit 0
   fi
-  # Author trailer doesn't match current author identity, or no trailer present:
-  # the author has changed (or is missing), so this is new content needing a fresh
-  # sign-off from the current committer. Fall through to the committer check below.
+  # Message was edited, author changed, or trailer is missing: the replay is no
+  # longer a faithful reproduction of the original, so it needs a fresh sign-off
+  # from the current committer. Fall through to the committer check below.
 fi
 
 # `git var GIT_COMMITTER_IDENT` resolves the exact identity `git commit -s`

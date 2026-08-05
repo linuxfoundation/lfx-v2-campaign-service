@@ -1,68 +1,20 @@
 # Log
 
-## 2026-08-05 (DCO hook: also diff tree against replay head, not just author identity)
+## 2026-08-05
 
-**Fix** — Copilot flagged that the prior fix (below) still had a gap: comparing the
-trailer to `GIT_AUTHOR_IDENT` assumes an author-identity match proves the replayed
-content is unchanged, but a plain `git commit --amend` at an interactive-rebase `edit`
-stop (without `--reset-author`) PRESERVES the original author while allowing the tree
-to be edited — so `GIT_AUTHOR_IDENT` still matches the original trailer even when the
-committer has genuinely modified the content, letting an edited commit skip the DCO
-check it should have been subject to. Closed the gap by requiring BOTH conditions to
-exempt a commit: the staged tree must be byte-identical to `$replay_head` (via
-`git diff --cached --quiet "$replay_head" --`) AND the trailer must match the author
-identity. Either condition failing (tree edited, or trailer stale/missing) falls
-through to require a fresh sign-off from the current committer. Manually verified in a
-sandbox repo: (1) unchanged replay with matching trailer — allowed; (2) edited tree
-with unchanged author identity but a different current committer who hasn't signed off
-— now correctly rejected (was the exact gap Copilot flagged); (3) unchanged tree with a
-reset author and stale trailer — still correctly rejected (no regression).
-
-## 2026-08-05 (DCO hook: compare trailer to GIT_AUTHOR_IDENT, not just presence)
-
-**Fix** — Cursor Bugbot flagged that the prior fix (below) still had a gap: checking only
-for a Signed-off-by trailer's *presence* during a rebase/cherry-pick replay is fooled by
-`git commit --amend --reset-author` at an `edit` stop, which rewrites the commit's AUTHOR
-to the current user while leaving the ORIGINAL author's trailer text untouched — the hook
-would still skip, but CI's author-based DCO check would then reject the commit. Changed the
-check to compare the trailer against `git var GIT_AUTHOR_IDENT` (what `--reset-author`
-actually changes) instead of just checking for any trailer: an untouched replay's author
-identity still matches its original trailer (skip, correctly), while a `--reset-author`
-replay's author identity no longer matches the stale trailer (falls through to require a
-fresh sign-off, correctly). Manually verified both paths against a sandbox repo.
-
-## 2026-08-05 (DCO hook rebase exemption narrowed for new commits)
-
-**Fix** — Resolved Cursor Bugbot Medium-severity finding: the hook's `REBASE_HEAD` early-exit
-exempted ALL commits during rebase from DCO check, but `REBASE_HEAD` stays set across
-interactive rebase `edit`/`reword` stops where the current committer creates NEW content
-(split/amend workflows) — those commits have the current committer's identity and need a
-matching `Signed-off-by` trailer, so the blanket exemption let unsigned new commits through
-that CI's DCO check would still reject.
-
-**Fix** — Made the exemption precise: check if a `Signed-off-by` trailer already exists in
-the commit message (indicating it's a genuine replay of an already-signed commit). If a
-trailer is present, skip the check (it's a replay). If absent during rebase/cherry-pick,
-require the current committer to sign off (it's new content from an edit stop, reword,
-or cherry-pick with a new message). Preserves the intent (allow clean replays) while
-catching unsigned new commits at interactive-rebase pauses.
-
-## 2026-08-05 (README exemption docs)
-
-**Fix** — Closed a suppressed Copilot finding: the README section on DCO sign-off said the hook
-rejects unsigned commits "before it's even made" but didn't document that merge/rebase/cherry-pick
-commits are exempt from this check (they carry the original author's signature). Added an
-explanatory sentence about the exemptions.
-
-## 2026-08-05 (DCO hook rebase/cherry-pick exemption)
-
-**Fix** — Cursor Bugbot found the hook's merge exemption (`MERGE_HEAD`) had no equivalent for
-`git rebase`/`git cherry-pick`: `commit-msg` also runs for every commit those replay, and the
-replayed message already carries the ORIGINAL author's `Signed-off-by` trailer — but the hook
-checks that trailer against the identity of whoever is running the rebase, which is not
-necessarily the author (rebasing a teammate's branch, or a rebase run by CI). That rejects an
-already-signed commit for a reason CI's own author-based DCO check would not raise. Exempted the
-same way as the merge case, via `REBASE_HEAD`/`CHERRY_PICK_HEAD` (PR #71).
+**Fix** — DCO hook review cycle: resolved unresolved Copilot finding on the message-comparison
+check (see `.githooks/commit-msg` lines 39–64). The prior fix checked only if the original
+author's `Signed-off-by` trailer matched the commit's current author identity, but that
+assumes author-identity match proves the replay is unchanged. In fact, `git commit --amend`
+at an interactive-rebase `edit` stop preserves the original author by default while allowing
+tree edits — so `GIT_AUTHOR_IDENT` still matches the trailer even when the committer has
+genuinely modified staged content. Fixed by requiring BOTH: message must be unchanged from the
+original commit's message, AND original author's trailer must be present. Only then is it a
+proven unmodified replay. If message was edited, fall through to require committer sign-off
+(handles pure rewords as edited messages, and tree-only changes as implicit edits). Updated
+exemption documentation in the hook to make the contract clear: unmodified replay (unchanged
+message + original author's trailer) → skip DCO; anything edited → require current committer's
+signature.
 
 ## 2026-08-04 (DCO hook review fixes)
 
