@@ -212,3 +212,20 @@ find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group 
 (`adgroup_ad.go`). MS-3 registers `microsoft-ads` and wires the stored
 `connection-microsoft-ads` credential into the orchestrator dispatcher
 (`internal/dispatch/microsoft.go`).
+
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` microsoft adapter (see [internal/dispatch](internal-dispatch.md))
+interprets an OAuth2 app (clientId/secret) + a developer token + refreshToken;
+AccountConfig comes from the connection's AccountID (the DIGITS-ONLY
+`CustomerAccountId`, trimmed) plus an optional `customer_id` (the manager/`CustomerId`
+header). The client builds the full Campaign → AdGroup → Ad hierarchy (all PAUSED) — so
+the adapter needs no ad config beyond `microsoftConfig.budget` (the DAILY budget, in the
+ACCOUNT's currency, no FX) and an optional `timeZone`. `NameSuffix = brief.ID` gives
+deterministic retry-safe names (Microsoft enforces case-insensitive campaign-name
+uniqueness, so a retry composes the SAME name and cleanly REUSES the existing campaign
+(`AlreadyExisted=true`, no error) rather than duplicating). A non-nil result accompanied
+by an error is a separate UNCONFIRMED partial (claim retained); (nil, err) means nothing
+was created (claim released).
+
+It has a creation dispatcher; its status-TOGGLE capability lands separately.

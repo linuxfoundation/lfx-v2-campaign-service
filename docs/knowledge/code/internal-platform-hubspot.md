@@ -119,3 +119,22 @@ create's 2xx-with-no-id is UNCONFIRMED. List/get responses are decoded from BOTH
 Auth + request layer + the email/list/event-def operations above. Consumers: the
 audience-building logic (LFXV2-2774, uses lists + event-defs) and the email staging
 dispatcher (LFXV2-2777, uses the marketing-email ops), the latter blocked on PR #11.
+
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` hubspot adapter (see [internal/dispatch](internal-dispatch.md)) is
+the EMAIL channel (not an ad platform), using a single private-app token. Unlike the ad
+adapters (which CREATE a campaign) it STAGES a marketing email: it CLONES a
+caller-specified template (`hubspotConfig.sourceEmailId`) and points the clone's send list
+at the brief's BUILT audience — resolved from the `campaign_audiences` resource
+(LFXV2-2773) via an injected `audienceReader`, taking the newest hubspot audience and
+refusing if it is not yet `built` (`PlatformMasterListID` → the send list,
+`SuppressionListIDs` → exclusions). The cloned email's HubSpot id is the campaign's
+`PlatformCampaignID`; the clone is a DRAFT (a human sends it). AI body content
+(LFXV2-2775) and audience building (LFXV2-2774) are separate steps. Claim contract: an
+UNCONFIRMED clone (2xx-no-id / transport) retains the claim with a name-only partial; a
+post-clone send-list failure is a partial (the email exists — retain + reconcile); a
+definite pre-clone failure releases the claim.
+
+It has no `StatusToggler` implementation — the email channel has no run state to pause or
+resume.
