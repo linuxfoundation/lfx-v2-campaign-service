@@ -84,11 +84,11 @@ func TestPrecomputeAdGroupAdInputs_OversizedNameRejected(t *testing.T) {
 
 // An over-length COMPOSED final URL (registration URL + LFX utm_* tagging) must be
 // rejected preflight, before any budget/campaign/ad-group mutate: a registration URL just
-// under Google's 2,048-character Final URL limit can still exceed it once utm_source/
+// under Google's 2,084-byte Final URL limit can still exceed it once utm_source/
 // utm_medium/utm_campaign/utm_content are appended, and that composed length is what
 // actually reaches adGroupAds:mutate.
 func TestPrecomputeAdGroupAdInputs_OversizedFinalURLRejected(t *testing.T) {
-	// A ~2040-char path plus the appended utm_* query pushes the composed URL over 2048.
+	// A ~2040-byte path plus the appended utm_* query pushes the composed URL over 2084.
 	longPath := strings.Repeat("a", 2040)
 	in := CampaignInput{
 		Project:         "CNCF",
@@ -99,7 +99,7 @@ func TestPrecomputeAdGroupAdInputs_OversizedFinalURLRejected(t *testing.T) {
 	if err == nil {
 		t.Fatalf("an over-length composed final URL must be rejected preflight, got finalURL=%q", finalURL)
 	}
-	if !strings.Contains(err.Error(), "final URL") || !strings.Contains(err.Error(), "2048") {
+	if !strings.Contains(err.Error(), "final URL") || !strings.Contains(err.Error(), "2084") {
 		t.Errorf("error must explain the final-URL length limit, got: %v", err)
 	}
 }
