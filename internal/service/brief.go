@@ -346,6 +346,17 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// Check the If-Match version against the LOADED row BEFORE the status-mismatch
+	// check below. Without this, a stale If-Match is validated against a row the
+	// client never saw: a concurrent ToggleCampaignStatus can flip existing.Status
+	// between the client's read and this request, and the status-mismatch check
+	// would then compare the client's (now-stale) status field against the NEW
+	// existing.Status and return 400 ("use the status-toggle endpoint") for what is
+	// actually a stale-ETag conflict — misreporting a 412 as a 400. Mirrors
+	// UpdateAudience's early version check for the same reason.
+	if existing.Version != version {
+		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
+	}
 	// This DB-only update MUST NOT be a back door for changing the RUN status
 	// (active/paused): that would persist a run state WITHOUT contacting the ad platform,
 	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists

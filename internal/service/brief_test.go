@@ -564,6 +564,31 @@ func TestBriefService_UpdateCampaign_ValidationBeforeClaim(t *testing.T) {
 	}
 }
 
+// A stale If-Match must be reported as 412, not misclassified as a 400 run-status
+// rejection. If the stored row's status changed (e.g. a concurrent toggle) since the
+// client's version, the status-mismatch check must not run against the new row before
+// the version is checked — otherwise a stale-ETag conflict surfaces as "use the
+// status-toggle endpoint" instead of "refetch and retry".
+func TestBriefService_UpdateCampaign_StaleVersionIsPreconditionFailed(t *testing.T) {
+	camps := &campaignEditRepo{cur: &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 6,
+		CampaignName: "old", Status: "active", // a concurrent toggle moved this to "active" at v6
+	}}
+	s := &BriefService{briefs: &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}}, campaigns: camps, jobs: newFakeJobRepo(), orch: NewOrchestrator(camps, newFakeJobRepo(), nil)}
+	v := "5" // client last saw v5, where status was "paused"
+	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "old", Status: "paused"}, // round-trips the client's stale view
+	})
+	var preFailed *briefs.PreconditionFailedError
+	if !errors.As(err, &preFailed) {
+		t.Fatalf("expected 412 PreconditionFailedError for a stale If-Match, got %T: %v", err, err)
+	}
+	if camps.got != nil {
+		t.Error("ReplaceCampaign must NOT be called when the If-Match version is stale")
+	}
+}
+
 // UpdateCampaign must NOT wipe the stored config when the caller omits config, and it must
 // leave the run status untouched (the caller round-trips the CURRENT status on a name edit;
 // run-state changes go through the toggle, not this DB-only path).
