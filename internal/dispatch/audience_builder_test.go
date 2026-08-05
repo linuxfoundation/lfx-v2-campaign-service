@@ -27,8 +27,10 @@ func (r *recordingResolver) ResolvePastEventNames(_ context.Context, eventTerm, 
 // never match. Event names normally CONTAIN their year ("KubeCon Korea 2026"), and the warehouse
 // query does an `ILIKE '%term%'` match — so passing the full name asks for rows containing
 // "KubeCon Korea 2026", which excludes every past edition (they carry a different year in their
-// name). Sibling discovery silently returned zero for every returning event, degrading each one
-// to a country-only audience.
+// name). Searching on the year-stripped family name instead finds sibling editions across years;
+// numeric year exclusion is then applied in Go over the returned rows, not baked into the SQL.
+// Sibling discovery silently returned zero for every returning event before this fix, degrading
+// each one to a country-only audience.
 func TestResolvePastEditions_StripsTheYearFromTheSearchTerm(t *testing.T) {
 	r := &recordingResolver{}
 	b := NewAudienceBuilder(nil, nil, r)

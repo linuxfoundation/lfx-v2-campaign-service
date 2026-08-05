@@ -1,5 +1,20 @@
 # Log
 
+## 2026-08-05 (continuation: finish PR #61's round-3 knowledge-doc + comment items)
+
+**Docs** — Two items from dealako's round-3 review on PR #61 (LFXV2-2774) landed as inline
+threads *after* the initial five-item batch (previous entry, same date) was already pushed:
+- `docs/knowledge/kubernetes/deployment.md` and `docs/knowledge/code/internal-infrastructure-config.md`
+  didn't mention the `SNOWFLAKE_ACCOUNT` / `SNOWFLAKE_USER` / `SNOWFLAKE_PRIVATE_KEY` /
+  `SNOWFLAKE_WAREHOUSE` / `SNOWFLAKE_ROLE` secret/config wiring added by this branch — both files
+  still only documented `PG*`/`CREDENTIAL_ENCRYPTION_KEY`. Added the Snowflake settings, noting
+  they're optional as a group (unlike PG*) and degrade audience building to country-only rather
+  than blocking startup.
+- Tightened the `internal/dispatch/audience_builder.go` / `audience_builder_test.go` year-stripping
+  comments further per dealako's exact wording: they now explicitly state that year exclusion is
+  applied in Go over the returned rows, not baked into the SQL predicate — the same drift the
+  previous entry's fix addressed, but dealako's inline thread asked for a more precise phrasing.
+
 ## 2026-08-05 (continuation: close out dealako's round-3 doc/test cleanup on PR #61)
 
 **Fix** — Addressed the five minor + two nit items from dealako's third review round on the
