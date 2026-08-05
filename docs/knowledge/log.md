@@ -111,12 +111,14 @@ version applied WITHOUT running the down migration, so nothing else clears it.
 block — an invalid index serves no query, so nothing that was working is blocked, and neither
 form of CONCURRENTLY can run inside the conditional). It must do both: `force`-recovering the
 dirty schema marks version 8 applied WITHOUT running it, so golang-migrate never re-executes
-000008 and its `IF NOT EXISTS` would skip regardless — "000008 rebuilds it on the next deploy"
-was false, and an operator following it would have waited forever while the scan silently
-full-scanned. A VALID index is untouched, and both object names are schema-qualified so a future
-multi-schema setup cannot inspect one index and drop another. Verified on live PostgreSQL 16
-across all three paths: INVALID → dropped and rebuilt VALID with a definition identical to
-000008; healthy → no-op; absent → no-op, no error.
+000008 and its `IF NOT EXISTS` would skip regardless. Recovery therefore requires operator
+force + a subsequent deploy to apply 000009 (which then drops the INVALID and rebuilds VALID).
+This is either automatic (next deploy) or manual (reissue `CREATE INDEX CONCURRENTLY
+idx_campaigns_stuck_claims ON campaigns (created_at) WHERE status = 'pending'`) — waiting for
+deployment alone is the correct path. A VALID index is untouched, and both object names are
+schema-qualified so a future multi-schema setup cannot inspect one index and drop another.
+Verified on live PostgreSQL 16 across all three paths: INVALID → dropped and rebuilt VALID
+with a definition identical to 000008; healthy → no-op; absent → no-op, no error.
 
 **Update** — `idx_campaigns_stuck_claims` is now built CONCURRENTLY (LFXV2-2665, PR #59 review).
 A plain `CREATE INDEX` takes a lock blocking INSERT/UPDATE/DELETE on `campaigns` for the whole
