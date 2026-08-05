@@ -645,6 +645,56 @@ func TestGoogleAds_ToggleStatus_PauseCascadeStopsOnChildFailure(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_ToggleStatus_PauseCascadeChildDefiniteFailureIsUnconfirmed pins the definite-4xx
+// counterpart of TestGoogleAds_ToggleStatus_PauseCascadeStopsOnChildFailure (which uses a 5xx):
+// once the campaign pause has already succeeded, ANY child mutate failure — including a definite
+// 4xx — is a genuine partial cascade (the parent already changed, the child's outcome is
+// unknown) and must be reported Unconfirmed, not passed through as a clean error.
+func TestGoogleAds_ToggleStatus_PauseCascadeChildDefiniteFailureIsUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "adGroups:mutate") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid ad group status"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := provisionedGoogleAdsCampaign()
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error when the child ad-group mutate fails")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a definite 4xx child mutate after the campaign already paused must be reported UNCONFIRMED, got %T: %v", err, err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	if len(gotPaths) != 2 {
+		t.Fatalf("issued %d calls, want 2 (campaign, then the failing ad group mutate — no ad mutate attempted): %v", len(gotPaths), gotPaths)
+	}
+	if !strings.HasSuffix(gotPaths[0], "campaigns:mutate") || !strings.HasSuffix(gotPaths[1], "adGroups:mutate") {
+		t.Errorf("paths = %v, want [campaigns:mutate, adGroups:mutate]", gotPaths)
+	}
+}
+
 // TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure_Refused verifies that
 // ACTIVATE is refused (it's re-enabled in GA-4 once targeting is provisioned).
 func TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure_Refused(t *testing.T) {
