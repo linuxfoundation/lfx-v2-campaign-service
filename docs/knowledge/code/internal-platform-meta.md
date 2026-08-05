@@ -101,6 +101,24 @@ UNCONFIRMED, so a create that may have committed is not blind-retried into a
 duplicate. The status is preserved even when the response body is unreadable or
 oversized, so an ambiguous outcome is never downgraded to a definite failure.
 
+## Campaign and ad-set idempotency by name
+
+Unlike Google Ads, Microsoft, and LinkedIn — which reject campaign name duplicates
+and let a retry discover the existing id via a name query — Meta's Graph API does
+NOT enforce campaign-name uniqueness and exposes NO create-idempotency key. A
+blind retry would silently create a second paid campaign with the identical name.
+To close this window, `CreateCampaign` runs a "poor-man's idempotency" reconciliation:
+before POSTing to create a campaign or ad set, `findCampaignByName` / `findAdSetByName`
+(using Graph API `filtering=[{"field":"name","operator":"EQUAL","value":name}]`
+lookups) check whether the name already exists. If found, the existing id is reused
+and the resource is not re-created. If the lookup itself fails ambiguously
+(transport/5xx), an UNCONFIRMED partial result is returned (the resource MAY exist,
+verify before retrying); a pre-send failure (dial error, definite 4xx) on the lookup
+is a clean error. Campaign names and ad-set names are both fully deterministic
+(composed from event name, region, objective, project), so a retry reaches the
+exact same names and reconciles correctly rather than creating duplicates. This
+closes the gap from LFXV2-2665 for campaign- and ad-set-level resources.
+
 ## Campaign status toggle
 
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, adSetID, status)` pauses/resumes a campaign

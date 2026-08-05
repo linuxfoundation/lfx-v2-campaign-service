@@ -131,6 +131,9 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -286,6 +289,9 @@ func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -336,6 +342,9 @@ func TestMeta_ConfigHSTokenTakesPrecedence(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):

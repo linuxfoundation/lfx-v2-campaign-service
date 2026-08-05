@@ -412,6 +412,77 @@ type createResponse struct {
 	ID string `json:"id"`
 }
 
+// findCampaignByName looks up an existing campaign in the ad account by exact
+// name match. Meta enforces no name-uniqueness constraint and exposes no create
+// idempotency key (see CreateCampaign's doc comment), so this is OUR safeguard —
+// mirroring the isDuplicateCampaignNameErr reconcile pattern used by the
+// googleads/microsoft clients — run BEFORE the create call rather than reactively
+// after a duplicate-name rejection, since Meta would silently create a second
+// paid campaign with the same name instead of rejecting it.
+//
+// Returns ("", nil) when no campaign with that name exists. A non-nil error means
+// the lookup itself failed — the caller cannot tell absence from a failed check,
+// so it must NOT proceed to create as if the name were confirmed free.
+func (c *Client) findCampaignByName(ctx context.Context, accountID, name string) (string, error) {
+	filtering, err := json.Marshal([]map[string]string{{"field": "name", "operator": "EQUAL", "value": name}})
+	if err != nil {
+		return "", fmt.Errorf("meta campaign lookup: encoding name filter: %w", err)
+	}
+	path := "/" + accountID + "/campaigns?fields=id&filtering=" + url.QueryEscape(string(filtering))
+	var resp struct {
+		// Data is a pointer slice so an absent `data` field (malformed 2xx) is
+		// distinguishable from a present-but-empty `{"data":[]}` — see listAdIDs'
+		// identical reasoning. A malformed body must NOT be read as "no match".
+		Data *[]struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return "", err
+	}
+	if resp.Data == nil {
+		return "", fmt.Errorf("meta campaign lookup for %q returned a 2xx response with no data field; cannot confirm absence", name)
+	}
+	if len(*resp.Data) == 0 {
+		return "", nil
+	}
+	id := strings.TrimSpace((*resp.Data)[0].ID)
+	if id == "" {
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id", name)
+	}
+	return id, nil
+}
+
+// findAdSetByName mirrors findCampaignByName, scoped to the ad sets under a
+// single already-resolved campaignID (the campaign's own name match already
+// disambiguates the account, so no separate accountID filter is needed).
+func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (string, error) {
+	filtering, err := json.Marshal([]map[string]string{{"field": "name", "operator": "EQUAL", "value": name}})
+	if err != nil {
+		return "", fmt.Errorf("meta ad set lookup: encoding name filter: %w", err)
+	}
+	path := "/" + campaignID + "/adsets?fields=id&filtering=" + url.QueryEscape(string(filtering))
+	var resp struct {
+		Data *[]struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return "", err
+	}
+	if resp.Data == nil {
+		return "", fmt.Errorf("meta ad set lookup for %q returned a 2xx response with no data field; cannot confirm absence", name)
+	}
+	if len(*resp.Data) == 0 {
+		return "", nil
+	}
+	id := strings.TrimSpace((*resp.Data)[0].ID)
+	if id == "" {
+		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id", name)
+	}
+	return id, nil
+}
+
 // accountPreflight models the fields read from the ad-account object during the
 // account preflight (GET /act_<id>?fields=name,account_status,currency). The
 // AdAccount node exposes the ISO 4217 currency CODE only — it does NOT expose a
@@ -2138,53 +2209,86 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	campaignName := buildCampaignName(in, geoCountries)
 
-	var campaignResp createResponse
-	err = c.doRequest(ctx, http.MethodPost, "/"+accountID+"/campaigns", map[string]any{
-		"name":                            campaignName,
-		"objective":                       objParams.CampaignObjective,
-		"status":                          "PAUSED",
-		"special_ad_categories":           []string{},
-		"is_adset_budget_sharing_enabled": false,
-	}, &campaignResp)
-	if err != nil {
-		// An AMBIGUOUS failure (transport/timeout or a 5xx) can occur AFTER Meta
-		// committed the create: the possibly-created PAUSED campaign has the
-		// deterministic campaignName, so return a partial result carrying it (like
-		// the no-id 2xx case below) plus an UNCONFIRMED step, rather than discarding
-		// the name and letting a retry duplicate it. A clear 4xx/validation error
-		// means nothing was created, so keep the plain (nil, err). Meta exposes no
-		// create idempotency key, so this reconcile-by-name is the safeguard
-		// (retry-safe idempotency is tracked in LFXV2-2665). Mirrors the reddit
-		// client's createOutcomeAmbiguous handling.
-		if createOutcomeAmbiguous(err) {
-			steps = append(steps, "Campaign creation outcome is UNCONFIRMED (ambiguous response — timeout, server error, or an unfollowed redirect); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
-			return &CampaignResult{
-				Platform:     "meta-ads",
-				CampaignName: campaignName,
-				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
-				Steps:        steps,
-			}, fmt.Errorf("meta campaign creation UNCONFIRMED (a PAUSED campaign %q may exist): %w", campaignName, err)
+	// Step 2a: reconcile by name BEFORE creating. buildCampaignName is fully
+	// deterministic (same brief → same name), so a retry after a prior
+	// UNCONFIRMED/malformed-success outcome reaches the exact same name — but
+	// Meta enforces no name uniqueness and would silently create a SECOND paid
+	// campaign rather than reject the duplicate (unlike Google/Microsoft, which
+	// error on a duplicate name and let the client self-heal by re-resolving the
+	// id). Looking the name up first, instead of reacting to a duplicate-name
+	// error that Meta never sends, is the only way to close that window.
+	existingCampaignID, lookupErr := c.findCampaignByName(ctx, accountID, campaignName)
+	if lookupErr != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("meta campaign creation aborted during name lookup (caller context done; nothing created): %w", lookupErr)
 		}
-		return nil, err
-	}
-	campaignID := campaignResp.ID
-	if campaignID == "" {
-		// A 2xx with no id is a malformed success: Meta may have created a PAUSED
-		// campaign whose id we couldn't read. Return a partial result carrying the
-		// campaign NAME so an orphan is reconcilable by name (not discarded), with an
-		// UNCONFIRMED note. NOTE: the campaign POST is not retry-safe in general —
-		// Meta exposes no create idempotency key, so a lost/timed-out response can't
-		// be distinguished from a not-created one; true retry-safe idempotency is
-		// tracked in LFXV2-2665. This makes the malformed-success case reconcilable.
-		steps = append(steps, "Campaign creation returned no campaign ID (malformed response); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
+		// A pre-send failure (dial error) or a definite 4xx on the lookup GET
+		// means the lookup never reached Meta / was cleanly rejected — nothing
+		// was created, so this is a clean failure like any other, not
+		// UNCONFIRMED. Only an ambiguous lookup outcome (transport/5xx — Meta may
+		// have received it) genuinely can't rule out a prior create, so only that
+		// case returns the UNCONFIRMED partial.
+		if !createOutcomeAmbiguous(lookupErr) {
+			return nil, fmt.Errorf("meta campaign lookup failed: %w", lookupErr)
+		}
+		steps = append(steps, "Campaign lookup outcome is UNCONFIRMED (ambiguous response — timeout, server error, or an unfollowed redirect); cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
 		return &CampaignResult{
 			Platform:     "meta-ads",
 			CampaignName: campaignName,
 			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 			Steps:        steps,
-		}, fmt.Errorf("meta campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
+		}, fmt.Errorf("meta campaign lookup UNCONFIRMED (cannot confirm %q is absent; verify in Meta Ads Manager before retrying): %w", campaignName, lookupErr)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (%s, PAUSED)", campaignID, objectiveLabel(objective)))
+
+	var campaignID string
+	if existingCampaignID != "" {
+		campaignID = existingCampaignID
+		steps = append(steps, fmt.Sprintf("Campaign already exists by name: %s (not re-created)", campaignID))
+	} else {
+		var campaignResp createResponse
+		err = c.doRequest(ctx, http.MethodPost, "/"+accountID+"/campaigns", map[string]any{
+			"name":                            campaignName,
+			"objective":                       objParams.CampaignObjective,
+			"status":                          "PAUSED",
+			"special_ad_categories":           []string{},
+			"is_adset_budget_sharing_enabled": false,
+		}, &campaignResp)
+		if err != nil {
+			// An AMBIGUOUS failure (transport/timeout or a 5xx) can occur AFTER Meta
+			// committed the create: the possibly-created PAUSED campaign has the
+			// deterministic campaignName, so return a partial result carrying it (like
+			// the no-id 2xx case below) plus an UNCONFIRMED step, rather than discarding
+			// the name and letting a retry duplicate it. A clear 4xx/validation error
+			// means nothing was created, so keep the plain (nil, err). A later retry
+			// finds this name via findCampaignByName above and reconciles instead of
+			// duplicating.
+			if createOutcomeAmbiguous(err) {
+				steps = append(steps, "Campaign creation outcome is UNCONFIRMED (ambiguous response — timeout, server error, or an unfollowed redirect); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
+				return &CampaignResult{
+					Platform:     "meta-ads",
+					CampaignName: campaignName,
+					MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+					Steps:        steps,
+				}, fmt.Errorf("meta campaign creation UNCONFIRMED (a PAUSED campaign %q may exist): %w", campaignName, err)
+			}
+			return nil, err
+		}
+		campaignID = campaignResp.ID
+		if campaignID == "" {
+			// A 2xx with no id is a malformed success: Meta may have created a PAUSED
+			// campaign whose id we couldn't read. Return a partial result carrying the
+			// campaign NAME so an orphan is reconcilable by name (not discarded), with an
+			// UNCONFIRMED note. A later retry finds it via findCampaignByName above.
+			steps = append(steps, "Campaign creation returned no campaign ID (malformed response); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
+			return &CampaignResult{
+				Platform:     "meta-ads",
+				CampaignName: campaignName,
+				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+				Steps:        steps,
+			}, fmt.Errorf("meta campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
+		}
+		steps = append(steps, fmt.Sprintf("Campaign created: %s (%s, PAUSED)", campaignID, objectiveLabel(objective)))
+	}
 
 	// Step 3: Ad set (budget, placements, and promoted object were validated up
 	// front, before the campaign was created).
@@ -2240,38 +2344,64 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		adSetBody["daily_budget"] = budgetMinor
 	}
 
-	var adSetResp createResponse
-	if err := c.doRequest(ctx, http.MethodPost, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
-		// The campaign was already created (PAUSED). Return a partial result carrying
-		// its id so the caller can identify/clean up the orphan without parsing the
-		// error string; auto-deleting here would race a retry that reuses it.
-		//
-		// An AMBIGUOUS ad-set failure (transport/timeout, a mutating 3xx now surfaced
-		// because redirects aren't followed, or a 5xx) can occur AFTER Meta committed
-		// the ad set — a definite "failed" instruction would let a retry create a
-		// DUPLICATE ad set. Word it UNCONFIRMED (verify before retrying) in that case;
-		// a clear 4xx rejection means nothing was created, so keep the plain "failed"
-		// wording. Mirrors the campaign and ad/creative create paths.
-		if createOutcomeAmbiguous(err) {
-			return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; an ad set may exist — verify in Meta Ads Manager before retrying): %w", campaignID, err)
+	// Reconcile the ad set by name too, same rationale as the campaign lookup
+	// above: adSetName is deterministic (in.EventName + objective), and a retry
+	// that already created the campaign (existingCampaignID != "" above, or a
+	// fresh create just above) must not blindly re-POST an ad set that a prior
+	// attempt already made under the same campaign.
+	existingAdSetID, adSetLookupErr := c.findAdSetByName(ctx, campaignID, adSetName)
+	if adSetLookupErr != nil {
+		if ctx.Err() != nil {
+			return partialResult(), fmt.Errorf("meta campaign aborted during ad set name lookup (campaign %s created, PAUSED; caller context done): %w", campaignID, adSetLookupErr)
 		}
-		return partialResult(), fmt.Errorf("meta ad set creation failed (campaign %s created, PAUSED): %w", campaignID, err)
+		// The campaign already exists either way, so the partial result is the
+		// same — but word it UNCONFIRMED only when the lookup itself was
+		// ambiguous (Meta may have received it); a pre-send/4xx lookup failure
+		// means the ad set was definitely not looked up, not "may exist".
+		if !createOutcomeAmbiguous(adSetLookupErr) {
+			return partialResult(), fmt.Errorf("meta ad set lookup failed (campaign %s created, PAUSED): %w", campaignID, adSetLookupErr)
+		}
+		return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (campaign %s created, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, adSetLookupErr)
 	}
-	adSetID = adSetResp.ID
-	if adSetID == "" {
-		// A 2xx with no id is a malformed SUCCESS: Meta may have created the ad set
-		// but didn't return a usable id. UNCONFIRMED (verify before retrying), NOT a
-		// clean failure — a blind retry could duplicate an ad set Meta already made.
-		// Mirrors the campaign/ad no-id and the ad-set error-path handling.
-		return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; Meta returned a 2xx with no ad set ID — an ad set may exist; verify in Meta Ads Manager before retrying)", campaignID)
+	if existingAdSetID != "" {
+		adSetID = existingAdSetID
+		steps = append(steps, fmt.Sprintf("Ad set already exists by name: %s (not re-created)", adSetID))
+	} else {
+		var adSetResp createResponse
+		if err := c.doRequest(ctx, http.MethodPost, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
+			// The campaign was already created (PAUSED). Return a partial result carrying
+			// its id so the caller can identify/clean up the orphan without parsing the
+			// error string; auto-deleting here would race a retry that reuses it.
+			//
+			// An AMBIGUOUS ad-set failure (transport/timeout, a mutating 3xx now surfaced
+			// because redirects aren't followed, or a 5xx) can occur AFTER Meta committed
+			// the ad set — a definite "failed" instruction would let a retry create a
+			// DUPLICATE ad set. Word it UNCONFIRMED (verify before retrying) in that case;
+			// a clear 4xx rejection means nothing was created, so keep the plain "failed"
+			// wording. Mirrors the campaign and ad/creative create paths. A later retry
+			// finds this ad set via findAdSetByName above and reconciles instead of
+			// duplicating.
+			if createOutcomeAmbiguous(err) {
+				return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; an ad set may exist — verify in Meta Ads Manager before retrying): %w", campaignID, err)
+			}
+			return partialResult(), fmt.Errorf("meta ad set creation failed (campaign %s created, PAUSED): %w", campaignID, err)
+		}
+		adSetID = adSetResp.ID
+		if adSetID == "" {
+			// A 2xx with no id is a malformed SUCCESS: Meta may have created the ad set
+			// but didn't return a usable id. UNCONFIRMED (verify before retrying), NOT a
+			// clean failure — a blind retry could duplicate an ad set Meta already made.
+			// Mirrors the campaign/ad no-id and the ad-set error-path handling.
+			return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; Meta returned a 2xx with no ad set ID — an ad set may exist; verify in Meta Ads Manager before retrying)", campaignID)
+		}
+		budgetLabel := "daily"
+		if in.LifetimeBudget {
+			budgetLabel = "lifetime"
+		}
+		// Currency-neutral: Meta interprets the budget in the ad account's currency,
+		// which may not be USD, so don't prefix with '$'.
+		steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.Budget, budgetLabel, strings.Join(geoCountries, ", ")))
 	}
-	budgetLabel := "daily"
-	if in.LifetimeBudget {
-		budgetLabel = "lifetime"
-	}
-	// Currency-neutral: Meta interprets the budget in the ad account's currency,
-	// which may not be USD, so don't prefix with '$'.
-	steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.Budget, budgetLabel, strings.Join(geoCountries, ", ")))
 
 	// Step 4: creative + ad per variant (per-variant failures are non-fatal).
 	for i, variant := range validVariants {

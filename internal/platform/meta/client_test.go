@@ -314,7 +314,7 @@ func TestBuildUTMURLPreservesSlashInQueryValue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateCampaignHappyPath(t *testing.T) {
-	authCapture := make(chan string, 8)
+	authCapture := make(chan string, 16)
 	campaignCap := newBodyCapture()
 	adsetCap := newBodyCapture()
 	creativeCap := newBodyCapture()
@@ -326,7 +326,11 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Campaign/ad-set name lookup for reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+			// Account preflight check
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			campaignCap.set(decodeBody(t, r))
@@ -483,6 +487,9 @@ func TestCreateCampaignNormalizesEventName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -562,6 +569,9 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -620,6 +630,9 @@ func TestCreateCampaignAdSetAmbiguousIsUnconfirmed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -669,6 +682,9 @@ func TestCreateCampaignAdSetNoIDIsUnconfirmed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -715,6 +731,9 @@ func TestCreateCampaignNoIDReturnsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -751,6 +770,9 @@ func TestCreateCampaignAmbiguousCampaignCreateReturnsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -832,6 +854,9 @@ func TestCreateCampaign4xxCampaignCreateReturnsNoPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -904,6 +929,9 @@ func TestCreateCampaignSuccessStepsHideSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -975,6 +1003,9 @@ func TestCreateCampaignWhitespaceOnlyGeosDefaultToUS(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1043,6 +1074,9 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1105,6 +1139,9 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 			case r.Method == http.MethodGet:
 				_, _ = io.WriteString(w, `{"name":"x"}`)
 			case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1274,6 +1311,9 @@ func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 				case r.Method == http.MethodGet:
 					// Preflight returns the account ISO currency code (NOT a
 					// currency_offset field — the AdAccount node does not expose one).
@@ -1324,6 +1364,9 @@ func TestCreateCampaignExplicitOffsetMustMatchPreflightCurrency(t *testing.T) {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 			case r.Method == http.MethodGet:
 				_, _ = io.WriteString(w, `{"name":"x","currency":"`+currency+`"}`)
 			case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1453,6 +1496,9 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1501,6 +1547,9 @@ func TestCreateCampaignReportsDroppedIneligibleGeos(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1574,6 +1623,9 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1637,6 +1689,9 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 func TestNonGraphErrorBodySurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"name":"x"}`)
@@ -1690,6 +1745,9 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1762,6 +1820,8 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 		}
 		body := `{"id":"x"}`
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
@@ -1826,6 +1886,8 @@ func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
 		}
 		body := `{"id":"x"}`
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
@@ -1902,6 +1964,8 @@ func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 		}
 		body := `{"id":"x"}`
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
@@ -1954,6 +2018,9 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			// Account verification fails.
 			w.WriteHeader(http.StatusInternalServerError)
@@ -2020,6 +2087,9 @@ func TestCreateCampaignNormalizesObjective(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 				case r.Method == http.MethodGet:
 					_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 				case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -2096,6 +2166,9 @@ func TestCreateCampaignAcceptsAnyActiveAccountStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","account_status":201,"currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -2295,6 +2368,10 @@ func TestCreateCampaignAtLimitCopyAllowed(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"x"}`)
 			return
 		}
+		if strings.Contains(r.URL.RawQuery, "filtering") {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"name":"x"}`)
 	}))
 	defer srv.Close()
@@ -2432,6 +2509,9 @@ func TestCreateCampaignAdSetFailureReportsOrphanCampaignID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -2705,6 +2785,9 @@ func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -2883,6 +2966,9 @@ func TestCreateCampaignAcceptsLargeLowValueCurrencyBudget(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			// VND account: zero-decimal, offset 1.
 			_, _ = io.WriteString(w, `{"name":"x","currency":"VND"}`)
@@ -3303,6 +3389,10 @@ func TestCreateCampaignAdFailureSurfacesOrphanCreative(t *testing.T) {
 		}
 		body := `{"id":"x"}`
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering="):
+			// Campaign/ad-set name-reconciliation lookups: no existing match, so
+			// creation proceeds normally.
+			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
@@ -4181,5 +4271,134 @@ func TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst(t *testing.T)
 	}
 	if len(seq) == 0 || seq[0] != "campaign" {
 		t.Fatalf("campaign gate must be flipped FIRST on pause; sequence = %v", seq)
+	}
+}
+
+// TestFindCampaignByName_Match verifies that a campaign name lookup returns the
+// matched campaign's ID when found.
+func TestFindCampaignByName_Match(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"data":[{"id":"camp_123"}]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "camp_123" {
+		t.Errorf("id = %q, want camp_123", id)
+	}
+}
+
+// TestFindCampaignByName_NoMatch verifies that a campaign name lookup returns
+// empty string and nil error when no campaign is found.
+func TestFindCampaignByName_NoMatch(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"data":[]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty string", id)
+	}
+}
+
+// TestFindCampaignByName_MalformedData verifies that a lookup returning a 2xx
+// with no data field is treated as a non-recoverable error — fail closed.
+func TestFindCampaignByName_MalformedData(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign")
+	if err == nil {
+		t.Fatal("findCampaignByName error = nil, want non-nil error for malformed response")
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty string on error", id)
+	}
+	if !strings.Contains(err.Error(), "cannot confirm absence") {
+		t.Errorf("error message = %q, want 'cannot confirm absence'", err.Error())
+	}
+}
+
+// TestCreateCampaignReusesExistingByName verifies that when a campaign with the
+// given name already exists, CreateCampaign reuses its ID instead of creating a
+// new one.
+func TestCreateCampaignReusesExistingByName(t *testing.T) {
+	campaignPostCount := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"id":"x"}`
+		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			// Existing campaign found by name.
+			body = `{"data":[{"id":"existing_camp_123"}]}`
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
+			// Track POST attempts — should NOT be called for reused campaign.
+			campaignPostCount++
+			body = `{"id":"should_not_appear"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"adset_1"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_1"}`
+		case strings.HasSuffix(req.URL.Path, "/ads"):
+			body = `{"id":"ad_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.CampaignID != "existing_camp_123" {
+		t.Errorf("campaign id = %q, want existing_camp_123", res.CampaignID)
+	}
+	if campaignPostCount != 0 {
+		t.Errorf("campaign POST called %d times, want 0 (should reuse by name)", campaignPostCount)
+	}
+	if !anyStepContains(res.Steps, "Campaign already exists by name") {
+		t.Errorf("expected 'Campaign already exists by name' step, got %v", res.Steps)
 	}
 }

@@ -1,5 +1,16 @@
 # Log
 
+## 2026-08-05
+
+**Update** — Meta campaign/ad-set name reconciliation idempotency (LFXV2-2665).
+Meta's Graph API enforces no campaign-name uniqueness and exposes no create-idempotency key,
+unlike Google/Microsoft/LinkedIn. `CreateCampaign` now runs pre-create name lookups via
+`findCampaignByName` / `findAdSetByName` using Graph API `filtering` queries before POSTing,
+reusing the id if found rather than creating a duplicate. Names are fully deterministic, so
+retries reach the same names and reconcile correctly. Lookup failures are classified:
+ambiguous (transport/5xx) → UNCONFIRMED partial (may exist, verify first); pre-send/4xx
+→ clean error. Four new tests cover match/no-match/malformed-data/reuse paths.
+
 ## 2026-08-04
 
 **Update** — Every stuck claim now requires an upstream check (LFXV2-2665, PR #59 review).
