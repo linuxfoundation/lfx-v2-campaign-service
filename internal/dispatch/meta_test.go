@@ -598,9 +598,12 @@ func TestMeta_ToggleStatus_NoPageIDNeeded(t *testing.T) {
 // ---- ReadMetrics --------------------------------------------------------
 
 func TestMeta_ReadMetrics_HappyPath(t *testing.T) {
+	var mu sync.Mutex
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotPath = r.URL.Path + "?" + r.URL.RawQuery
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":[{"impressions":"1000","clicks":"40","spend":"25.00"}]}`)
 	}))
@@ -618,8 +621,11 @@ func TestMeta_ReadMetrics_HappyPath(t *testing.T) {
 	if want := 0.04; m.Ctr != want {
 		t.Errorf("Ctr = %v, want %v", m.Ctr, want)
 	}
-	if !strings.HasPrefix(gotPath, "/777/insights?") || !strings.Contains(gotPath, "date_preset=last_30d") {
-		t.Errorf("request path = %s", gotPath)
+	mu.Lock()
+	path := gotPath
+	mu.Unlock()
+	if !strings.HasPrefix(path, "/777/insights?") || !strings.Contains(path, "date_preset=last_30d") {
+		t.Errorf("request path = %s", path)
 	}
 }
 

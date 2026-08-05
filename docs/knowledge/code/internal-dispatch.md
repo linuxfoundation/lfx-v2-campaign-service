@@ -238,6 +238,17 @@ this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contr
 submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
 live read) — deferred, not attempted here.
 
+**Meta** also implements it: `MetaDispatcher.ReadMetrics` resolves the connection the same way
+`ToggleStatus`/`Dispatch` do, then calls `meta.Client.GetCampaignMetrics`, which issues a single
+`GET /{campaign-id}/insights` Graph API request for `impressions`, `clicks`, `spend` over a
+`date_preset` mapped from `window` (validated against a platform-side allow-list — an invalid
+caller value fails inside the client). The campaign id is validated as digits-only (the same
+`numericIDRE` sibling Meta client methods use) BEFORE string concatenation into the request path,
+since the Graph API has no parameterized path segments. `spend` arrives as a decimal-USD JSON
+string (not micros, unlike Google Ads) and is `strconv.ParseFloat`'d then scaled ×1,000,000 and
+rounded (not truncated) to `CostMicros`, guarding against non-finite (`NaN`/`Inf`) results. CTR is
+computed client-side the same way as Google Ads.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

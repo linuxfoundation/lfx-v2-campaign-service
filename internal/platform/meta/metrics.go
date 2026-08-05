@@ -6,6 +6,7 @@ package meta
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,8 +94,8 @@ func parseMetricInt(s string) (int64, error) {
 // than surfacing "not found" — mirrors googleads.GetCampaignMetrics.
 func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, window MetricsWindow) (*CampaignMetrics, error) {
 	id := strings.TrimSpace(campaignID)
-	if id == "" {
-		return nil, fmt.Errorf("get campaign metrics: campaign id must not be empty")
+	if id == "" || !numericIDRE.MatchString(id) {
+		return nil, fmt.Errorf("get campaign metrics: campaign id %q must be numeric", campaignID)
 	}
 	w := window
 	if w == "" {
@@ -138,6 +139,13 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 				Err:    fmt.Errorf("decode campaign metrics row: spend %q: %w", row.Spend, err),
 			}
 		}
+		if math.IsNaN(spend) || math.IsInf(spend, 0) {
+			return nil, &transportError{
+				Method: http.MethodGet,
+				Path:   path,
+				Err:    fmt.Errorf("decode campaign metrics row: spend %q is not a finite number", row.Spend),
+			}
+		}
 	}
 
 	m := &CampaignMetrics{
@@ -145,7 +153,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		Window:      w,
 		Impressions: impressions,
 		Clicks:      clicks,
-		CostMicros:  int64(spend * 1_000_000),
+		CostMicros:  int64(math.Round(spend * 1_000_000)),
 	}
 	if impressions > 0 {
 		m.Ctr = float64(clicks) / float64(impressions)
