@@ -317,6 +317,28 @@ func (s *BriefService) briefIndexPayload(action string) domain.IndexPayloadFunc 
 	}
 }
 
+// FindBrief returns the saved brief for an event slug, or 404 when none exists.
+//
+// This is the "have I already generated a brief for this event?" lookup. The UI derives the
+// slug from a pasted event URL and calls this BEFORE generating: a 200 returns the stored
+// brief (with its AI-generated copy/keywords/targeting, plus any edits made since), and a
+// 404 means this event has no brief yet, so one should be generated.
+//
+// A 404 is an ORDINARY outcome, not a failure — first-time generation is the common case.
+// This endpoint never generates or mutates anything; regenerating is an explicit
+// update-brief call, so a marketer's edits to the AI output are never silently clobbered.
+func (s *BriefService) FindBrief(ctx context.Context, p *briefs.FindBriefPayload) (*briefs.Brief, error) {
+	briefRepo, _, _, _, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	b, err := briefRepo.FindBriefByEventSlug(ctx, p.ProjectID, p.EventSlug)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	return briefResult(b), nil
+}
+
 func (s *BriefService) GetBrief(ctx context.Context, p *briefs.GetBriefPayload) (*briefs.Brief, error) {
 	briefRepo, _, _, _, err := s.ready()
 	if err != nil {

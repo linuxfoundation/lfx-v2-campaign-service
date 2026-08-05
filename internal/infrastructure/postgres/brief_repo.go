@@ -63,6 +63,29 @@ func classifyNoRowTx(ctx context.Context, tx pgx.Tx, projectID, id string) error
 	return domain.ErrPreconditionFailed
 }
 
+// FindBriefByEventSlug returns the non-archived brief for (projectID, eventSlug), or
+// ErrNotFound when none exists. This is the "have I already generated a brief for this
+// event?" lookup: the UI derives the slug from a pasted event URL and calls this before
+// generating, so a previously generated brief (with its AI copy/keywords/targeting) is
+// reused instead of silently regenerated.
+//
+// At most ONE row can match: uq_campaign_briefs_project_event is a UNIQUE index on
+// (project_id, event_slug) WHERE status <> 'archived' — the same predicate used here, so
+// this is an efficient unique-key lookup and archiving frees the slug for a fresh brief.
+// (Not an index-ONLY scan: briefCols selects every column while the index carries just the
+// two key columns, so the heap row is still fetched.)
+func (r *BriefRepo) FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {
+	q := `SELECT ` + briefCols + ` FROM campaign_briefs WHERE project_id = $1 AND event_slug = $2 AND status <> 'archived'`
+	b, err := scanBrief(r.db.QueryRow(ctx, q, projectID, eventSlug))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("find brief by event slug: %w", err)
+	}
+	return b, nil
+}
+
 // CreateBrief inserts a brief. Returns ErrConflict on UNIQUE(project_id, event_slug).
 func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	approvedBy, err := marshalActor(b.ApprovedBy)

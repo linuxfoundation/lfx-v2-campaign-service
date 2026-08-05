@@ -388,6 +388,102 @@ brief is read BEFORE the archive (`GetBrief` filters archived rows, so reading a
 return `ErrNotFound` and leave nothing to publish), then republished carrying the archived
 status and the version bump. A read failure does not block the archive: the write is the
 contract, indexing is best-effort.
+**Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where
+`MinLength(1)` actually bites (LFXV2-2812, PR #55 review).
+
+`TestFindBrief_HandlesLongSlugs` called `BriefService.FindBrief` directly, so it could not catch a
+length cap reintroduced in `design/brief.go`: goa generates that check into
+`DecodeFindBriefRequest`, which the service-level call bypasses. The test's comment nevertheless
+claimed it guarded against exactly that. Added
+`TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes`, which routes a real request through the
+goa muxer and decodes it. Verified binding by adding `MaxLength(64)` to the design and
+regenerating: the new test fails, the old one still passes.
+
+Also established, by removing it and regenerating, that `MinLength(1)` on the find-brief
+`event_slug` QUERY PARAM is redundant: because the param is `Required()`, goa already rejects `""`
+with a `MissingFieldError`, so no test can distinguish its presence. It is kept as
+belt-and-braces and is now documented as such. The constraint that genuinely does work is the one
+on `BriefWriteInput.event_slug` — a JSON BODY field, where `Required()` only checks key presence —
+and `TestBriefInput_RejectsEmptyEventSlug` was confirmed binding the same way (drop the design
+constraint, regenerate, test fails).
+
+**Fix** — Corrected a stale comment on `BriefInput` in `design/brief.go` that pointed maintainers
+at a `nonEmptyEventSlug()` helper which does not exist anywhere in the repo. The real mechanism is
+the separate `BriefWriteInput` type; the comment now names it.
+**Update** — Closed two test gaps on the X/Twitter status toggle (LFXV2-2808, PR #53 review).
+Both were unguarded contracts, not bugs: the code was already correct, but nothing would have
+caught a regression.
+
+The `twitter.IsOutcomeUnconfirmed` branch in `TwitterDispatcher.ToggleStatus` was untested. The
+two ambiguous shapes reach it differently, and only one depends on it to acquire the marker at
+all: a first-call 5xx surfaces as a plain `apiError`, which does NOT implement `Unconfirmed()`
+— `IsOutcomeUnconfirmed` recognizes it structurally via `createOutcomeAmbiguous`, and the
+dispatcher's wrap is what turns that into an error carrying the behavioral marker. A partial
+cascade already implements `Unconfirmed()` itself, so it would survive the branch's removal.
+Deleting the wrap therefore left every client test green while the 5xx outcome silently
+degraded to "not modified". Twitter was the only toggle-capable dispatcher without this
+boundary test (googleads, reddit and meta all had one). Pinned in BOTH directions — a definite
+4xx on the first call mutated nothing and must stay definite — so an unconditional wrap fails
+too.
+
+The deliberate create/toggle credential asymmetry was also undefended: `Dispatch` requires
+`funding_instrument_id`, `validateTwitterConnection` intentionally does not, because
+`UpdateCampaignAndChildrenStatus` only PUTs `entity_status` on entities that already exist and
+never puts that field on the wire. Requiring it in the shared validator would refuse an
+otherwise-valid pause. A future refactor folding the check into the shared validator now breaks
+a test instead of silently restoring the rejection the asymmetry exists to avoid. Recorded in
+`internal-dispatch.md` so the constraint is discoverable before someone attempts that tidy-up.
+
+**Fix** — A mutating 429 whose retry backoff is interrupted by the caller's deadline was
+misclassified as DEFINITE. `doRequest` returned the bare `ctx.Err()` from `sleepCtx`, erasing
+the 429 the server had already sent — and a mutating 429 is ambiguous, since X can report the
+throttle at or after the write is accepted. Reachable in production rather than theoretical:
+`maxRetryWait` (90s) exceeds the orchestrator's `toggleCallTimeout` (45s), so a server-declared
+`Retry-After` in between (e.g. 60s) passes the cap check, is accepted for sleeping, and is then
+cut short by the toggle deadline. The operator was told "not modified" about a pause that may
+well have applied — exactly the failure mode `partialCascadeError` exists to prevent, arriving
+through a different door.
+
+The client now returns the 429 as a typed `apiError` with the cancellation cause attached via a
+new `Unwrap`, so `IsOutcomeUnconfirmed` still classifies it while `errors.Is(err,
+context.DeadlineExceeded)` keeps working for callers that distinguish deadlines. `Error()` is
+unchanged and still renders only method/path/status, so nothing body-derived reaches a persisted
+Step. Also corrected `docs/architecture.md`, which still listed the X/Twitter and Google Ads
+toggles as follow-up work after both had landed; Microsoft is now the only outstanding one.
+
+## 2026-08-03
+
+**Update** — Split the brief WRITE payload from the response type (LFXV2-2812, PR #55 review).
+Putting `MinLength(1)` on `BriefInput` fixed the create side but broke the read side: the `Brief`
+RESPONSE type `Reference()`s `BriefInput`, and goa COPIES validations through `Reference`, so the
+constraint landed in all five response validators (12 generated checks). Any already-persisted
+empty-slug row then became undecodable by generated clients — breaking even `get-brief` for
+exactly the rows the fix exists to prevent going forward.
+
+Created `BriefData` (unconstrained, for responses) and kept `BriefInput` (constrained, for
+create/update). Verified by counting the generated checks: **0** response-side, **2** request-side.
+Redeclaring the attribute on `Brief` does NOT work — goa merges rather than overrides, so the
+constraint survives; a separate type is required. This approach also preserves backward
+compatibility: `BriefInput` stays the same generated type name, and tooling referencing the
+OpenAPI component doesn't break.
+
+**Update** — Closed an event_slug validation gap (LFXV2-2812, PR #55 review, @dealako). The
+find-brief lookup enforces `MinLength(1)` on `event_slug`, but `BriefInput.event_slug` — the
+CREATE contract — had only `Required()`. goa's `Required()` checks that the JSON key is PRESENT,
+not that the string is non-empty, and the `TEXT NOT NULL` column accepts `""` too.
+
+So a brief with an empty slug was creatable, occupied the `UNIQUE(project_id, event_slug)`
+index, and could then NEVER be recalled through the lookup — the caller got a 400 rather than
+the documented 404 (no brief yet) or 200 (found), and a re-create collided.
+
+`BriefInput.event_slug` — the create/update payload — now carries `MinLength(1)` so the two
+contracts agree. It could NOT go on `BriefData`: the `Brief` response type `Reference()`s that,
+and goa copies validations through `Reference`, so constraining it would make an
+already-persisted empty-slug row undecodable by generated clients. The comment on
+the lookup asserting that an empty slug "can never match a stored row" was simply FALSE and has
+been replaced with the real reason it is safe: the create side now rejects it. Loosening either
+constraint reopens the gap. `TestBriefInput_RejectsEmptyEventSlug` asserts the GENERATED
+validator, so dropping the constraint in the design and regenerating fails the test.
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the
 adapter but `registerDispatchers` had no `ProviderMicrosoftAds` entry, so a brief selecting
 microsoft recorded a job that finished "failed: no dispatcher registered" — the whole feature
@@ -457,6 +553,49 @@ concept as a deferred, unsolved follow-up rather than presented as handled.
 
 ## 2026-07-30
 
+**Update** — Added `find-brief` (LFXV2-2812): `GET /projects/{project_id}/briefs?event_slug=`
+returns the saved brief for an event, or 404 when none exists. This closes the
+generate-once/recall-later loop for the Campaigns Planning tab: the AI brief generation lives
+in the UI's Express BFF (`POST /brief/generate`), and this service persists the result — but
+nothing mapped an event URL back to the stored brief, because `get-brief` needs a brief id the
+caller does not have when pasting a URL.
+
+A 404 is an ORDINARY outcome, not a failure: first-time generation is the common case, and the
+caller generates then POSTs to `create-brief`. The endpoint never generates or mutates —
+regeneration stays an explicit `update-brief`, so a marketer's edits to the AI copy are never
+silently clobbered (the existing `version`/`If-Match` gate protects them).
+
+No migration: the lookup reuses `uq_campaign_briefs_project_event`, the partial unique index on
+`(project_id, event_slug) WHERE status <> 'archived'`. Archiving therefore frees the slug and a
+re-paste correctly 404s into a fresh generation.
+
+On D5 (Query Service owns lists): this is a KEYED item read, not a list — the unique index
+means it matches at most one brief, returning the same one-item-plus-ETag shape as
+`GET /briefs/{id}`, which D5 retains. Recorded in api-catalog.md next to the rule.
+**Update** — X/Twitter campaign status toggle (LFXV2-2808). `TwitterDispatcher` now implements
+`service.StatusToggler`, closing the toggle gap for the twitter adapter. New client method
+`UpdateCampaignAndChildrenStatus` PUTs `entity_status` (query params, not a JSON body — the same
+X Ads v12 contract `createRequest` documents) and a new exported `IsOutcomeUnconfirmed` mirrors
+the reddit client so the dispatcher can classify ambiguous outcomes across the package boundary.
+
+SCOPE is deliberately campaign + line item, NOT the promoted tweet: the create path leaves the
+association ACTIVE (the endpoint does not accept `entity_status`) and the LINE ITEM is X's
+delivery gate, so the association never needs to move. ORDER mirrors reddit — child first on
+ACTIVATE (nothing serves until the tree is ready), campaign gate first on PAUSE (delivery stops
+immediately). An ACTIVATE with an unknown line-item id is refused up front as
+`ErrCampaignNotProvisioned` → 409, never calling X.
+
+Connection rules are shared via `validateTwitterConnection`, which BOTH `Dispatch` and
+`ToggleStatus` call, so a create and a toggle accept exactly the same connections and cannot
+drift. Each caller keeps its own error wrapping (`Dispatch` wraps with `notCreated` for claim
+semantics; the toggle path must not). `funding_instrument_id` is checked only in `Dispatch` —
+it is a create-time field a toggle never uses, so requiring it would refuse a legitimate pause.
+A post-gate cascade failure returns `partialCascadeError` (`Unconfirmed() == true`) so a
+definite 4xx on the second entity is not misreported as "not modified" when the first already
+changed. `twitterChildIDs` reads the persisted `CampaignResult`
+blob, whose shape is pinned by a round-trip test (the blob is `json.Marshal` of an UNTAGGED
+struct, so the field is `LineItemID`; a renamed/nested field would silently yield "" and turn
+every ACTIVATE into a spurious 409).
 **Update** — Patched four indirect-dependency CVEs flagged by Dependabot on main
 (LFXV2-2811): `google.golang.org/grpc` 1.82.0→1.82.1 (HIGH, xDS RBAC + HTTP/2, reached via
 `goa.design/clue/debug`), `github.com/apache/thrift` 0.22.0→0.23.0 (HIGH,
