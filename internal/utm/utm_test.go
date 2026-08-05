@@ -610,3 +610,33 @@ func TestApply_RestoresFragmentTokens(t *testing.T) {
 		})
 	}
 }
+
+// TestApply_TokenOnlyHrefsAreNotTagged covers the case where an href is ONLY a HubSpot
+// personalization token, with no URL destination until the token is substituted at send time.
+//
+// Appending UTM query params to a token-only href creates something like
+// "{{contact.email}}?utm_campaign=...", which becomes malformed when HubSpot expands the
+// token — the params end up attached to the expanded URL, potentially breaking its structure
+// if the destination already has a query or fragment.
+//
+// Token-only hrefs must pass through unchanged.
+func TestApply_TokenOnlyHrefsAreNotTagged(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "NEW"}
+
+	cases := []string{
+		"{{contact.email}}",
+		"{{ contact.email }}",
+		"  {{  contact.email  }}  ",
+		"{{event.slug}}",
+		"{{ event.slug }}",
+	}
+
+	for _, raw := range cases {
+		t.Run(raw, func(t *testing.T) {
+			got := Apply(raw, p, "content-label")
+			assert.Equal(t, raw, got,
+				"a token-only href must not be tagged; it has no destination until substitution")
+			assert.NotContains(t, got, "utm_", "no UTM params may be appended")
+		})
+	}
+}

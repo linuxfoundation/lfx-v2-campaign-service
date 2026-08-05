@@ -99,6 +99,17 @@ func Apply(rawURL string, p Params, content string) string {
 	if strings.TrimSpace(rawURL) == "" || strings.TrimSpace(p.Campaign) == "" {
 		return rawURL
 	}
+	// A token-only href (e.g., "{{contact.email}}") has no destination until HubSpot
+	// substitutes the token at send time. Appending UTM query params to it creates
+	// "{{contact.email}}?utm_campaign=...", and when HubSpot expands the token, the
+	// parameters end up attached to whatever URL the token resolves to, potentially
+	// breaking the structure if the destination URL already has a query or fragment.
+	// Token-only hrefs must pass through unchanged.
+	trimmed := strings.TrimSpace(rawURL)
+	if templateToken.MatchString(trimmed) && templateToken.ReplaceAllString(trimmed, "") == "" {
+		// The URL is only whitespace and template tokens; return it unchanged.
+		return rawURL
+	}
 	if !isTaggable(rawURL) {
 		return rawURL
 	}
