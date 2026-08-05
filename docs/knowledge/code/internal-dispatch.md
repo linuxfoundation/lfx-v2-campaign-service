@@ -121,8 +121,9 @@ without touching every adapter.
 
 An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`) is wrapped in
 `unconfirmedToggleError`, whose `Unconfirmed()` the service detects across the package
-boundary (same behavioral-interface pattern as `NoUpstreamCreate`) — every adapter's
-`ToggleStatus` below follows this contract.
+boundary (same behavioral-interface pattern as `NoUpstreamCreate`) — every adapter that
+implements `StatusToggler` follows this contract; see the linked platform concepts below
+for which do and their implementation details.
 
 Which children a toggle must reach, any asymmetric ACTIVATE/PAUSE handling, and
 whether a platform has wired `StatusToggler` at all, is per-platform and
