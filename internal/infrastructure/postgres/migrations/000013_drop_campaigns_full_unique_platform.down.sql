@@ -13,7 +13,7 @@
 -- slug-valued project_id.
 --
 -- golang-migrate runs down migrations in DESCENDING version order, so this runs
--- BEFORE 000013 drops the partial index -- the table is never left without
+-- BEFORE 000012 drops the partial index -- the table is never left without
 -- uniqueness on the pair.
 ALTER TABLE campaigns
     ADD CONSTRAINT campaigns_brief_id_platform_key UNIQUE (brief_id, platform);

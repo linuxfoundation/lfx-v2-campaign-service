@@ -2,6 +2,17 @@
 
 ## 2026-08-04
 
+**Fix** — Renumbered this branch's migrations `000013`/`000014` → `000012`/`000013`. PR #59
+(`feat/LFXV2-2665-reclaim-expired-dispatch-claims`) claims `000008`/`000009` and PR #60
+(`feat/LFXV2-2814-query-service-indexing`) claims `000010`/`000011` — both still open, but
+together they leave `000012` as the next free version once they merge, one below where this
+branch previously started. Left as `000013`/`000014` the sequence would jump from `000011` to
+`000013` after both predecessors land, skipping `000012` forever (golang-migrate never applies a
+version below the highest one it has already recorded). Renumbering removes the gap outright
+instead of widening `allowedVersionGaps`'s reserved headroom to cover it — that map exists for
+versions genuinely claimed by an unmerged sibling, not as a substitute for picking the correct
+next number once a sibling's actual claimed range is known.
+
 **Fix** — Pinned `strategy.type: Recreate` on the Deployment, closing the rolling-deploy window
 that `000014`'s `DROP CONSTRAINT` opens.
 

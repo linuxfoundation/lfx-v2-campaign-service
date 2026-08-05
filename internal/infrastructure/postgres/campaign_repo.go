@@ -34,7 +34,7 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // claimCampaignDispatchQuery inserts the placeholder 'pending' claim row.
 //
 // The conflict target carries the partial index's predicate (`WHERE status <>
-// 'deleted'`) because 000013/000014 replaced the full UNIQUE (brief_id, platform)
+// 'deleted'`) because 000012/000013 replaced the full UNIQUE (brief_id, platform)
 // constraint with a partial unique index over LIVE rows only. Postgres infers the
 // arbiter index by matching the conflict target AND its predicate, so a bare
 // `ON CONFLICT (brief_id, platform)` now matches no index and fails at runtime with
@@ -239,7 +239,7 @@ const deleteCampaignQuery = `UPDATE campaigns SET status='deleted', version=vers
 // expectedVersion. The row is RETAINED: it carries platform_campaign_id, the only
 // local record of a campaign that may still exist — and still be spending — on the
 // ad platform. Hard-deleting would destroy both the audit trail and the sole
-// pointer needed to reconcile it upstream. The partial unique index from 000013
+// pointer needed to reconcile it upstream. The partial unique index from 000012
 // excludes deleted rows, so this frees the (brief_id, platform) slot for a
 // legitimate re-dispatch.
 //

@@ -90,7 +90,7 @@ divergence reconcile signal.
 SOFT-deletes a campaign locally. Its purpose is slot recovery: the `(brief_id, platform)`
 uniqueness that makes dispatch idempotent also meant a campaign row occupied its brief's
 slot for that platform permanently, so a wrong-budget campaign or an ambiguously-failed
-upstream create blocked the pair forever. The partial unique index from `000013` excludes
+upstream create blocked the pair forever. The partial unique index from `000012` excludes
 deleted rows, so deleting frees the slot for a legitimate re-dispatch.
 
 **It never touches the ad platform, by design.** No provider client in

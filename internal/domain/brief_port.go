@@ -82,7 +82,7 @@ type CampaignWriter interface {
 	// ad platform.
 	//
 	// Its purpose is to free the (brief_id, platform) slot: the partial unique index
-	// added in 000013 excludes deleted rows, so a brief whose campaign was created
+	// added in 000012 excludes deleted rows, so a brief whose campaign was created
 	// with the wrong budget (or whose upstream create failed ambiguously) can be
 	// re-dispatched to that platform instead of being blocked forever.
 	//
