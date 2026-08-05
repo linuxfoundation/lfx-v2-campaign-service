@@ -93,7 +93,12 @@ Each adapter interprets its own credential + config shape:
   from AccountID + `funding_instrument_id`. Budget (`budgetAmount`) is in the ACCOUNT's
   currency (no FX). Surfaces a `Reused` reuse/config-drift flag and classifies an
   exhausted mutating 429 as UNCONFIRMED; validates the destination URL (https/http, no
-  embedded userinfo) up front.
+  embedded userinfo) up front. `validateTwitterConnection` holds the credential rules
+  shared by `Dispatch` and `ToggleStatus`, with ONE intentional asymmetry:
+  `funding_instrument_id` is required only by `Dispatch`. It is a create-time field that
+  `UpdateCampaignAndChildrenStatus` never puts on the wire, so requiring it in the shared
+  validator would refuse an otherwise-valid pause. Do not fold that check into
+  `validateTwitterConnection` — both halves are pinned by tests.
 - **googleads** — OAuth2 application (clientId/secret + refreshToken) PLUS a Google Ads
   API developer token; AccountConfig from AccountID (the customer id) + an OPTIONAL
   `login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
@@ -153,6 +158,16 @@ the campaign is already the effective gate. An UNCONFIRMED client outcome (via `
 is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
 package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). 
 
+**X/Twitter** implements it too, with a DIFFERENT cascade shape: scope is the campaign + line
+item ONLY. `CreateCampaign` creates both PAUSED but the promoted-tweet association is created
+ACTIVE by the API (that endpoint does not accept `entity_status`), and the LINE ITEM is X's
+delivery gate — so pausing the line item stops serving and re-activating it resumes serving
+without the association ever changing. Toggling the promoted tweet would be unnecessary and,
+on activate, unable to make an otherwise-paused tree serve. `UpdateCampaignAndChildrenStatus`
+PUTs `entity_status` (query params, not a JSON body, per the X Ads v12 contract), ordering
+child-first on ACTIVATE and campaign-gate-first on PAUSE. An ACTIVATE with an unknown
+line-item id is refused as `ErrCampaignNotProvisioned` (a 409) before any call.
+
 **Google Ads** (GA-3c) CASCADES like reddit, now that GA-3b's create path provisions a real ad
 group + ad under the campaign: `GoogleAdsDispatcher.ToggleStatus` reads the ad-group/ad ids the
 create path persisted in the campaign's `Result` blob (`googleAdsChildIDs`). PAUSE flips the
@@ -165,8 +180,7 @@ unconfirmed outcome has nothing to cascade to, and enabling just the campaign in
 report success while nothing can serve, the exact lie that sentinel exists to prevent. Note the
 vocabulary: Google spells the serving state **ENABLED**, not ACTIVE.
 
-X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
-separately.
+Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
 
 ## Channel kinds: paid ads vs email
 

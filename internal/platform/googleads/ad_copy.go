@@ -31,12 +31,18 @@ const (
 )
 
 // adTextAsset is one headline/description entry in a responsiveSearchAd.
+//
+// next stacked PR (GA-3b) and is not yet merged into this branch.
+//
+//nolint:unused // consumed by the ad group/ad cascade (adgroup_ad.go), which lands in the
 type adTextAsset struct {
 	Text string `json:"text"`
 }
 
 // textAssets wraps plain strings as the {"text": ...} shape RSA headlines/
 // descriptions require.
+//
+//nolint:unused // see adTextAsset above.
 func textAssets(ss []string) []adTextAsset {
 	out := make([]adTextAsset, len(ss))
 	for i, s := range ss {

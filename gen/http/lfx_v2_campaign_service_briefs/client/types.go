@@ -8,6 +8,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	lfxv2campaignservicebriefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -49,6 +51,36 @@ type ToggleCampaignStatusRequestBody struct {
 // CreateBriefResponseBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "create-brief" endpoint HTTP response body.
 type CreateBriefResponseBody struct {
+	// Brief UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Funnel context
+	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
+	// Event/course slug (unique within the project)
+	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
+	// Event/course page URL
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
+	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+	// Extracted event/course details
+	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
+	// Ad copy
+	Copy any `form:"copy,omitempty" json:"copy,omitempty" xml:"copy,omitempty"`
+	// Keyword list
+	Keywords any `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+	// Targeting recommendation
+	Targeting any `form:"targeting,omitempty" json:"targeting,omitempty" xml:"targeting,omitempty"`
+	// Lifecycle status
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Optimistic-concurrency version
+	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+}
+
+// FindBriefResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "find-brief" endpoint HTTP response body.
+type FindBriefResponseBody struct {
 	// Brief UUID
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// Owning project
@@ -300,6 +332,56 @@ type CreateBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "create-brief" endpoint HTTP
 // response body for the "NotFound" error.
 type CreateBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FindBriefBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "BadRequest" error.
+type FindBriefBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FindBriefConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "Conflict" error.
+type FindBriefConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FindBriefServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "ServiceUnavailable" error.
+type FindBriefServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FindBriefInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "InternalServerError" error.
+type FindBriefInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FindBriefNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "NotFound" error.
+type FindBriefNotFoundResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1017,6 +1099,88 @@ func NewCreateBriefInternalServerError(body *CreateBriefInternalServerErrorRespo
 // NewCreateBriefNotFound builds a lfx-v2-campaign-service-briefs service
 // create-brief endpoint NotFound error.
 func NewCreateBriefNotFound(body *CreateBriefNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFindBriefBriefOK builds a "lfx-v2-campaign-service-briefs" service
+// "find-brief" endpoint result from a HTTP "OK" response.
+func NewFindBriefBriefOK(body *FindBriefResponseBody, etag *string) *lfxv2campaignservicebriefs.Brief {
+	v := &lfxv2campaignservicebriefs.Brief{
+		ID:           *body.ID,
+		ProjectID:    *body.ProjectID,
+		ProgramType:  *body.ProgramType,
+		EventSlug:    *body.EventSlug,
+		URL:          body.URL,
+		EventDetails: body.EventDetails,
+		Copy:         body.Copy,
+		Keywords:     body.Keywords,
+		Targeting:    body.Targeting,
+		Status:       *body.Status,
+		Version:      *body.Version,
+	}
+	if body.Platforms != nil {
+		v.Platforms = make([]string, len(body.Platforms))
+		for i, val := range body.Platforms {
+			v.Platforms[i] = val
+		}
+	}
+	v.Etag = etag
+
+	return v
+}
+
+// NewFindBriefBadRequest builds a lfx-v2-campaign-service-briefs service
+// find-brief endpoint BadRequest error.
+func NewFindBriefBadRequest(body *FindBriefBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFindBriefConflict builds a lfx-v2-campaign-service-briefs service
+// find-brief endpoint Conflict error.
+func NewFindBriefConflict(body *FindBriefConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFindBriefServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service find-brief endpoint ServiceUnavailable error.
+func NewFindBriefServiceUnavailable(body *FindBriefServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFindBriefInternalServerError builds a lfx-v2-campaign-service-briefs
+// service find-brief endpoint InternalServerError error.
+func NewFindBriefInternalServerError(body *FindBriefInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFindBriefNotFound builds a lfx-v2-campaign-service-briefs service
+// find-brief endpoint NotFound error.
+func NewFindBriefNotFound(body *FindBriefNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -1821,6 +1985,40 @@ func ValidateCreateBriefResponseBody(body *CreateBriefResponseBody) (err error) 
 	return
 }
 
+// ValidateFindBriefResponseBody runs the validations defined on
+// Find-BriefResponseBody
+func ValidateFindBriefResponseBody(body *FindBriefResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.ProgramType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("program_type", "body"))
+	}
+	if body.EventSlug == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("event_slug", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Version == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.ProgramType != nil {
+		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
+	if body.Status != nil {
+		if !(*body.Status == "draft" || *body.Status == "approved" || *body.Status == "archived") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"draft", "approved", "archived"}))
+		}
+	}
+	return
+}
+
 // ValidateGetBriefResponseBody runs the validations defined on
 // Get-BriefResponseBody
 func ValidateGetBriefResponseBody(body *GetBriefResponseBody) (err error) {
@@ -2099,6 +2297,66 @@ func ValidateCreateBriefInternalServerErrorResponseBody(body *CreateBriefInterna
 // ValidateCreateBriefNotFoundResponseBody runs the validations defined on
 // create-brief_NotFound_response_body
 func ValidateCreateBriefNotFoundResponseBody(body *CreateBriefNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFindBriefBadRequestResponseBody runs the validations defined on
+// find-brief_BadRequest_response_body
+func ValidateFindBriefBadRequestResponseBody(body *FindBriefBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFindBriefConflictResponseBody runs the validations defined on
+// find-brief_Conflict_response_body
+func ValidateFindBriefConflictResponseBody(body *FindBriefConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFindBriefServiceUnavailableResponseBody runs the validations defined
+// on find-brief_ServiceUnavailable_response_body
+func ValidateFindBriefServiceUnavailableResponseBody(body *FindBriefServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFindBriefInternalServerErrorResponseBody runs the validations
+// defined on find-brief_InternalServerError_response_body
+func ValidateFindBriefInternalServerErrorResponseBody(body *FindBriefInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFindBriefNotFoundResponseBody runs the validations defined on
+// find-brief_NotFound_response_body
+func ValidateFindBriefNotFoundResponseBody(body *FindBriefNotFoundResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -2753,6 +3011,9 @@ func ValidateGetJobNotFoundResponseBody(body *GetJobNotFoundResponseBody) (err e
 func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 	if !(body.ProgramType == "events" || body.ProgramType == "education" || body.ProgramType == "membership") {
 		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", body.ProgramType, []any{"events", "education", "membership"}))
+	}
+	if utf8.RuneCountInString(body.EventSlug) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", body.EventSlug, utf8.RuneCountInString(body.EventSlug), 1, true))
 	}
 	return
 }
