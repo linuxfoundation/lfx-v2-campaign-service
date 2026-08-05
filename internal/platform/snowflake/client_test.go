@@ -157,6 +157,7 @@ func TestResolvePastEventNames_QueryShapeAndRows(t *testing.T) {
 		rows: [][]driver.Value{
 			{"KubeCon + CloudNativeCon North America 2025", "ev-1"},
 			{"KubeCon + CloudNativeCon North America 2024", "ev-2"},
+			{"KubeCon + CloudNativeCon North America 2026", "ev-3"}, // Future edition, should be filtered
 		},
 	}
 	c := newFakeClient(t, drv)
@@ -165,32 +166,38 @@ func TestResolvePastEventNames_QueryShapeAndRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolvePastEventNames: %v", err)
 	}
+	// 2026 edition should be filtered out because 2026 >= currentYear (2026)
 	if len(got) != 2 || got[0].EventName != "KubeCon + CloudNativeCon North America 2025" || got[0].EventID != "ev-1" {
-		t.Fatalf("rows = %+v", got)
+		t.Fatalf("rows = %+v (expected 2 past editions, currentYear editions filtered out)", got)
 	}
 
 	// The query must be a read-only, fully-qualified, parameterized SELECT DISTINCT
-	// against the PLATINUM table, excluding the current year, with a LIMIT.
+	// against the PLATINUM table. Year filtering is now done in code (comparing years
+	// numerically) rather than in SQL, so the query does NOT contain "NOT ILIKE".
+	// The LIMIT is doubled to account for rows we'll filter in code.
 	q := drv.query
 	for _, want := range []string{
 		"SELECT DISTINCT EVENT_NAME, EVENT_ID",
 		"ANALYTICS.PLATINUM_LFX_ONE.event_registrations",
 		"EVENT_NAME ILIKE ?",
-		"EVENT_NAME NOT ILIKE ?",
-		"LIMIT 501", // maxEventRows+1, so truncation is DETECTABLE
+		"LIMIT 1002", // (maxEventRows+1)*2, to account for year filtering in code
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query missing %q\nquery:\n%s", want, q)
 		}
 	}
+	// The SQL must NOT contain "NOT ILIKE" for year filtering anymore (it's in code).
+	if strings.Contains(q, "NOT ILIKE") {
+		t.Errorf("query must not contain SQL-level year filtering (now done in code):\n%s", q)
+	}
 	// No caller term is ever interpolated into the SQL text — only bind args.
 	if strings.Contains(q, "KubeCon") || strings.Contains(q, "North America") || strings.Contains(q, "2026") {
 		t.Errorf("query interpolated a caller term (SQL-injection risk):\n%s", q)
 	}
-	// The three ILIKE bind args carry the wildcards (terms here have no metachars).
-	wantArgs := []driver.Value{"%KubeCon%", "%North America%", "%2026%"}
-	if len(drv.args) != 3 {
-		t.Fatalf("args = %v, want 3 bind params", drv.args)
+	// The two ILIKE bind args carry the wildcards (no current-year exclusion in SQL anymore).
+	wantArgs := []driver.Value{"%KubeCon%", "%North America%"}
+	if len(drv.args) != 2 {
+		t.Fatalf("args = %v, want 2 bind params (event term + location, year filtering in code)", drv.args)
 	}
 	for i, w := range wantArgs {
 		if drv.args[i] != w {
@@ -259,26 +266,27 @@ func TestClient_ConcurrentFirstUse(t *testing.T) {
 func TestResolvePastEventNames_OmitsOptionalLocation(t *testing.T) {
 	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}}
 	c := newFakeClient(t, drv)
-	// location is optional; currentYear is required. With no location, exactly two
-	// binds are sent: the event term and the current-year exclusion.
+	// location is optional; currentYear is required. With no location, exactly one bind
+	// is sent: the event term. Year filtering is now done in code, not SQL.
 	if _, err := c.ResolvePastEventNames(context.Background(), "OSSNA", "", "2026"); err != nil {
 		t.Fatalf("ResolvePastEventNames: %v", err)
 	}
-	if len(drv.args) != 2 {
-		t.Errorf("want 2 binds (event term + current-year exclusion) with no location, got %v", drv.args)
+	if len(drv.args) != 1 {
+		t.Errorf("want 1 bind (event term only) with no location, year filtering in code; got %v", drv.args)
 	}
-	if !strings.Contains(drv.query, "NOT ILIKE") {
-		t.Error("the required current-year exclusion must always be present")
+	if strings.Contains(drv.query, "NOT ILIKE") {
+		t.Error("SQL-level year filtering (NOT ILIKE) must not be present; year filtering is done in code")
 	}
 }
 
 func TestResolvePastEventNames_FailsClosedOnTruncation(t *testing.T) {
-	// The query fetches maxEventRows+1; if that many rows come back, more than the
-	// cap matched, so the method must fail closed (not silently return a truncated,
-	// incomplete audience).
-	rows := make([][]driver.Value, maxEventRows+1)
+	// The query fetches (maxEventRows+1)*2 rows; after year filtering in code, if more than
+	// maxEventRows past editions match, the method must fail closed (not silently return a
+	// truncated, incomplete audience).
+	rows := make([][]driver.Value, (maxEventRows+1)*2)
 	for i := range rows {
-		rows[i] = []driver.Value{fmt.Sprintf("Event %d", i), fmt.Sprintf("ev-%d", i)}
+		// All events are from year 2000 (before currentYear 2026), so none will be filtered by year
+		rows[i] = []driver.Value{fmt.Sprintf("Event 2000 %d", i), fmt.Sprintf("ev-%d", i)}
 	}
 	drv := &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}, rows: rows}
 	c := newFakeClient(t, drv)

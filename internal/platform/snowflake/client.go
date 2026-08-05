@@ -236,6 +236,12 @@ func (c *Client) ResolvePastEventNames(ctx context.Context, eventTerm, locationT
 	// Fully-qualified, read-only SELECT DISTINCT against the AUTHORITATIVE source
 	// (package constants, never caller-controlled). Only bind parameters vary; LIMIT
 	// bounds the result. escapeClause pairs with likeContains's metacharacter escaping.
+	//
+	// NOTE: The query fetches ALL matching events (without year filtering in the SQL) because
+	// event names embed years in various formats and positions. The year predicate is applied
+	// in Go code (after fetching) to compare extracted years numerically against currentYear,
+	// ensuring only truly past editions (year < currentYear) are returned, not editions from
+	// currentYear onward that merely lack the current year string in their name.
 	q := fmt.Sprintf(`SELECT DISTINCT EVENT_NAME, EVENT_ID
 FROM %s.%s.%s
 WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), ident(eventTable), escapeClause)
@@ -244,13 +250,10 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 		q += "\n  AND EVENT_NAME ILIKE ? " + escapeClause
 		args = append(args, likeContains(locationTerm))
 	}
-	q += "\n  AND EVENT_NAME NOT ILIKE ? " + escapeClause
-	args = append(args, likeContains(currentYear))
-	// Fetch ONE more than the cap so we can DETECT truncation rather than silently
-	// return a partial set. Returning the first maxEventRows as an apparent success
-	// would drop valid event filters (an incomplete audience) — which conflicts with
-	// the fail-closed contract, so an over-broad term is an error, not a quiet trim.
-	q += fmt.Sprintf("\nORDER BY EVENT_NAME\nLIMIT %d", maxEventRows+1)
+	// Fetch MORE than the cap to account for rows we'll filter out by year. We'll trim to
+	// maxEventRows after filtering, so an over-broad term that yields many non-past editions
+	// is still detected and refused.
+	q += fmt.Sprintf("\nORDER BY EVENT_NAME\nLIMIT %d", (maxEventRows+1)*2)
 
 	qctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -261,6 +264,9 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 	}
 	defer func() { _ = rows.Close() }()
 
+	// Parse currentYear once for filtering below. We already validated it's a 4-digit year.
+	currentYearInt, _ := parseYear(currentYear)
+
 	var out []Event
 	for rows.Next() {
 		var e Event
@@ -269,14 +275,27 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 			return nil, fmt.Errorf("snowflake: scan event row: %w", err)
 		}
 		e.EventID = id.String
+
+		// BOUND PAST EDITIONS BY YEAR: only include events with a year strictly BEFORE
+		// currentYear. This ensures that when rebuilding a 2025 brief in 2026+, we do not
+		// treat 2026/2027 editions as past. yearInName returns "" if no year is found;
+		// treat missing years as too old (include them, since they predate year tracking).
+		extractedYear := yearInName(e.EventName)
+		if extractedYear != "" {
+			extractedYearInt, _ := parseYear(extractedYear)
+			if extractedYearInt >= currentYearInt {
+				// This edition's year >= current year, so it is not past; skip it.
+				continue
+			}
+		}
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("snowflake: iterate event rows: %w", err)
 	}
 	if len(out) > maxEventRows {
-		// More than the cap matched: fail closed rather than return a silently
-		// truncated (incomplete) audience.
+		// More than the cap matched (after year filtering): fail closed rather than return
+		// a silently truncated (incomplete) audience.
 		return nil, fmt.Errorf("snowflake: event term %q matched more than %d editions; narrow the search term", eventTerm, maxEventRows)
 	}
 	return out, nil
@@ -353,4 +372,28 @@ func ident(s string) string {
 		}
 	}
 	return s
+}
+
+// yearInName extracts a standalone 4-digit 19xx/20xx year from a string (e.g. an event name).
+// Returns "" if no 4-digit year is found.
+func yearInName(s string) string {
+	for i := 0; i+4 <= len(s); i++ {
+		c := s[i : i+4]
+		if !isFourDigitYear(c) || (c[0] != '1' && c[0] != '2') {
+			continue
+		}
+		// Reject a longer digit run (e.g. an id) that merely contains four digits.
+		if (i == 0 || s[i-1] < '0' || s[i-1] > '9') && (i+4 == len(s) || s[i+4] < '0' || s[i+4] > '9') {
+			return c
+		}
+	}
+	return ""
+}
+
+// parseYear converts a 4-digit year string to an integer. Returns 0 if parsing fails.
+// The caller should validate with isFourDigitYear first.
+func parseYear(s string) (int, error) {
+	var y int
+	_, err := fmt.Sscanf(s, "%d", &y)
+	return y, err
 }

@@ -80,11 +80,27 @@ func audienceUnavailableErr() error {
 // claiming 502, which is worse than either alone. The upstream nature of the failure is carried
 // in the MESSAGE, where it does not contradict the status line.
 //
-// Upstream error text can carry request ids but not credentials — the clients redact those.
+// The message contains only safe, redacted text. Raw error details from Snowflake, HubSpot,
+// and decryption sources are logged server-side via slog and never exposed in the public API
+// response. Reconciliation IDs and the UNCONFIRMED marker (if present) are preserved as they
+// are safe and necessary for operators to reconcile orphaned state.
 func audienceBuildErr(err error) error {
+	// Check if the error is a safely-wrapped error (from unrecordedListsErr or unconfirmedNote).
+	// These wrappers contain reconciliation IDs or UNCONFIRMED markers, which are safe and useful.
+	// Pass those through; otherwise use only the safe fixed message. The raw cause is in the logs.
+	errMsg := err.Error()
+	isSafeWrapped := strings.Contains(errMsg, "recording the result failed") ||
+		strings.Contains(errMsg, "UNCONFIRMED") ||
+		strings.Contains(errMsg, "HubSpot lists EXIST")
+
+	msg := "the audience build failed upstream"
+	if isSafeWrapped && errMsg != "" {
+		// Error chain carries safe reconciliation context; preserve it.
+		msg = "the audience build failed upstream: " + errMsg
+	}
 	return &audiences.InternalServerError{
 		Code:    "500",
-		Message: "the audience build failed upstream: " + err.Error(),
+		Message: msg,
 	}
 }
 
@@ -96,10 +112,26 @@ func audienceBuildErr(err error) error {
 // be fine — and contradicting the neutral wording of the wrapped unrecordedListsErr, which is
 // telling them the lists EXIST. The distinction matters most in exactly this case, because the
 // remedy is to reconcile listed ids rather than to investigate the platform.
+//
+// The message contains only safe, redacted text. Raw pgx and driver errors are logged server-side
+// via slog and never exposed in the public API response. Reconciliation IDs (list ids) are
+// preserved as they are essential for operators to reconcile orphaned HubSpot lists.
 func audiencePersistErr(err error) error {
+	// Check if the error is a safely-wrapped error (from unrecordedListsErr).
+	// This wrapper contains reconciliation IDs (HubSpot list ids), which are safe and essential.
+	// Pass it through; otherwise use only the safe fixed message. The raw cause is in the logs.
+	errMsg := err.Error()
+	isSafeWrapped := strings.Contains(errMsg, "recording the result failed") ||
+		strings.Contains(errMsg, "HubSpot lists EXIST")
+
+	msg := "the audience lists were created but recording them failed"
+	if isSafeWrapped && errMsg != "" {
+		// Error chain carries safe reconciliation context (list IDs); preserve it.
+		msg = "the audience lists were created but recording them failed: " + errMsg
+	}
 	return &audiences.InternalServerError{
 		Code:    "500",
-		Message: "the audience lists were created but recording them failed: " + err.Error(),
+		Message: msg,
 	}
 }
 
@@ -187,7 +219,7 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		// so the stored InclusionSummary says "could not read the history" rather than the
 		// first-time-event note — the log line rotates away, the summary does not.
 		slog.WarnContext(ctx, "could not resolve past editions; building a country-only audience",
-			"brief_id", p.BriefID, "event", details.EventName, "error", rerr)
+			"brief_id", p.BriefID, "event", details.EventName, "error", audience.SafeErrorCause(rerr))
 		editions = nil
 	}
 

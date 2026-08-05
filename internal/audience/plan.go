@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// safeErrorCause renders a URL-free, DSN-free description of a warehouse error. Connection
+// SafeErrorCause renders a URL-free, DSN-free description of a warehouse error. Connection
 // strings and transport errors from the gosnowflake driver can carry sensitive details (account
 // names, user names, key material); this function strips them by rendering only well-known,
 // safe cases, collapsing everything else to a generic failure message.
@@ -21,7 +21,7 @@ import (
 // The function follows the pattern established by the HubSpot and Microsoft clients to avoid
 // persisting sensitive warehouse credentials or connection errors into the API response or
 // stored InclusionSummary.
-func safeErrorCause(err error) string {
+func SafeErrorCause(err error) string {
 	if err == nil {
 		return "warehouse failure"
 	}
@@ -196,7 +196,7 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 		// rebuilt once the lookup works — the opposite conclusion from a first-time event, so it
 		// must not share that note.
 		p.Notes = append(p.Notes,
-			"Past editions could NOT be resolved (warehouse error: "+safeErrorCause(in.PastEditionsErr)+"). "+
+			"Past editions could NOT be resolved (warehouse error: "+SafeErrorCause(in.PastEditionsErr)+"). "+
 				"Groups 5 and 7 (past-edition registrants) were not built, so this audience is "+
 				"NARROWER THAN INTENDED for a returning event — rebuild it once the lookup succeeds.")
 	case len(editions) == 0:
