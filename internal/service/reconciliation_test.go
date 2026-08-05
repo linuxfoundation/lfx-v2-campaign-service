@@ -277,12 +277,30 @@ func TestReconciliationServiceUnavailableWithoutDatabase(t *testing.T) {
 // persist/release window; a floor at or below that would let the API release a claim
 // whose provider call is still running, and a concurrent dispatch could then create a
 // SECOND paid campaign. The floor must stay comfortably above the real bound.
+//
+// dispatchQueueTimeout (10m) is deliberately NOT a term of that bound, and this is the
+// subtle part. A platform goroutine waits for the semaphore slot BEFORE calling
+// dispatchPlatform, which is where ClaimCampaignDispatch inserts the row — so no claim
+// row exists during the queue wait, and a queued dispatch cannot own a claim whose age
+// is accruing. If that ordering were ever inverted (claiming before acquiring the slot),
+// a claim could legitimately sit 'pending' for up to dispatchQueueTimeout +
+// providerCallTimeout = 12m, and this 15m floor would lose most of its margin. The
+// second assertion below fails if someone shrinks the floor to where that inverted
+// ordering would become unsafe, so the risk surfaces as a test failure either way.
 func TestClaimReleaseFloorExceedsDispatchBound(t *testing.T) {
 	liveDispatchBound := providerCallTimeout + persistResultTimeout
 	if model.ClaimReleaseFloor <= liveDispatchBound {
 		t.Fatalf("ClaimReleaseFloor (%v) must exceed the live-dispatch bound (%v = providerCallTimeout %v + persistResultTimeout %v): "+
 			"a shorter floor lets the API release a claim whose provider call is still in flight, allowing a duplicate paid campaign",
 			model.ClaimReleaseFloor, liveDispatchBound, providerCallTimeout, persistResultTimeout)
+	}
+	// Defence in depth: keep the floor above the worst case that WOULD apply if the
+	// claim were ever taken before the semaphore wait.
+	worstCaseIfClaimedBeforeQueueing := dispatchQueueTimeout + providerCallTimeout + persistResultTimeout
+	if model.ClaimReleaseFloor <= worstCaseIfClaimedBeforeQueueing {
+		t.Errorf("ClaimReleaseFloor (%v) should also exceed dispatchQueueTimeout + providerCallTimeout + persistResultTimeout (%v), "+
+			"so the floor stays safe even if the claim is ever moved before the semaphore acquire",
+			model.ClaimReleaseFloor, worstCaseIfClaimedBeforeQueueing)
 	}
 }
 
