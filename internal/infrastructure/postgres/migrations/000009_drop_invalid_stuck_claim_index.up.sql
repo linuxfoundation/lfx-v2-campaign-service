@@ -49,9 +49,16 @@ BEGIN
           AND NOT i.indisvalid
     ) THEN
         EXECUTE 'DROP INDEX public.idx_campaigns_stuck_claims';
-        EXECUTE 'CREATE INDEX idx_campaigns_stuck_claims '
-             || 'ON public.campaigns (created_at) WHERE status = ''pending''';
-        RAISE NOTICE 'rebuilt idx_campaigns_stuck_claims (an INVALID copy from a failed CONCURRENTLY build was dropped)';
+        RAISE NOTICE 'dropped INVALID idx_campaigns_stuck_claims from a failed CONCURRENTLY build; will rebuild below';
     END IF;
 END
 $$;
+
+-- Rebuild the index with CONCURRENTLY (outside any transaction) to avoid blocking
+-- campaign inserts/updates/deletes during the migration. This mirrors the approach
+-- used in 000008, which chose CONCURRENTLY for the same reason: if an invalid
+-- copy was dropped above, the index is now absent and will be created; if no invalid
+-- copy existed, this becomes a no-op due to IF NOT EXISTS.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_campaigns_stuck_claims
+    ON public.campaigns (created_at)
+    WHERE status = 'pending';
