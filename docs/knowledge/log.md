@@ -1,5 +1,13 @@
 # Log
 
+## 2026-08-05 (continuation)
+
+**Fix** — `Orchestrator.ReadCampaignMetrics` treated a `MetricsReader` returning
+`(nil, nil)` as success and passed the nil result through; `GetCampaignMetrics`
+dereferences it unconditionally on a nil error, panicking the request. Now converts a
+nil result with no error into an ordinary error, so the handler returns its declared
+503 instead of crashing (mirrors the existing nil-result guard on the dispatch path).
+
 ## 2026-08-05
 
 **Add** — Metrics-read foundation PR (LFXV2-3001): platform-agnostic `MetricsReader`
