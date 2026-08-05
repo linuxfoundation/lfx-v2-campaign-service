@@ -899,13 +899,14 @@ func TestUpdateCampaignAndChildrenStatus_PauseGatesParentFirst(t *testing.T) {
 	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns", "AdGroups", "Ads"}) {
 		t.Fatalf("pause order = %v, want [Campaigns AdGroups Ads] (gate first)", got)
 	}
-	assertCascadeParentIDs(t, rec.snapshot())
+	assertCascadeParentIDs(t, rec.snapshot(), StatusPaused)
 }
 
 // assertCascadeParentIDs pins each child PUT to its OWN parent: the ad group scopes to the
 // campaign and the ad scopes to the AD GROUP. Passing the campaign id as AdGroupId would
 // address a different entity entirely and silently toggle nothing (or the wrong thing).
-func assertCascadeParentIDs(t *testing.T, calls []statusCall) {
+// If expectedStatus is non-empty, it also checks that all cascade entities sent that status value.
+func assertCascadeParentIDs(t *testing.T, calls []statusCall, expectedStatus ...string) {
 	t.Helper()
 	var sawAdGroup, sawAd bool
 	for _, call := range calls {
@@ -919,6 +920,19 @@ func assertCascadeParentIDs(t *testing.T, calls []statusCall) {
 			sawAd = true
 			if got := call.body["AdGroupId"]; got != json.Number("654") && got != float64(654) {
 				t.Errorf("Ads body AdGroupId = %v, want the AD GROUP id 654, not the campaign id", got)
+			}
+		}
+		// Check Status value if provided
+		if len(expectedStatus) > 0 {
+			for _, key := range []string{"Campaigns", "AdGroups", "Ads"} {
+				list, ok := call.body[key].([]any)
+				if !ok || len(list) == 0 {
+					continue
+				}
+				entry, _ := list[0].(map[string]any)
+				if entry["Status"] != expectedStatus[0] {
+					t.Errorf("%s entry Status = %v, want %s", call.entity, entry["Status"], expectedStatus[0])
+				}
 			}
 		}
 	}

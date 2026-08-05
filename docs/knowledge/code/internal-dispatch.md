@@ -210,10 +210,16 @@ full three-level cascade — campaign, ad group, ad — ordered by DIRECTION, li
   plain error, because the parent change did land and a blind retry would misread the state.
 - **ACTIVATE works upward, children first**, so the campaign is only un-gated once its children are
   already serving — the reverse would briefly serve nothing under a live campaign.
-- **Unknown children are SKIPPED, not guessed.** An ad can only be addressed when its parent ad-group
-  id is also known, so a persisted `adId` with no `adGroupId` is refused rather than sent with an
-  empty `AdGroupId` (which would address a different entity entirely). An ad group with no ad is the
-  one asymmetric shape that IS allowed: it is addressable via its `CampaignId`.
+- **Unknown children are SKIPPED, not guessed**, with direction-dependent rules. An ad can only be
+  addressed when its parent ad-group id is also known. **ACTIVATE requires both child ids** — if
+  either `adGroupId` or `adId` is missing, it is refused locally with `ErrCampaignNotProvisioned`
+  before any upstream call, since a missing child would stay paused while the row claimed "active".
+  **PAUSE only refuses the orphan-ad case** (an `adId` with no `adGroupId`): the Ads PUT is scoped
+  by `AdGroupId`, so the ad cannot be addressed; sending the campaign anyway would report success
+  while the ad kept serving. A missing `adGroupId` without an `adId` does not block PAUSE — the
+  campaign and ad group can pause without their child ads. In both directions, a persisted value is
+  refused rather than sent empty (which would address a different entity entirely). An ad group with
+  no ad is the one asymmetric shape that IS allowed: it is addressable via its `CampaignId`.
 - **Each child PUT is scoped to its OWN parent** — the ad group to the campaign, the ad to the AD
   GROUP. Passing the campaign id as `AdGroupId` would silently toggle the wrong thing.
 - **Outcome classification** folds Microsoft's 200-with-`PartialErrors` contract into an error, and
