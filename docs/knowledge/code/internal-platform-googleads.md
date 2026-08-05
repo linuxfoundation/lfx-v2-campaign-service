@@ -168,8 +168,9 @@ retry collide on `DUPLICATE_NAME`) rather than relying on name reuse.
 
 `ad_copy.go` holds the pure, side-effect-free helpers GA-3's ad-group/ad
 creation cascade consumes: `composeAdCopy` resolves caller-supplied
-headlines/descriptions into a valid RSA content set (trimmed, rune-capped,
-deduped, padded with deterministic `eventName`/`project`-derived placeholders
+headlines/descriptions into a valid RSA content set (trimmed, weight-capped —
+CJK/full-width runes count double, see `truncateWeighted` — deduped, padded
+with deterministic `eventName`/`project`-derived placeholders
 up to the minimum, capped at the maximum — never silently dropping down to
 zero, but empties/duplicates ARE dropped and the count IS capped, so a caller
 should not assume its exact input list survives verbatim), and

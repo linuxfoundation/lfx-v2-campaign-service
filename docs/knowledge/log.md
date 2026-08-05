@@ -12,6 +12,15 @@ resource KIND (the path segment must be `adGroupAds`, not `campaigns` or another
 accepting the composite numeric IDs. Added test cases for wrong-resource-kind and missing-kind
 scenarios. All tests (`go test ./... -race`), linters (`go vet`, `gofmt`), and builds
 (`go build ./...`) pass clean. Address PR #67 review feedback.
+**Fix** — Closed 5 suppressed Copilot findings on GA-3a (`internal/platform/googleads/ad_copy.go`):
+corrected the `composeAdCopy`/RSA doc comment and the concept doc
+(`internal-platform-googleads.md`) to describe weight-capping (CJK/full-width runes count double,
+per `truncateWeighted`) instead of plain rune-capping; fixed the `minDescriptions` error message
+to name only `eventName` as a remedy, since `defaultDescriptions` returns nil whenever `eventName`
+is empty regardless of `project`; fixed `TestComposeAdCopy`'s project-omission assertion (`&&` →
+`||`) so it actually fails when the project-specific description survives; and repaired the split
+`nolint:unused` directive/rationale comment on `adTextAsset` whose two sentences had been
+transposed.
 
 ## 2026-08-04
 
