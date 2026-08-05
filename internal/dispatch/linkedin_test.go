@@ -622,3 +622,28 @@ func TestLinkedIn_ToggleStatus_NoOrgIDNeeded(t *testing.T) {
 		t.Fatalf("ToggleStatus must work without an org_id: %v", err)
 	}
 }
+
+// TestLinkedIn_ReadMetrics_UnsupportedWindowIs400 verifies ReadMetrics wraps the platform
+// client's window-rejection error with domain.ErrMetricsWindowUnsupported, so brief.go's
+// GetCampaignMetrics maps it to 400 (caller input) instead of falling through to 503
+// (upstream failure) — LinkedIn's Ad Analytics date-range mapping has no "yesterday" or
+// "last_14_days" case, and the platform is never contacted.
+func TestLinkedIn_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+	)
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderLinkedInAds,
+		&model.Campaign{PlatformCampaignID: "555"},
+		model.MetricsWindowYesterday,
+	)
+	if err == nil {
+		t.Fatal("expected an error for a window LinkedIn cannot map to a date range")
+	}
+	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Errorf("expected err to wrap domain.ErrMetricsWindowUnsupported (so brief.go maps it to 400), got: %v", err)
+	}
+	if !errors.Is(err, linkedin.ErrUnsupportedWindow) {
+		t.Errorf("expected err to still wrap linkedin.ErrUnsupportedWindow, got: %v", err)
+	}
+}

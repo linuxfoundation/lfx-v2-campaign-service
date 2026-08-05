@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -16,6 +17,10 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
+
+// ErrUnsupportedWindow is returned for a model.MetricsWindow this client does not map to a
+// LinkedIn Ad Analytics date range (currently: yesterday, last_14_days).
+var ErrUnsupportedWindow = errors.New("unsupported metrics window")
 
 // AdAnalyticsElement is one analytics record returned by the Ad Analytics API.
 // The API aggregates metrics for the requested campaign over the given date range.
@@ -269,7 +274,7 @@ func (c *Client) dateRangeForWindow(window model.MetricsWindow) (start, end time
 		end = lastDayOfLastMonth
 
 	default:
-		return time.Time{}, time.Time{}, fmt.Errorf("unsupported metrics window: %s", window)
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: %q", ErrUnsupportedWindow, window)
 	}
 
 	return start.UTC(), end.UTC(), nil

@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -291,6 +292,9 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 	// Call GetCampaignMetrics with the bare campaign id and account id.
 	metrics, err := client.GetCampaignMetrics(ctx, accountID, campaign.PlatformCampaignID, window)
 	if err != nil {
+		if errors.Is(err, linkedin.ErrUnsupportedWindow) {
+			return nil, fmt.Errorf("get campaign metrics from linkedin: %w: %w", domain.ErrMetricsWindowUnsupported, err)
+		}
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", err)
 	}
 
