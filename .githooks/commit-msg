@@ -25,14 +25,23 @@ fi
 
 # Same reasoning for a rebase or cherry-pick replaying an existing commit: its message
 # already carries the ORIGINAL AUTHOR's Signed-off-by trailer, which is what CI's DCO
-# check (author-based) actually verifies. Checking it against THIS run's committer
-# identity below would reject an already-signed commit for the sole reason that whoever
-# is replaying it isn't the original author — e.g. rebasing a teammate's branch, or a
-# rebase run by CI — a false rejection CI's own check would not raise. REBASE_HEAD
-# covers both `git rebase` and `git rebase --interactive`; CHERRY_PICK_HEAD covers
-# `git cherry-pick`.
+# check (author-based) actually verifies. HOWEVER, in interactive rebase at an `edit` or
+# `reword` stop, the message may be rewritten by the current committer — in which case
+# REBASE_HEAD stays set but the commit is genuinely new content needing a fresh
+# Signed-off-by from the current committer.
+#
+# Distinguish by trailer presence: if a Signed-off-by trailer already exists in the
+# message, the commit is a replay of an existing signed commit — skip the local check.
+# If no trailer is present during rebase/cherry-pick, the user is creating new content
+# and must sign off with their own identity.
 if git rev-parse -q --verify REBASE_HEAD >/dev/null 2>&1 || git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null 2>&1; then
-  exit 0
+  # Check if message already has a Signed-off-by trailer (from the original commit or earlier).
+  if git interpret-trailers --parse "$commit_msg_file" | grep -q "^Signed-off-by:"; then
+    # It's a replay of an existing signed commit; skip the local DCO check.
+    exit 0
+  fi
+  # No trailer present: this is new content (edit/reword stop, or cherry-pick with new
+  # message). Fall through to require the current committer's sign-off below.
 fi
 
 # `git var GIT_COMMITTER_IDENT` resolves the exact identity `git commit -s`

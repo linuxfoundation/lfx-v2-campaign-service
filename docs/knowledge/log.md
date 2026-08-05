@@ -1,5 +1,21 @@
 # Log
 
+## 2026-08-05 (DCO hook rebase exemption narrowed for new commits)
+
+**Fix** — Resolved Cursor Bugbot Medium-severity finding: the hook's `REBASE_HEAD` early-exit
+exempted ALL commits during rebase from DCO check, but `REBASE_HEAD` stays set across
+interactive rebase `edit`/`reword` stops where the current committer creates NEW content
+(split/amend workflows) — those commits have the current committer's identity and need a
+matching `Signed-off-by` trailer, so the blanket exemption let unsigned new commits through
+that CI's DCO check would still reject.
+
+**Fix** — Made the exemption precise: check if a `Signed-off-by` trailer already exists in
+the commit message (indicating it's a genuine replay of an already-signed commit). If a
+trailer is present, skip the check (it's a replay). If absent during rebase/cherry-pick,
+require the current committer to sign off (it's new content from an edit stop, reword,
+or cherry-pick with a new message). Preserves the intent (allow clean replays) while
+catching unsigned new commits at interactive-rebase pauses.
+
 ## 2026-08-05 (README exemption docs)
 
 **Fix** — Closed a suppressed Copilot finding: the README section on DCO sign-off said the hook
