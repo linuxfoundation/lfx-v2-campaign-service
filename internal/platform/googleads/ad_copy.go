@@ -183,6 +183,9 @@ func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix 
 	}
 	u, err := url.Parse(registrationURL)
 	if err != nil {
+		// Do NOT echo the raw URL or wrap err (both may carry secrets in
+		// userinfo/query/fragment) — this message and its wrapped url.Error
+		// can both be logged or persisted in a result step/snapshot.
 		return "", fmt.Errorf("registration URL %q is not a valid URL", redactURLForError(registrationURL))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
@@ -190,6 +193,18 @@ func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix 
 	}
 	if u.Host == "" {
 		return "", fmt.Errorf("registration URL %q has no host", redactURLForError(registrationURL))
+	}
+	// Reject embedded userinfo (user[:password]@host): an ad destination never
+	// needs URL credentials, and forwarding them downstream would leak a
+	// basic-auth secret. Mirrors the twitter/reddit/meta clients' validators.
+	if u.User != nil {
+		return "", fmt.Errorf("registration URL %q must not contain embedded credentials (userinfo)", redactURLForError(registrationURL))
+	}
+	// Validate the existing query before merging in utm_* params: a malformed
+	// percent-escape in RawQuery is silently dropped by u.Query(), which would
+	// alter the destination the ad actually points to.
+	if _, err := url.ParseQuery(u.RawQuery); err != nil {
+		return "", fmt.Errorf("registration URL %q has a malformed query string", redactURLForError(registrationURL))
 	}
 
 	campaign := sanitizeNamePart(eventSlug)
@@ -228,8 +243,10 @@ func setIfAbsent(q url.Values, key, value string) {
 // (which may be logged or persisted in a step/snapshot) never carries
 // userinfo/query/fragment that can hold secrets. A value that can't be parsed
 // as an absolute URL is reported as an opaque placeholder rather than echoed
-// raw. Mirrors redactURLForError in the twitter client and redactURL in the
-// reddit/meta clients.
+// raw. Identical to redactURLForError in the twitter client (the reddit/meta
+// clients' redactURL uses more permissive fallback heuristics — it strips a
+// trailing "?"/"#" and echoes the rest rather than falling back to a fixed
+// placeholder).
 func redactURLForError(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {

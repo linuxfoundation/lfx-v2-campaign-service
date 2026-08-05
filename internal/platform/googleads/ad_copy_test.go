@@ -253,6 +253,55 @@ func TestBuildAdFinalURL(t *testing.T) {
 	})
 }
 
+func TestRedactURLForError(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"strips query and fragment", "https://example.com/register?token=secret&utm_source=x#frag", "https://example.com/register"},
+		{"strips userinfo", "https://user:pass@example.com/register", "https://example.com/register"},
+		{"preserves port", "https://example.com:8443/register", "https://example.com:8443/register"},
+		{"unparseable input redacted", "https://[::1", "(redacted)"},
+		{"empty input redacted", "", "(redacted)"},
+		{"whitespace-only input redacted", "   ", "(redacted)"},
+		{"relative path redacted", "/register?token=secret", "(redacted)"},
+		{"scheme with no host falls back to scheme-only", "mailto:", "(redacted)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := redactURLForError(tc.raw); got != tc.want {
+				t.Errorf("redactURLForError(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildAdFinalURL_RejectsUserinfoAndMalformedQuery(t *testing.T) {
+	t.Run("embedded userinfo is rejected", func(t *testing.T) {
+		_, err := buildAdFinalURL("https://user:pass@example.com/register", "slug", "Event", "Proj", "suffix")
+		if err == nil {
+			t.Fatal("expected an error for a registration URL with embedded userinfo")
+		}
+		if !strings.Contains(err.Error(), "userinfo") {
+			t.Errorf("error = %v, want it to mention userinfo", err)
+		}
+		if strings.Contains(err.Error(), "user:pass") {
+			t.Errorf("error = %v, must not echo the embedded credentials", err)
+		}
+	})
+
+	t.Run("malformed query is rejected rather than silently dropped", func(t *testing.T) {
+		_, err := buildAdFinalURL("https://example.com/register?%zz", "slug", "Event", "Proj", "suffix")
+		if err == nil {
+			t.Fatal("expected an error for a malformed query string")
+		}
+		if !strings.Contains(err.Error(), "malformed query") {
+			t.Errorf("error = %v, want it to mention the malformed query", err)
+		}
+	})
+}
+
 func TestSetIfAbsent(t *testing.T) {
 	q := url.Values{"utm_source": []string{"existing"}}
 	setIfAbsent(q, "utm_source", "new")

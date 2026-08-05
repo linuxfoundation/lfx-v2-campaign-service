@@ -1,5 +1,15 @@
 # Log
 
+## 2026-08-04
+
+**Update** — Added GA-3a ad-copy generation (`internal/platform/googleads/ad_copy.go`, split out
+of GA-3's ad-group/ad cascade to keep the PR under 1000 lines) and fixed a credentials-leak in its
+`buildAdFinalURL`: the caller-supplied registration URL was echoed unredacted into three validation
+error messages, including via `%w`-wrapping a `*url.Error`. Added `redactURLForError` (mirroring
+the twitter client) and applied it at all three sites; also added the userinfo-rejection and
+malformed-query-rejection checks the reddit/meta/twitter clients already carry. New concept section
+in `internal-platform-googleads.md`.
+
 ## 2026-08-03
 
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the
