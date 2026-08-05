@@ -1,5 +1,23 @@
 # Log
 
+## 2026-08-05 (DCO hook: also diff tree against replay head, not just author identity)
+
+**Fix** — Copilot flagged that the prior fix (below) still had a gap: comparing the
+trailer to `GIT_AUTHOR_IDENT` assumes an author-identity match proves the replayed
+content is unchanged, but a plain `git commit --amend` at an interactive-rebase `edit`
+stop (without `--reset-author`) PRESERVES the original author while allowing the tree
+to be edited — so `GIT_AUTHOR_IDENT` still matches the original trailer even when the
+committer has genuinely modified the content, letting an edited commit skip the DCO
+check it should have been subject to. Closed the gap by requiring BOTH conditions to
+exempt a commit: the staged tree must be byte-identical to `$replay_head` (via
+`git diff --cached --quiet "$replay_head" --`) AND the trailer must match the author
+identity. Either condition failing (tree edited, or trailer stale/missing) falls
+through to require a fresh sign-off from the current committer. Manually verified in a
+sandbox repo: (1) unchanged replay with matching trailer — allowed; (2) edited tree
+with unchanged author identity but a different current committer who hasn't signed off
+— now correctly rejected (was the exact gap Copilot flagged); (3) unchanged tree with a
+reset author and stale trailer — still correctly rejected (no regression).
+
 ## 2026-08-05 (DCO hook: compare trailer to GIT_AUTHOR_IDENT, not just presence)
 
 **Fix** — Cursor Bugbot flagged that the prior fix (below) still had a gap: checking only

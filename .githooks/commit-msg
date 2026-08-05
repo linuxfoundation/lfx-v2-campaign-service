@@ -26,21 +26,17 @@ fi
 # Same reasoning for a rebase or cherry-pick replaying an existing commit: its message
 # already carries the ORIGINAL AUTHOR's Signed-off-by trailer, which is what CI's DCO
 # check (author-based) actually verifies. HOWEVER, in interactive rebase at an `edit` or
-# `reword` stop, the message may be rewritten by the current committer — in which case
-# REBASE_HEAD stays set but the commit is genuinely new content needing a fresh
-# Signed-off-by from the current committer.
-#
-# Distinguish by comparing the trailer to GIT_AUTHOR_IDENT, not just checking trailer
-# presence: a plain "any Signed-off-by trailer exists" check is fooled by
-# `git commit --amend --reset-author` at an `edit` stop — that rewrites the commit's
-# AUTHOR to the current user while leaving the ORIGINAL author's trailer text
-# untouched, so a presence-only check would still skip, and CI's author-based DCO
-# check would then reject a commit this hook waved through. GIT_AUTHOR_IDENT reflects
-# exactly that rewrite (it's what --reset-author changes), so comparing against it
-# catches the stale-trailer case: unchanged replay -> author identity still matches
-# the original trailer -> skip; reset-author -> author identity is now the current
-# user, stale trailer no longer matches -> fall through and require a fresh sign-off.
-if git rev-parse -q --verify REBASE_HEAD >/dev/null 2>&1 || git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null 2>&1; then
+# `reword` stop, the tree or message may be rewritten by the current committer — in
+# which case REBASE_HEAD stays set but the commit is genuinely new content needing a
+# fresh Signed-off-by from the current committer.
+replay_head=""
+if git rev-parse -q --verify REBASE_HEAD >/dev/null 2>&1; then
+  replay_head=REBASE_HEAD
+elif git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null 2>&1; then
+  replay_head=CHERRY_PICK_HEAD
+fi
+
+if [[ -n "$replay_head" ]]; then
   if ! author_ident=$(git var GIT_AUTHOR_IDENT); then
     echo "error: could not resolve author identity to verify DCO sign-off" >&2
     exit 1
@@ -48,15 +44,27 @@ if git rev-parse -q --verify REBASE_HEAD >/dev/null 2>&1 || git rev-parse -q --v
   author_name_email=$(sed -E 's/ [0-9]+ [-+][0-9]{4}$//' <<<"$author_ident")
   expected_author_trailer="Signed-off-by: ${author_name_email}"
 
-  if git interpret-trailers --parse "$commit_msg_file" | grep -qFx "$expected_author_trailer"; then
-    # The trailer matches the commit's current author identity: either an untouched
-    # replay of an already-signed commit, or a fresh sign-off already present because
-    # the author re-signed. Either way DCO is already satisfied; skip the local check.
+  # A trailer-vs-GIT_AUTHOR_IDENT comparison alone is not enough: a plain
+  # `git commit --amend` at an interactive-rebase `edit` stop PRESERVES the original
+  # commit's author by default (only `--reset-author` changes it), so GIT_AUTHOR_IDENT
+  # still matches the original trailer even when the committer has edited the tree.
+  # An author-identity match therefore does not prove the content is unchanged.
+  #
+  # Close that gap by also diffing the staged tree against $replay_head (the original
+  # commit being replayed): identical trees mean this really is an untouched replay
+  # (or a pure reword, which doesn't touch the DCO-relevant content); any difference
+  # means the tree was edited and needs a fresh sign-off from the current committer,
+  # regardless of whether the author identity happens to still match.
+  if git diff --cached --quiet "$replay_head" -- && \
+     git interpret-trailers --parse "$commit_msg_file" | grep -qFx "$expected_author_trailer"; then
+    # Tree matches the original commit AND the trailer matches the (unchanged) author
+    # identity: either an untouched replay of an already-signed commit, or a pure
+    # reword. Either way DCO is already satisfied; skip the local check.
     exit 0
   fi
-  # Trailer missing, or present but stale (author identity changed via --reset-author):
-  # this is new/modified content needing a fresh sign-off. Fall through to require the
-  # current committer's sign-off below.
+  # Tree was edited (content differs from $replay_head), or the trailer is missing or
+  # stale: this is new/modified content needing a fresh sign-off. Fall through to
+  # require the current committer's sign-off below.
 fi
 
 # `git var GIT_COMMITTER_IDENT` resolves the exact identity `git commit -s`
