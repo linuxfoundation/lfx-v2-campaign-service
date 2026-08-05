@@ -214,7 +214,7 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		}
 		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		wait := c.parseRetryAfter(resp)
