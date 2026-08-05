@@ -100,6 +100,21 @@ const (
 	MetricsWindowLastMonth  MetricsWindow = "last_month"
 )
 
+// IsValidMetricsWindow reports whether w is one of the closed set of supported windows. The
+// Goa HTTP layer already enforces the enum on requests that arrive over HTTP, but the service
+// layer validates independently — the same defense-in-depth as
+// IsCampaignRunStatus/CampaignStatusToggleable — so a direct/test caller can't pass an
+// unmapped value through to a platform adapter.
+func IsValidMetricsWindow(w MetricsWindow) bool {
+	switch w {
+	case MetricsWindowToday, MetricsWindowYesterday, MetricsWindowLast7Days, MetricsWindowLast14Days,
+		MetricsWindowLast30Days, MetricsWindowThisMonth, MetricsWindowLastMonth:
+		return true
+	default:
+		return false
+	}
+}
+
 // CampaignMetrics is a platform-agnostic, live read-through performance
 // snapshot for one campaign over one window. It is never persisted — a
 // MetricsReader dispatcher call populates it fresh on every read, the same

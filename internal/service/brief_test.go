@@ -1331,3 +1331,19 @@ func TestBriefService_GetCampaignMetrics_PlatformFailureIs503(t *testing.T) {
 		t.Fatalf("expected a ConnServiceUnavailableError (503), got %T: %v", err, err)
 	}
 }
+
+func TestBriefService_GetCampaignMetrics_InvalidWindowIs400(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	s := newMetricsService(camp, &metricsOnlyDispatcher{})
+	window := "not_a_real_window"
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("expected a BadRequestError (400) for an invalid window, got %T: %v", err, err)
+	}
+}

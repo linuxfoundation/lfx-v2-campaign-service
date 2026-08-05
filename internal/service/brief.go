@@ -344,6 +344,9 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	window := model.MetricsWindowLast30Days
 	if p.Window != nil {
 		window = model.MetricsWindow(*p.Window)
+		if !model.IsValidMetricsWindow(window) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "window must be one of: today, yesterday, last_7_days, last_14_days, last_30_days, this_month, last_month"}
+		}
 	}
 	m, merr := orch.ReadCampaignMetrics(ctx, p.ProjectID, existing.Platform, existing, window)
 	if merr != nil {
