@@ -41,6 +41,28 @@ func (r *BriefRepo) GetBrief(ctx context.Context, projectID, id string) (*model.
 	return b, nil
 }
 
+// classifyNoRowTx decides whether a guarded UPDATE that matched no row was a MISSING brief or a
+// STALE version, reading through the SAME transaction.
+//
+// It must not call GetBrief: that acquires a SECOND pool connection while this transaction still
+// holds the first. With a saturated pool — pool_max_conns=1 makes it certain — an ordinary
+// stale-version request would block until its context expired instead of returning 412. Reading
+// inside the tx also sees the same snapshot the UPDATE did, so the two cannot disagree.
+//
+// A transient read error is surfaced as-is rather than masked as a precondition failure, which
+// would make the caller retry with a fresh ETag instead of backing off on a server error.
+func classifyNoRowTx(ctx context.Context, tx pgx.Tx, projectID, id string) error {
+	var exists bool
+	q := `SELECT EXISTS (SELECT 1 FROM campaign_briefs WHERE id = $1 AND project_id = $2 AND status <> 'archived')`
+	if err := tx.QueryRow(ctx, q, id, projectID).Scan(&exists); err != nil {
+		return fmt.Errorf("classify guarded update: %w", err)
+	}
+	if !exists {
+		return domain.ErrNotFound
+	}
+	return domain.ErrPreconditionFailed
+}
+
 // FindBriefByEventSlug returns the non-archived brief for (projectID, eventSlug), or
 // ErrNotFound when none exists. This is the "have I already generated a brief for this
 // event?" lookup: the UI derives the slug from a pasted event URL and calls this before
@@ -65,15 +87,21 @@ func (r *BriefRepo) FindBriefByEventSlug(ctx context.Context, projectID, eventSl
 }
 
 // CreateBrief inserts a brief. Returns ErrConflict on UNIQUE(project_id, event_slug).
-func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief) (*model.CampaignBrief, error) {
+func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	approvedBy, err := marshalActor(b.ApprovedBy)
 	if err != nil {
 		return nil, err
 	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create brief: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	q := `INSERT INTO campaign_briefs
 		(project_id, program_type, event_slug, url, platforms, event_details, copy, keywords, targeting, approved_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING ` + briefCols
-	row := r.db.QueryRow(ctx, q,
+	row := tx.QueryRow(ctx, q,
 		b.ProjectID, string(b.ProgramType), b.EventSlug, nullStr(b.URL),
 		nullJSON(b.Platforms), nullJSON(b.EventDetails), nullJSON(b.Copy),
 		nullJSON(b.Keywords), nullJSON(b.Targeting), approvedBy,
@@ -85,11 +113,17 @@ func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief) (*m
 		}
 		return nil, fmt.Errorf("create brief: %w", err)
 	}
+	if eerr := enqueueBriefIndex(ctx, tx, created, indexPayload); eerr != nil {
+		return nil, fmt.Errorf("create brief: %w", eerr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("create brief: commit: %w", cerr)
+	}
 	return created, nil
 }
 
 // ReplaceBrief replaces mutable fields, gating on expectedVersion.
-func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64) (*model.CampaignBrief, error) {
+func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	// Replacing brief content invalidates any prior approval: reset the brief to
 	// 'draft' and clear the approver so a modified brief cannot silently retain
 	// status='approved' (which would let changed ad inputs be treated as approved
@@ -100,13 +134,24 @@ func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, ex
 		program_type=$1, event_slug=$2, url=$3, platforms=$4, event_details=$5, copy=$6, keywords=$7, targeting=$8,
 		status='draft', approved_by=NULL, approved_at=NULL,
 		version=version+1, updated_at=now()
-		WHERE id=$9 AND project_id=$10 AND version=$11 AND status <> 'archived'`
-	tag, err := r.db.Exec(ctx, q,
+		WHERE id=$9 AND project_id=$10 AND version=$11 AND status <> 'archived'
+		RETURNING ` + briefCols
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("replace brief: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// RETURNING the updated row keeps the write and the snapshot that gets indexed in ONE
+	// statement, so the outbox payload is exactly what committed — the same reason ArchiveBrief
+	// does it. The prior implementation re-read via GetBrief after the UPDATE, which could
+	// observe a LATER concurrent write and index a snapshot this call never produced.
+	updated, err := scanBrief(tx.QueryRow(ctx, q,
 		string(b.ProgramType), b.EventSlug, nullStr(b.URL), nullJSON(b.Platforms), nullJSON(b.EventDetails),
 		nullJSON(b.Copy), nullJSON(b.Keywords), nullJSON(b.Targeting),
 		b.ID, b.ProjectID, expectedVersion,
-	)
-	if err != nil {
+	))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		// A slug change that collides with another live brief trips the partial
 		// unique index; surface it as a conflict (409) rather than a 500.
 		if isUniqueViolation(err) {
@@ -114,26 +159,21 @@ func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, ex
 		}
 		return nil, fmt.Errorf("replace brief: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		// Distinguish missing from stale version. Surface a transient re-fetch
-		// error rather than masking it as a precondition failure (which would make
-		// the caller retry with a fresh ETag instead of backing off on a server
-		// error), consistent with ConnectionRepo.Update.
-		_, gerr := r.GetBrief(ctx, b.ProjectID, b.ID)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
-		}
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Distinguish missing from stale version, THROUGH THIS TRANSACTION (see classifyNoRowTx).
+		return nil, classifyNoRowTx(ctx, tx, b.ProjectID, b.ID)
 	}
-	return r.GetBrief(ctx, b.ProjectID, b.ID)
+	if eerr := enqueueBriefIndex(ctx, tx, updated, indexPayload); eerr != nil {
+		return nil, fmt.Errorf("replace brief: %w", eerr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("replace brief: commit: %w", cerr)
+	}
+	return updated, nil
 }
 
 // Approve marks a brief approved, recording the actor.
-func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64) (*model.CampaignBrief, error) {
+func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model.Actor, expectedVersion int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	approvedBy, err := marshalActor(by)
 	if err != nil {
 		return nil, err
@@ -142,38 +182,90 @@ func (r *BriefRepo) Approve(ctx context.Context, projectID, id string, by *model
 	// approver fetched it cannot be approved on stale content.
 	q := `UPDATE campaign_briefs SET status='approved', approved_by=$1, approved_at=now(),
 		version=version+1, updated_at=now()
-		WHERE id=$2 AND project_id=$3 AND version=$4 AND status <> 'archived'`
-	tag, err := r.db.Exec(ctx, q, approvedBy, id, projectID, expectedVersion)
+		WHERE id=$2 AND project_id=$3 AND version=$4 AND status <> 'archived'
+		RETURNING ` + briefCols
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
+		return nil, fmt.Errorf("approve brief: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	approved, err := scanBrief(tx.QueryRow(ctx, q, approvedBy, id, projectID, expectedVersion))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("approve brief: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Distinguish missing from stale version, mirroring ReplaceBrief.
-		_, gerr := r.GetBrief(ctx, projectID, id)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
-		}
+		return nil, classifyNoRowTx(ctx, tx, projectID, id)
 	}
-	return r.GetBrief(ctx, projectID, id)
+	if eerr := enqueueBriefIndex(ctx, tx, approved, indexPayload); eerr != nil {
+		return nil, fmt.Errorf("approve brief: %w", eerr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("approve brief: commit: %w", cerr)
+	}
+	return approved, nil
 }
 
-// ArchiveBrief soft-archives a brief.
-func (r *BriefRepo) ArchiveBrief(ctx context.Context, projectID, id string) error {
-	q := `UPDATE campaign_briefs SET status='archived', version=version+1, updated_at=now()
-		WHERE id=$1 AND project_id=$2 AND status <> 'archived'`
-	tag, err := r.db.Exec(ctx, q, id, projectID)
+// enqueueBriefIndex writes the brief's index message to the outbox inside tx.
+//
+// EVERY brief mutation goes through this — not just the terminal archive. A direct
+// post-commit publish cannot be ordered against an outbox replay: a replace could commit,
+// stall before publishing, and have its update land AFTER an archive was replayed and
+// retired, resurrecting a deleted brief in the index. One ordered sequence per row removes
+// that interleaving entirely.
+//
+// A nil builder means the caller does not want this resource indexed; the write still commits.
+func enqueueBriefIndex(ctx context.Context, tx pgx.Tx, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) error {
+	if indexPayload == nil {
+		return nil
+	}
+	payload, err := indexPayload(b)
 	if err != nil {
-		return fmt.Errorf("archive brief: %w", err)
+		return fmt.Errorf("build index payload: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
+	return enqueueIndexMessage(ctx, tx, indexObjectTypeBrief, b.ID, payload)
+}
+
+// indexObjectTypeBrief mirrors indexer.ObjectTypeBrief. Duplicated rather than imported: the
+// postgres package must not depend on the indexer, and the value is pinned by a test.
+const indexObjectTypeBrief = "campaign_brief"
+
+// ArchiveBrief soft-archives a brief.
+func (r *BriefRepo) ArchiveBrief(ctx context.Context, projectID, id string, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+	// Archive + outbox enqueue in ONE transaction. Archiving is TERMINAL: there is no "next
+	// write" to repair the index, so if the post-commit publish is dropped the brief stays
+	// searchable forever. The outbox row co-commits with the archive, so the relay can deliver
+	// it even if this process dies immediately after the commit.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("archive brief: begin tx: %w", err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// RETURNING the updated row makes the archive and the read of its result ONE statement, so
+	// the caller indexes exactly what was committed. A separate read-then-archive would race a
+	// concurrent ReplaceBrief/Approve and publish a snapshot that never existed in the table.
+	q := `UPDATE campaign_briefs SET status='archived', version=version+1, updated_at=now()
+		WHERE id=$1 AND project_id=$2 AND status <> 'archived'
+		RETURNING ` + briefCols
+	b, err := scanBrief(tx.QueryRow(ctx, q, id, projectID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No row updated: absent, cross-project, or ALREADY archived (the status guard).
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("archive brief: %w", err)
+	}
+
+	if eerr := enqueueBriefIndex(ctx, tx, b, indexPayload); eerr != nil {
+		return nil, fmt.Errorf("archive brief: %w", eerr)
+	}
+
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("archive brief: commit: %w", cerr)
+	}
+	return b, nil
 }
 
 func scanBrief(row pgx.Row) (*model.CampaignBrief, error) {

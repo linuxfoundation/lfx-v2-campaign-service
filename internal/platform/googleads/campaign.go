@@ -549,6 +549,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — a campaign may exist; verify in Google Ads before retrying): %w", budgetID, err)
 	}
+	// Validate that the campaign resource is in the exact current-account campaign shape
+	// before forwarding it to createAdGroupAndAd. A malformed 2xx such as
+	// customers/1234567890/adGroups/222 would be treated as a confirmed campaign and
+	// only fail after the real campaign has been created, persisting an untrustworthy ID.
+	if err := c.validateCampaignResource(campaignResource); err != nil {
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
+	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC)", campaignID))
 
 	res := budgetPartial()
@@ -588,6 +595,31 @@ func firstResourceName(body []byte) (resourceName, id string, err error) {
 		return "", "", fmt.Errorf("mutate response resource name %q is malformed (no id segment)", rn)
 	}
 	return rn, rid, nil
+}
+
+// validateCampaignResource validates that a resource name is exactly the
+// current-account campaign resource shape: customers/{currentCustomerID}/campaigns/{numericID}.
+// A malformed 2xx such as customers/1234567890/adGroups/222 could otherwise be
+// accepted as a confirmed campaign and only fail later when forwarded to adGroups:mutate,
+// after the real campaign has been created. This guard ensures that only a trustworthy
+// campaign resource is persisted.
+func (c *Client) validateCampaignResource(resourceName string) error {
+	pathParts := strings.Split(resourceName, "/")
+	// Require exactly 4 segments: customers, {id}, campaigns, {id}
+	if len(pathParts) != 4 {
+		return fmt.Errorf("campaign resource name %q has %d segments, want exactly 4", resourceName, len(pathParts))
+	}
+	if pathParts[0] != "customers" || pathParts[2] != "campaigns" {
+		return fmt.Errorf("campaign resource name %q has wrong resource kind (want customers/.../campaigns/...)", resourceName)
+	}
+	if pathParts[1] != c.account.CustomerID {
+		return fmt.Errorf("campaign resource name %q is from a different account (want customers/%s/...)", resourceName, c.account.CustomerID)
+	}
+	// Validate the trailing campaign ID is numeric.
+	if !numericID(pathParts[3]) {
+		return fmt.Errorf("campaign resource name %q has a non-numeric campaign id", resourceName)
+	}
+	return nil
 }
 
 // composeName builds a deterministic budget/campaign name from the input. The

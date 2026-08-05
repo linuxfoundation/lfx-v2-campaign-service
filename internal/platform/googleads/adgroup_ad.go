@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -120,8 +119,9 @@ func isDuplicateAdGroupNameErr(err error) bool {
 func adGroupAdID(resourceName string) (adGroupID, adID string) {
 	// Validate the full resource path structure: customers/<id>/adGroupAds/<composite-id>
 	// Split by "/" to validate the resource kind is "adGroupAds" and not something else.
+	// Require EXACTLY 4 segments: extra segments indicate a malformed/substituted response.
 	pathParts := strings.Split(resourceName, "/")
-	if len(pathParts) < 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupAds" {
+	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupAds" {
 		return "", ""
 	}
 
@@ -267,8 +267,8 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 // PAUSED, mirroring UpdateCampaignStatus. Both mutates are sent as idempotent
 // (bounded 429 retries are safe: re-applying the same status converges, same
 // reasoning as UpdateCampaignStatus). Returns after the FIRST failure without
-// attempting the second mutate — the caller (ToggleStatus) already orders
-// campaign/ad-group/ad calls per the children-first-on-ACTIVATE /
+// attempting the second mutate — the caller (ToggleStatus, once the GA-3c child
+// cascade is wired) will order campaign/ad-group/ad calls per the children-first-on-ACTIVATE /
 // campaign-first-on-PAUSE contract, so a failed ad group update must not mask
 // itself as "ad group ok, ad unknown".
 func (c *Client) UpdateAdGroupAndAdStatus(ctx context.Context, adGroupID, adID, status string) error {
@@ -340,10 +340,15 @@ func (e *partialCascadeError) Unconfirmed() bool { return true }
 // numericID reports whether s is a non-empty run of ASCII digits — the same
 // shape check UpdateCampaignStatus applies to a campaign id, reused here so an
 // id interpolated into a resourceName can't alter the resource path.
+// strconv.ParseUint accepts a leading "+", so explicitly reject every rune outside 0–9.
 func numericID(s string) bool {
 	if s == "" {
 		return false
 	}
-	_, err := strconv.ParseUint(s, 10, 64)
-	return err == nil
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
