@@ -2,6 +2,28 @@
 
 ## 2026-08-04
 
+**Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where
+`MinLength(1)` actually bites (LFXV2-2812, PR #55 review).
+
+`TestFindBrief_HandlesLongSlugs` called `BriefService.FindBrief` directly, so it could not catch a
+length cap reintroduced in `design/brief.go`: goa generates that check into
+`DecodeFindBriefRequest`, which the service-level call bypasses. The test's comment nevertheless
+claimed it guarded against exactly that. Added
+`TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes`, which routes a real request through the
+goa muxer and decodes it. Verified binding by adding `MaxLength(64)` to the design and
+regenerating: the new test fails, the old one still passes.
+
+Also established, by removing it and regenerating, that `MinLength(1)` on the find-brief
+`event_slug` QUERY PARAM is redundant: because the param is `Required()`, goa already rejects `""`
+with a `MissingFieldError`, so no test can distinguish its presence. It is kept as
+belt-and-braces and is now documented as such. The constraint that genuinely does work is the one
+on `BriefWriteInput.event_slug` — a JSON BODY field, where `Required()` only checks key presence —
+and `TestBriefInput_RejectsEmptyEventSlug` was confirmed binding the same way (drop the design
+constraint, regenerate, test fails).
+
+**Fix** — Corrected a stale comment on `BriefInput` in `design/brief.go` that pointed maintainers
+at a `nonEmptyEventSlug()` helper which does not exist anywhere in the repo. The real mechanism is
+the separate `BriefWriteInput` type; the comment now names it.
 **Update** — Closed two test gaps on the X/Twitter status toggle (LFXV2-2808, PR #53 review).
 Both were unguarded contracts, not bugs: the code was already correct, but nothing would have
 caught a regression.
@@ -45,6 +67,37 @@ toggles as follow-up work after both had landed; Microsoft is now the only outst
 
 ## 2026-08-03
 
+**Update** — Split the brief WRITE payload from the response type (LFXV2-2812, PR #55 review).
+Putting `MinLength(1)` on `BriefInput` fixed the create side but broke the read side: the `Brief`
+RESPONSE type `Reference()`s `BriefInput`, and goa COPIES validations through `Reference`, so the
+constraint landed in all five response validators (12 generated checks). Any already-persisted
+empty-slug row then became undecodable by generated clients — breaking even `get-brief` for
+exactly the rows the fix exists to prevent going forward.
+
+Created `BriefData` (unconstrained, for responses) and kept `BriefInput` (constrained, for
+create/update). Verified by counting the generated checks: **0** response-side, **2** request-side.
+Redeclaring the attribute on `Brief` does NOT work — goa merges rather than overrides, so the
+constraint survives; a separate type is required. This approach also preserves backward
+compatibility: `BriefInput` stays the same generated type name, and tooling referencing the
+OpenAPI component doesn't break.
+
+**Update** — Closed an event_slug validation gap (LFXV2-2812, PR #55 review, @dealako). The
+find-brief lookup enforces `MinLength(1)` on `event_slug`, but `BriefInput.event_slug` — the
+CREATE contract — had only `Required()`. goa's `Required()` checks that the JSON key is PRESENT,
+not that the string is non-empty, and the `TEXT NOT NULL` column accepts `""` too.
+
+So a brief with an empty slug was creatable, occupied the `UNIQUE(project_id, event_slug)`
+index, and could then NEVER be recalled through the lookup — the caller got a 400 rather than
+the documented 404 (no brief yet) or 200 (found), and a re-create collided.
+
+`BriefInput.event_slug` — the create/update payload — now carries `MinLength(1)` so the two
+contracts agree. It could NOT go on `BriefData`: the `Brief` response type `Reference()`s that,
+and goa copies validations through `Reference`, so constraining it would make an
+already-persisted empty-slug row undecodable by generated clients. The comment on
+the lookup asserting that an empty slug "can never match a stored row" was simply FALSE and has
+been replaced with the real reason it is safe: the create side now rejects it. Loosening either
+constraint reopens the gap. `TestBriefInput_RejectsEmptyEventSlug` asserts the GENERATED
+validator, so dropping the constraint in the design and regenerating fails the test.
 **Update** — Registered the Microsoft dispatcher (LFXV2-2804, PR #50 review). The PR added the
 adapter but `registerDispatchers` had no `ProviderMicrosoftAds` entry, so a brief selecting
 microsoft recorded a job that finished "failed: no dispatcher registered" — the whole feature
@@ -114,6 +167,25 @@ concept as a deferred, unsolved follow-up rather than presented as handled.
 
 ## 2026-07-30
 
+**Update** — Added `find-brief` (LFXV2-2812): `GET /projects/{project_id}/briefs?event_slug=`
+returns the saved brief for an event, or 404 when none exists. This closes the
+generate-once/recall-later loop for the Campaigns Planning tab: the AI brief generation lives
+in the UI's Express BFF (`POST /brief/generate`), and this service persists the result — but
+nothing mapped an event URL back to the stored brief, because `get-brief` needs a brief id the
+caller does not have when pasting a URL.
+
+A 404 is an ORDINARY outcome, not a failure: first-time generation is the common case, and the
+caller generates then POSTs to `create-brief`. The endpoint never generates or mutates —
+regeneration stays an explicit `update-brief`, so a marketer's edits to the AI copy are never
+silently clobbered (the existing `version`/`If-Match` gate protects them).
+
+No migration: the lookup reuses `uq_campaign_briefs_project_event`, the partial unique index on
+`(project_id, event_slug) WHERE status <> 'archived'`. Archiving therefore frees the slug and a
+re-paste correctly 404s into a fresh generation.
+
+On D5 (Query Service owns lists): this is a KEYED item read, not a list — the unique index
+means it matches at most one brief, returning the same one-item-plus-ETag shape as
+`GET /briefs/{id}`, which D5 retains. Recorded in api-catalog.md next to the rule.
 **Update** — X/Twitter campaign status toggle (LFXV2-2808). `TwitterDispatcher` now implements
 `service.StatusToggler`, closing the toggle gap for the twitter adapter. New client method
 `UpdateCampaignAndChildrenStatus` PUTs `entity_status` (query params, not a JSON body — the same
