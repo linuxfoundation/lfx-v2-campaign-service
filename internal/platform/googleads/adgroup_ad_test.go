@@ -53,10 +53,23 @@ func TestIsDuplicateAdGroupNameErr(t *testing.T) {
 // ---- createAdGroupAndAd integration paths ----------------------------------
 
 func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
+	var mu sync.Mutex
 	var adGroupBody, adGroupAdBody map[string]any
 	c := newCampaignClientFull(t, okBudget, okCampaign,
-		func(w http.ResponseWriter, r *http.Request) { adGroupBody = decode(t, r); okAdGroup(w, r) },
-		func(w http.ResponseWriter, r *http.Request) { adGroupAdBody = decode(t, r); okAdGroupAd(w, r) },
+		func(w http.ResponseWriter, r *http.Request) {
+			body := decode(t, r)
+			mu.Lock()
+			adGroupBody = body
+			mu.Unlock()
+			okAdGroup(w, r)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			body := decode(t, r)
+			mu.Lock()
+			adGroupAdBody = body
+			mu.Unlock()
+			okAdGroupAd(w, r)
+		},
 	)
 	res, err := c.CreateCampaign(context.Background(), sampleInput())
 	if err != nil {
@@ -73,7 +86,10 @@ func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
 	}
 
 	// Ad group body: PAUSED, SEARCH_STANDARD, references the campaign resourceName.
-	agOp := firstCreate(t, adGroupBody)
+	mu.Lock()
+	agBody := adGroupBody
+	mu.Unlock()
+	agOp := firstCreate(t, agBody)
 	if agOp["status"] != StatusPaused || agOp["type"] != adGroupTypeSearchStandard {
 		t.Errorf("ad group status/type = %v / %v, want %s / %s", agOp["status"], agOp["type"], StatusPaused, adGroupTypeSearchStandard)
 	}
@@ -87,7 +103,10 @@ func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
 	// Ad body: PAUSED, references the ad group resourceName, carries the final URL
 	// and RSA headlines/descriptions (padded up to the platform minimums since
 	// sampleInput supplies none).
-	adOp := firstCreate(t, adGroupAdBody)
+	mu.Lock()
+	adBody := adGroupAdBody
+	mu.Unlock()
+	adOp := firstCreate(t, adBody)
 	if adOp["status"] != StatusPaused {
 		t.Errorf("ad status = %v, want %s", adOp["status"], StatusPaused)
 	}

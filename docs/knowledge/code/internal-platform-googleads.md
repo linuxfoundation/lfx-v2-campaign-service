@@ -259,11 +259,12 @@ misbehave.
 `Descriptions`, trims/rune-truncates/dedupes them (`boundedUniqueCopy`), then
 pads with deterministic eventName/project-derived placeholders
 (`defaultHeadlines`/`defaultDescriptions` via `padUnique`) up to Google's v23
-RSA minimums (3 headlines ≤30 runes, 2 descriptions ≤90 runes) without ever
-dropping caller-supplied entries. Unlike the Microsoft client, Google's limits
-are plain rune counts — there is NO double-width-character halving rule here.
-A caller with zero usable copy AND an empty EventName is a hard error (there
-is nothing to advertise).
+RSA minimums (3 headlines ≤30 runes, 2 descriptions ≤90 runes). Caller-supplied
+entries are accepted up to the maximum (15 headlines, 4 descriptions), with
+later entries beyond those limits silently dropped. Unlike the Microsoft client,
+Google's limits are plain rune counts — there is NO double-width-character
+halving rule here. A caller with zero usable copy AND an empty EventName is a
+hard error (there is nothing to advertise).
 
 **The ad's final URL** (`buildAdFinalURL`) is the brief's `RegistrationURL`
 tagged with `utm_source=google`, `utm_medium=cpc`, `utm_campaign` (from

@@ -316,12 +316,15 @@ budget: number                  — Whole units of the account currency (e.g. 25
                                   async). Omitting it leaves the shell with no budget, which fails the
                                   platform job asynchronously — supply it explicitly.
 headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 runes each, 3-15
-                                  after padding). Trimmed, rune-truncated, and de-duplicated; any
-                                  caller-supplied entry is preserved and never dropped. Padded with
-                                  deterministic eventName-derived placeholders up to the minimum of
-                                  3 when fewer are supplied (or omitted entirely).
+                                  after padding). Trimmed, rune-truncated, and de-duplicated;
+                                  caller-supplied entries are accepted up to 15 (later entries
+                                  beyond that are silently dropped). Padded with deterministic
+                                  eventName-derived placeholders up to the minimum of 3 when fewer
+                                  are supplied (or omitted entirely).
 descriptions?: string[]         — Optional Responsive Search Ad descriptions (≤90 runes each, 2-4
-                                  after padding), same trim/truncate/dedupe/pad rules as headlines.
+                                  after padding). Same trim/truncate/dedupe/pad rules as headlines,
+                                  with caller-supplied entries accepted up to 4 (later entries
+                                  beyond that are silently dropped).
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)

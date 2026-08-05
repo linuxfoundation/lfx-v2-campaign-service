@@ -675,15 +675,17 @@ func IsOutcomeUnconfirmed(err error) bool {
 // with an updateMask of "status".
 //
 // This method flips ONLY the campaign — it does not cascade to the ad group/ad. Unlike
-// reddit's single UpdateCampaignAndChildrenStatus, Google's cascade lives one level up in
-// GoogleAdsDispatcher.ToggleStatus (dispatch/googleads.go), which calls this PLUS
-// UpdateAdGroupAndAdStatus (adgroup_ad.go) in the children-first-on-ACTIVATE /
-// campaign-first-on-PAUSE order the other adapters use. Kept as two client methods (rather
-// than one combined call) because the ad group/ad may legitimately not exist yet (a
-// duplicate-name orphan from GA-3's create path — see createAdGroupAndAd) — the dispatcher's
-// activate guard (ErrCampaignNotProvisioned) checks for that BEFORE calling either method, but
-// keeping them separate also lets a caller pause a campaign whose children failed to create,
-// without that call depending on child ids it may not have.
+// reddit's single UpdateCampaignAndChildrenStatus, Google's cascade will be added to
+// GoogleAdsDispatcher.ToggleStatus (dispatch/googleads.go) as a future phase of GA-3:
+// once UpdateAdGroupAndAdStatus (adgroup_ad.go) is called from the dispatcher in the
+// children-first-on-ACTIVATE / campaign-first-on-PAUSE order the other adapters use.
+// Today the dispatcher rejects ACTIVATE because no ad group/ad exists yet to cascade to.
+// Kept as two client methods (rather than one combined call) because the ad group/ad may
+// legitimately not exist yet (a duplicate-name orphan from GA-3's create path — see
+// createAdGroupAndAd) — the dispatcher's activate guard (ErrCampaignNotProvisioned) checks
+// for that BEFORE calling either method, but keeping them separate also lets a caller pause
+// a campaign whose children failed to create, without that call depending on child ids it
+// may not have.
 //
 // The mutate IS sent as idempotent (doRequest's last arg), unlike the create path. That flag
 // gates only bounded 429 retries, and the create path's reason for declining them (no

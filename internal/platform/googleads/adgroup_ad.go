@@ -168,6 +168,10 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		Status:   StatusPaused,
 		Type:     adGroupTypeSearchStandard,
 	}}}}
+	// Set the ad group name into the result before sending the mutate, so that on failure
+	// (duplicate, ambiguous) the partial result still carries the deterministic name for
+	// reconciliation.
+	res.AdGroupName = adGroupName
 	adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
 	if err != nil {
 		switch {
@@ -183,7 +187,6 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	if err != nil {
 		return fmt.Errorf("google-ads ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", adGroupName, err)
 	}
-	res.AdGroupName = adGroupName
 	res.AdGroupID = adGroupID
 	res.Steps = append(res.Steps, fmt.Sprintf("Ad group created: %s (PAUSED, %s)", adGroupID, adGroupTypeSearchStandard))
 
