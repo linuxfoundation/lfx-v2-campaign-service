@@ -33,20 +33,17 @@ const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 // CreateAudienceForApprovedBrief inserts the row only if the parent brief is still APPROVED at
 // expectedVersion. See the port for why the plain create is not sufficient here.
 //
-// One statement, no transaction needed: the WHERE EXISTS is evaluated against the same snapshot
-// as the insert, so a concurrent ReplaceBrief either commits first (and the insert finds no
-// approved row) or after (and the insert already happened). Zero rows means the brief moved,
-// which is ErrStaleApproval rather than ErrNotFound — the caller should refresh and re-approve,
-// not be told the brief is missing.
+// A guarded INSERT ... WHERE EXISTS is NOT sufficient here. Under READ COMMITTED the
+// statement's snapshot can still see the approved row while a concurrent ReplaceBrief
+// commits a draft/version change before this insert commits — so the build would create
+// REAL HubSpot lists from a brief that is no longer approved.
 func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
-	// A guarded INSERT ... WHERE EXISTS is NOT sufficient here. Under READ COMMITTED the
-	// statement's snapshot can still see the approved row while a concurrent ReplaceBrief
-	// commits a draft/version change before this insert commits — so the build would create
-	// REAL HubSpot lists from a brief that is no longer approved.
-	//
 	// SELECT ... FOR UPDATE takes a row-level exclusive lock and re-reads the row's CURRENT
 	// committed state, so this check cannot straddle a concurrent commit: whichever
 	// transaction takes the lock first runs to completion before the other observes the row.
+	// This guarantees that if we observe the brief as approved, it will remain approved
+	// (or return ErrStaleApproval if it moved) until our INSERT completes, preventing the
+	// creation of HubSpot lists from a draft or modified brief.
 	// Same shape as JobRepo.CreateJobForApprovedBrief.
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

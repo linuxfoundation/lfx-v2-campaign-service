@@ -492,7 +492,14 @@ func partialSummary(planSummary string, ids []string, buildErr error) string {
 	b.WriteString("\nBuild incomplete: ")
 	b.WriteString(safeBuildCause(buildErr))
 	if len(ids) == 0 {
-		b.WriteString("\nNo HubSpot lists were created.")
+		// Distinguish unconfirmed (list may exist) from a definite zero-create (no list exists).
+		// The row stays BUILDING in both cases, but the summary must clarify the reconciliation path.
+		ambiguous := hubspot.IsUnconfirmed(buildErr) || errors.Is(buildErr, errUnconfirmedCreate)
+		if ambiguous {
+			b.WriteString("\nNo confirmed list ID returned, but the request may have succeeded upstream.")
+		} else {
+			b.WriteString("\nNo HubSpot lists were created.")
+		}
 		return b.String()
 	}
 	b.WriteString("\nHubSpot lists ALREADY CREATED (reconcile these before retrying): ")

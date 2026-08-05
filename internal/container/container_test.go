@@ -437,8 +437,11 @@ func TestNewAudienceBuilder_SnowflakeOptional(t *testing.T) {
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
-			b := newAudienceBuilder(nil, nil, cfg)
+			b, client, _ := newAudienceBuilder(nil, nil, cfg)
 			require.NotNil(t, b, "a builder must always be returned: HubSpot list creation does not need Snowflake")
+			// The client must be nil when Snowflake is not fully configured, otherwise
+			// it remains unclosed and leaks connections.
+			require.Nil(t, client, "client should only be non-nil when all Snowflake config fields are present")
 
 			// The degrade path must yield no editions and NO error — the caller records the
 			// narrower scope rather than failing the build.
@@ -763,8 +766,10 @@ func TestNewAudienceBuilder_UnusableKeyIsAnOutage_NotSilence(t *testing.T) {
 		SnowflakeAccount: "acct", SnowflakeUser: "usr",
 		SnowflakePrivateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----", // secretlint-disable-line -- non-key fixture asserting an unusable key degrades
 	}
-	b := newAudienceBuilder(nil, nil, cfg)
+	b, client, _ := newAudienceBuilder(nil, nil, cfg)
 	require.NotNil(t, b, "boot must not fail: a read-only enrichment cannot take down dispatch")
+	// An unusable key means the client is never created; the builder is degraded but not nil.
+	require.Nil(t, client, "client should be nil when key initialization fails")
 
 	names, err := b.ResolvePastEditions(context.Background(), "KubeCon", "Korea", "2026")
 	require.Error(t, err,
@@ -784,7 +789,8 @@ func TestNewAudienceBuilder_UnusableKeyIsAnOutage_NotSilence(t *testing.T) {
 // return the same typed 503 and an error-based assertion passes vacuously. (Verified: an
 // earlier version of this test did exactly that and stayed green with SetBuilder removed.)
 func TestNewAudienceService_InjectsBuilder(t *testing.T) {
-	c := &Container{audienceBuilder: newAudienceBuilder(nil, nil, &config.Config{})}
+	b, _, _ := newAudienceBuilder(nil, nil, &config.Config{})
+	c := &Container{audienceBuilder: b}
 	require.NotNil(t, c.audienceBuilder)
 
 	s := c.newAudienceService(nil, nil)
@@ -809,7 +815,8 @@ func TestAudienceService_ColdStartBindsAllBuildDeps(t *testing.T) {
 
 	ab.SetBackend(fakeAudienceRepo{})
 	ab.SetBriefRepo(nil)
-	ab.SetBuilder(newAudienceBuilder(nil, nil, &config.Config{}))
+	b, _, _ := newAudienceBuilder(nil, nil, &config.Config{})
+	ab.SetBuilder(b)
 
 	s, ok := ab.(*service.AudienceService)
 	require.True(t, ok)

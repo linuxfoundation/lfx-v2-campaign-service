@@ -183,6 +183,11 @@ type Container struct {
 	// initDone is closed when the background goroutine exits, so Close can wait
 	// for it (nil when no goroutine runs).
 	initDone chan struct{}
+
+	// snowflakeClient is the optional Snowflake connection pool for audience enrichment.
+	// Stored here so it can be closed during Container.Close(), releasing database sessions
+	// and connection pool resources. Nil when Snowflake is not configured.
+	snowflakeClient *snowflake.Client
 }
 
 // NewContainer creates and wires all application dependencies.
@@ -353,10 +358,15 @@ var dispatchableProviders = []model.Provider{
 //
 // HubSpot needs no config here: its credentials are per-project encrypted connections the
 // builder resolves per call, exactly as the dispatchers do.
-func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg *config.Config) service.AudienceBuilder {
+//
+// Returns (builder, snowflakeClient, error). The snowflakeClient (if non-nil) owns database
+// sessions and must be closed during Container.Close to release those resources.
+func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg *config.Config) (service.AudienceBuilder, *snowflake.Client, error) {
 	var snow dispatch.PastEditionResolver
+	var client *snowflake.Client
 	if cfg.SnowflakeAccount != "" && cfg.SnowflakeUser != "" && cfg.SnowflakePrivateKey != "" {
-		client, err := snowflake.NewClient(snowflake.Config{
+		var err error
+		client, err = snowflake.NewClient(snowflake.Config{
 			Account:       cfg.SnowflakeAccount,
 			User:          cfg.SnowflakeUser,
 			PrivateKeyPEM: cfg.SnowflakePrivateKey,
@@ -374,13 +384,13 @@ func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg
 			// benign first-time-event note. This boot log rotates away; the audience row does not.
 			slog.Warn("snowflake is configured but unusable; audiences will be built country-only",
 				"error", err)
-			return dispatch.NewDegradedAudienceBuilder(repo, enc, err)
+			return dispatch.NewDegradedAudienceBuilder(repo, enc, err), nil, nil
 		}
 		snow = client
 	} else {
 		slog.Info("snowflake not configured; audiences will be built from the event's country only")
 	}
-	return dispatch.NewAudienceBuilder(repo, enc, snow)
+	return dispatch.NewAudienceBuilder(repo, enc, snow), client, nil
 }
 
 // newAudienceService constructs an AudienceService with the audience-build dependencies
@@ -614,7 +624,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// warn so that gap is visible in production logs.
 	audienceRepo := postgres.NewAudienceRepo(pool)
 	// Must precede newAudienceService below, which reads c.audienceBuilder.
-	c.audienceBuilder = newAudienceBuilder(repo, enc, cfg)
+	c.audienceBuilder, c.snowflakeClient, _ = newAudienceBuilder(repo, enc, cfg)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo)
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
@@ -678,7 +688,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			jobRepo := postgres.NewJobRepo(pool)
 			// Same dispatcher set as the fast path (see registerDispatchers).
 			audienceRepo := postgres.NewAudienceRepo(pool)
-			c.audienceBuilder = newAudienceBuilder(connRepo, enc, cfg)
+			c.audienceBuilder, c.snowflakeClient, _ = newAudienceBuilder(connRepo, enc, cfg)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
@@ -913,6 +923,15 @@ func (c *Container) Close(ctx context.Context) error {
 	c.mu.Unlock()
 	if pool != nil {
 		pool.Close()
+	}
+	// Close the Snowflake client AFTER the dispatch drain, as audience builds may still
+	// be running and holding connections to the warehouse. Closing before dispatches finish
+	// would abandon connections and sessions in the pool.
+	if c.snowflakeClient != nil {
+		if err := c.snowflakeClient.Close(); err != nil {
+			slog.Warn("error closing snowflake client", "error", err)
+			// Non-fatal: log it but don't override shutdownErr if the dispatch drain failed.
+		}
 	}
 	// Close the NATS connection AFTER the dispatch drain: a draining dispatch can
 	// still persist a campaign and publish its index event, and closing earlier

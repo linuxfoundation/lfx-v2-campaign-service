@@ -283,14 +283,17 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 		// BOUND PAST EDITIONS BY YEAR: only include events with a year strictly BEFORE
 		// currentYear. This ensures that when rebuilding a 2025 brief in 2026+, we do not
 		// treat 2026/2027 editions as past. yearInName returns "" if no year is found;
-		// treat missing years as too old (include them, since they predate year tracking).
+		// a row without a recognizable year is not proven to predate year tracking — it can
+		// also be a current or future edition whose name omits the year. Fail closed and exclude it.
 		extractedYear := yearInName(e.EventName)
-		if extractedYear != "" {
-			extractedYearInt, _ := parseYear(extractedYear)
-			if extractedYearInt >= currentYearInt {
-				// This edition's year >= current year, so it is not past; skip it.
-				continue
-			}
+		if extractedYear == "" {
+			// Yearless names are ambiguous; exclude them to prevent inclusion of unwanted editions.
+			continue
+		}
+		extractedYearInt, _ := parseYear(extractedYear)
+		if extractedYearInt >= currentYearInt {
+			// This edition's year >= current year, so it is not past; skip it.
+			continue
 		}
 		out = append(out, e)
 	}
