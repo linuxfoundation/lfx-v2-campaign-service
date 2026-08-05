@@ -495,7 +495,10 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
-	window := model.MetricsWindowLast7Days
+	// Default to last_30_days when no window is specified by the caller — matches the
+	// published contract in design/brief.go, the generated OpenAPI, and
+	// docs/knowledge/code/internal-service.md.
+	window := model.MetricsWindowLast30Days
 	if p.Window != nil {
 		window = model.MetricsWindow(*p.Window)
 		if !model.IsValidMetricsWindow(window) {

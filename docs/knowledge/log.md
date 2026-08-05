@@ -1,5 +1,13 @@
 # Log
 
+## 2026-08-05 (continuation)
+
+**Fix** — `GetCampaignMetrics` defaulted an omitted `window` to `last_7_days`, but the
+published contract (`design/brief.go`, generated OpenAPI, and
+`docs/knowledge/code/internal-service.md`) documents `last_30_days`. Callers omitting
+`window` per the documented contract got a different range than promised. Fixed the
+code default to `model.MetricsWindowLast30Days`.
+
 ## 2026-08-05
 
 **Update** — Rewrote `internal/platform/twitter` metrics read (LFXV2-2996) after review found
