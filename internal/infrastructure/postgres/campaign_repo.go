@@ -310,7 +310,21 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		config_snapshot=$7, result=$8, version=version+1, updated_at=now()
 		WHERE id=$9 AND brief_id=$10 AND project_id=$11 AND version=$12
 		RETURNING ` + campaignCols
-	tx, err := r.db.Begin(ctx)
+	// If a caller holds the claim lock for this campaign, the write MUST run on that
+	// SAME pooled connection rather than acquiring a second one from the pool: the lock
+	// holder pins one connection for the whole claim window, so opening a second here
+	// would need a second connection from the pool at the same time. Under a small or
+	// saturated pool (pool_max_conns=1 makes it certain) that starves this write behind
+	// its own lock holder, blocking every toggle until persistResultTimeout.
+	var beginner interface {
+		Begin(context.Context) (pgx.Tx, error)
+	}
+	if val, ok := activeCampaignLocks.Load(c.ID); ok {
+		beginner = val.(*campaignLock).conn
+	} else {
+		beginner = r.db
+	}
+	tx, err := beginner.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("replace campaign: begin tx: %w", err)
 	}
@@ -401,8 +415,22 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
 	c, err := scanCampaign(conn.QueryRow(ctx, q, campaignID, briefID, projectID, expectedVersion))
 	if err != nil {
-		// Release the lock immediately on error.
-		_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockKey)
+		// Release the lock immediately on error, on a detached bounded context: the
+		// caller's ctx may already be cancelled (e.g. the read above failed because the
+		// request context expired), and an unlock issued with a dead context fails
+		// immediately. A session advisory lock is NOT released just because the
+		// connection is returned to the pool, so a failed unlock here would strand the
+		// lock on a now-pooled connection and block every future claim for this
+		// campaign. If the unlock itself errors, destroy the connection instead of
+		// releasing it, so the lock-bearing session can never be reused.
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
+		_, unlockErr := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", lockKey)
+		cancel()
+		if unlockErr != nil {
+			slog.WarnContext(ctx, "failed to release campaign advisory lock after claim error; destroying connection",
+				"campaign_id", campaignID, "error", unlockErr)
+			conn.Conn().Close(context.WithoutCancel(ctx))
+		}
 		conn.Release()
 
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -453,11 +481,14 @@ func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, campaignID strin
 	defer cancel()
 
 	if _, err := lock.conn.Exec(releaseCtx, "SELECT pg_advisory_unlock($1)", lock.lockKey); err != nil {
-		// Log but don't fail completely; the connection will be released
-		// and the lock will be cleaned up when the connection is returned to
-		// the pool (advisory locks are held per-session).
-		slog.WarnContext(ctx, "failed to release campaign advisory lock",
+		// A session advisory lock is NOT released just because the connection goes back
+		// to the pool — it stays held for the life of the underlying Postgres session, so
+		// returning this connection to the pool after a failed unlock would strand the
+		// lock on a connection future claims can be handed, permanently blocking them.
+		// Destroy the connection instead of releasing it.
+		slog.WarnContext(ctx, "failed to release campaign advisory lock; destroying connection",
 			"campaign_id", campaignID, "error", err)
+		lock.conn.Conn().Close(context.WithoutCancel(ctx))
 	}
 	lock.conn.Release()
 	return nil

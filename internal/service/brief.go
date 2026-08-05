@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -568,6 +569,12 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	return campaignResult(updated), nil
 }
 
+// unconfirmedLockCooldown bounds how long ToggleCampaignStatus holds the claim lock after an
+// UNCONFIRMED platform outcome before letting another writer claim the same (still-unbumped)
+// version. It gives an operator or the caller's own retry a window to verify the platform's
+// actual state before a second call can race a possibly-already-applied change.
+const unconfirmedLockCooldown = 30 * time.Second
+
 // ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
 // status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
 // updated only after the platform confirms, so a persisted "paused" always reflects reality.
@@ -640,7 +647,16 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// platform call succeeds (to persist even if the request is cancelled). ReleaseCampaignLock
 	// internally uses context.WithoutCancel to guarantee the unlock runs even if the caller's
 	// context is cancelled.
-	defer func() { _ = campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID) }()
+	//
+	// releaseNow is turned off on the UNCONFIRMED path below, which schedules its own delayed
+	// release instead — releasing inline there would let a second waiter re-claim the same
+	// still-unbumped version and call the platform again while this call's outcome is unknown.
+	releaseNow := true
+	defer func() {
+		if releaseNow {
+			_ = campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID)
+		}
+	}()
 
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
 	// lie that the campaign is paused when the platform still has it running).
@@ -673,6 +689,23 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
 				"requested_status", p.Status, "error", terr)
+			// The row is deliberately left untouched here (it might already be right, or not
+			// — see the test asserting this). But releasing the claim lock immediately, as the
+			// deferred release above would, lets a second caller already waiting on it claim
+			// the SAME still-unbumped expectedVersion right away and call the platform again
+			// while THIS call's outcome is still unknown — doubling up on an already-ambiguous
+			// change. Hold the lock for a bounded cooldown instead of releasing it inline: skip
+			// the deferred release for this path and release asynchronously after
+			// unconfirmedLockCooldown, on a background context so it isn't tied to this
+			// request. This gives an operator/retry a window to reconcile before any other
+			// writer can proceed, without persisting anything (a crash before the cooldown
+			// elapses still releases the lock immediately — it's a Postgres session lock, so it
+			// drops the moment the holding connection closes).
+			releaseNow = false
+			go func(campaignID string) {
+				time.Sleep(unconfirmedLockCooldown)
+				_ = campaignRepo.ReleaseCampaignLock(context.Background(), campaignID)
+			}(p.CampaignID)
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
 		default:
 			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution
