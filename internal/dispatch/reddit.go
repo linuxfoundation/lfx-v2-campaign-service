@@ -256,6 +256,27 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	return nil
 }
 
+// ReadMetrics returns live campaign metrics from Reddit's Ads v3 reporting endpoint for
+// the given campaign during the specified time window.
+//
+// See the UNVERIFIED-CONTRACT warning on reddit.Client.GetCampaignMetrics: Reddit's
+// reporting endpoint has no public documentation (LFXV2-2995 investigation), so the
+// request/response shape this calls is a best-effort guess, not a confirmed integration.
+func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	if campaign.PlatformCampaignID == "" {
+		return nil, fmt.Errorf("campaign has no platform campaign ID")
+	}
+	client, err := d.resolveRedditClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)
+	if err != nil {
+		return nil, fmt.Errorf("get campaign metrics from reddit: %w", err)
+	}
+	return metrics, nil
+}
+
 // redditChildIDs pulls the ad group + ad ids the create path stored in the persisted
 // CampaignResult blob. A missing/unparseable blob yields empty ids (only the campaign is
 // toggled) rather than an error — the service already blocks toggling a degraded campaign.
