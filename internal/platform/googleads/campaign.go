@@ -430,6 +430,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := validateEntityName("campaign", campaignName, utf8.RuneCountInString(campaignName), maxCampaignNameRunes, "characters"); err != nil {
 		return nil, err
 	}
+	// Validate the ad-group/ad inputs (destination URL, ad copy, ad-group name)
+	// BEFORE the first (budget) mutate: a failure here is purely local
+	// input validation, and surfacing it only after the budget+campaign already
+	// committed (inside createAdGroupAndAd, which runs last) would orphan a real
+	// paid campaign for what amounts to a bad RegistrationURL or over-length name.
+	finalURL, headlines, descriptions, adGroupName, err := precomputeAdGroupAdInputs(in)
+	if err != nil {
+		return nil, err
+	}
 
 	var steps []string
 	googleAdsURL := "https://ads.google.com/aw/campaigns?ocid=" + c.account.CustomerID
@@ -553,7 +562,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// point. The caller (GoogleAdsDispatcher.Dispatch) treats a non-nil result +
 	// error as "retain the claim, record the partial" — the same contract already
 	// used for an ambiguous/duplicate budget or campaign.
-	if err := c.createAdGroupAndAd(ctx, in, campaignResource, campaignID, res); err != nil {
+	if err := c.createAdGroupAndAd(ctx, campaignResource, campaignID, finalURL, headlines, descriptions, adGroupName, res); err != nil {
 		return res, err
 	}
 	return res, nil

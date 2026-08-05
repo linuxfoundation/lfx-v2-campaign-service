@@ -204,6 +204,21 @@ GA-4). Both steps run unconditionally after every successful campaign create;
 there is no way to create a campaign shell with no children through this path
 today.
 
+**All ad-group/ad input validation runs BEFORE the first (budget) mutate.**
+`CreateCampaign` calls `precomputeAdGroupAdInputs` — which validates the
+destination URL (`buildAdFinalURL`), ad copy (`composeAdCopy`), and ad-group
+name (`validateEntityName`) with no network calls — immediately after the
+budget/campaign name validation and before `campaignBudgets:mutate` is sent.
+`createAdGroupAndAd` then takes the precomputed `finalURL`/`headlines`/
+`descriptions`/`adGroupName` as arguments and performs no local validation of
+its own. This ordering matters: `createAdGroupAndAd` runs LAST, after the
+budget and campaign already committed, so validating its inputs only at that
+point would let a bad `RegistrationURL` or an over-length ad-group name orphan
+a real, already-created budget+campaign for what is purely a local input
+error — every other precondition in this file (budget/campaign name length,
+attribution fields) is likewise checked before its first upstream call for
+the same reason.
+
 **Idempotency** mirrors the budget/campaign convention (create-then-catch,
 not Microsoft's find-by-name-first): the ad group has a deterministic
 composed name (`composeName("Ad Group", in)`), so a retry with the same
@@ -225,7 +240,16 @@ can never be attempted twice against one ad group.
 Ads resource (a single trailing numeric id split by `resourceID`), an
 AdGroupAd's resourceName trailing segment is `{adGroupId}~{adId}` (tilde-
 separated, e.g. `customers/1/adGroupAds/111~222`). `adGroupAdID` splits on
-`~` after `resourceID`'s slash-split; this composite shape is the single
+`~` after `resourceID`'s slash-split and requires EXACTLY two components, both
+a non-empty run of ASCII digits (`numericID`) — a third tilde-separated
+component or a non-numeric half is rejected as malformed (returns `("", "")`)
+rather than silently accepted, since the extra/non-numeric text would
+otherwise be carried into `res.AdGroupID`/`AdID` and later interpolated into a
+`resourceName` path by `UpdateAdGroupAndAdStatus`. `createAdGroupAndAd` also
+verifies the returned ad-group-id HALF of the adGroupAd resourceName matches
+the ad-group id the ad was actually created under — a mismatch means the
+response doesn't describe the ad this call just created, so it is reported
+UNCONFIRMED rather than persisted. This composite shape is the single
 highest-risk unverified assumption in this slice (no live fixture in-repo to
 confirm it against) — if wrong, both `UpdateAdGroupAndAdStatus`'s resourceName
 construction and `firstResourceName`'s extraction on ad create would silently

@@ -28,7 +28,9 @@ func TestAdGroupAdID(t *testing.T) {
 		{"no tilde", "customers/1/adGroupAds/111", "", ""},
 		{"empty adGroup half", "customers/1/adGroupAds/~222", "", ""},
 		{"empty ad half", "customers/1/adGroupAds/111~", "", ""},
-		{"extra tildes kept in second half", "customers/1/adGroupAds/111~222~333", "111", "222~333"},
+		{"extra tildes rejected as malformed", "customers/1/adGroupAds/111~222~333", "", ""},
+		{"non-numeric adGroup half rejected", "customers/1/adGroupAds/abc~222", "", ""},
+		{"non-numeric ad half rejected", "customers/1/adGroupAds/111~abc", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,7 +53,11 @@ func TestIsDuplicateAdGroupNameErr(t *testing.T) {
 // ---- createAdGroupAndAd integration paths ----------------------------------
 
 func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
-	c := newCampaignClient(t, okBudget, okCampaign)
+	var adGroupBody, adGroupAdBody map[string]any
+	c := newCampaignClientFull(t, okBudget, okCampaign,
+		func(w http.ResponseWriter, r *http.Request) { adGroupBody = decode(t, r); okAdGroup(w, r) },
+		func(w http.ResponseWriter, r *http.Request) { adGroupAdBody = decode(t, r); okAdGroupAd(w, r) },
+	)
 	res, err := c.CreateCampaign(context.Background(), sampleInput())
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
@@ -64,6 +70,52 @@ func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
 	}
 	if res.AdID != "444" {
 		t.Errorf("AdID = %q, want 444", res.AdID)
+	}
+
+	// Ad group body: PAUSED, SEARCH_STANDARD, references the campaign resourceName.
+	agOp := firstCreate(t, adGroupBody)
+	if agOp["status"] != StatusPaused || agOp["type"] != adGroupTypeSearchStandard {
+		t.Errorf("ad group status/type = %v / %v, want %s / %s", agOp["status"], agOp["type"], StatusPaused, adGroupTypeSearchStandard)
+	}
+	if agOp["campaign"] != "customers/1234567890/campaigns/222" {
+		t.Errorf("ad group campaign = %v, want customers/1234567890/campaigns/222", agOp["campaign"])
+	}
+	if agOp["name"] != res.AdGroupName {
+		t.Errorf("ad group name = %v, want %q", agOp["name"], res.AdGroupName)
+	}
+
+	// Ad body: PAUSED, references the ad group resourceName, carries the final URL
+	// and RSA headlines/descriptions (padded up to the platform minimums since
+	// sampleInput supplies none).
+	adOp := firstCreate(t, adGroupAdBody)
+	if adOp["status"] != StatusPaused {
+		t.Errorf("ad status = %v, want %s", adOp["status"], StatusPaused)
+	}
+	if adOp["adGroup"] != "customers/1234567890/adGroups/333" {
+		t.Errorf("ad adGroup = %v, want customers/1234567890/adGroups/333", adOp["adGroup"])
+	}
+	ad, ok := adOp["ad"].(map[string]any)
+	if !ok {
+		t.Fatalf("ad create must carry an ad object, got %v", adOp["ad"])
+	}
+	finalURLs, ok := ad["finalUrls"].([]any)
+	if !ok || len(finalURLs) != 1 {
+		t.Fatalf("ad.finalUrls = %v, want exactly one URL", ad["finalUrls"])
+	}
+	if !strings.HasPrefix(finalURLs[0].(string), "https://events.linuxfoundation.org/kubecon") {
+		t.Errorf("ad.finalUrls[0] = %v, want it to start with the registration URL", finalURLs[0])
+	}
+	rsa, ok := ad["responsiveSearchAd"].(map[string]any)
+	if !ok {
+		t.Fatalf("ad must carry a responsiveSearchAd, got %v", ad["responsiveSearchAd"])
+	}
+	headlines, ok := rsa["headlines"].([]any)
+	if !ok || len(headlines) < minHeadlines {
+		t.Errorf("responsiveSearchAd.headlines = %v, want at least %d", rsa["headlines"], minHeadlines)
+	}
+	descriptions, ok := rsa["descriptions"].([]any)
+	if !ok || len(descriptions) < minDescriptions {
+		t.Errorf("responsiveSearchAd.descriptions = %v, want at least %d", rsa["descriptions"], minDescriptions)
 	}
 }
 
@@ -149,6 +201,25 @@ func TestCreateAdGroupAndAd_MalformedAdGroupAdResourceName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "malformed adGroupAd resource name") {
 		t.Errorf("error = %v, want it to mention the malformed resource name", err)
+	}
+}
+
+func TestCreateAdGroupAndAd_AdGroupAdResourceNameReportsWrongAdGroup(t *testing.T) {
+	c := newCampaignClientFull(t, okBudget, okCampaign,
+		okAdGroup,
+		func(w http.ResponseWriter, _ *http.Request) {
+			// A different ad-group id (999) than the one just created (333) — the
+			// response does not describe the ad this call created, so it must be
+			// rejected rather than persisted under the wrong ad group.
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/999~444"}]}`)
+		},
+	)
+	_, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil {
+		t.Fatal("expected an error when the adGroupAd resource name reports a different ad group id")
+	}
+	if !strings.Contains(err.Error(), "different ad group id") {
+		t.Errorf("error = %v, want it to mention the ad-group-id mismatch", err)
 	}
 }
 

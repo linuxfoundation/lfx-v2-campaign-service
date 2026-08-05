@@ -427,6 +427,30 @@ func TestCreateCampaign_RejectsBadInput(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_RejectsBadAdGroupAdInputBeforeAnyMutate confirms the
+// ad-group/ad inputs (destination URL, ad copy, ad-group name) are validated
+// BEFORE the first (budget) mutate — a bad RegistrationURL must not leave an
+// orphaned budget+campaign committed in Google Ads for what is purely a local
+// input-validation failure.
+func TestCreateCampaign_RejectsBadAdGroupAdInputBeforeAnyMutate(t *testing.T) {
+	c := newCampaignClient(t,
+		func(w http.ResponseWriter, _ *http.Request) { t.Error("no budget call expected"); okBudget(w, nil) },
+		func(w http.ResponseWriter, _ *http.Request) { t.Error("no campaign call expected"); okCampaign(w, nil) },
+	)
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		Project:         "P",
+		EventName:       "E",
+		Budget:          50,
+		RegistrationURL: "not-a-valid-url",
+	})
+	if err == nil {
+		t.Fatal("an invalid RegistrationURL should be rejected before any mutate call")
+	}
+	if res != nil {
+		t.Errorf("a preflight ad-group/ad input rejection must return a nil result (nothing was created), got %+v", res)
+	}
+}
+
 // --- unit tests for the pure helpers ---
 
 func TestResourceID(t *testing.T) {

@@ -92,18 +92,48 @@ func isDuplicateAdGroupNameErr(err error) bool {
 // Unlike every other Google Ads resource, AdGroupAd uses a COMPOSITE trailing
 // segment "{adGroupId}~{adId}" (e.g. "customers/1/adGroupAds/111~222") rather
 // than a single numeric id — resourceID's plain last-slash split returns that
-// whole "111~222" string, so this further splits on "~". Returns ("", "") if
-// the resource name is empty or the trailing segment isn't in that shape.
+// whole "111~222" string, so this further splits on "~". Requires EXACTLY two
+// components and BOTH must be a non-empty run of ASCII digits (numericID) — a
+// third tilde-separated component (e.g. "111~222~333") or a non-numeric half
+// is rejected as malformed rather than silently accepted, since the extra/
+// non-numeric text would otherwise be carried into res.AdGroupID/AdID and
+// later interpolated into a resourceName path by UpdateAdGroupAndAdStatus.
+// Returns ("", "") if the resource name is empty or the trailing segment
+// isn't in that exact shape.
 func adGroupAdID(resourceName string) (adGroupID, adID string) {
 	trailing := resourceID(resourceName)
 	if trailing == "" {
 		return "", ""
 	}
-	parts := strings.SplitN(trailing, "~", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	parts := strings.Split(trailing, "~")
+	if len(parts) != 2 || !numericID(parts[0]) || !numericID(parts[1]) {
 		return "", ""
 	}
 	return parts[0], parts[1]
+}
+
+// precomputeAdGroupAdInputs validates and derives everything createAdGroupAndAd
+// needs (destination URL, ad copy, ad-group name) WITHOUT sending any request.
+// CreateCampaign calls this BEFORE the first (budget) mutate: an invalid
+// RegistrationURL, unusable ad copy, or over-length ad-group name must fail
+// before any Google Ads resource is created, not after the budget+campaign
+// already committed — surfacing it only inside createAdGroupAndAd (which runs
+// after both prior mutates) would orphan a real campaign+budget with no ad
+// group/ad for what is purely a local input-validation failure.
+func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, descriptions []string, adGroupName string, err error) {
+	finalURL, err = buildAdFinalURL(in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
+	if err != nil {
+		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
+	}
+	headlines, descriptions, err = composeAdCopy(in.Headlines, in.Descriptions, in.EventName, in.Project)
+	if err != nil {
+		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
+	}
+	adGroupName = composeName("Ad Group", in)
+	if err := validateEntityName("ad group", adGroupName, len(adGroupName), maxAdGroupNameBytes, "UTF-8 bytes"); err != nil {
+		return "", nil, nil, "", err
+	}
+	return finalURL, headlines, descriptions, adGroupName, nil
 }
 
 // createAdGroupAndAd extends a just-created campaign with a PAUSED ad group and a
@@ -119,27 +149,15 @@ func adGroupAdID(resourceName string) (adGroupID, adID string) {
 // campaign left in that state needs manual reconciliation, same as a
 // duplicate-budget or duplicate-campaign orphan today.
 //
+// finalURL/headlines/descriptions/adGroupName are precomputed by
+// precomputeAdGroupAdInputs BEFORE CreateCampaign's first mutate, so this
+// method performs no local validation of its own — by the time it runs, the
+// campaign already exists and there is nothing left to reject before sending.
+//
 // res is mutated in place (AdGroupName/AdGroupID/AdID/Steps) so the caller's
 // existing partial-result plumbing (campaignNamePartial-derived) carries
 // whatever was created even when this returns an error.
-func (c *Client) createAdGroupAndAd(ctx context.Context, in CampaignInput, campaignResource, campaignID string, res *CampaignResult) error {
-	// Validate the destination URL and ad copy BEFORE any ad-group mutate: a bad
-	// input here must not leave an orphaned ad group with no ad, mirroring the
-	// budget/campaign name validation that runs before their own mutates.
-	finalURL, err := buildAdFinalURL(in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
-	if err != nil {
-		return fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
-	}
-	headlines, descriptions, err := composeAdCopy(in.Headlines, in.Descriptions, in.EventName, in.Project)
-	if err != nil {
-		return fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
-	}
-
-	adGroupName := composeName("Ad Group", in)
-	if err := validateEntityName("ad group", adGroupName, len(adGroupName), maxAdGroupNameBytes, "UTF-8 bytes"); err != nil {
-		return err
-	}
-
+func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campaignID, finalURL string, headlines, descriptions []string, adGroupName string, res *CampaignResult) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("google-ads ad group creation aborted before any request (context already done): %w", ctxErr)
 	}
@@ -198,9 +216,16 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, in CampaignInput, campa
 	if err != nil {
 		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; 2xx with no/malformed resource name — an ad may exist — verify in Google Ads before retrying): %w", adGroupID, err)
 	}
-	_, adID := adGroupAdID(adResource)
-	if adID == "" {
+	returnedAdGroupID, adID := adGroupAdID(adResource)
+	if adID == "" || returnedAdGroupID == "" {
 		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; malformed adGroupAd resource name %q — verify in Google Ads before retrying)", adGroupID, adResource)
+	}
+	// The adGroupAd resourceName's ad-group-id half must match the ad group this
+	// ad was created under — a mismatch means the response doesn't describe the
+	// ad this call just created (a malformed/substituted resourceName), so the
+	// returned adID cannot be trusted enough to persist.
+	if returnedAdGroupID != adGroupID {
+		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; adGroupAd resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, adResource, returnedAdGroupID)
 	}
 	res.AdID = adID
 	res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ad created: %s (PAUSED, %d headlines, %d descriptions)", adID, len(headlines), len(descriptions)))
