@@ -368,6 +368,31 @@ func TestDateRangeForWindow_Last7Days(t *testing.T) {
 	}
 }
 
+func TestDateRangeForWindow_Last30Days(t *testing.T) {
+	fixedTime := time.Date(2025, 1, 15, 10, 30, 45, 0, time.UTC)
+	client := NewClient(
+		Credentials{AccessToken: "test"},
+		RuntimeConfig{},
+		WithClock(func() time.Time { return fixedTime }),
+	)
+
+	start, end, err := client.dateRangeForWindow(model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 30 days = 29 days before today through today
+	expectedStart := time.Date(2024, 12, 17, 0, 0, 0, 0, time.UTC)
+	expectedEnd := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	if !start.Equal(expectedStart) {
+		t.Errorf("start: expected %v, got %v", expectedStart, start)
+	}
+	if !end.Equal(expectedEnd) {
+		t.Errorf("end: expected %v, got %v", expectedEnd, end)
+	}
+}
+
 func TestDateRangeForWindow_ThisMonth(t *testing.T) {
 	fixedTime := time.Date(2025, 1, 15, 10, 30, 45, 0, time.UTC)
 	client := NewClient(
@@ -462,8 +487,10 @@ func TestDateRangeForWindow_ThisMonthAndLastMonth_MonthEndBoundary(t *testing.T)
 // LinkedIn Ad Analytics API.
 func TestDateRangeForWindow_TimezoneHandling(t *testing.T) {
 	// Simulate a client clock in UTC+10 (Australian Eastern time).
-	// 2025-01-15 10:30:45 AEDT (UTC+11 due to daylight saving) = 2025-01-14 23:30:45 UTC
-	// But for simplicity, we'll use 2025-08-05 10:30:45 in a UTC+10 fixed offset zone.
+	// 2025-08-05 10:30:45 in UTC+10 = 2025-08-05 00:30:45 UTC.
+	// The client's local date is Aug 5, and dateRangeForWindow normalizes to UTC
+	// before extracting date components, so the returned UTC times should reflect
+	// the client's local date (Aug 5).
 	fixedLoc := time.FixedZone("UTC+10", 10*3600)
 	fixedTime := time.Date(2025, 8, 5, 10, 30, 45, 0, fixedLoc)
 
@@ -473,16 +500,16 @@ func TestDateRangeForWindow_TimezoneHandling(t *testing.T) {
 		WithClock(func() time.Time { return fixedTime }),
 	)
 
-	// Today in the client's local time is 2025-08-05 (not 2025-08-04 UTC).
-	// The dateRangeForWindow should return the date in the client's local time,
-	// not in UTC.
+	// The dateRangeForWindow returns times in UTC, but normalized from the
+	// client's local date. Today's local date is 2025-08-05, which converts to
+	// 2025-08-05 00:30:45 UTC; extracted components are Aug 5, year 2025.
 	start, end, err := client.dateRangeForWindow(model.MetricsWindowToday)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Extract the date components using the time's own location (UTC+10 offset).
-	// This should give 2025-08-05, not 2025-08-04.
+	// Extracted date components should reflect the client's local date (Aug 5),
+	// not the UTC date shifted earlier.
 	if got, want := start.Day(), 5; got != want {
 		t.Errorf("today start day: expected %d, got %d", want, got)
 	}
@@ -501,5 +528,41 @@ func TestDateRangeForWindow_TimezoneHandling(t *testing.T) {
 	}
 	if got, want := end.Year(), 2025; got != want {
 		t.Errorf("today end year: expected %d, got %d", want, got)
+	}
+}
+
+// TestDateRangeForWindow_UTCNegativeOffset verifies that negative-offset timezones
+// (west of UTC) are handled correctly. The function normalizes to UTC before
+// extracting date components, ensuring consistent UTC-based queries regardless
+// of the client's timezone. For a client in UTC-5 on Jan 15, the UTC date is
+// Jan 16, so the API receives the query for Jan 16 UTC metrics.
+func TestDateRangeForWindow_UTCNegativeOffset(t *testing.T) {
+	// Simulate a client in US Eastern Standard Time (UTC-5).
+	// 2025-01-15 22:00:00 EST = 2025-01-16 03:00:00 UTC
+	estLoc := time.FixedZone("EST", -5*3600)
+	fixedTime := time.Date(2025, 1, 15, 22, 0, 0, 0, estLoc)
+
+	client := NewClient(
+		Credentials{AccessToken: "test"},
+		RuntimeConfig{},
+		WithClock(func() time.Time { return fixedTime }),
+	)
+
+	start, _, err := client.dateRangeForWindow(model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The function normalizes to UTC: fixedTime.UTC() = 2025-01-16 03:00:00 UTC.
+	// Date components extracted from UTC are: year=2025, month=1, day=16.
+	// The returned times are UTC times with UTC date components.
+	if got, want := start.Day(), 16; got != want {
+		t.Errorf("today start day: expected %d (UTC date), got %d", want, got)
+	}
+	if got, want := start.Month(), time.January; got != want {
+		t.Errorf("today start month: expected %v, got %v", want, got)
+	}
+	if got, want := start.Year(), 2025; got != want {
+		t.Errorf("today start year: expected %d, got %d", want, got)
 	}
 }

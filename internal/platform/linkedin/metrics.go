@@ -277,11 +277,17 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 // invalid day-of-month (e.g. subtracting a month from the 31st) into the
 // following month rather than erroring — that would silently shift both
 // this_month and last_month's boundaries on 29th/30th/31st-of-month days.
+//
+// All dates are normalized to UTC before extraction to ensure LinkedIn's API
+// receives consistent UTC dates regardless of the client's local timezone. For
+// example, a client in Asia/Tokyo (UTC+9) on Jan 15 local time will extract
+// year/month/day from UTC (Jan 15 UTC, not Jan 14 UTC), so the query requests
+// Jan 15 UTC metrics.
 func (c *Client) dateRangeForWindow(window model.MetricsWindow) (start, end time.Time, err error) {
-	now := c.now()
+	now := c.now().UTC()
 	year, month, day := now.Date()
-	today := time.Date(year, month, day, 0, 0, 0, 0, now.Location())
-	firstOfThisMonth := time.Date(year, month, 1, 0, 0, 0, 0, now.Location())
+	today := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	firstOfThisMonth := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
 
 	switch window {
 	case model.MetricsWindowToday:
@@ -310,10 +316,5 @@ func (c *Client) dateRangeForWindow(window model.MetricsWindow) (start, end time
 		return time.Time{}, time.Time{}, fmt.Errorf("%w: %q", ErrUnsupportedWindow, window)
 	}
 
-	// Convert calendar-date components directly to UTC REST.li date format without
-	// converting the time.Time to UTC first, which could shift the date. For example,
-	// a "midnight in UTC+10" is actually "14:00 UTC yesterday", so converting to UTC
-	// would change the date. Instead, construct the REST.li date from the year/month/day
-	// components directly, which are always in the client's local time (c.now()'s location).
 	return start, end, nil
 }
