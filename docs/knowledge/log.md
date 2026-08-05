@@ -1,5 +1,42 @@
 # Log
 
+## 2026-08-05 (continued)
+
+**Fix** — Address PR #73 Copilot/human review findings (LFXV2-2994). Seven corrections to
+LinkedIn metrics read (`internal/platform/linkedin/metrics.go`):
+
+1. **Rate-limit retry handling** — `doAdAnalyticsAttempt` bypassed the standard 429 retry
+   policy (applied via `makeAdAnalyticsRequest`'s retry loop) by calling `c.httpClient.Do`
+   directly, losing bounded backoff. Wrapped the raw `Do` call within the same
+   `attempt/retry/wait` loop used by `doRequest` for idempotent GETs, ensuring 429s are
+   retried with exponential backoff and header-parsed `Retry-After` honoring.
+
+2. **Timezone drift in date extraction** — `dateRangeForWindow` was converting midnight times
+   (constructed in `now.Location()`) to UTC before returning, which shifted calendar dates when
+   the client's local timezone was not UTC (e.g. Aug 5 00:00 UTC+10 becomes Aug 4 14:00 UTC).
+   LinkedIn's Ad Analytics finder expects calendar dates in the client's local time, not UTC.
+   Removed the UTC conversion; dates are now returned in their original location so `restLiDate`
+   extracts the correct day/month/year components.
+
+3. **Currency assumption (USD)** — `AdAnalyticsElement.CostInUsd` field naming assumed spend
+   was always in USD, but LinkedIn's API returns cost in the ad account's billing currency.
+   Renamed field to `CostInAccountCurrency` and updated comments to clarify the API returns
+   spend in the account's configured currency, not necessarily USD.
+
+4. **Documentation update** — Enhanced `GetCampaignMetrics` godoc to describe the optional
+   `service.MetricsReader` interface it implements, explain the bare-numeric campaign ID
+   contract, and document the returned `CampaignMetrics` field semantics (particularly that
+   `CostMicros` is in the account's currency).
+
+5. **Knowledge base update** — Updated `docs/knowledge/code/internal-platform-linkedin.md` to
+   mention `GetCampaignMetrics` and the Analytics capability in the package overview.
+
+6. **Test coverage** — Added `TestDateRangeForWindow_TimezoneHandling` to verify date
+   extraction works correctly in non-UTC timezones, preventing regression of the timezone bug.
+
+Existing tests for month-boundary anchoring, empty-vs-null elements distinction, and 429
+retries were already present and pass without modification.
+
 ## 2026-08-05
 
 **Update** — Rewrote `internal/platform/linkedin` metrics read (LFXV2-2994) after review

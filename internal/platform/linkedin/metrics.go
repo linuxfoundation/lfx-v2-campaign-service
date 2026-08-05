@@ -29,9 +29,12 @@ type AdAnalyticsElement struct {
 	Impressions int64 `json:"impressions"`
 	// Clicks is the number of times the ad was clicked.
 	Clicks int64 `json:"clicks"`
-	// CostInUsd is the spend in decimal USD (e.g. 25.50 for $25.50).
-	// The API returns this as a JSON number.
-	CostInUsd *float64 `json:"costInUsd"`
+	// CostInAccountCurrency is the spend in decimal amount in the ad account's
+	// billing currency (e.g. 25.50 for 25.50 units). The API returns this as a
+	// JSON number. Note: the JSON field name is costInUsd for backward compatibility
+	// with the LinkedIn API naming; the actual currency depends on the ad account's
+	// configuration.
+	CostInAccountCurrency *float64 `json:"costInUsd"`
 }
 
 // AdAnalyticsResponse is the JSON response from LinkedIn's Ad Analytics endpoint.
@@ -45,10 +48,22 @@ type AdAnalyticsResponse struct {
 }
 
 // GetCampaignMetrics reads live campaign metrics from LinkedIn's Ad Analytics API
-// for the given campaign during the specified time window. campaignID is the bare
-// numeric LinkedIn campaign id as persisted by campaignFromLinkedIn (trailingID of
-// the campaign URN returned on creation) — NOT a URN. This method builds the
-// sponsoredCampaign/sponsoredAccount URNs the Ad Analytics finder requires.
+// for the given campaign during the specified time window. This method implements
+// the service.MetricsReader interface (the optional capability the orchestrator
+// discovers per dispatcher).
+//
+// campaignID is the bare numeric LinkedIn campaign id as persisted by
+// campaignFromLinkedIn (trailingID of the campaign URN returned on creation)
+// — NOT a URN. This method builds the sponsoredCampaign/sponsoredAccount URNs the
+// Ad Analytics finder requires.
+//
+// The returned CampaignMetrics contains:
+//   - Impressions: number of times the ad was displayed
+//   - Clicks: number of times the ad was clicked
+//   - CostMicros: spend in micros of the ad account's billing currency
+//     (not necessarily USD; LinkedIn's API returns the cost in the account's
+//     configured currency)
+//   - Ctr: clicks/impressions (0 when impressions is 0)
 func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	if campaignID == "" {
 		return nil, fmt.Errorf("campaign ID is required")
@@ -81,10 +96,12 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	for _, elem := range *resp.Elements {
 		metrics.Impressions += elem.Impressions
 		metrics.Clicks += elem.Clicks
-		if elem.CostInUsd != nil {
-			// Convert USD to micros (multiply by 1,000,000), rounding rather than
-			// truncating so a value like 25.505 doesn't silently lose a micro.
-			metrics.CostMicros += int64(math.Round(*elem.CostInUsd * 1_000_000))
+		if elem.CostInAccountCurrency != nil {
+			// Convert the ad account's currency to micros (multiply by 1,000,000),
+			// rounding rather than truncating so a value like 25.505 doesn't silently
+			// lose a micro. The currency depends on the ad account's configuration on
+			// LinkedIn; the API returns the cost in the account's billing currency.
+			metrics.CostMicros += int64(math.Round(*elem.CostInAccountCurrency * 1_000_000))
 		}
 	}
 
@@ -181,6 +198,7 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 
 	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, rawURL, nil)
 	if err != nil {
+		cancel()
 		return nil, false, 0, fmt.Errorf("new request: %w", err)
 	}
 
@@ -190,12 +208,12 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		cancel()
 		if isPreSendDialError(err) {
 			return nil, false, 0, fmt.Errorf("linkedin GET adAnalytics: %w", err)
 		}
 		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		wait := c.parseRetryAfter(resp)
@@ -284,5 +302,10 @@ func (c *Client) dateRangeForWindow(window model.MetricsWindow) (start, end time
 		return time.Time{}, time.Time{}, fmt.Errorf("%w: %q", ErrUnsupportedWindow, window)
 	}
 
-	return start.UTC(), end.UTC(), nil
+	// Convert calendar-date components directly to UTC REST.li date format without
+	// converting the time.Time to UTC first, which could shift the date. For example,
+	// a "midnight in UTC+10" is actually "14:00 UTC yesterday", so converting to UTC
+	// would change the date. Instead, construct the REST.li date from the year/month/day
+	// components directly, which are always in the client's local time (c.now()'s location).
+	return start, end, nil
 }

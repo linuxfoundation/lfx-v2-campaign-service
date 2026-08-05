@@ -26,7 +26,9 @@ Marketing API. `CreateCampaign` builds the full sponsored-content hierarchy in
 one call — Campaign Group (ACTIVE) -> Campaign (PAUSED) -> Dark Post
 (`feedDistribution: NONE`) -> Creative — with targeting assembled from the
 runtime config's profile (skills/groups/job-functions) and resolved geo URNs.
-Cross-tenant org/account pairing fails closed.
+Cross-tenant org/account pairing fails closed. `GetCampaignMetrics` reads live
+campaign analytics from LinkedIn's Ad Analytics API, implementing the optional
+`service.MetricsReader` interface the orchestrator discovers per dispatcher.
 
 A deliberate divergence from the TS source is that geo resolution is a pure,
 cache-only function (no network fallback). Beyond that, the Go port validates

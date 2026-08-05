@@ -453,3 +453,53 @@ func TestDateRangeForWindow_ThisMonthAndLastMonth_MonthEndBoundary(t *testing.T)
 		t.Errorf("last_month end: expected %v, got %v", want, lastEnd)
 	}
 }
+
+// TestDateRangeForWindow_TimezoneHandling verifies that date ranges are
+// constructed correctly when the client clock is in a non-UTC timezone.
+// This tests the fix for the timezone bug: converting midnight-in-local-time
+// to UTC could shift the date (e.g. Aug 5 00:00 UTC+10 becomes Aug 4 14:00 UTC),
+// so we must NOT convert to UTC before extracting date components for the
+// LinkedIn Ad Analytics API.
+func TestDateRangeForWindow_TimezoneHandling(t *testing.T) {
+	// Simulate a client clock in UTC+10 (Australian Eastern time).
+	// 2025-01-15 10:30:45 AEDT (UTC+11 due to daylight saving) = 2025-01-14 23:30:45 UTC
+	// But for simplicity, we'll use 2025-08-05 10:30:45 in a UTC+10 fixed offset zone.
+	fixedLoc := time.FixedZone("UTC+10", 10*3600)
+	fixedTime := time.Date(2025, 8, 5, 10, 30, 45, 0, fixedLoc)
+
+	client := NewClient(
+		Credentials{AccessToken: "test"},
+		RuntimeConfig{},
+		WithClock(func() time.Time { return fixedTime }),
+	)
+
+	// Today in the client's local time is 2025-08-05 (not 2025-08-04 UTC).
+	// The dateRangeForWindow should return the date in the client's local time,
+	// not in UTC.
+	start, end, err := client.dateRangeForWindow(model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Extract the date components using the time's own location (UTC+10 offset).
+	// This should give 2025-08-05, not 2025-08-04.
+	if got, want := start.Day(), 5; got != want {
+		t.Errorf("today start day: expected %d, got %d", want, got)
+	}
+	if got, want := start.Month(), time.August; got != want {
+		t.Errorf("today start month: expected %v, got %v", want, got)
+	}
+	if got, want := start.Year(), 2025; got != want {
+		t.Errorf("today start year: expected %d, got %d", want, got)
+	}
+
+	if got, want := end.Day(), 5; got != want {
+		t.Errorf("today end day: expected %d, got %d", want, got)
+	}
+	if got, want := end.Month(), time.August; got != want {
+		t.Errorf("today end month: expected %v, got %v", want, got)
+	}
+	if got, want := end.Year(), 2025; got != want {
+		t.Errorf("today end year: expected %d, got %d", want, got)
+	}
+}
