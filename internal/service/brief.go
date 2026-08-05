@@ -353,6 +353,8 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		switch {
 		case errors.Is(merr, ErrMetricsUnsupported):
 			return nil, &briefs.BadRequestError{Code: "400", Message: "metrics reads are not supported for this campaign's platform"}
+		case errors.Is(merr, ErrMetricsWindowUnsupported):
+			return nil, &briefs.BadRequestError{Code: "400", Message: "this window is not supported for the campaign's platform: " + merr.Error()}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
 		default:
