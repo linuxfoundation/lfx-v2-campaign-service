@@ -32,11 +32,16 @@ type googleAdsCreds struct {
 
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
 // in CreateCampaigns' Input.Config (delivered here as the Dispatch `config`). Today the
-// GA client creates a PAUSED search-campaign shell, so only the budget is caller-
-// supplied here; targeting/keywords land in GA-3+. Budget is in whole units of the ad
+// GA client creates a PAUSED search campaign with an ad group + a Responsive Search Ad
+// (GA-3b); keyword/audience targeting land in GA-4. Budget is in whole units of the ad
 // ACCOUNT's currency (NOT USD — the client does no FX), mirroring the meta client.
 type googleAdsConfig struct {
 	Budget float64 `json:"budget"`
+	// Headlines/Descriptions are optional Responsive Search Ad copy overrides (GA-3b).
+	// Left nil/empty, the client composes deterministic placeholder copy from the
+	// brief's EventName/Project (see googleads.composeAdCopy).
+	Headlines    []string `json:"headlines"`
+	Descriptions []string `json:"descriptions"`
 }
 
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
@@ -77,17 +82,21 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 
 	in := googleads.CampaignInput{
 		EventName: bf.EventName,
+		EventSlug: brief.EventSlug,
 		// Project is stamped from the AUTHENTICATED project scope (brief.ProjectID),
 		// never from caller JSON — the Project name segment is the data pipeline's
 		// attribution join key (docs/api-catalog.md), so it must be the canonical LFX
 		// slug (matches reddit/meta/twitter).
-		Project: brief.ProjectID,
-		Budget:  cfg.Budget,
+		Project:         brief.ProjectID,
+		Budget:          cfg.Budget,
+		RegistrationURL: bf.RegistrationURL,
+		Headlines:       cfg.Headlines,
+		Descriptions:    cfg.Descriptions,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
-		// GA client composes the budget/campaign names from these, and a retry with the
-		// same suffix hits Google's DUPLICATE_NAME (reported UNCONFIRMED-already-exists)
-		// rather than creating a second paid campaign — a poor-man's idempotency key
-		// until LFXV2-2665 lands provider idempotency keys.
+		// GA client composes the budget/campaign/ad-group names from these, and a retry
+		// with the same suffix hits Google's DUPLICATE_NAME (reported
+		// UNCONFIRMED-already-exists) rather than creating a second paid campaign — a
+		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys.
 		NameSuffix: brief.ID,
 	}
 

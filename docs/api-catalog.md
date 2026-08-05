@@ -303,7 +303,10 @@ config — not this campaign config.
 
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
-Google Ads per-platform config. Today the dispatcher creates a PAUSED search-campaign shell, so `budget` is the only caller-supplied key here; targeting/keywords land in a later phase (GA-3+). **Budget is in whole units of the ad ACCOUNT's currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
+Google Ads per-platform config. The dispatcher creates a PAUSED search campaign with an ad
+group + a Responsive Search Ad (GA-3); keyword/audience targeting land in a later phase (GA-4).
+**Budget is in whole units of the ad ACCOUNT's currency**, not USD — the service does no FX
+conversion (mirroring `metaConfig`).
 
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
@@ -312,6 +315,13 @@ budget: number                  — Whole units of the account currency (e.g. 25
                                   during dispatch (a pre-create job failure, since CreateCampaigns is
                                   async). Omitting it leaves the shell with no budget, which fails the
                                   platform job asynchronously — supply it explicitly.
+headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 runes each, 3-15
+                                  after padding). Trimmed, rune-truncated, and de-duplicated; any
+                                  caller-supplied entry is preserved and never dropped. Padded with
+                                  deterministic eventName-derived placeholders up to the minimum of
+                                  3 when fewer are supplied (or omitted entirely).
+descriptions?: string[]         — Optional Responsive Search Ad descriptions (≤90 runes each, 2-4
+                                  after padding), same trim/truncate/dedupe/pad rules as headlines.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)

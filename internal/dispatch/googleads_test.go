@@ -76,6 +76,10 @@ func googleAdsServers(t *testing.T, budgetH, campaignH http.HandlerFunc) ([]goog
 			budgetH(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			campaignH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 		}

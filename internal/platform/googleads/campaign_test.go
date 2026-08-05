@@ -20,8 +20,17 @@ import (
 )
 
 // newCampaignClient wires a token server + an API server whose budget/campaign
-// mutate handlers are supplied per-test.
+// mutate handlers are supplied per-test. adGroups:mutate/adGroupAds:mutate get
+// default "happy" handlers (okAdGroup/okAdGroupAd) unless the test needs to
+// exercise the ad-group/ad cascade itself — see newCampaignClientFull.
 func newCampaignClient(t *testing.T, budgetH, campaignH http.HandlerFunc) *Client {
+	t.Helper()
+	return newCampaignClientFull(t, budgetH, campaignH, okAdGroup, okAdGroupAd)
+}
+
+// newCampaignClientFull is newCampaignClient with the ad-group/ad mutate handlers
+// also supplied per-test, for tests that exercise the GA-3 cascade itself.
+func newCampaignClientFull(t *testing.T, budgetH, campaignH, adGroupH, adGroupAdH http.HandlerFunc) *Client {
 	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
@@ -31,6 +40,10 @@ func newCampaignClient(t *testing.T, budgetH, campaignH http.HandlerFunc) *Clien
 			budgetH(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			campaignH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			adGroupH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			adGroupAdH(w, r)
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -48,6 +61,12 @@ func okBudget(w http.ResponseWriter, _ *http.Request) {
 func okCampaign(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
 }
+func okAdGroup(w http.ResponseWriter, _ *http.Request) {
+	_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+}
+func okAdGroupAd(w http.ResponseWriter, _ *http.Request) {
+	_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+}
 
 func gaqlError(status int, category, code string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
@@ -59,7 +78,13 @@ func gaqlError(status int, category, code string) http.HandlerFunc {
 }
 
 func sampleInput() CampaignInput {
-	return CampaignInput{EventName: "KubeCon", Project: "CNCF", Budget: 50, NameSuffix: "brief-1"}
+	return CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "CNCF",
+		Budget:          50,
+		NameSuffix:      "brief-1",
+		RegistrationURL: "https://events.linuxfoundation.org/kubecon",
+	}
 }
 
 func TestCreateCampaign_HappyPath(t *testing.T) {
