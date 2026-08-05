@@ -1139,9 +1139,9 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch {
-		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
-			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
-			_, _ = io.WriteString(w, `{"data":[]}`)
+			case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+				// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+				_, _ = io.WriteString(w, `{"data":[]}`)
 			case r.Method == http.MethodGet:
 				_, _ = io.WriteString(w, `{"name":"x"}`)
 			case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1311,9 +1311,9 @@ func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
-		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
-			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
-			_, _ = io.WriteString(w, `{"data":[]}`)
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+					// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+					_, _ = io.WriteString(w, `{"data":[]}`)
 				case r.Method == http.MethodGet:
 					// Preflight returns the account ISO currency code (NOT a
 					// currency_offset field — the AdAccount node does not expose one).
@@ -1364,9 +1364,9 @@ func TestCreateCampaignExplicitOffsetMustMatchPreflightCurrency(t *testing.T) {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch {
-		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
-			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
-			_, _ = io.WriteString(w, `{"data":[]}`)
+			case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+				// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+				_, _ = io.WriteString(w, `{"data":[]}`)
 			case r.Method == http.MethodGet:
 				_, _ = io.WriteString(w, `{"name":"x","currency":"`+currency+`"}`)
 			case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -2087,9 +2087,9 @@ func TestCreateCampaignNormalizesObjective(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
-		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
-			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
-			_, _ = io.WriteString(w, `{"data":[]}`)
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+					// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+					_, _ = io.WriteString(w, `{"data":[]}`)
 				case r.Method == http.MethodGet:
 					_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 				case strings.HasSuffix(r.URL.Path, "/campaigns"):
