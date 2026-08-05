@@ -187,7 +187,7 @@ func decodeErr(r *http.Request) (map[string]any, error) {
 // campaigns:mutate handler succeeds but first hands its decoded body to
 // onCampaign (if non-nil) — the shared plumbing behind newTargetingClient and
 // newTargetingClientCapturingCampaign.
-func newTargetingClientWith(t *testing.T, onCampaign func(map[string]any), criteriaH http.HandlerFunc) *Client {
+func newTargetingClientWith(t *testing.T, onAdGroup func(map[string]any), criteriaH http.HandlerFunc) *Client {
 	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
@@ -196,17 +196,17 @@ func newTargetingClientWith(t *testing.T, onCampaign func(map[string]any), crite
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
 			okBudget(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
-			if onCampaign != nil {
+			okCampaign(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			if onAdGroup != nil {
 				body, err := decodeErr(r)
 				if err != nil {
-					t.Errorf("decode campaign request body: %v", err)
+					t.Errorf("decode ad group request body: %v", err)
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				onCampaign(body)
+				onAdGroup(body)
 			}
-			okCampaign(w, r)
-		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
 			okAdGroup(w, r)
 		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
 			okAdGroupAd(w, r)
@@ -477,11 +477,15 @@ func TestCreateAdGroupAndAd_InvalidAudienceSegmentAbortsBeforeAnyMutate(t *testi
 	}
 }
 
-// ---- campaign-level targetingSetting -----------------------------------------
+// ---- ad-group-level targetingSetting -----------------------------------------
 
-// newTargetingClientCapturingCampaign is newTargetingClient but also captures the
-// decoded campaigns:mutate request body, for tests asserting on campaign-level
+// newTargetingClientCapturingAdGroup is newTargetingClient but also captures the
+// decoded adGroups:mutate request body, for tests asserting on ad-group-level
 // fields (targetingSetting) rather than the adGroupCriteria call itself.
+// targetingSetting must live at the SAME level as the criteria it restricts —
+// GA-4's audience criteria are AdGroupCriterions, so this is asserted on the
+// ad group create, not the campaign create (see targetingSetting's doc
+// comment in campaign.go).
 // capturedBody guards a decoded request body captured inside an httptest
 // handler goroutine and read back from the test goroutine — the handler runs
 // on its own goroutine, so an unguarded map read/write here would race.
@@ -502,7 +506,7 @@ func (c *capturedBody) get() map[string]any {
 	return c.body
 }
 
-func newTargetingClientCapturingCampaign(t *testing.T, criteriaH http.HandlerFunc) (*Client, *capturedBody) {
+func newTargetingClientCapturingAdGroup(t *testing.T, criteriaH http.HandlerFunc) (*Client, *capturedBody) {
 	t.Helper()
 	captured := &capturedBody{}
 	c := newTargetingClientWith(t, captured.set, criteriaH)
@@ -514,16 +518,16 @@ func okAdGroupCriteriaOne(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestCreateCampaign_SetsAudienceObservationTargetingSetting(t *testing.T) {
-	c, campaignBody := newTargetingClientCapturingCampaign(t, okAdGroupCriteriaOne)
+	c, adGroupBody := newTargetingClientCapturingAdGroup(t, okAdGroupCriteriaOne)
 	in := sampleInput()
 	in.AudienceSegments = []string{"customers/1/userLists/2"}
 	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	op := firstCreate(t, campaignBody.get())
+	op := firstCreate(t, adGroupBody.get())
 	ts, ok := op["targetingSetting"].(map[string]any)
 	if !ok {
-		t.Fatalf("campaign create body = %v, want a targetingSetting when audience segments are supplied", op)
+		t.Fatalf("ad group create body = %v, want a targetingSetting when audience segments are supplied", op)
 	}
 	restrictions, ok := ts["targetRestrictions"].([]any)
 	if !ok || len(restrictions) != 1 {
@@ -536,12 +540,12 @@ func TestCreateCampaign_SetsAudienceObservationTargetingSetting(t *testing.T) {
 }
 
 func TestCreateCampaign_NoAudienceSegmentsOmitsTargetingSetting(t *testing.T) {
-	c, campaignBody := newTargetingClientCapturingCampaign(t, okAdGroupCriteria)
+	c, adGroupBody := newTargetingClientCapturingAdGroup(t, okAdGroupCriteria)
 	if _, err := c.CreateCampaign(context.Background(), sampleInput()); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	op := firstCreate(t, campaignBody.get())
+	op := firstCreate(t, adGroupBody.get())
 	if _, present := op["targetingSetting"]; present {
-		t.Errorf("campaign create body = %v, want no targetingSetting when no audience segments are supplied", op)
+		t.Errorf("ad group create body = %v, want no targetingSetting when no audience segments are supplied", op)
 	}
 }

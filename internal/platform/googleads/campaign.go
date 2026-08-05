@@ -212,23 +212,28 @@ type campaignBudgetCreate struct {
 // because true would require targetGoogleSearch AND opt this into Search Partners,
 // which a generic broker shouldn't assume.
 type campaignCreate struct {
-	Name                           string            `json:"name"`
-	Status                         string            `json:"status"`
-	AdvertisingChannelType         string            `json:"advertisingChannelType"`
-	CampaignBudget                 string            `json:"campaignBudget"`
-	ContainsEuPoliticalAdvertising string            `json:"containsEuPoliticalAdvertising"`
-	NetworkSettings                networkSettings   `json:"networkSettings"`
-	ManualCPC                      json.RawMessage   `json:"manualCpc"`
-	TargetingSetting               *targetingSetting `json:"targetingSetting,omitempty"`
+	Name                           string          `json:"name"`
+	Status                         string          `json:"status"`
+	AdvertisingChannelType         string          `json:"advertisingChannelType"`
+	CampaignBudget                 string          `json:"campaignBudget"`
+	ContainsEuPoliticalAdvertising string          `json:"containsEuPoliticalAdvertising"`
+	NetworkSettings                networkSettings `json:"networkSettings"`
+	ManualCPC                      json.RawMessage `json:"manualCpc"`
 }
 
-// targetingSetting / targetRestriction declare, per targeting dimension,
-// whether a criterion of that dimension RESTRICTS delivery or only observes
-// it (bids/reports without narrowing reach). Set on the campaign create ONLY
-// when GA-4 attaches audience criteria (see CreateCampaign): with no
-// targetingSetting at all, Google's default for a Search campaign's AUDIENCE
-// dimension is TARGETING (restrictive) — an audience segment added for
-// bid/reporting purposes would otherwise silently narrow delivery to that
+// targetingSetting / targetRestriction declare, per targeting dimension, whether
+// a criterion of that dimension RESTRICTS delivery or only observes it (bids/
+// reports without narrowing reach). Google requires targetingSetting be set at
+// the SAME level the criterion is attached to — an AdGroup's targetingSetting
+// cannot even be set while the parent Campaign has one, and a campaign-level
+// setting has no effect on ad-group-level criteria (see Google's
+// UpdateAudienceTargetRestriction sample, which reads/writes ad_group, not
+// campaign, targeting_setting). GA-4's audience criteria are created as
+// AdGroupCriterions (createAdGroupAndAd), so this is set on the AD GROUP
+// create, not the campaign create — see adGroupCreate in adgroup_ad.go. With
+// no targetingSetting at all, Google's default for a Search ad group's
+// AUDIENCE dimension is TARGETING (restrictive) — an audience segment added
+// for bid/reporting purposes would otherwise silently narrow delivery to that
 // segment alone, a serious, easy-to-miss behavior change. bidOnly=true keeps
 // AUDIENCE observation-only so keyword targeting (GA-4's other half) remains
 // the thing that actually controls reach.
@@ -572,17 +577,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		NetworkSettings:                networkSettings{TargetGoogleSearch: true},
 		ManualCPC:                      json.RawMessage(`{}`),
-	}
-	// See targetingSetting's doc comment: an audience criterion added later
-	// (GA-4, createAdGroupAndAd) must not silently restrict delivery to it.
-	// Checked on the RAW input, not a validated list — the flag only declares a
-	// campaign-level setting and costs nothing if the ad-group step later
-	// rejects/omits the segments; the important case is never OMITTING it when
-	// segments are supplied.
-	if len(in.AudienceSegments) > 0 {
-		campaignCreateVal.TargetingSetting = &targetingSetting{
-			TargetRestrictions: []targetRestriction{{TargetingDimension: "AUDIENCE", BidOnly: true}},
-		}
 	}
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")

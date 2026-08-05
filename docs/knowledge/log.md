@@ -1,5 +1,22 @@
 # Log
 
+## 2026-08-04 (GA-4 audience targetingSetting level fix)
+
+**Update** — Fixed a Copilot-flagged PR #69 review finding: the AUDIENCE/`bidOnly: true`
+observation-only `targetingSetting` was being declared on the campaign create
+(`campaign.go`, `CreateCampaign`), but GA-4's audience criteria are created as
+`AdGroupCriterion`s (ad-group level), not campaign-level criteria. Verified against Google's
+official `UpdateAudienceTargetRestriction` sample and targeting-settings docs before fixing
+(mirroring the verification discipline used for a prior Final-URL-bytes finding): Google
+requires `targetingSetting` be declared at the SAME level as the criteria it restricts, and
+setting it on the ad group is even blocked while the parent campaign has one set. Moved the
+`targetingSetting`/`targetRestriction` application from `campaignCreate` (`campaign.go`) to
+the new `TargetingSetting` field on `adGroupCreate` (`adgroup_ad.go`), set in
+`createAdGroupAndAd` whenever the validated `audienceSegments` list is non-empty. Updated
+`TestCreateCampaign_SetsAudienceObservationTargetingSetting`/
+`TestCreateCampaign_NoAudienceSegmentsOmitsTargetingSetting` to assert on the adGroups:mutate
+body instead of campaigns:mutate.
+
 ## 2026-08-05
 
 **Update** — Review fixes for GA-3c dispatcher-level status-toggle cascade (PR #68). Two issues

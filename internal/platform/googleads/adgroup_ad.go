@@ -50,12 +50,16 @@ const (
 	errCodeDuplicateAdGroupName = "DUPLICATE_ADGROUP_NAME"
 )
 
-// adGroupCreate is the create payload for adGroups:mutate.
+// adGroupCreate is the create payload for adGroups:mutate. TargetingSetting is
+// set only when GA-4 attaches audience segments (see createAdGroupAndAd) — see
+// targetingSetting's doc comment in campaign.go for why this lives at the ad
+// group level rather than the campaign level.
 type adGroupCreate struct {
-	Name     string `json:"name"`
-	Campaign string `json:"campaign"`
-	Status   string `json:"status"`
-	Type     string `json:"type"`
+	Name             string            `json:"name"`
+	Campaign         string            `json:"campaign"`
+	Status           string            `json:"status"`
+	Type             string            `json:"type"`
+	TargetingSetting *targetingSetting `json:"targetingSetting,omitempty"`
 }
 
 // adGroupStatusUpdate is the update payload for adGroups:mutate (status-only toggle,
@@ -201,12 +205,21 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		return fmt.Errorf("google-ads ad group creation aborted before any request (context already done): %w", ctxErr)
 	}
 
-	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreate{
+	adGroupCreateVal := adGroupCreate{
 		Name:     adGroupName,
 		Campaign: campaignResource,
 		Status:   StatusPaused,
 		Type:     adGroupTypeSearchStandard,
-	}}}}
+	}
+	// See targetingSetting's doc comment (campaign.go): GA-4's audience criteria
+	// are AdGroupCriterions, so the observation-only setting must be declared
+	// here, on the ad group create, not on the campaign create.
+	if len(audienceSegments) > 0 {
+		adGroupCreateVal.TargetingSetting = &targetingSetting{
+			TargetRestrictions: []targetRestriction{{TargetingDimension: "AUDIENCE", BidOnly: true}},
+		}
+	}
+	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
 	// Set the ad group name into the result before sending the mutate, so that on failure
 	// (duplicate, ambiguous) the partial result still carries the deterministic name for
 	// reconciliation.

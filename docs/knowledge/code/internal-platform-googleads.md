@@ -336,17 +336,22 @@ maps to `customAudience`; any other shape (`userInterest`, `combinedAudience`,
 `docs/api-catalog.md`) represents. Also capped at 20 per call, deduped by
 resource name.
 
-**Observation vs targeting — the audience-restriction gotcha**: a Search
-campaign's audience criteria default to TARGETING (restrictive — narrows
-delivery to ONLY that audience) unless the campaign explicitly declares
-`targetingSetting.targetRestrictions` with `targetingDimension: "AUDIENCE",
-bidOnly: true`. `CreateCampaign` (`campaign.go`) sets this on the campaign
-`:mutate` create WHENEVER `CampaignInput.AudienceSegments` is non-empty (and
-omits it entirely otherwise) — so an audience segment added for bid/reporting
-purposes doesn't silently narrow delivery to that segment alone. This is the
-highest-risk unverified assumption in this slice, mirroring the AdGroupAd
-composite-resourceName flag from GA-3: verify against a live account that
-`bidOnly: true` actually behaves as observation-only before relying on it.
+**Observation vs targeting — the audience-restriction gotcha**: a Search ad
+group's audience criteria default to TARGETING (restrictive — narrows
+delivery to ONLY that audience) unless a `targetingSetting.targetRestrictions`
+with `targetingDimension: "AUDIENCE", bidOnly: true` is declared at the SAME
+level the criteria are attached. GA-4's audience criteria are created as
+`AdGroupCriterion`s, so this must be set on the AD GROUP `:mutate` create, not
+the campaign create — Google requires `targetingSetting` live at the same
+level as the criterion, and even rejects setting it on an `AdGroup` while the
+parent `Campaign` has one (per Google's `UpdateAudienceTargetRestriction`
+sample, which reads/writes `ad_group.targeting_setting`, not
+`campaign.targeting_setting`). `createAdGroupAndAd` (`adgroup_ad.go`) sets it
+on the ad group create WHENEVER the validated `audienceSegments` list is
+non-empty (and omits it entirely otherwise) — so an audience segment added for
+bid/reporting purposes doesn't silently narrow delivery to that segment alone.
+(An earlier version of this code set it on the campaign create instead, which
+Google's docs confirm has no effect on ad-group-level criteria.)
 
 Every criterion is created `ENABLED` (not `PAUSED` like the ad group/ad
 shell): a criterion's own status is one more gate on top of its ancestors (ad
