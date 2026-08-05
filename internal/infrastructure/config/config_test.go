@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -266,5 +267,65 @@ func TestConfigString_RedactsKeywordAndMalformedDSN(t *testing.T) {
 		formatted := cfg.String()
 		assert.NotContains(t, formatted, "s3cret-value", "dsn=%q", dsn)
 		assert.Contains(t, formatted, "[redacted]", "dsn=%q", dsn)
+	}
+}
+
+// TestEnvOrDefaultUnlessSet_DistinguishesUnsetFromEmpty pins the ONLY behavioural
+// difference from envOrDefault: an explicitly-empty value survives instead of
+// falling through to the default. This is what makes NATS_URL="" a usable
+// disable switch for index publishing.
+func TestEnvOrDefaultUnlessSet_DistinguishesUnsetFromEmpty(t *testing.T) {
+	const key = "LFX_TEST_UNSET_VS_EMPTY"
+
+	t.Run("unset falls back to the default", func(t *testing.T) {
+		require.NoError(t, os.Unsetenv(key))
+		if got := envOrDefaultUnlessSet(key, "fallback"); got != "fallback" {
+			t.Fatalf("unset: got %q, want %q", got, "fallback")
+		}
+	})
+
+	t.Run("explicitly empty stays empty", func(t *testing.T) {
+		t.Setenv(key, "")
+		// envOrDefault would return "fallback" here — that difference is the point.
+		if got := envOrDefaultUnlessSet(key, "fallback"); got != "" {
+			t.Fatalf("explicit empty: got %q, want %q (the disable switch is unreachable)", got, "")
+		}
+	})
+
+	t.Run("set wins over the default", func(t *testing.T) {
+		t.Setenv(key, "nats://custom:4222")
+		if got := envOrDefaultUnlessSet(key, "fallback"); got != "nats://custom:4222" {
+			t.Fatalf("set: got %q, want %q", got, "nats://custom:4222")
+		}
+	})
+}
+
+// TestConfigString_RedactsNATSCredentials pins that String() does not leak the broker password.
+// A NATS URL may carry userinfo (nats://user:pass@host:4222), String() promises a log-safe
+// representation, and anything that logs the config would otherwise put that password in the
+// pod logs. The host is deliberately KEPT — it is what makes an indexing outage diagnosable.
+func TestConfigString_RedactsNATSCredentials(t *testing.T) {
+	cfg := &Config{NATSUrl: "nats://svcuser:sup3r-s3cret@nats.lfx.svc:4222"} // secretlint-disable-line -- fixture asserting the password is redacted
+
+	for _, formatted := range []string{cfg.String(), cfg.GoString(), fmt.Sprintf("%v", cfg), fmt.Sprintf("%+v", cfg)} {
+		assert.NotContains(t, formatted, "sup3r-s3cret", "the broker password must never reach a log line")
+		assert.NotContains(t, formatted, "svcuser", "the broker username is part of the credential")
+		// The host must survive: redacting wholesale would make an outage undiagnosable.
+		assert.Contains(t, formatted, "nats.lfx.svc:4222")
+	}
+}
+
+// TestRedactNATSURL_Shapes covers the forms a NATS URL actually takes, including the ones with
+// nothing to redact (where masking would needlessly hide the host).
+func TestRedactNATSURL_Shapes(t *testing.T) {
+	cases := map[string]string{
+		"":                              "",
+		"nats://nats.lfx.svc:4222":      "nats://nats.lfx.svc:4222",
+		"nats://u:p@nats.lfx.svc:4222":  "nats://***@nats.lfx.svc:4222", // secretlint-disable-line -- fixture
+		"nats://token@nats.lfx.svc:422": "nats://***@nats.lfx.svc:422",
+		"u:p@host:4222":                 "***@host:4222", // secretlint-disable-line -- fixture: no scheme
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, redactNATSURL(in), "input %q", in)
 	}
 }

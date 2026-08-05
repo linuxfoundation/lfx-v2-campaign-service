@@ -233,7 +233,7 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 
 // UpsertCampaign inserts or updates the (brief, platform) campaign row. On
 // conflict it updates in place (a brief change after campaigns exist).
-func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error) {
+func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	q := `INSERT INTO campaigns
 		(project_id, brief_id, job_id, platform, platform_campaign_id, campaign_name, status,
 		 budget_amount, budget_type, start_date, end_date, config_snapshot, result)
@@ -246,7 +246,13 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*
 			config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
 			version=campaigns.version+1, updated_at=now()
 		RETURNING ` + campaignCols
-	row := r.db.QueryRow(ctx, q,
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("upsert campaign: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	row := tx.QueryRow(ctx, q,
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType),
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
@@ -255,36 +261,90 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*
 	if err != nil {
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}
+	if eerr := enqueueCampaignIndex(ctx, tx, upserted, indexPayload); eerr != nil {
+		return nil, fmt.Errorf("upsert campaign: %w", eerr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("upsert campaign: commit: %w", cerr)
+	}
 	return upserted, nil
 }
 
+// enqueueCampaignIndex writes a campaign's index message to the outbox inside tx.
+//
+// EVERY campaign write co-commits, exactly as the brief writes do. Mixing paths does not work:
+// while creates went through the outbox and updates published directly, a replayed create could
+// land AFTER a newer update or status toggle and overwrite it in the index, leaving search stale
+// until some later write happened to repair it. One ordered sequence per row removes that.
+//
+// It also removes a second hazard specific to campaigns: creation is ASYNC, so the caller's JWT
+// could be EXPIRED by publish time and the message rejected outright, with no row to retry.
+//
+// A nil builder means the caller does not want this write indexed; the write still commits.
+func enqueueCampaignIndex(ctx context.Context, tx pgx.Tx, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) error {
+	if indexPayload == nil {
+		return nil
+	}
+	payload, err := indexPayload(c)
+	if err != nil {
+		return fmt.Errorf("build index payload: %w", err)
+	}
+	return enqueueIndexMessage(ctx, tx, indexObjectTypeCampaign, c.ID, payload)
+}
+
+// indexObjectTypeCampaign mirrors indexer.ObjectTypeCampaign. Duplicated rather than imported
+// for the same reason as indexObjectTypeBrief: the postgres package must not depend on the
+// indexer. Pinned by a test.
+const indexObjectTypeCampaign = "campaign"
+
 // ReplaceCampaign replaces mutable fields, gating on expectedVersion.
-func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64) (*model.Campaign, error) {
+func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	// RETURNING keeps the write and the snapshot that gets indexed in ONE statement, so the
+	// outbox payload is exactly what committed. The prior implementation re-read via
+	// GetCampaign after the UPDATE, which could observe a LATER concurrent write and index a
+	// snapshot this call never produced.
 	q := `UPDATE campaigns SET
 		campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
 		config_snapshot=$7, result=$8, version=version+1, updated_at=now()
-		WHERE id=$9 AND brief_id=$10 AND project_id=$11 AND version=$12`
-	tag, err := r.db.Exec(ctx, q,
+		WHERE id=$9 AND brief_id=$10 AND project_id=$11 AND version=$12
+		RETURNING ` + campaignCols
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("replace campaign: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	updated, err := scanCampaign(tx.QueryRow(ctx, q,
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType), c.StartDate, c.EndDate,
 		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), c.ID, c.BriefID, c.ProjectID, expectedVersion,
-	)
-	if err != nil {
+	))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("replace campaign: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		// Surface a transient re-fetch error rather than masking it as a
-		// precondition failure, consistent with ConnectionRepo.Update.
-		_, gerr := r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Distinguish missing from stale version THROUGH THIS TRANSACTION. Calling GetCampaign
+		// would acquire a SECOND pool connection while this one still holds the first — with a
+		// saturated pool (pool_max_conns=1 makes it certain) an ordinary stale-version request
+		// would block until its context expired instead of returning 412.
+		var exists bool
+		eq := `SELECT EXISTS (SELECT 1 FROM campaigns WHERE id = $1 AND brief_id = $2 AND project_id = $3)`
+		if serr := tx.QueryRow(ctx, eq, c.ID, c.BriefID, c.ProjectID).Scan(&exists); serr != nil {
+			// Surface a transient read error rather than masking it as a precondition failure,
+			// which would make the caller retry with a fresh ETag instead of backing off.
+			return nil, fmt.Errorf("replace campaign: classify guarded update: %w", serr)
 		}
+		if !exists {
+			return nil, domain.ErrNotFound
+		}
+		return nil, domain.ErrPreconditionFailed
 	}
-	return r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID)
+	if eerr := enqueueCampaignIndex(ctx, tx, updated, indexPayload); eerr != nil {
+		return nil, fmt.Errorf("replace campaign: %w", eerr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("replace campaign: commit: %w", cerr)
+	}
+	return updated, nil
 }
 
 func scanCampaign(row pgx.Row) (*model.Campaign, error) {
