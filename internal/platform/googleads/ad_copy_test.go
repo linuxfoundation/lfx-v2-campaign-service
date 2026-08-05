@@ -266,7 +266,7 @@ func TestRedactURLForError(t *testing.T) {
 		{"empty input redacted", "", "(redacted)"},
 		{"whitespace-only input redacted", "   ", "(redacted)"},
 		{"relative path redacted", "/register?token=secret", "(redacted)"},
-		{"scheme with no host falls back to scheme-only", "mailto:", "(redacted)"},
+		{"scheme with no host is redacted", "mailto:", "(redacted)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

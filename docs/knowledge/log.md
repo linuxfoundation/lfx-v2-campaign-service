@@ -4,11 +4,12 @@
 
 **Update** — Added GA-3a ad-copy generation (`internal/platform/googleads/ad_copy.go`, split out
 of GA-3's ad-group/ad cascade to keep the PR under 1000 lines) and fixed a credentials-leak in its
-`buildAdFinalURL`: the caller-supplied registration URL was echoed unredacted into three validation
+`buildAdFinalURL`: the caller-supplied registration URL was echoed unredacted into its validation
 error messages, including via `%w`-wrapping a `*url.Error`. Added `redactURLForError` (mirroring
-the twitter client) and applied it at all three sites; also added the userinfo-rejection and
-malformed-query-rejection checks the reddit/meta/twitter clients already carry. New concept section
-in `internal-platform-googleads.md`.
+the twitter client) and applied it across all five error sites (parse failure, bad scheme, missing
+host, embedded userinfo, malformed query); also added the userinfo-rejection (twitter/reddit/meta)
+and malformed-query-rejection (reddit/meta/linkedin/microsoft) checks those clients already carry.
+New concept section in `internal-platform-googleads.md`.
 
 ## 2026-08-03
 
