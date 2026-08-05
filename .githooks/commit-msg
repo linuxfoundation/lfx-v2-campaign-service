@@ -23,6 +23,18 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
   exit 0
 fi
 
+# Same reasoning for a rebase or cherry-pick replaying an existing commit: its message
+# already carries the ORIGINAL AUTHOR's Signed-off-by trailer, which is what CI's DCO
+# check (author-based) actually verifies. Checking it against THIS run's committer
+# identity below would reject an already-signed commit for the sole reason that whoever
+# is replaying it isn't the original author — e.g. rebasing a teammate's branch, or a
+# rebase run by CI — a false rejection CI's own check would not raise. REBASE_HEAD
+# covers both `git rebase` and `git rebase --interactive`; CHERRY_PICK_HEAD covers
+# `git cherry-pick`.
+if git rev-parse -q --verify REBASE_HEAD >/dev/null 2>&1 || git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null 2>&1; then
+  exit 0
+fi
+
 # `git var GIT_COMMITTER_IDENT` resolves the exact identity `git commit -s`
 # writes into the trailer (GIT_COMMITTER_NAME/EMAIL env vars, then
 # committer.*, then user.* config, in that precedence) — reading only

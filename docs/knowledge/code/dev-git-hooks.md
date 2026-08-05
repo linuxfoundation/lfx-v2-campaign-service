@@ -22,6 +22,13 @@ merge — checking the message text would exempt an ordinary commit whose
 subject happens to start with "Merge", and fail to exempt a real merge with a
 custom subject).
 
+Rebase and cherry-pick replays are exempted the same way, via `REBASE_HEAD` /
+`CHERRY_PICK_HEAD`: the replayed message already carries the ORIGINAL
+author's trailer — what CI's author-based DCO check actually verifies —
+and checking it against the identity of whoever is replaying it (not
+necessarily the author) would reject an already-signed commit for no reason
+CI itself would raise.
+
 `make setup` wires it in via `git config core.hooksPath .githooks` — a
 repo-local config change, not a global one.
 

@@ -1,5 +1,15 @@
 # Log
 
+## 2026-08-05 (DCO hook rebase/cherry-pick exemption)
+
+**Fix** — Cursor Bugbot found the hook's merge exemption (`MERGE_HEAD`) had no equivalent for
+`git rebase`/`git cherry-pick`: `commit-msg` also runs for every commit those replay, and the
+replayed message already carries the ORIGINAL author's `Signed-off-by` trailer — but the hook
+checks that trailer against the identity of whoever is running the rebase, which is not
+necessarily the author (rebasing a teammate's branch, or a rebase run by CI). That rejects an
+already-signed commit for a reason CI's own author-based DCO check would not raise. Exempted the
+same way as the merge case, via `REBASE_HEAD`/`CHERRY_PICK_HEAD` (PR #71).
+
 ## 2026-08-04 (DCO hook review fixes)
 
 **Update** — Fixed three Copilot/Bugbot findings on the `.githooks/commit-msg` DCO hook (PR #71):
