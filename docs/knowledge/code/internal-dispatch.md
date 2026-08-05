@@ -204,6 +204,40 @@ matching the reddit shape.
 
 Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
 
+## Metrics read (optional capability)
+
+`MetricsReader` is a second OPTIONAL dispatcher interface, alongside `StatusToggler` —
+`ReadMetrics(ctx, projectID, platform, campaign *model.Campaign, window model.MetricsWindow)
+(*model.CampaignMetrics, error)` — for a live, read-only performance snapshot of one
+campaign (impressions, clicks, cost, CTR) over a caller-supplied window. Same pattern as the
+toggle: the orchestrator's `ReadCampaignMetrics` type-asserts it (returning
+`ErrMetricsUnsupported` when a platform's dispatcher doesn't implement it, without ever
+contacting the platform), so it is added platform-by-platform without touching every adapter,
+and it receives the full persisted `*model.Campaign` so an adapter can reach any child ids it
+stored at creation (e.g. an ad group/ad set id, if a platform's reporting API needs it).
+Unlike `ToggleStatus`, a `ReadMetrics` call has no ambiguous mutation to protect — there is
+nothing to leave in an unknown state — so adapter errors propagate to the service verbatim; there
+is no UNCONFIRMED wrapping equivalent to `unconfirmedToggleError`.
+
+`window` arrives as a closed, platform-agnostic `model.MetricsWindow` value (`today`,
+`yesterday`, `last_7_days`, `last_14_days`, `last_30_days`, `this_month`, `last_month`) — never
+a platform's own literal. Each platform adapter owns the mapping from this vocabulary to its
+platform's actual query syntax (e.g. Google Ads' GAQL `DURING` literals, Meta's Insights
+`date_preset`), and any platform-specific validation of the mapped value (e.g. an allow-list
+guard against GAQL injection) belongs in that platform's client package, not in the adapter or
+the orchestrator.
+
+**Microsoft Ads is NOT a `MetricsReader` and is not expected to become one under this
+contract.** Its Campaign Management API v13 (REST/JSON, synchronous — what the existing
+create dispatcher and status toggle use) has no metrics surface. Metrics live in a wholly
+separate service, the Reporting API v13: SOAP, and asynchronous
+(`SubmitGenerateReport` → poll `PollGenerateReport` until the status leaves `Pending` →
+download a zipped CSV via a `ReportDownloadUrl`). There is no synchronous "impressions for
+this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contract within
+`metricsCallTimeout` (20s). Closing this gap needs a design decision (e.g. a bounded
+submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
+live read) — deferred, not attempted here.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

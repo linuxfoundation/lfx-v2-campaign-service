@@ -1250,3 +1250,84 @@ func TestToggleUnsupported_EmailGetsADistinctMessage(t *testing.T) {
 		})
 	}
 }
+
+// --- get campaign metrics -----------------------------------------------------
+
+func newMetricsService(camp *model.Campaign, disp PlatformDispatcher) *BriefService {
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{byID: map[string]*model.Campaign{camp.ID: camp}}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{camp.Platform: disp})
+	return NewBriefService(repo, camps, jobs, orch)
+}
+
+func TestBriefService_GetCampaignMetrics_HappyPath(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+		CampaignID: "ga-1", Window: model.MetricsWindowLast30Days, Impressions: 100, Clicks: 10, CostMicros: 5000000, Ctr: 0.1,
+	}}
+	s := newMetricsService(camp, disp)
+	window := "last_30_days"
+	res, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if res.CampaignID != "c1" || res.PlatformCampaignID != "ga-1" || res.Window != "last_30_days" ||
+		res.Impressions != 100 || res.Clicks != 10 || res.CostMicros != 5000000 || res.Ctr != 0.1 {
+		t.Errorf("unexpected result: %+v", res)
+	}
+	if disp.gotWindow != model.MetricsWindowLast30Days {
+		t.Errorf("dispatcher got window %q, want last_30_days", disp.gotWindow)
+	}
+}
+
+func TestBriefService_GetCampaignMetrics_PlatformUnsupportedIs400(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	s := newMetricsService(camp, nonMetricsDispatcher{})
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("expected a BadRequestError (400), got %T: %v", err, err)
+	}
+}
+
+func TestBriefService_GetCampaignMetrics_NotProvisionedIs409(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "", Status: "pending", Version: 1,
+	}
+	s := newMetricsService(camp, &metricsOnlyDispatcher{})
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409) for an unprovisioned campaign, got %T: %v", err, err)
+	}
+}
+
+func TestBriefService_GetCampaignMetrics_PlatformFailureIs503(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: errors.New("google ads 500")}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var unavailable *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("expected a ConnServiceUnavailableError (503), got %T: %v", err, err)
+	}
+}
