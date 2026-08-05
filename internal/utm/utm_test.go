@@ -675,4 +675,19 @@ func TestApply_AmbiguousSemicolonQueriesAreNotTagged(t *testing.T) {
 	assert.NotEqual(t, raw3, got3, "an encoded semicolon is unambiguous and tagging may proceed")
 	assert.Contains(t, got3, "utm_campaign=NEW", "the URL should be tagged")
 	assert.Contains(t, got3, "sig=a%3Bb%3Bc", "encoded semicolons must be preserved")
+
+	// A utm param that is ampersand-separated from what precedes it but semicolon-separated
+	// from what follows is still ambiguous — the utm param's OWN preceding separator is '&',
+	// but the bare key 'b' after it is only reachable via a semicolon.
+	raw4 := "https://lf.dev/p?a=1&utm_source=fb;b"
+	got4 := Apply(raw4, p, "")
+	assert.Equal(t, raw4, got4,
+		"a utm param followed by a semicolon-delimited bare key must not be tagged")
+
+	// A bare key that OPENS an ampersand segment, immediately followed by a semicolon-joined
+	// utm param, must still be detected as being on the same segment as that utm param.
+	raw5 := "https://lf.dev/p?a=1&b;utm_source=partner"
+	got5 := Apply(raw5, p, "")
+	assert.Equal(t, raw5, got5,
+		"a bare key opening the segment before a semicolon-joined utm param must not be tagged")
 }

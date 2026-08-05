@@ -459,14 +459,17 @@ func hasAmbiguousSemicolon(rawQuery string) bool {
 			continue // Not a utm param
 		}
 
-		// Found a utm param. Check if it's separated by a semicolon (not ampersand).
-		// The separator tells us what preceded this param in the original query.
-		if part.sep != ';' && part.sep != 0 {
-			// Separated by ampersand or nothing (first param): not ambiguous on this boundary
+		// Found a utm param. Check if it's separated by a semicolon (not ampersand) on
+		// EITHER side — the separator recorded on a part is the one that PRECEDED it, so
+		// the trailing side is read off the sep of the NEXT part.
+		precededBySemicolon := part.sep == ';'
+		followedBySemicolon := i+1 < len(parts) && parts[i+1].sep == ';'
+		if !precededBySemicolon && !followedBySemicolon {
+			// Ampersand (or query-boundary) on both sides: not ambiguous.
 			continue
 		}
 
-		// This utm param is preceded by a semicolon or is first (sep=0).
+		// This utm param has a semicolon on at least one side.
 		// Only flag as ambiguous if there are bare keys on the same segment.
 		if hasBareKeysInSegmentWith(parts, i) {
 			return true
@@ -482,7 +485,9 @@ func hasBareKeysInSegmentWith(parts []queryPart, utmIndex int) bool {
 	segmentStart := 0
 	for i := utmIndex - 1; i >= 0; i-- {
 		if parts[i].sep == '&' {
-			segmentStart = i + 1
+			// parts[i].sep records the separator that PRECEDES parts[i], so an '&' here
+			// means parts[i] itself opens the new segment, not parts[i+1].
+			segmentStart = i
 			break
 		}
 	}
