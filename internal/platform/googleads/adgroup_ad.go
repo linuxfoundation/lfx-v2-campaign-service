@@ -34,6 +34,15 @@ const (
 	// real limit, even though Google would accept it.
 	maxAdGroupNameRunes = 255
 
+	// maxFinalURLRunes bounds the ad's composed FinalUrls (the registration URL with the
+	// LFX utm_* params appended). Google Ads' v23 System Limits cap a Final URL at 2,048
+	// characters; validated on the COMPOSED url up front (mirrors the microsoft client's
+	// maxFinalURLRunes check) so a near-limit registration URL can't pass buildAdFinalURL's
+	// syntax check and then be rejected only at adGroupAds:mutate — after the budget,
+	// campaign, and ad group already exist, orphaning that paid hierarchy for what is purely
+	// a local length failure.
+	maxFinalURLRunes = 2048
+
 	// errCodeDuplicateAdGroupName is Google's AdGroupError code when an ad group
 	// name already exists within the campaign — the ad-group analogue of
 	// errCodeDuplicateBudgetName/errCodeDuplicateCampaignName. A retry with the
@@ -129,16 +138,20 @@ func compositeResourceID(resourceName string) (parentID, id string) {
 // precomputeAdGroupAdInputs validates and derives everything createAdGroupAndAd
 // needs (destination URL, ad copy, ad-group name) WITHOUT sending any request.
 // CreateCampaign calls this BEFORE the first (budget) mutate: an invalid
-// RegistrationURL, unusable ad copy, over-length ad-group name, or bad
-// keyword/audience-segment (GA-4) input must fail before any Google Ads
-// resource is created, not after the budget+campaign already committed —
-// surfacing it only inside createAdGroupAndAd (which runs after both prior
-// mutates) would orphan a real campaign+budget with no ad group/ad for what
-// is purely a local input-validation failure.
+// RegistrationURL, an over-length composed final URL, unusable ad copy,
+// over-length ad-group name, or bad keyword/audience-segment (GA-4) input
+// must fail before any Google Ads resource is created, not after the
+// budget+campaign already committed — surfacing it only inside
+// createAdGroupAndAd (which runs after both prior mutates) would orphan a
+// real campaign+budget with no ad group/ad for what is purely a local
+// input-validation failure.
 func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, descriptions []string, adGroupName string, keywords []Keyword, audienceSegments []string, err error) {
 	finalURL, err = buildAdFinalURL(in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
 	if err != nil {
 		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
+	}
+	if n := utf8.RuneCountInString(finalURL); n > maxFinalURLRunes {
+		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (composed ad final URL is %d characters, exceeding the %d limit; shorten the registration URL)", n, maxFinalURLRunes)
 	}
 	headlines, descriptions, err = composeAdCopy(in.Headlines, in.Descriptions, in.EventName, in.Project)
 	if err != nil {
