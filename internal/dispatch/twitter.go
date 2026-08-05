@@ -314,7 +314,7 @@ func twitterMetricsWindow(w model.MetricsWindow) (twitter.MetricsWindow, error) 
 	case model.MetricsWindowLast7Days:
 		return twitter.WindowLast7Days, nil
 	default:
-		return "", fmt.Errorf("%w: %q (X Ads only supports today and last_7_days)", twitter.ErrUnsupportedWindow, w)
+		return "", fmt.Errorf("%w: %w: %q (X Ads only supports today and last_7_days)", domain.ErrMetricsWindowUnsupported, twitter.ErrUnsupportedWindow, w)
 	}
 }
 

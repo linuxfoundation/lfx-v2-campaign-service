@@ -673,6 +673,9 @@ func TestTwitter_ReadMetrics_UnsupportedWindow(t *testing.T) {
 	if !strings.Contains(err.Error(), "7 days") {
 		t.Errorf("expected error mentioning 7-day API limit, got: %v", err)
 	}
+	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Errorf("expected err to wrap domain.ErrMetricsWindowUnsupported (so brief.go maps it to 400), got: %v", err)
+	}
 }
 
 // TestTwitter_ReadMetrics_ConnectionResolutionFails verifies that connection
