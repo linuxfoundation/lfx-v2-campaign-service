@@ -2,6 +2,7 @@
 
 * [cmd/campaign-service](cmd-campaign-service.md) - The LFX V2 Campaign Service.
 * [internal/container](internal-container.md) - Dependency injection: opens the PostgreSQL pool, runs migrations, and wires Readyz to the pool.
+* [internal/utm](internal-utm.md) - Tags outbound email links with UTM parameters so email traffic is attributable.
 * [internal/dispatch](internal-dispatch.md) - Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel).
 * [internal/infrastructure/config](internal-infrastructure-config.md) - Application configuration from CLI flags and env vars, including PG* composition into a PostgreSQL DSN.
 * [internal/infrastructure/postgres](internal-infrastructure-postgres.md) - PostgreSQL pool (otelpgx), migrations, repositories, and Ready() for readiness probes.
