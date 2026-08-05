@@ -60,6 +60,15 @@ so the version column serializes every campaign writer through one atomic gate
 rather than each writer protecting only itself.
 ## 2026-08-05
 
+**Docs** — Migration `000012_index_outbox_published_at` (PR #60) landed without a log entry,
+flagged in round-2 review. It adds a partial index on `index_outbox(published_at)` restricted to
+`WHERE published_at IS NOT NULL`, revisiting 000010's "no index needed" call: that call was
+verified against a table where published rows dominate, so the retention prune's PK scan finds a
+full batch almost immediately. On a large, mostly-PENDING outbox — the shape a backlog produces —
+the same query has to walk id-order past a long run of unpublished rows first. The partial index
+gives the prune pass a direct route to (or a cheap proof of the absence of) prunable rows without
+paying for the pending rows in between.
+
 **Fix** — Closed two false negatives in the semicolon-ambiguity guard (LFXV2-2775, PR #62),
 both flagged by automated review against a merge commit that pulled in `origin/main`'s shared
 infra (the file itself was untouched by that merge).
@@ -91,6 +100,392 @@ separator-preservation property directly at the `stripUTM` level, unguarded by t
 
 ## 2026-08-04
 
+**Fix** — Renumbered `000015_index_outbox_lease` → `000011_index_outbox_lease`. It COLLIDED with
+`000015_drop_campaigns_full_unique_platform` on `feat/LFXV2-campaign-delete` (PR #64): two
+different migration files claiming the same version in two open PRs.
+
+golang-migrate applies one and silently skips the other — no error, the schema just drifts. And
+no CI check on either PR could catch it: a uniqueness test globs only its own branch's migrations
+directory, so it is green on both PRs and fails only on whichever merges second. The lease
+migration was also numbered above `000011`–`000014`, which nothing owned, so the version had no
+reason to be 15 in the first place.
+
+Added the numbering guards this needed: `TestMigrations_UniqueNumbering` (duplicate versions),
+`TestMigrations_NoVersionGaps` (a version numbered above ones that do not exist yet — if this tree
+deploys first, the migrations later filling the gap are skipped permanently), and
+`TestMigrations_AllowedVersionGapsAreStillOpen` (an `allowedVersionGaps` entry becomes stale once
+its sibling lands, so it must be deleted rather than left to mask a future genuine gap). The
+remaining `000008`–`000009` gap is recorded there as the merge-ordering obligation it is: PR #59
+must merge before this branch. Each test verified by violating what it guards.
+
+Verified on PostgreSQL 16.10: the chain applies ascending (`000001`–`000007`, `000010`, `000011`)
+with the lease columns and `idx_index_outbox_claimable` present and `idx_index_outbox_pending`
+replaced, and `000011`'s down migration reverses it.
+
+**Update** — Took the NATS publish OUT of the outbox claim transaction (LFXV2-2814, PR #60). The
+drain held one transaction across claim, publish and retire, so a pool connection stayed checked
+out for up to the 30s pass budget while the relay waited on the indexer. With a small pool that
+blocks every brief/campaign write and the readiness query — the broker degradation this table
+exists to isolate becomes a service outage — and `pgxpool.Close` at shutdown waits on that
+connection, defeating the bounded `Relay.Stop`. A drain is now three short transactions with the
+publish in none of them: claim and commit, publish, then settle each outcome separately.
+
+Removing the long transaction removed what carried exclusivity, since `FOR UPDATE SKIP LOCKED`
+locks end at commit. Migration `000011` adds `leased_until`/`leased_by`, stamped in the SAME
+statement that selects the rows — splitting the select and the update would leave a window where
+two pods both read an unleased row. A row is claimable only when its lease is absent or expired;
+the expiry (not a permanent flag) is what lets a crashed pod's rows recover instead of wedging
+their resource forever. `leaseDuration` is 60s, which must exceed the pass budget plus the settle
+budget or a lease dies mid-publish and a peer republishes behind the pod still working —
+`TestClaimStampsALeaseThatOutlastsAPass` pins that, mirroring `relayPassTimeout` locally because
+this package must not import `indexer`. Both settle paths are guarded on still holding the lease,
+so a pod whose lease expired cannot retire a row or corrupt the new owner's backoff accounting;
+settle also runs on a context detached from the pass, because at shutdown the publish may already
+have succeeded. The predecessor check deliberately does NOT filter on the lease: an older leased
+row is in-flight, not absent, and must still block its successor.
+
+Two existing tests were stale rather than failing, which is the worse kind:
+`TestPendingIndexPartialIndexSupportsTheClaim` asserted against `000010`'s
+`idx_index_outbox_pending`, which `000011` replaces with the lease-aware
+`idx_index_outbox_claimable` — it would have passed forever while the index the claim actually uses
+went unchecked. `TestDrainClaimsOneRowPerResourceInOrder`'s comment still claimed locks were held
+"through the publish AND the retire", the precise property this change removes.
+
+**Update** — Renumbered the outbox migration `000008_index_outbox` → `000010_index_outbox`
+(LFXV2-2814, PR #60). PR #59 (stuck-claim recovery) also defines a `000008`, plus a `000009` that
+repairs an INVALID index its own `000008` may leave behind, so that pair must stay together;
+`main` is at `000007`. The loud failure was a merge conflict, but the quiet one is why this moved
+ahead of merge rather than at merge time: two files sharing a version means golang-migrate applies
+one and SILENTLY SKIPS the other, so `index_outbox` would never be created in any environment,
+every brief and campaign write would fail its co-commit, and the whole indexing recovery path
+would be dead with nothing in the logs pointing at the cause. Renumbering removes the ordering
+dependency outright — #59 and #60 can now merge in either order, instead of correctness resting on
+a merge sequence the repository does not enforce. `migrations.go` embeds `*.sql` by wildcard, so
+only two hard-coded references needed updating (the test that reads the migration by filename, and
+the indexer concept doc). Verified on a live PostgreSQL 16 by injecting #59's `000008`/`000009`
+alongside this `000010` and running the service's own `postgres.Migrate`: all three apply and the
+schema lands clean at `version=10, dirty=f`, confirming the number gap does not block the runner.
+
+## 2026-08-03
+
+**Update** — An unusable `NATS_URL` now fails boot (LFXV2-2814, PR #60). The publisher is built
+with `RetryOnFailedConnect`, so an ordinary broker outage never reaches that error branch — it
+returns a reconnecting publisher. Reaching it means the config can never work (malformed URL), and
+degrading to a Noop was the worst available outcome: `NATS_URL` is non-empty, so the enqueue gate
+stays OPEN and every write co-commits a row into a table this process can never drain, whose
+pending rows are deliberately never pruned. The service would look healthy while accumulating
+undeliverable work forever. Now fatal, matching how invalid database settings are already treated.
+
+**Update** — Fixed a data-loss bug I introduced with the disabled-indexing gate, plus the backoff
+clock (LFXV2-2814, PR #60). (1) The gate read `IndexerIsNoop()`, but `NewNATSPublisher` returns a
+Noop for an UNREACHABLE broker as well as an empty `NATS_URL` — and the publisher is never
+re-dialled. So a pod that started during a broker restart skipped the outbox for its entire life,
+permanently losing every brief archive and campaign create (pending rows are never pruned; there
+is no reindex path). Strictly worse than the growth the gate was added to prevent. It now keys on
+an explicit config flag (`DisableIndexing`, set by the container only when `NATS_URL` is empty).
+`TestBrokerDown_StillEnqueues` pins it — with the old gate it writes 0 rows instead of 2. (2) The
+retry backoff used `now()` on both sides, which is TRANSACTION-START time; the drain holds one
+transaction across the whole pass, so every backoff was understated by up to the pass duration.
+Both sides now use `clock_timestamp()`. Verified on live PostgreSQL: inside a transaction, after a
+2s sleep, `now()` had not advanced at all while `clock_timestamp()` advanced by 2s. Also removed
+two stale comments — one asserting the OLD `Noop.PublishRaw`-reports-success contract (the exact
+bug this PR fixed), one describing the reverted two-window prune.
+
+**Update** — Added retry backoff to the outbox claim (LFXV2-2814, PR #60). `attempts` was
+recorded but never affected ELIGIBILITY, so a row that can never be delivered was re-selected on
+every pass — and once enough poison rows accumulate as the oldest resource heads they consume the
+whole batch, so a failure stops "blocking only its own resource" and starves every newer write.
+A failed row now waits `2^attempts` seconds (`last_attempt_at`, new column), capped at hourly so a
+long outage still recovers. The exponent is capped separately from the seconds: `attempts` is
+unbounded and `POWER(2, n)` overflows int first (verified with attempts=999999). Reproduced on
+live PostgreSQL 16 with 50 poison heads + 1 new write: without backoff the batch was 50 poison
+rows with the new write excluded; with backoff it was the new write alone. EXPLAIN still shows an
+index scan on the partial index.
+
+**Update** — REVERTED the pending-row pruning added earlier today (LFXV2-2814, PR #60); a
+reviewer was right and I was wrong. Aging out undelivered work is unrecoverable here: there is no
+full-reindex path, and the cases with no later write to repair them — a terminal brief archive, a
+created-then-never-edited campaign — are exactly the ones the outbox exists for. The stated
+motivation did not even hold: `drain` returns BEFORE pruning when the token is absent, so the
+unprovisioned case never pruned anyway. Pending rows are now never pruned at any age. Unbounded
+growth is prevented at the SOURCE instead: when indexing is deliberately disabled (`NATS_URL=""`)
+the payload builder is nil and no row is written. A missing credential is deliberately not
+treated that way — it is a provisioning gap and the rows are real work.
+
+**Update** — `PublishRaw` now uses NATS request/reply instead of publish-and-flush (LFXV2-2814,
+PR #60). A flush only confirms the bytes reached the broker; it says nothing about acceptance.
+Checked the REAL consumer rather than assuming: `lfx-v2-indexer-service` subscribes to
+`lfx.index.*` via `QueueSubscribeWithReply` and its `IndexingMessageHandler.HandleWithReply`
+answers `"OK"` on success and `"ERROR: ..."` on any rejection. So a rejected message was being
+retired as delivered — and, after the retention work, eventually pruned. Only a literal `OK` now
+retires the row. Verified against a live nats-server: accepted → nil, rejected → an error
+carrying the indexer's reason, no responder → `nats: no responders available`.
+
+**Update** — Bounded the PENDING side of the index outbox too (LFXV2-2814, PR #60). The previous
+commit pruned only published rows, so with indexing disabled (`NATS_URL=""`) or unprovisioned
+(the service token is an `optional` chart secret — my own choice) every brief and campaign write
+still co-committed a JSONB row that nothing would ever drain: unbounded growth in a configuration
+the deployment actively permits. Pending rows now age out after 30 days, versus 7 for published
+history — long enough that a row is only discarded well after any realistic outage or rotation
+would have been noticed, at which point a reindex beats replaying a month-old snapshot. Verified
+on live PostgreSQL 16: 30d-published and 40d-pending rows deleted; 1d-published, 29d-PENDING, and
+fresh rows all kept.
+
+**Update** — Closed four more findings on the outbox (LFXV2-2814, PR #60). (1) POOL DEADLOCK: the
+guarded-update paths in `ReplaceBrief`/`Approve`/`ReplaceCampaign` classified a no-row result by
+calling `GetBrief`/`GetCampaign`, which acquires a SECOND pool connection while the transaction
+still holds the first — with a saturated pool (`pool_max_conns=1` makes it certain) an ordinary
+stale-version request blocked until its context expired instead of returning 412. The existence
+check now runs inside the same transaction, which also reads the same snapshot the UPDATE did.
+(2) UNBOUNDED GROWTH: published rows were retained forever with no pruning path;
+`PrunePublishedIndexMessages` now trims them after 7 days, bounded per pass, running after the
+drain. Pending rows are never eligible. (3) The `bearer` parameter threaded through
+`Start`/`run`/`dispatchPlatform` became dead when campaign creates moved to the outbox, and its
+comment still claimed the indexer needed the request JWT — removed, along with the now-unused
+`deref` helper. (4) No `published_at` index: verified with EXPLAIN that the prune's
+`ORDER BY id LIMIT n` is served from the primary key, so an extra index would be pure write
+amplification.
+
+**Update** — Hardened the outbox claim and finished routing campaign writes through it
+(LFXV2-2814, PR #60). (1) `SKIP LOCKED` alone did NOT preserve per-resource order: it skips an
+older LOCKED row for object X and hands another pod the NEWER row for the same X, publishing an
+update before its create. The claim now carries a `NOT EXISTS` predecessor check — one message
+per resource per pass, so a failed delivery blocks only its own resource. Verified on a live
+PostgreSQL 16: with one pod holding b1's create, a concurrent pod claimed ZERO rows. (2) Ordering
+moved from `created_at` to `id`: `now()` is TRANSACTION-START time, so a transaction that began
+earlier but wrote later gets an earlier timestamp and sorting by it can invert committed order.
+The partial index is re-keyed `(object_type, object_id, id)` to serve both. (3) `UpdateCampaign`
+and `ToggleCampaignStatus` still published directly after `ReplaceCampaign`, so a replayed create
+could overwrite a newer update — `ReplaceCampaign` now co-commits too, and `publishIndex` is gone
+entirely: no write publishes on the request path. (4) Because a pass now claims one row per
+resource, `drain` loops while making progress (bounded), so a queued create+update+delete drains
+in one tick rather than 45s.
+
+**Update** — Closed two more outbox findings on PR #60 (LFXV2-2814), both raised against the
+previous commit. (1) `PendingIndexMessages` read rows with NO claim, so every replica loaded the
+same batch: a slow pod could publish an earlier `updated` after a faster one had already
+published the later `deleted`, resurrecting an archived brief ACROSS replicas — the same race the
+outbox closes intra-process, and rolling deploys make overlapping pods routine. The read/mark/
+record triple collapsed into one `DrainPendingIndexMessages(ctx, limit, deliver)` that claims
+with `FOR UPDATE SKIP LOCKED` and holds the locks across the publish (passed down as a callback)
+and the retire. Ordering is now `created_at, id` — total, since `created_at` can tie at now()
+resolution. (2) Campaign creates still published directly with the caller's JWT captured at
+`Start`; because dispatch is async on the root context, that token could be EXPIRED by publish
+time and there was no row to retry, leaving a new campaign permanently unsearchable.
+`UpsertCampaign` now takes a `CampaignIndexPayloadFunc` and co-commits like the brief writes.
+
+**Update** — Routed ALL brief writes through the index outbox (LFXV2-2814, PR #60), not just the
+terminal archive. With create/replace/approve publishing directly after commit and only the
+archive co-committing, the two paths could not be ordered against each other: a replace could
+commit, stall before its publish, and land its update AFTER the archive had been replayed and
+retired — resurrecting a deleted brief in the index with no pending tombstone to repair it. The
+publisher's per-object lock cannot close this (process-local, orders only calls as they arrive).
+`CreateBrief`/`ReplaceBrief`/`Approve` now take an `IndexPayloadFunc` and co-commit like
+`ArchiveBrief` did, giving each brief one ordered sequence carried by the table — correct across
+replicas. Replace and Approve also switched to `RETURNING` so the indexed snapshot is exactly
+what committed, rather than a post-write `GetBrief` that could observe a later concurrent write.
+
+**Update** — Closed four more review findings on the index outbox (LFXV2-2814, PR #60), all
+raised against the previous fix. (1) `INDEXER_SERVICE_TOKEN` was never wired in the Helm chart,
+so the new empty-token guard would have idled the relay in every cluster — added as an
+`optional` `secretKeyRef` (optional so a cluster missing the key still starts; the relay idles
+and rows stay pending rather than blocking pod start). (2) `Close` read `c.indexRelay` BEFORE
+joining the DB-init goroutine, which is what installs the relay on the 503 cold-start path: a
+retry landing in that gap started a relay nothing stopped, reading the outbox through
+`pool.Close`. Reordered, and the field is now mutex-guarded like `pool` — it was an
+unsynchronized read/write besides. (3) `PublishRaw` returned nil when the flush budget was
+exhausted, letting the relay retire a row for a delivery never confirmed on the wire; it now
+returns the context error, checked FIRST because `flushBudget` consults only the deadline and a
+context cancelled without one reported a full budget.
+
+**Update** — Closed two review findings on the index relay (LFXV2-2814, PR #60). Both were
+consequences of the outbox commit itself. (1) With no `INDEXER_SERVICE_TOKEN`, `stamp` wrote an
+EMPTY authorization header; NATS accepted the publish so `drain` retired the row, while the
+indexer drops empty-auth messages — the outbox would have silently drained itself and terminal
+writes like brief archival would have lost their only recovery path. `drain` now skips the pass
+and warns once, leaving rows pending. Same defect class as the `Noop.PublishRaw` fix. (2)
+`relayStopTimeout` was spent at the start of `Close` but omitted from `ContainerCloseTimeout`,
+so shutdown could overrun `DefaultShutdownTimeout` and reintroduce the SIGKILL-mid-drain risk
+the budget exists to prevent; it is now in the sum and the `init()` assertion still holds.
+
+**Update** — Rebuilt the indexing contract against the REAL indexer (LFXV2-2814, PR #60 review).
+**A reviewer was right and I was wrong, three times.** The flat body this PR published would
+have been REJECTED before indexing — the service would have looked fully wired and indexed
+nothing.
+
+Root cause of my error: I treated `lfx-v2-query-service`'s `TransactionBodyStub` as the producer
+contract. It is the `_source` shape the indexer PRODUCES after processing a message. The actual
+consumer is `lfx-v2-indexer-service` (a separate repo, not checked out locally), whose
+`LFXTransaction` requires `action` + `headers` + `data` + `indexing_config`, and rejects a
+message with no action outright.
+
+I searched only local checkouts, stated the caveat "the subscriber isn't in any local checkout",
+and then failed to do the obvious next thing — search GitHub, where the repo exists. **Absence of
+evidence in the repos you happen to have is not evidence of absence.**
+
+The contract now mirrors the indexer: FGA metadata moved under `indexing_config`, `object_type`
+removed from the payload (the indexer derives it from the SUBJECT), and create/update/delete
+threaded per operation — archiving publishes `delete`, since republishing it as an update would
+leave the document findable.
+
+**Update** — Two more indexing fixes (LFXV2-2814, PR #60 review):
+
+**Indexed documents now use snake_case.** The generated goa types (`briefs.Brief`,
+`briefs.Campaign`) carry NO json tags, so publishing them directly emitted Go field names —
+`"ProjectID"`, `"EventSlug"` — instead of the API's `project_id`/`event_slug`. Verified against
+the real payload before fixing. Such a document indexes CLEANLY and then matches nothing for any
+consumer filtering on API field names, which looks exactly like indexing being broken.
+`indexer.BriefDoc` / `indexer.CampaignDoc` now restate the indexed shape explicitly with tags —
+hand-written on purpose, since the projection is a contract with the Query Service and should
+change only when someone edits it deliberately.
+
+**The dial error no longer leaks the broker password.** Redacting our own `%s` prefix was not
+enough: `%w` renders nats.go's error, and its URL-parse failures embed the ORIGINAL string, so a
+malformed credential-bearing `NATS_URL` printed `nats://***@host` and the raw `user:pass@host`
+in the SAME line (reproduced before fixing). `scrubURL` now removes the credential from the
+wrapped text as well.
+
+**Update** — Redacted the broker URL in `Config.String` (LFXV2-2814, PR #60 review). `String()`
+promises a log-safe representation and redacts `DatabaseURL`/`CredentialEncryptionKey`, but
+printed `NATSUrl` VERBATIM. A NATS URL may carry userinfo (`nats://user:pass@host:4222`), and
+this PR is what made that field live — so anything logging the config would have put the broker
+password in the pod logs.
+
+`redactNATSURL` strips the credential but KEEPS the host, unlike `redactDatabaseURL` which masks
+wholesale: the broker host is what makes an indexing outage diagnosable, and a NATS URL is always
+a parseable URL (no keyword-DSN form), so the credential portion can be removed precisely.
+
+**Update** — Toggle publish now uses the DETACHED context (LFXV2-2814, PR #60 review).
+`ToggleCampaignStatus` writes on `persistCtx` (`context.WithoutCancel`) on purpose — the platform
+status has already changed, so a cancelled request must still record it — but the index publish
+still used the request `ctx`. That dropped the index update for exactly the cancelled requests
+the detach exists to protect, leaving the database correct and search stale on the cases most
+likely to need reconciling. Same class as the orchestrator's persist-site publishes.
+
+Note the SIBLING site (`UpdateCampaign`) writes on plain `ctx` and publishes on `ctx`, which is
+consistent — only the toggle mismatched.
+
+**Update** — Closed a read-then-archive race in `DeleteBrief` (LFXV2-2814, PR #60 review). The
+archive-republish fix read the brief, archived it, then published the SNAPSHOT with a
+hand-incremented version. A concurrent `ReplaceBrief`/`Approve` committing in that window would
+make the archive apply to the newer row while the index received the older content, at a version
+that never existed in the table.
+
+`ArchiveBrief` now RETURNS the archived row (`UPDATE ... RETURNING`), making the write and the
+read of its result one statement; the port signature no longer permits a separate read. A second
+archive is `ErrNotFound`, since the `status <> 'archived'` guard commits nothing.
+
+Testing note: an in-memory fake hands back the SAME pointer for the read and the archive, so
+racy and correct implementations publish identical version numbers — a version-based assertion
+passes either way (verified: the first version of this test stayed green against a deliberately
+racy DeleteBrief). The test therefore asserts the repository CONTRACT; the real guarantee lives
+in the SQL and the port signature.
+
+**Update** — Retracted the "self-healing" claim for indexing (LFXV2-2814, PR #60 review). Core
+NATS is at-most-once, and this bundle plus `publisher.go` both asserted that a dropped message
+"self-heals on the next update". That is FALSE for terminal writes: archiving a brief has no
+successor write, and a created-then-never-edited campaign may never be written again — so the
+index can be permanently stale or missing the only document backing lists/history.
+
+No code fix here beyond the retraction: bounding the flush narrows the window but cannot close
+the commit-to-publish gap (the process can die between the two regardless). Closing it needs
+delivery recoverable independently of the write — a transactional outbox with a relay, or a
+periodic database-to-index reconciliation sweep. Recorded as a KNOWN GAP rather than
+implemented, because it is a design decision with operational weight and belongs in its own
+change, not a review round.
+
+**Update** — Budgeted the index drain into shutdown (LFXV2-2814, PR #60 review follow-up).
+Bounding `nats.DrainTimeout` to 2s was necessary but NOT sufficient: `Container.Close` really
+does spend those 2s draining after the pool closes, and `ContainerCloseTimeout` did not count
+them. The two shutdown phases already consumed all 25s of `DefaultShutdownTimeout` with ZERO
+headroom, so the unbudgeted drain pushed the real total to 27s — the SIGKILL-mid-drain the
+budget exists to prevent.
+
+`indexer.DrainTimeout` is now exported and folded into `ContainerCloseTimeout`, and
+`dispatchDrainTimeout` trimmed 6s → 4s so the HTTP phase keeps a positive budget. The `init()`
+guard now asserts the composed `ContainerCloseTimeout` rather than re-deriving two of its three
+terms, so a future term added to Close cannot escape the check.
+
+**Update** — Bounded indexing's shutdown cost (LFXV2-2814, PR #60 review). Both findings were
+consequences of wiring the publisher into the shutdown path without checking its budget:
+
+- `Close` calls `conn.Drain()`, and nats.go defaults `DrainTimeout` to **30s** — alone MORE
+  than the service's entire graceful-shutdown budget (`DefaultShutdownTimeout`, 25s). A wedged
+  broker would hold `Container.Close` past the budget and get the pod SIGKILLed mid-shutdown,
+  defeating the very budget `ContainerCloseTimeout` exists to enforce. Now pinned to 2s.
+- `Publish` flushed for a flat `publishTimeout` (3s) even during shutdown grace, which is sized
+  as `persistResultTimeout + jobFinalizeTimeout + 1s` and budgets nothing for a flush between
+  them. The flush now takes the smaller of `publishTimeout` and the caller's remaining
+  deadline (`flushBudget`), skipping entirely when none is left — the message stays buffered
+  and the drain is its last chance, which is correct for a best-effort concern.
+
+The flush bound is asserted on `flushBudget` directly rather than by timing a real publish: an
+unreachable broker fails its flush immediately, so a timing test passes even with the bound
+removed. The first version of that test was vacuous for exactly that reason.
+
+**Update** — Wired Query Service indexing (LFXV2-2814). `internal/infrastructure/indexer`
+publishes brief and campaign snapshots to NATS on every write; `brief.go:169` had marked this
+seam as "no indexing happens here yet" since the service was built. Architecture D1 and D5 both
+commit to it, and it is why #55 needed its own lookup endpoint rather than querying the index.
+
+The contract was DERIVED from the platform, not invented — recording the derivation so a future
+change can re-verify rather than re-guess:
+
+- Subject `lfx.index.<object_type>` matches the four already in use (`committee_document`,
+  `project_document`, `individual_vote`, `vote_response`).
+- The body mirrors `lfx-v2-query-service`'s `TransactionBodyStub`, whose own comment marks it as
+  the indexed `_source` shape. Its searcher reads `object_type` and `public` directly out of
+  `_source`, so a wrong value there indexes cleanly and then matches nothing.
+- `access_check_relation = campaign_manager` on `project:<projectId>`, per architecture D2 ("no
+  new FGA object types; only relations on project") and the deployed `ruleset.yaml`, which gates
+  every route on exactly that. D2 also explains why the HISTORY check equals the ACCESS check:
+  this service has no read-only audience.
+- `public` is always false — every resource is project-scoped.
+
+BEST-EFFORT by contract: `Publish` has no error return, an unreachable broker logs and returns a
+`Noop` instead of blocking boot, and an empty `NATS_URL` disables indexing outright. The DB is
+the source of truth and the Query Service re-indexes on the next write, so a dropped message
+self-heals — whereas letting indexing fail a write would turn a NATS outage into a
+campaign-service outage. NATS core, not JetStream, for the same reason.
+
+No chart change was needed: `NATS_URL` was already injected via `app.environment` and already
+read into `config.NATSUrl`. The only thing missing was a consumer.
+
+**Update** — Fixed the indexing WIRING (LFXV2-2814, PR #60 review). Two independent reviewers
+converged on the same defect and both were right: `SetIndexer` was called only on the 503-mode
+path, so a HEALTHY startup — the normal case — kept the `Noop` and published nothing. Worse,
+`SetIndexer` turned out to have zero call sites at all, because `wireLiveBackends` constructs its
+own `BriefService`. The publisher is now built once in `NewContainer` ahead of every branch and
+injected through `newBriefService` / `newOrchestrator`, the single funnels all five construction
+sites now use.
+
+`Orchestrator` needed the publisher too: campaign CREATES are persisted by `dispatchOne`, not by
+`BriefService`, so a newly created campaign was unsearchable until some later update republished
+it. Retained PARTIAL orphans publish as well — those are exactly the rows an operator must find in
+order to reconcile them — and both publish on the detached `persistCtx` so a write completing
+during shutdown grace still reaches the index.
+
+Also made the documented disable switch real: `LoadConfig` resolved `NATS_URL` with
+`envOrDefault`, which treats empty as absent, so `NATS_URL=""` silently became the in-cluster
+default and could never disable anything. Now resolved with `envOrDefaultUnlessSet`
+(`os.LookupEnv`), which distinguishes unset from explicitly empty.
+
+Rejected one finding: a reviewer claimed the indexer requires an `action` / `headers` / `data` /
+`indexing_config` envelope and drops flat messages. An exhaustive search of every local checkout
+found ZERO occurrences of `indexing_config` in any code, test, doc or fixture — including the repo
+that DEFINES `TransactionBodyStub`. The flat shape is corroborated on both the producer and
+consumer sides (`SourceIncludes` projects those keys at the TOP level; an envelope would break
+every projection). Caveat kept deliberately: the subscribing indexer service is not in any local
+checkout, so this argues from absence — if that repo is produced, re-verify before trusting the
+flat shape.
+
+**Update** — Archiving now republishes (LFXV2-2814, PR #60 review). `DeleteBrief` soft-archives
+the row and previously published nothing, so an archived brief kept its stale pre-archive
+`_source` and went on matching searches indefinitely — every OTHER write path publishes. The
+brief is read BEFORE the archive (`GetBrief` filters archived rows, so reading after would
+return `ErrNotFound` and leave nothing to publish), then republished carrying the archived
+status and the version bump. A read failure does not block the archive: the write is the
+contract, indexing is best-effort.
 **Fix** — Corrected a regression introduced by the separator-preservation change earlier the same
 day (LFXV2-2775, PR #62). That change had each kept query part re-emit the separator that
 FOLLOWED it; it should have been the one that PRECEDED it. The two differ exactly when a `utm_`
