@@ -367,11 +367,14 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	return &briefs.CampaignMetrics{
 		CampaignID:         existing.ID,
 		PlatformCampaignID: existing.PlatformCampaignID,
-		Window:             string(m.Window),
-		Impressions:        m.Impressions,
-		Clicks:             m.Clicks,
-		CostMicros:         m.CostMicros,
-		Ctr:                m.Ctr,
+		// The validated request window, not m.Window: adapters are not required to echo it
+		// back, and trusting them would emit "" for one that doesn't, violating the response
+		// enum and causing generated clients to reject an otherwise successful 200.
+		Window:      string(window),
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
 	}, nil
 }
 
