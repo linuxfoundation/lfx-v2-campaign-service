@@ -260,7 +260,7 @@ func TestRedactURLForError(t *testing.T) {
 		want string
 	}{
 		{"strips query and fragment", "https://example.com/register?token=secret&utm_source=x#frag", "https://example.com/register"},
-		{"strips userinfo", "https://user:pass@example.com/register", "https://example.com/register"},
+		{"strips userinfo", "https://user:pass@example.com/register", "https://example.com/register"}, // secretlint-disable-line -- fixture asserting userinfo is stripped, not a real credential
 		{"preserves port", "https://example.com:8443/register", "https://example.com:8443/register"},
 		{"unparseable input redacted", "https://[::1", "(redacted)"},
 		{"empty input redacted", "", "(redacted)"},
@@ -279,7 +279,7 @@ func TestRedactURLForError(t *testing.T) {
 
 func TestBuildAdFinalURL_RejectsUserinfoAndMalformedQuery(t *testing.T) {
 	t.Run("embedded userinfo is rejected", func(t *testing.T) {
-		_, err := buildAdFinalURL("https://user:pass@example.com/register", "slug", "Event", "Proj", "suffix")
+		_, err := buildAdFinalURL("https://user:pass@example.com/register", "slug", "Event", "Proj", "suffix") // secretlint-disable-line -- fixture asserting embedded userinfo is rejected, not a real credential
 		if err == nil {
 			t.Fatal("expected an error for a registration URL with embedded userinfo")
 		}
