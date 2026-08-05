@@ -16,6 +16,16 @@ first, then children, so a child failure after the gate closes surfaces as a
 `partialCascadeError` (`Unconfirmed()`), not a plain error. Activating a campaign missing either
 child id is refused up front with `domain.ErrCampaignNotProvisioned` before any PUT.
 
+**Update** — Review fixes on PR #76: `putEntityStatus` now issues status PUTs with
+`idempotent=true` (re-applying Active/Paused converges on the same state, so a throttled PUT
+retries with backoff instead of becoming an avoidable UNCONFIRMED failure on an ordinary 429);
+`parseEntityID` reuses `idRE` and enforces the signed-64-bit range instead of a bare digits-only
+loop, so a corrupt persisted child id ("0", leading zeros, or an over-range value) is rejected
+the same way the create path's `numberID` already rejects it; added `MicrosoftDispatcher` to
+`status_toggler_guard_test.go`'s compile-time `StatusToggler` assertions; and synchronized the
+`campaignPatched`/`count` httptest-handler counters in `microsoft_test.go`/`status_test.go` with
+a mutex, matching this PR's other recorders.
+
 ## 2026-08-04
 
 **Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where

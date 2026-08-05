@@ -137,10 +137,13 @@ func TestUpdateCampaignAndChildrenStatus_PauseAdFailureIsPartialError(t *testing
 // TestUpdateCampaignAndChildrenStatus_ActivateChildFailureDoesNotOpenGate verifies that when a
 // child PUT fails during ACTIVATE, the campaign gate is NEVER flipped.
 func TestUpdateCampaignAndChildrenStatus_ActivateChildFailureDoesNotOpenGate(t *testing.T) {
+	var mu sync.Mutex
 	var campaignPatched bool
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/Campaigns") {
+			mu.Lock()
 			campaignPatched = true
+			mu.Unlock()
 		}
 		if strings.HasSuffix(r.URL.Path, "/AdGroups") {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -158,6 +161,8 @@ func TestUpdateCampaignAndChildrenStatus_ActivateChildFailureDoesNotOpenGate(t *
 	if err == nil {
 		t.Fatal("a child failure during activate must return an error")
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if campaignPatched {
 		t.Error("the campaign gate must NOT be flipped Active when a child activate fails")
 	}

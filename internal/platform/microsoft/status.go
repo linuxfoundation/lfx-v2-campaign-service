@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -193,7 +194,10 @@ func (c *Client) updateAdStatus(ctx context.Context, adGroupID, adID, status str
 // PartialErrors entry on an otherwise-200 response is a definite per-entity rejection
 // (mirrors the Add* create response this client already decodes), NOT retried.
 func (c *Client) putEntityStatus(ctx context.Context, path string, req any, entity, id, status string) error {
-	respBody, err := c.doRequest(ctx, http.MethodPut, path, req, false)
+	// idempotent=true: re-applying Active/Paused converges on the same state, so a
+	// throttled PUT can safely retry with backoff instead of becoming an avoidable
+	// UNCONFIRMED toggle failure on an ordinary 429.
+	respBody, err := c.doRequest(ctx, http.MethodPut, path, req, true)
 	if err != nil {
 		return fmt.Errorf("microsoft-ads: update %s %s status to %s: %w", entity, id, status, err)
 	}
@@ -212,17 +216,21 @@ func (c *Client) putEntityStatus(ctx context.Context, path string, req any, enti
 }
 
 // parseEntityID converts a caller-supplied id string to the json.Number the v13 REST
-// body expects. Microsoft entity ids are int64 on the wire; a non-numeric string here
-// means the persisted CampaignResult blob is corrupt, not a valid retryable failure.
+// body expects. Microsoft entity ids are positive int64s on the wire; anything idRE/
+// numberID's own create-path validation would reject ("0", leading zeros, negative,
+// fractional, or over int64 range) here means the persisted CampaignResult blob is
+// corrupt, not a valid retryable failure — reuse the same allow-list so a toggle can
+// never accept an id the create path itself would have rejected.
 func parseEntityID(kind, id string) (json.Number, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return "", fmt.Errorf("microsoft-ads: %s id is required", kind)
 	}
-	for _, r := range id {
-		if r < '0' || r > '9' {
-			return "", fmt.Errorf("microsoft-ads: invalid %s id %q: must be numeric", kind, id)
-		}
+	if !idRE.MatchString(id) {
+		return "", fmt.Errorf("microsoft-ads: invalid %s id %q: must be numeric", kind, id)
+	}
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		return "", fmt.Errorf("microsoft-ads: invalid %s id %q: out of int64 range", kind, id)
 	}
 	return json.Number(id), nil
 }

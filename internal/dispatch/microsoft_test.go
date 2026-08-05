@@ -422,9 +422,12 @@ func TestMicrosoft_ToggleStatus_CascadesToTree(t *testing.T) {
 // campaign with no known ad group/ad ids is refused before any PUT — activating only the
 // campaign would leave the ad group/ad Paused and the tree unable to serve.
 func TestMicrosoft_ToggleStatus_ActivateWithoutChildIDsRejected(t *testing.T) {
+	var mu sync.Mutex
 	var count int
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		count++
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 	}))
@@ -447,6 +450,8 @@ func TestMicrosoft_ToggleStatus_ActivateWithoutChildIDsRejected(t *testing.T) {
 	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Errorf("error = %v, want ErrCampaignNotProvisioned (a client/state error → 409, not 503)", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if count != 0 {
 		t.Errorf("issued %d PUTs, want 0 (rejected before any PUT)", count)
 	}
@@ -489,10 +494,13 @@ func TestMicrosoft_ToggleStatus_PartialCascadeIsUnconfirmed(t *testing.T) {
 // (children-first, campaign gate LAST) a child PUT failure returns an error but the campaign
 // gate is never opened.
 func TestMicrosoft_ToggleStatus_ActivateChildFailureIsCleanNotServing(t *testing.T) {
+	var mu sync.Mutex
 	var campaignPatched bool
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/Campaigns") {
+			mu.Lock()
 			campaignPatched = true
+			mu.Unlock()
 		}
 		if strings.HasSuffix(r.URL.Path, "/AdGroups") {
 			w.WriteHeader(http.StatusInternalServerError) // child fails before the gate flip
@@ -516,6 +524,8 @@ func TestMicrosoft_ToggleStatus_ActivateChildFailureIsCleanNotServing(t *testing
 	if err == nil {
 		t.Fatal("expected an error when a child PUT fails during activate")
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if campaignPatched {
 		t.Error("the campaign gate must NOT be opened when a child activate fails (nothing should serve)")
 	}
