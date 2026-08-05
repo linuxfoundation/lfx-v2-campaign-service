@@ -117,6 +117,26 @@ func TestApply_TagsSchemelessWebLinks(t *testing.T) {
 	assert.Contains(t, Apply("HTTPS://lf.dev/e", p, ""), "utm_campaign=c")
 }
 
+// TestApply_TrimsSurroundingWhitespaceBeforeTagging pins that a leading/trailing-whitespace
+// href is trimmed before url.Parse sees it. Leading whitespace hides the scheme from the
+// parser (making a normally-taggable absolute URL look like a bare relative path with the
+// scheme embedded in it), and untrimmed trailing whitespace survives into the path, where
+// URL.String() percent-encodes it as a literal "%20" in the tagged output.
+func TestApply_TrimsSurroundingWhitespaceBeforeTagging(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "c"}
+
+	t.Run("leading whitespace does not hide the scheme", func(t *testing.T) {
+		tagged := Apply("  https://events.lfx.dev/reg", p, "")
+		got := query(t, strings.TrimSpace(tagged))
+		assert.Equal(t, "c", got.Get("utm_campaign"), "tagged = %q", tagged)
+	})
+
+	t.Run("trailing whitespace is not percent-encoded into the path", func(t *testing.T) {
+		tagged := Apply("https://events.lfx.dev/reg  ", p, "")
+		assert.NotContains(t, tagged, "%20", "tagged = %q", tagged)
+	})
+}
+
 // TestApply_PercentEncodedUTMKeysAreSeen pins that query KEYS are decoded before comparison.
 //
 // `?utm%5Fcampaign=hand-picked` decodes to utm_campaign for every normal query reader and for the

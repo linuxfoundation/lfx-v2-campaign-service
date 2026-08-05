@@ -110,10 +110,14 @@ func Apply(rawURL string, p Params, content string) string {
 		// The URL is only whitespace and template tokens; return it unchanged.
 		return rawURL
 	}
-	if !isTaggable(rawURL) {
+	if !isTaggable(trimmed) {
 		return rawURL
 	}
-	u, err := url.Parse(rawURL)
+	// Parse the TRIMMED href, not rawURL: leading whitespace can hide the scheme from
+	// url.Parse (making a normally-taggable link parse as a bare relative path), and
+	// trailing whitespace survives into the path, where URL.String() percent-encodes it
+	// as a literal "%20" in the tagged output.
+	u, err := url.Parse(trimmed)
 	if err != nil {
 		return rawURL
 	}
@@ -181,7 +185,7 @@ func Apply(rawURL string, p Params, content string) string {
 	// RawQuery is written verbatim by URL.String(), so the original QUERY — tokens, ordering
 	// and separators included — survives untouched. The PATH still needs restoring: String()
 	// re-escapes it, so a token there comes back as %7B%7B…%7D%7D.
-	return restoreTemplateTokens(u.String(), rawURL)
+	return restoreTemplateTokens(u.String(), trimmed)
 }
 
 // templateToken matches a HubSpot personalization token: {{contact.firstname}}, {{ event.slug }}.
