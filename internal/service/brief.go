@@ -16,6 +16,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 
 	"goa.design/goa/v3/security"
 )
@@ -34,6 +35,13 @@ type BriefService struct {
 	campaigns domain.CampaignRepository
 	jobs      domain.JobRepository
 	orch      *Orchestrator
+	// indexer publishes resource snapshots for the Query Service. Never nil after
+	// construction (a Noop stands in when NATS is unconfigured), so call sites publish
+	// unconditionally rather than nil-checking at each of them.
+	indexer indexer.Publisher
+	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
+	// publisher: a Noop also appears when the broker is merely unreachable. See DisableIndexing.
+	indexingDisabled bool
 }
 
 var (
@@ -41,9 +49,101 @@ var (
 	_ briefs.Auther  = (*BriefService)(nil)
 )
 
-// NewBriefService constructs a BriefService.
+// SetIndexer injects the Query Service index publisher. Separate from the constructor so the
+// ~40 existing NewBriefService call sites (mostly tests) are unaffected and default to Noop.
+func (s *BriefService) SetIndexer(p indexer.Publisher) {
+	if p == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.indexer = p
+}
+
+// DisableIndexing marks indexing as DELIBERATELY off, so writes skip the outbox entirely.
+//
+// This is a CONFIGURATION fact (NATS_URL is empty), not an observation of the current publisher.
+// The distinction is load-bearing: NewNATSPublisher also returns a Noop when the broker is merely
+// UNREACHABLE, and treating that as "disabled" would drop outbox rows for the entire life of a
+// pod that happened to start during a broker restart — permanently, since pending rows are never
+// pruned and there is no reindex path. A transient outage must still enqueue; the relay delivers
+// once the connection recovers (the publisher is built with RetryOnFailedConnect).
+//
+// Set once at wiring, before any request is served, so it cannot change between two writes.
+func (s *BriefService) DisableIndexing() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.indexingDisabled = true
+}
+
+// indexingIsDisabled reports the configuration fact set by DisableIndexing.
+func (s *BriefService) indexingIsDisabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.indexingDisabled
+}
+
+// IndexerIsNoop reports whether this service would publish nothing. Exported so the
+// container's wiring tests can assert that EVERY startup path injected a real publisher:
+// SetIndexer is opt-in, so a path that forgets it still compiles, boots and serves — it
+// just silently indexes nothing. That failure is invisible without this accessor.
+func (s *BriefService) IndexerIsNoop() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, isNoop := s.indexer.(indexer.Noop)
+	return isNoop
+}
+
+// briefDoc maps a brief response to the INDEXED shape. The generated briefs.Brief has no json
+// tags, so publishing it directly emits PascalCase keys that no API-shaped consumer matches.
+func briefDoc(b *briefs.Brief) indexer.BriefDoc {
+	return indexer.BriefDoc{
+		ID:          b.ID,
+		ProjectID:   b.ProjectID,
+		ProgramType: b.ProgramType,
+		EventSlug:   b.EventSlug,
+		URL:         derefStr(b.URL),
+		Status:      b.Status,
+		Version:     b.Version,
+
+		// The revisable content: without it a copy-only edit indexes a new version showing
+		// nothing changed, so revision history cannot answer "what was revised?".
+		Platforms:    b.Platforms,
+		EventDetails: b.EventDetails,
+		Copy:         b.Copy,
+		Keywords:     b.Keywords,
+		Targeting:    b.Targeting,
+	}
+}
+
+// campaignDoc maps a campaign response to the INDEXED shape (same reasoning as briefDoc).
+func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
+	return indexer.CampaignDoc{
+		ID:                 c.ID,
+		ProjectID:          c.ProjectID,
+		BriefID:            c.BriefID,
+		Platform:           c.Platform,
+		PlatformCampaignID: derefStr(c.PlatformCampaignID),
+		CampaignName:       c.CampaignName,
+		Status:             c.Status,
+		Version:            c.Version,
+	}
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// NewBriefService constructs a BriefService. The index publisher is NOT a parameter: it is
+// injected via SetIndexer so the many existing call sites (mostly tests) are unaffected and
+// default to a Noop publisher.
 func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j domain.JobRepository, orch *Orchestrator) *BriefService {
-	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch}
+	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch,
+		indexer: indexer.Noop{},
+	}
 }
 
 // SetBackend late-binds the brief/campaign/job repositories and the orchestrator
@@ -161,17 +261,60 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
 	}
-	created, err := briefRepo.CreateBrief(ctx, b)
+	// The index message co-commits with the row (see briefIndexPayload); the relay delivers it.
+	created, err := briefRepo.CreateBrief(ctx, b, s.briefIndexPayload(indexer.ActionCreated))
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
-	// NOTE: brief/campaign lists and revision history are owned by the Query Service
-	// (per the api-catalog). Wiring the Query Service indexer client — so create /
-	// replace / approve / archive and the orchestrator's campaign upserts emit index
-	// events — is a deliberate follow-up (LFXV2-2665), not part of this PR. This
-	// persistence layer is the source of truth the indexer will later consume; no
-	// indexing happens here yet.
 	return briefResult(created), nil
+}
+
+// briefIndexPayload builds the outbox payload for a brief write. It is passed INTO the repo so
+// the message is enqueued in the same transaction as the row, giving every brief mutation ONE
+// ordered sequence per resource.
+//
+// This is what makes archival safe. When some writes published directly after commit and only
+// the archive went through the outbox, the two paths could not be ordered against each other: a
+// replace could commit, stall before its publish, and land its update AFTER the archive had been
+// replayed and retired — resurrecting a deleted brief in the index. The publisher's per-object
+// lock could not prevent it, being process-local and only ordering calls as they arrive.
+//
+// NO bearer token is serialized. The outbox is JSONB retained for audit with no pruning, so
+// storing the caller's JWT would persist a live credential indefinitely; the relay stamps a
+// service credential at publish time instead.
+// campaignIndexPayload mirrors briefIndexPayload for campaign writes made on the REQUEST path
+// (update, status toggle). The orchestrator has its own copy for its async dispatch writes.
+func (s *BriefService) campaignIndexPayload(action string) domain.CampaignIndexPayloadFunc {
+	if s.indexingIsDisabled() {
+		return nil
+	}
+	return func(c *model.Campaign) ([]byte, error) {
+		return json.Marshal(indexer.NewTransaction(
+			action, indexer.ObjectTypeCampaign,
+			c.ID, c.ProjectID, "",
+			campaignDoc(campaignResult(c)), c.CampaignName,
+		))
+	}
+}
+
+func (s *BriefService) briefIndexPayload(action string) domain.IndexPayloadFunc {
+	// Indexing DELIBERATELY disabled (NATS_URL="") enqueues nothing: the row could never be
+	// delivered and is never pruned, so writing one is unbounded growth with no upside.
+	//
+	// Gated on the CONFIG flag, never on IndexerIsNoop(): a Noop publisher also appears when the
+	// broker is temporarily UNREACHABLE, and skipping the enqueue then would permanently lose
+	// every write made by a pod that started during a broker restart. A missing CREDENTIAL is
+	// likewise not covered — both are transient states whose rows are real work.
+	if s.indexingIsDisabled() {
+		return nil
+	}
+	return func(b *model.CampaignBrief) ([]byte, error) {
+		return json.Marshal(indexer.NewTransaction(
+			action, indexer.ObjectTypeBrief,
+			b.ID, b.ProjectID, "",
+			briefDoc(briefResult(b)), b.EventSlug,
+		))
+	}
 }
 
 // FindBrief returns the saved brief for an event slug, or 404 when none exists.
@@ -230,7 +373,7 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
 	}
-	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version)
+	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version, s.briefIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -246,7 +389,7 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if err != nil {
 		return nil, err
 	}
-	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version)
+	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version, s.briefIndexPayload(indexer.ActionUpdated))
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
@@ -258,7 +401,18 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	if err != nil {
 		return err
 	}
-	return mapBriefErr(briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID))
+	// ArchiveBrief RETURNS the archived row, so the published document is exactly what was
+	// committed. Reading separately would race a concurrent ReplaceBrief/Approve landing
+	// between the read and the archive: the archive would apply to the newer row while the
+	// index received the older snapshot, with a hand-incremented version that never existed.
+	// The index message is built INSIDE the archive transaction and co-committed to the
+	// outbox, so a dropped publish is recoverable by the relay. Archiving is terminal: without
+	// this, one lost message leaves the brief searchable forever.
+	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, s.briefIndexPayload(indexer.ActionDeleted))
+	if aerr != nil {
+		return mapBriefErr(aerr)
+	}
+	return nil
 }
 
 // ─── Campaigns ───
@@ -423,7 +577,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
-	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version)
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -526,7 +680,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	existing.Status = p.Status
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancel()
-	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version)
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		// The platform WAS changed but the row write failed → platform and DB now diverge.
 		// Log it loudly as an operational reconcile signal (the run state on the platform is
@@ -537,6 +691,10 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			"new_status", p.Status, "error", uerr)
 		return nil, mapBriefErr(uerr)
 	}
+	// The index message co-committed with the row on persistCtx, so a cancelled request still
+	// records BOTH the platform change and its index event — previously the row could be
+	// written while the publish was dropped, leaving the status right in the database and
+	// stale in search for exactly the requests most likely to need reconciling.
 	return campaignResult(updated), nil
 }
 
