@@ -365,3 +365,69 @@ func cleanIDs(ids []string) []string {
 	}
 	return out
 }
+
+// emailContent is the subset of an email's draft content this client reads and writes. The
+// HubSpot draft body lives under content.widgets.<key>.body.html, keyed by module id, so the
+// widget map is decoded generically — the keys vary per template and are not ours to name.
+type emailContent struct {
+	Content struct {
+		Widgets map[string]json.RawMessage `json:"widgets"`
+	} `json:"content"`
+}
+
+// widgetBody is one draft widget's body. Only html is touched; every other field is preserved
+// by patching the widget map rather than replacing it.
+type widgetBody struct {
+	Body struct {
+		HTML string `json:"html"`
+	} `json:"body"`
+}
+
+// GetEmailHTMLWidgets returns the draft's rich-text widget bodies keyed by widget id.
+// IDEMPOTENT (a GET). Widgets with no html body are omitted, so a caller can range over
+// exactly the ones it can rewrite.
+func (c *Client) GetEmailHTMLWidgets(ctx context.Context, id string) (map[string]string, error) {
+	if id = strings.TrimSpace(id); id == "" {
+		return nil, fmt.Errorf("hubspot: GetEmailHTMLWidgets requires a non-empty id")
+	}
+	raw, err := c.doRequest(ctx, http.MethodGet, emailsPath+"/"+url.PathEscape(id)+"/draft", nil, true)
+	if err != nil {
+		return nil, err
+	}
+	var ec emailContent
+	if uerr := json.Unmarshal(raw, &ec); uerr != nil {
+		return nil, fmt.Errorf("hubspot: decode email %s draft content: %w", id, uerr)
+	}
+	out := make(map[string]string, len(ec.Content.Widgets))
+	for key, rawWidget := range ec.Content.Widgets {
+		var w widgetBody
+		if json.Unmarshal(rawWidget, &w) != nil {
+			continue // a widget that isn't this shape (image, divider, …) is not ours to touch
+		}
+		if strings.TrimSpace(w.Body.HTML) != "" {
+			out[key] = w.Body.HTML
+		}
+	}
+	return out, nil
+}
+
+// SetEmailHTMLWidgets replaces the html body of the given widgets on an email's DRAFT.
+// MUTATING.
+//
+// It patches ONLY the named widgets' body.html: HubSpot merges the widget map, so untouched
+// widgets and every other field of a touched widget (styles, module metadata) are preserved.
+// Replacing the whole content object would silently drop template configuration this client
+// never modelled.
+func (c *Client) SetEmailHTMLWidgets(ctx context.Context, id string, widgets map[string]string) (*Email, error) {
+	if id = strings.TrimSpace(id); id == "" {
+		return nil, fmt.Errorf("hubspot: SetEmailHTMLWidgets requires a non-empty id")
+	}
+	if len(widgets) == 0 {
+		return nil, fmt.Errorf("hubspot: SetEmailHTMLWidgets requires at least one widget")
+	}
+	w := make(map[string]any, len(widgets))
+	for key, htmlBody := range widgets {
+		w[key] = map[string]any{"body": map[string]any{"html": htmlBody}}
+	}
+	return c.patchEmail(ctx, id, map[string]any{"content": map[string]any{"widgets": w}})
+}
