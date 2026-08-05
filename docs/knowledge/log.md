@@ -1,5 +1,36 @@
 # Log
 
+## 2026-08-05
+
+**Fix** — Closed two false negatives in the semicolon-ambiguity guard (LFXV2-2775, PR #62),
+both flagged by automated review against a merge commit that pulled in `origin/main`'s shared
+infra (the file itself was untouched by that merge).
+
+1. `hasAmbiguousSemicolon` only flagged ambiguity when a segment contained a BARE key (no `=`).
+   But `stripUTM` deletes the matched `utm_` token outright, and under a literal (non-separator)
+   reading of `;` that token was never a separate parameter — it was the tail of a neighbour's
+   value, keyed or not. `sig=a;utm_source=partner;b=2` was tagged even though stripping
+   `utm_source` deletes text a literal reading of `sig`'s value would have kept. This also flips
+   `utm_campaign=;a=1` from "not ambiguous" to ambiguous, since the same corruption risk applies
+   to it once traced through `stripUTM`'s removal-and-rejoin.
+2. The segment-boundary scan in the old `hasBareKeysInSegmentWith` had a second bug: its backward
+   walk started at `utmIndex-1` and never checked `parts[utmIndex]`'s own leading separator, so a
+   utm param that OPENS its own segment (leading separator `&`) could still pull in a bare key
+   from the PRIOR, unrelated segment.
+
+Fixing (1) made the segment-scan itself unnecessary: whichever side triggers the semicolon check
+(`part.sep == ';'` or the next part's) names a specific adjacent part still inside the same
+ampersand-delimited segment (only `&` opens a new one) — so that adjacent part IS the "other
+parameter" the old segment scan was searching for, and checking for it separately, with or
+without bug (2), can never change the answer. `hasAmbiguousSemicolon` now just returns true
+directly off the semicolon-adjacency check, and `hasBareKeysInSegmentWith` /
+`hasOtherParamInSegmentWith` are deleted along with both segment-boundary bugs they carried.
+
+Pinned by new cases in `TestApply_AmbiguousSemicolonQueriesAreNotTagged`; one existing test
+(`TestApply_SurvivorKeepsItsOwnSeparator`) encoded the same now-corrected assumption and was
+narrowed to point at `TestStripUTM_SurvivorKeepsItsOwnSeparator`, which pins the same
+separator-preservation property directly at the `stripUTM` level, unguarded by the ambiguity check.
+
 ## 2026-08-04
 
 **Update** — Fixed two status-toggle defects and the concepts that still denied the feature existed
@@ -22,6 +53,55 @@ the package scope at creation/dispatcher wiring, so both documented the feature 
 shipped. They now carry the cascade direction (pause gates the parent first, activate works upward),
 the child-id guard (an `adId` with no `adGroupId` is refused, an ad group with no ad is allowed), the
 per-parent scoping of each child PUT, and the retry/presence rules above.
+**Fix** — Corrected a regression introduced by the separator-preservation change earlier the same
+day (LFXV2-2775, PR #62). That change had each kept query part re-emit the separator that
+FOLLOWED it; it should have been the one that PRECEDED it. The two differ exactly when a `utm_`
+pair sits BETWEEN two kept parts, because the survivor then inherits a separator belonging to the
+removed pair: `a=1;utm_source=fb&b=2` collapsed to `a=1;b=2`. `url.ParseQuery` has rejected `;`
+since Go 1.17, so that does not merge `b` into `a`'s value — it returns an EMPTY map and the
+sibling parameter is lost outright, which is the same silent-damage class the original change set
+out to remove. A part's own LEADING byte always belongs to that part, so dropping any number of
+neighbours can never reassign it; both properties (semicolons inside values preserved, survivors
+keeping their own delimiter) now hold together, pinned by a test covering both shapes in one
+query. Caught by automated review before merge.
+
+**Update** — Stopped `stripUTM` from shredding non-UTM query values containing `;` (LFXV2-2775,
+PR #62). `splitQuery` must split on BOTH `&` and `;` so a `utm_` pair hidden behind a semicolon is
+visible to the strip — but the survivors were re-joined with `&`, so any non-utm VALUE that
+legitimately contained a semicolon was torn apart: `?sig=a;b;c&utm_term=old` shipped as
+`?sig=a&b&c&utm_…`, turning one signature into three empty-valued parameters. Signatures, base64
+payloads, `redirect=` targets and ad-tracker macros all routinely carry unencoded semicolons.
+Nothing failed loudly — the link still resolved and the destination merely received a truncated
+signature — which is a worse outcome than the untagged link this package exists to prevent. Each
+query part now carries the separator byte that originally followed it, so only the removed `utm_`
+pairs change the string. The prior doc defence ("a query with no `utm_` pairs is returned
+byte-identical") only decided WHETHER to rewrite, not what the rewrite did to everything else.
+
+**Update** — Narrowed link-tagging eligibility from a scheme DENYLIST to an http/https ALLOWLIST
+(LFXV2-2775, PR #62). The guard skipped `mailto:`, `tel:` and `#`, which let every other non-web
+action through: `javascript:void(0)` — the standard placeholder href marketing tools emit for a
+no-op link — became `javascript:void(0)?utm_source=…`, changing the expression the browser
+evaluates; `sms:`, `data:` and `ftp:` mangled the same way. `isTaggable` now accepts only http/https
+plus schemeless links (relative and protocol-relative, the ordinary case in templated email HTML),
+and runs on the raw string before `url.Parse` so a rejected link comes back byte-identical.
+
+**Update** — Query KEYS are now percent-decoded before comparison (LFXV2-2775, PR #62).
+`?utm%5Fcampaign=hand-picked` decodes to `utm_campaign` for every normal query reader and for the
+analytics backend, but the raw comparison saw the literal `utm%5Fcampaign`: the never-retag guard
+missed it, `Apply` appended a SECOND campaign, and `stripUTM` left the author's original ahead of
+it — two conflicting `utm_campaign` values in one link, with the author's the one a
+first-occurrence reader picks. A shared `queryKey` helper decodes for all three raw-query scans,
+falling back to the raw key when the escape is malformed.
+
+**Update** — Corrected two doc-comment claims in `internal/utm` that no longer matched the code
+(LFXV2-2775, PR #62). The fragment restore said "Fragments use FragmentUnescape" — `net/url`
+exports no such function and the code calls `url.PathUnescape`, which is the correct decoder for a
+fragment (`QueryUnescape` would turn `+` into a space on one side of the comparison only, silently
+skipping the restore). And `TagHTMLLinksFrom`'s "every byte survives verbatim" guarantee holds for
+UNTOUCHED tokens only: a TAGGED anchor is re-serialized from parsed attributes, so its start tag is
+normalized (`download` → `download=""`, names lower-cased, values double-quoted). Spec-equivalent
+and cosmetic, but stating the guarantee too broadly would invite a future change to rely on
+byte-identity that does not hold. Both are now pinned by tests.
 **Update** — Every stuck claim now requires an upstream check (LFXV2-2665, PR #59 review).
 `stuckClaimRemediation` gave a bare `version = 1` row the weaker "verify no dispatch is in flight
 before deleting", on the theory that no upsert had happened so nothing could exist upstream. That
@@ -143,6 +223,79 @@ toggles as follow-up work after both had landed; Microsoft is now the only outst
 
 ## 2026-08-03
 
+**Update** — Fixed two ways email UTM tagging could ship broken HTML (LFXV2-2775, PR #62).
+(1) `TagHTMLLinksFrom` parsed the fragment into a tree and re-rendered it. Parsing needs a context
+element, and the spec's insertion modes DISCARD invalid content: `<tr><td><a …>` parsed in a body
+context lost its row and cell entirely, so a tagged email shipped with its table layout stripped
+— the common case for email HTML, not an edge one. It now rewrites `href` tokens in place, so
+every byte it does not deliberately change survives verbatim and an untagged anchor keeps its
+original bytes. (2) `restoreTemplateTokens` repaired tokens only in the PATH, so
+`#{{contact.id}}` shipped as `#%7B%7B…%7D%7D`, which HubSpot never expands. Path and fragment are
+now restored independently, since a url may personalize either alone.
+
+**Update** — Closed a semicolon-query bypass in email UTM tagging (LFXV2-2775, PR #62). Go 1.17+
+dropped `;` as a query separator, so `url.Query()` silently discards semicolon-delimited pairs:
+the never-retag guard saw no campaign in `?utm_campaign=hand-picked;a=1`, replaced the author's
+deliberate campaign, and dropped `a=1` with it. In the reverse field order the stale pair also
+survived `stripUTM`, so the link shipped with TWO conflicting `utm_campaign` values. Both the
+guard and the strip now read the raw query across both separators. `stripUTM` rewrites only when
+a `utm_` pair is actually present, so a semicolon query it has no reason to touch is returned
+byte-identical.
+
+**Update** — Fixed a scheme-case bug in email UTM tagging (LFXV2-2775, PR #62). A template URL
+written with a non-lower-case scheme (`HTTPS://lf.dev/e/{{contact.id}}`) lost its personalization
+tokens: `url.Parse` normalizes the scheme, so the tagged URL no longer matched the original
+byte-for-byte, `restoreTemplateTokens` skipped the path splice, and the link shipped as
+`%7B%7Bcontact.id%7D%7D` — which HubSpot does not expand, so every recipient would have received
+a dead link. The gate now compares with `sameExceptSchemeCase`, folding only the scheme (RFC 3986
+§3.1); host and path case remain significant. The spliced result keeps the normalized scheme.
+
+**Update** — Five UTM fixes (LFXV2-2775, PR #62 review):
+
+- **Never-retag was defeatable.** `url.Values.Get` returns only the FIRST value, so
+  `?utm_campaign=&utm_campaign=hand-picked` slipped past the guard and `Set` then DELETED the
+  author's deliberate campaign. Every value is now checked.
+- **Multi-widget emails emitted DUPLICATE `utm_content`.** The counter restarted per widget, so
+  two widgets both produced `body-link-1` and no report could tell those links apart —
+  defeating the point of labelling. `TagHTMLLinksFrom` carries the count across fragments, and
+  the dispatcher iterates widgets in SORTED order (Go map order is randomized, so numbering
+  would otherwise differ run to run).
+- **A no-op tag still rewrote the body.** `html.Render` canonicalizes markup, so re-serializing
+  an untouched widget produced a different string; the caller PATCHed a draft that gained no UTM
+  parameters and logged a successful tag. It now returns the ORIGINAL fragment when nothing was
+  tagged.
+- **Provenance was false.** A brief-config override was recorded as `hubspot_campaign`, which
+  means an upstream campaign's `hs_utm` — not implemented. Added `SourceBriefConfig`.
+- Docs synced: `utmCampaign` added to the API catalog, the hubspot concept no longer says
+  content-setting is deferred, and the `**LF-Events**` asterisks moved outside the code span
+  (they were documenting a literal `**LF-Events**`).
+
+**Update** — Added email UTM tagging (LFXV2-2775). Every PAID platform client already built its
+own UTM parameters; the email channel had NONE, so staged emails sent with bare links and their
+sessions arrived in the warehouse as direct/unattributed traffic — the marketing dashboards
+could not see email at all.
+
+`internal/utm` ports the tagging rules (see [internal/utm](code/internal-utm.md)) and
+`dispatch.tagEmailLinks` applies them to the cloned draft. Two new client methods,
+`GetEmailHTMLWidgets` / `SetEmailHTMLWidgets`, read and patch the draft's rich-text widgets;
+the patch touches only `body.html` per named widget, so template configuration this client
+never modelled is preserved.
+
+Design points worth keeping:
+
+- Tagging runs LAST and is BEST-EFFORT. By then the email is cloned and pointed at the right
+  audience — a working campaign. Failing the dispatch would convert a reporting gap into a
+  failed send and leave the configured draft behind regardless.
+- `utm_medium` is **LF-Events**, not `email`. Warehouse channel reporting keys on the exact
+  source/medium pair.
+- A link that already carries a non-empty `utm_campaign` is never re-tagged: overwriting an
+  author's deliberate campaign yields a URL that still works but reports to the wrong campaign.
+- An empty `utm_campaign` is never emitted — that looks tagged while attributing nothing, which
+  is the exact failure this feature exists to fix.
+
+Bug found by its own test: `html.ParseFragment`'s context node must have `DataAtom` matching
+`Data` (`atom.Body`). With `DataAtom: 0` it returns "inconsistent Node" and EVERY call silently
+returned the fragment untagged — a feature that appears wired and does nothing.
 **Update** — Clear an INVALID stuck-claim index (LFXV2-2665, PR #59 review, migration 000009).
 A failed `CREATE INDEX CONCURRENTLY` does NOT roll back — it leaves the index marked INVALID.
 `IF NOT EXISTS` then sees that name, skips the rebuild and reports success, so the scan keeps
