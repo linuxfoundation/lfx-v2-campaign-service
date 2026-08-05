@@ -13,6 +13,10 @@ import (
 type BriefReader interface {
 	// GetBrief returns a brief by id (scoped to the project), or ErrNotFound.
 	GetBrief(ctx context.Context, projectID, id string) (*model.CampaignBrief, error)
+	// FindBriefByEventSlug returns the non-archived brief for (projectID, eventSlug), or
+	// ErrNotFound when none exists. ErrNotFound is an ORDINARY outcome here, not a failure:
+	// it is how the caller learns this event has no brief yet and one should be generated.
+	FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error)
 }
 
 // BriefWriter mutates campaign briefs.

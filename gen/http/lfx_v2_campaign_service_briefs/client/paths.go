@@ -16,6 +16,11 @@ func CreateBriefLfxV2CampaignServiceBriefsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/briefs", projectID)
 }
 
+// FindBriefLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service find-brief HTTP endpoint.
+func FindBriefLfxV2CampaignServiceBriefsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/briefs", projectID)
+}
+
 // GetBriefLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service get-brief HTTP endpoint.
 func GetBriefLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v", projectID, briefID)
