@@ -97,6 +97,13 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 
 	var metrics model.CampaignMetrics
 	for _, row := range rows {
+		// The campaign_ids filter and this report contract are both UNVERIFIED — do not
+		// trust that Reddit actually scoped the response to the requested campaign. A
+		// blank or mismatched row id would otherwise silently fold another campaign's
+		// impressions/clicks/spend into this one's totals.
+		if row.CampaignID != id {
+			return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: row campaign id %q does not match requested campaign %q", row.CampaignID, id)}
+		}
 		metrics.Impressions += row.Impressions
 		metrics.Clicks += row.Clicks
 		if row.Spend != "" {

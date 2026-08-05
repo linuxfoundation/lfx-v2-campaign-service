@@ -1,5 +1,17 @@
 # Log
 
+## 2026-08-05 (continuation)
+
+**Fix** — `GetCampaignMetrics` aggregated report rows without checking that a row's
+`campaign_id` actually matched the requested campaign (Copilot finding, PR #75
+review). Since both the report contract and the `campaign_ids` filter are explicitly
+UNVERIFIED (see the reporting-contract caveat above), an extra row or a silently
+ignored filter would attribute another campaign's impressions/clicks/spend to the
+requested one with no error. Rows are now rejected outright (as a decode error, same
+as other malformed-response handling) if `row.CampaignID != id`, including a blank
+`campaign_id`. Added `TestGetCampaignMetrics_MismatchedRowCampaignIDIsDecodeError`
+and `TestGetCampaignMetrics_BlankRowCampaignIDIsDecodeError`.
+
 ## 2026-08-05
 
 **Creation** — Implemented live-read campaign metrics for Reddit Ads (LFXV2-2995), the last of

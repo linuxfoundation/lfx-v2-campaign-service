@@ -216,6 +216,28 @@ func TestGetCampaignMetrics_InfinitySpendIsDecodeError(t *testing.T) {
 	}
 }
 
+func TestGetCampaignMetrics_MismatchedRowCampaignIDIsDecodeError(t *testing.T) {
+	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"camp_999","impressions":10,"clicks":1,"spend":"1.00"}]}`))
+	})
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday); err == nil {
+		t.Fatal("expected a decode error when a row's campaign_id does not match the requested campaign")
+	}
+}
+
+func TestGetCampaignMetrics_BlankRowCampaignIDIsDecodeError(t *testing.T) {
+	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"","impressions":10,"clicks":1,"spend":"1.00"}]}`))
+	})
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday); err == nil {
+		t.Fatal("expected a decode error when a row carries a blank campaign_id")
+	}
+}
+
 func TestGetCampaignMetrics_NegativeSpendIsDecodeError(t *testing.T) {
 	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
