@@ -102,17 +102,44 @@ func TestUpdateCampaignAndChildrenStatus_PauseIsCampaignFirst(t *testing.T) {
 			t.Errorf("PUT[%d] = %+v, want %+v (pause must be campaign-gate first)", i, got[i], w)
 		}
 	}
+	// Explicitly assert that all pause calls carry StatusPaused, mirroring the activate test.
+	for i, call := range got {
+		if call.status != StatusPaused {
+			t.Errorf("PUT[%d] status = %q, want %q (all pause calls must use StatusPaused)", i, call.status, StatusPaused)
+		}
+	}
 }
 
 // TestUpdateCampaignAndChildrenStatus_PauseAdFailureIsPartialError verifies that on PAUSE the
 // campaign gate and ad group succeed, then the AD PUT fails — the tree is partially applied,
-// so the result is a partialCascadeError{stage:"ad"} whose Unconfirmed() is true.
+// so the result is a partialCascadeError{stage:"ad"} whose Unconfirmed() is true. Before the
+// failure, all successful PUTs must carry StatusPaused.
 func TestUpdateCampaignAndChildrenStatus_PauseAdFailureIsPartialError(t *testing.T) {
+	var mu sync.Mutex
+	var got []struct{ method, path, status string }
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/Ads") {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
+		var body struct {
+			Campaigns []msStatusUpdate `json:"Campaigns"`
+			AdGroups  []msStatusUpdate `json:"AdGroups"`
+			Ads       []msStatusUpdate `json:"Ads"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		var status string
+		switch {
+		case len(body.Campaigns) > 0:
+			status = body.Campaigns[0].Status
+		case len(body.AdGroups) > 0:
+			status = body.AdGroups[0].Status
+		case len(body.Ads) > 0:
+			status = body.Ads[0].Status
+		}
+		mu.Lock()
+		got = append(got, struct{ method, path, status string }{r.Method, r.URL.Path, status})
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"PartialErrors":[]}`))
 	}))
@@ -131,6 +158,14 @@ func TestUpdateCampaignAndChildrenStatus_PauseAdFailureIsPartialError(t *testing
 	}
 	if !IsOutcomeUnconfirmed(err) {
 		t.Errorf("the ad partial cascade must be Unconfirmed(), got %T: %v", err, err)
+	}
+	// Verify all successful (pre-failure) PUTs used StatusPaused.
+	mu.Lock()
+	defer mu.Unlock()
+	for i, call := range got {
+		if call.status != StatusPaused {
+			t.Errorf("PUT[%d] status = %q, want %q (all pause calls must use StatusPaused)", i, call.status, StatusPaused)
+		}
 	}
 }
 

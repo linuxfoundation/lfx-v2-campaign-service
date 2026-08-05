@@ -178,7 +178,14 @@ Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE. Wh
 ad groups/ads/keywords, this must grow BOTH a cascade and a real child-id-based activate guard,
 matching the reddit shape.
 
-Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
+**Microsoft** implements the status toggle (LFXV2-2805) and cascades with DIRECTION-DEPENDENT rules:
+a PAUSED create path can accept an orphan ad (single-node toggle), but ACTIVATE refuses any
+missing child (ad or ad group) with `ErrCampaignNotProvisioned` before any PUT.
+The cascade is PULL-FIRST on ACTIVATE (ad → ad group → campaign gate last) to avoid opening
+the gate over incomplete children, and GATE-FIRST on PAUSE (campaign → ad group → ad) to stop
+delivery immediately when a child PUT fails mid-cascade (recorded as `partialCascadeError`, `Unconfirmed()`). 
+This is an asymmetry driven by platform constraints: activating requires a complete tree (nothing can serve 
+if any child is paused), while pausing needs only the campaign (its gate closes delivery regardless of child state).
 
 ## Channel kinds: paid ads vs email
 
