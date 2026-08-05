@@ -248,16 +248,18 @@ func googleAdsRunStatus(status string) (string, error) {
 
 // ToggleStatus implements service.StatusToggler for Google Ads.
 //
-// GA-3b gave the create path a real ad group + ad, so this now cascades like the reddit
-// adapter: PAUSE flips the campaign first (stops delivery immediately, regardless of whether
-// the children can be reached), ACTIVATE flips the children FIRST and the campaign last (so a
-// campaign never reports ENABLED before its ad group/ad do — the reverse order could have the
-// campaign live for a moment with paused children). ACTIVATE is still refused up front when
-// either child id is unknown — a campaign whose ad-group/ad create hit a duplicate-name orphan
-// or an unconfirmed outcome (see createAdGroupAndAd) has no id to cascade to, so enabling just
-// the campaign would report success while nothing can serve. That is exactly the lie
-// ErrCampaignNotProvisioned exists to prevent (the service maps it to a 409 without calling
-// Google), matching the guard reddit/microsoft apply when a child is missing.
+// GA-3b gave the create path a real ad group + ad under the campaign, so GA-3c now implements
+// cascading status updates. PAUSE cascades from the campaign FIRST (stops delivery immediately,
+// regardless of whether the children can be reached) down to the ad group/ad via the persisted
+// ids stored in the campaign's Result blob.
+//
+// ACTIVATE is unconditionally refused in GA-3c with ErrCampaignNotProvisioned (→409, raised
+// locally without calling Google) because GA-3b creates the ad group + ad but no targeting
+// criteria (keywords, audiences). A campaign without targeting cannot deliver, so activating it
+// would report false success — the exact lie ErrCampaignNotProvisioned exists to prevent. Targeting
+// provisioning is deferred to GA-4; once GA-4 lands and the Result blob carries the targeting ids,
+// ACTIVATE will be reconsidered with a children-first ordering (children activated before campaign)
+// to prevent a campaign from reporting ENABLED before its children do.
 func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	gaStatus, err := googleAdsRunStatus(status)
 	if err != nil {
@@ -304,19 +306,9 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return nil
 	}
 
-	// ACTIVATE (unreachable in GA-3c, re-enabled in GA-4): children first (both ids are
-	// confirmed present by the guard above), campaign last — so the campaign only reports
-	// ENABLED once its ad group/ad already do.
-	if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
-		// Any failure once we're past the guard is a partial cascade.
-		return &unconfirmedToggleError{err: uerr}
-	}
-	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
-		// After the children succeed, a campaign failure is a partial cascade: children are
-		// active but the parent's outcome is unknown.
-		return &unconfirmedToggleError{err: uerr}
-	}
-	return nil
+	// ACTIVATE is refused by the guard above (line 271) for all GA-3c requests; this code is
+	// unreachable. It will be re-enabled in GA-4 once targeting provisioning is implemented.
+	return fmt.Errorf("google ads: status toggle reached unexpected code path for status %s", gaStatus)
 }
 
 // googleAdsChildIDs pulls the ad group + ad ids the create path stored in the persisted

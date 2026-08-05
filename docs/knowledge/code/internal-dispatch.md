@@ -192,17 +192,19 @@ PUTs `entity_status` (query params, not a JSON body, per the X Ads v12 contract)
 child-first on ACTIVATE and campaign-gate-first on PAUSE. An ACTIVATE with an unknown
 line-item id is refused as `ErrCampaignNotProvisioned` (a 409) before any call.
 
-**Google Ads** (GA-3c) CASCADES like reddit, now that GA-3b's create path provisions a real ad
+**Google Ads** (GA-3c) implements PAUSE cascading now that GA-3b's create path provisions a real ad
 group + ad under the campaign: `GoogleAdsDispatcher.ToggleStatus` reads the ad-group/ad ids the
 create path persisted in the campaign's `Result` blob (`googleAdsChildIDs`). PAUSE flips the
 campaign FIRST (stops delivery immediately) then the ad group/ad via
-`Client.UpdateAdGroupAndAdStatus`; ACTIVATE flips the children FIRST and the campaign LAST, so a
-campaign never reports ENABLED before its ad group/ad already do. **ACTIVATE is still refused**
-with `ErrCampaignNotProvisioned` (→409, raised locally without calling Google) whenever either
-child id is unknown — a campaign whose ad-group/ad create hit a duplicate-name orphan or an
-unconfirmed outcome has nothing to cascade to, and enabling just the campaign in that state would
-report success while nothing can serve, the exact lie that sentinel exists to prevent. Note the
-vocabulary: Google spells the serving state **ENABLED**, not ACTIVE.
+`Client.UpdateAdGroupAndAdStatus`.
+
+**ACTIVATE is unconditionally refused** with `ErrCampaignNotProvisioned` (→409, raised locally
+without calling Google) in GA-3c because GA-3b creates the ad group + ad but NO targeting criteria
+(keywords, audiences). A campaign without targeting cannot deliver, so activating it would report
+false success — the exact lie that sentinel exists to prevent. Targeting provisioning is deferred
+to GA-4; once GA-4 lands, ACTIVATE will cascade with a children-first order (children activated
+before campaign) to prevent a campaign from reporting ENABLED before its ad group/ad already do.
+Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE.
 
 Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
 
