@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting and up-front validation."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, and live analytics reads."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -10,7 +10,7 @@ tags:
   - oauth2
   - go-package
   - metrics
-timestamp: "2026-08-05T00:00:00Z"
+timestamp: "2026-08-05T14:30:00Z"
 ---
 
 # internal/platform/linkedin
@@ -100,8 +100,9 @@ kind of disclosed assumption in `internal/platform/googleads/metrics.go`).
 The response's `elements` field is decoded via a `*[]AdAnalyticsElement` pointer so a
 missing/null field (malformed response — empty body, `{}`, `null`) is distinguishable from an
 explicit `{"elements": []}` (genuine zero activity in the window): a nil pointer is a decode
-error, never silently reported as zero metrics. Spend (`costInUsd`, decimal USD) is rounded —
-not truncated — into micros (`int64(math.Round(spend * 1_000_000))`).
+error, never silently reported as zero metrics. Spend (`costInUsd`, decimal USD returned as a
+JSON string representing a BigDecimal) is parsed as a float64, then rounded — not truncated —
+into micros (`int64(math.Round(spend * 1_000_000))`).
 
 `dateRangeForWindow` anchors both `this_month` and `last_month` off the first-of-month date
 rather than `AddDate(0, -1, 0)` on today's day-of-month, since `time.AddDate` silently

@@ -36,7 +36,7 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 				{
 					"impressions": 1000,
 					"clicks": 50,
-					"costInUsd": 25.50
+					"costInUsd": "25.50"
 				}
 			]
 		}`)
@@ -172,7 +172,7 @@ func TestGetCampaignMetrics_ZeroImpressions(t *testing.T) {
 	// Zero impressions should result in zero CTR (no divide-by-zero)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"elements": [{"impressions": 0, "clicks": 0, "costInUsd": 0}]}`)
+		_, _ = fmt.Fprint(w, `{"elements": [{"impressions": 0, "clicks": 0, "costInUsd": "0"}]}`)
 	}))
 	defer server.Close()
 
@@ -271,7 +271,7 @@ func TestGetCampaignMetrics_RetriesOn429(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"elements": [{"impressions": 10, "clicks": 1, "costInUsd": 1.0}]}`)
+		_, _ = fmt.Fprint(w, `{"elements": [{"impressions": 10, "clicks": 1, "costInUsd": "1.0"}]}`)
 	}))
 	defer server.Close()
 

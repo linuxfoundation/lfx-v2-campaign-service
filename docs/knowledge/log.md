@@ -1,5 +1,32 @@
 # Log
 
+## 2026-08-05 (continued: address PR #73 cost serialization and currency issues)
+
+**Fix** — Address remaining Copilot/Cursor review findings on PR #73 LinkedIn metrics reads.
+Seven corrections to `internal/platform/linkedin/metrics.go`, `design/brief.go`, and tests:
+
+1. **Cost field serialization** — LinkedIn's Ad Analytics API returns `costInUsd` as a
+   JSON string (BigDecimal), not a JSON number. Changed `AdAnalyticsElement.CostInUsd`
+   from `*float64` to `*string` with a custom parser (`fmt.Sscanf` %f) before converting
+   to micros. This fixes JSON unmarshal failures on real cost-bearing responses
+   (tests were mocking costInUsd as JSON numbers).
+
+2. **Currency documentation** — Clarified that `costInUsd` is always in USD regardless
+   of the ad account's billing currency configuration. Updated `GetCampaignMetrics`
+   godoc to document that returned `CostMicros` is USD micros, not account-currency
+   micros. Updated the Goa design/brief.go `CampaignMetrics.cost_micros` description
+   to reflect USD.
+
+3. **Knowledge base** — Updated the "Metrics read" section of
+   `docs/knowledge/code/internal-platform-linkedin.md` to document that costInUsd
+   is returned as a JSON string (BigDecimal) and is parsed before conversion to micros.
+   Updated the package description timestamp.
+
+4. **Test updates** — Changed all test mocks to serialize costInUsd as JSON strings
+   (e.g., `"25.50"` instead of `25.50`) to match the actual API response format.
+
+All checks pass: `go build`/`go vet`/`gofmt`/`go test -race`.
+
 ## 2026-08-05 (fix: response body leak in doAdAnalyticsAttempt retry loop)
 
 **Fix** — Cursor Bugbot flagged that the retry loop added in the prior fix (below) never

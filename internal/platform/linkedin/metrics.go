@@ -29,12 +29,11 @@ type AdAnalyticsElement struct {
 	Impressions int64 `json:"impressions"`
 	// Clicks is the number of times the ad was clicked.
 	Clicks int64 `json:"clicks"`
-	// CostInAccountCurrency is the spend in decimal amount in the ad account's
-	// billing currency (e.g. 25.50 for 25.50 units). The API returns this as a
-	// JSON number. Note: the JSON field name is costInUsd for backward compatibility
-	// with the LinkedIn API naming; the actual currency depends on the ad account's
-	// configuration.
-	CostInAccountCurrency *float64 `json:"costInUsd"`
+	// CostInUsd is the spend in decimal USD (e.g. 25.50 for $25.50). LinkedIn's
+	// Ad Analytics API returns this as a JSON string representing a BigDecimal,
+	// so a custom unmarshaler is required to parse it. This is always USD,
+	// regardless of the ad account's billing currency configuration.
+	CostInUsd *string `json:"costInUsd"`
 }
 
 // AdAnalyticsResponse is the JSON response from LinkedIn's Ad Analytics endpoint.
@@ -60,9 +59,9 @@ type AdAnalyticsResponse struct {
 // The returned CampaignMetrics contains:
 //   - Impressions: number of times the ad was displayed
 //   - Clicks: number of times the ad was clicked
-//   - CostMicros: spend in micros of the ad account's billing currency
-//     (not necessarily USD; LinkedIn's API returns the cost in the account's
-//     configured currency)
+//   - CostMicros: spend in micros of USD (the Ad Analytics API returns costInUsd
+//     which is always in USD regardless of the ad account's billing currency
+//     configuration)
 //   - Ctr: clicks/impressions (0 when impressions is 0)
 func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	if campaignID == "" {
@@ -96,12 +95,20 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	for _, elem := range *resp.Elements {
 		metrics.Impressions += elem.Impressions
 		metrics.Clicks += elem.Clicks
-		if elem.CostInAccountCurrency != nil {
-			// Convert the ad account's currency to micros (multiply by 1,000,000),
-			// rounding rather than truncating so a value like 25.505 doesn't silently
-			// lose a micro. The currency depends on the ad account's configuration on
-			// LinkedIn; the API returns the cost in the account's billing currency.
-			metrics.CostMicros += int64(math.Round(*elem.CostInAccountCurrency * 1_000_000))
+		if elem.CostInUsd != nil {
+			// Parse the costInUsd field (returned as a JSON string by LinkedIn's API).
+			// LinkedIn's Ad Analytics API returns costInUsd as a BigDecimal serialized
+			// as a JSON string. Parse it to a float64 and convert to micros.
+			var costUsd float64
+			if _, err := fmt.Sscanf(*elem.CostInUsd, "%f", &costUsd); err != nil {
+				// If parsing fails, skip this cost value. This is defensive and should
+				// not happen on valid API responses, but better to lose one campaign's
+				// cost than fail the entire metrics read.
+				continue
+			}
+			// Convert USD to micros (multiply by 1,000,000), rounding rather than
+			// truncating so a value like 25.505 doesn't silently lose a micro.
+			metrics.CostMicros += int64(math.Round(costUsd * 1_000_000))
 		}
 	}
 

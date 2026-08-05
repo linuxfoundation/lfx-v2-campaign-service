@@ -202,7 +202,7 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("window", String, "Platform-agnostic reporting window the metrics were read for")
 	Attribute("impressions", Int64, "Impressions in window")
 	Attribute("clicks", Int64, "Clicks in window")
-	Attribute("cost_micros", Int64, "Cost in window, in micros of the ad account's currency")
+	Attribute("cost_micros", Int64, "Cost in window, in micros of USD (LinkedIn's Ad Analytics API returns USD-normalized spend)")
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
 })
