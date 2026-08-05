@@ -47,6 +47,30 @@ imports) and outside each `platform/*` package (avoiding an import cycle).
 
 ## The claim contract (release vs retain)
 
+The claim is PERMANENT until released — deliberately NOT auto-reclaimed on a timer. `pending`
+is overloaded: it marks both a claim merely in flight AND an AMBIGUOUS dispatch outcome, which
+the orchestrator persists as `pending` precisely because the provider MAY already have created
+a paid campaign. No column distinguishes the two, so a time-based reclaim would eventually
+authorize a DUPLICATE paid create against a campaign that already exists upstream — the exact
+failure the claim exists to prevent. Safe automatic recovery needs provider idempotency keys or
+an authoritative reconcile first (LFXV2-2665).
+
+The cost is that a pod crashing between claim and release strands a `pending` row that blocks
+every future dispatch for that pair, recoverable only by a human. `StuckDispatchClaims` makes
+those rows VISIBLE (read-only, `stuckClaimReportAge` = 4m, bounded by `providerCallTimeout` so a
+healthy in-flight claim is never reported) instead of leaving them silently invisible until
+someone notices a campaign will not dispatch.
+
+**Every stuck claim requires an upstream-platform check before deletion — including a bare
+`version = 1` row with no platform id and no result blob.** That shape is NOT evidence the
+provider was never called: `dispatchOne` retains the claim WITHOUT upserting when a dispatcher
+returns `(nil, nil)`, when it returns an empty upstream id, and when it returns a non-pre-create
+`(nil, err)`. In each case a paid campaign may already exist upstream while the row remains
+byte-for-byte identical to an abandoned pre-create claim. Confirming that no worker is running
+is therefore NOT sufficient to delete: the schema cannot distinguish the two, so the only safe
+floor is to check the platform. The `remediation` field on each logged claim states this, and
+`version`/`platform_campaign_id`/`has_result` only sharpen WHY the check is owed, never waive it.
+
 The orchestrator single-flight-claims a `(brief, platform)` pair before dispatch and
 decides, from the returned error, whether to RELEASE the claim (retry-safe) or RETAIN
 it (a blind retry could double-create). Adapters drive that decision:
@@ -180,29 +204,49 @@ matching the reddit shape.
 
 Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
 
-## Metrics reads (optional capability)
+## Metrics read (optional capability)
 
-`MetricsReader` is an OPTIONAL dispatcher interface (separate from `PlatformDispatcher`) —
-`ReadMetrics(ctx, projectID, platform, campaign *model.Campaign, window string)` — for
-reading live campaign performance metrics (impressions, clicks, cost, CTR) from the
-ad platform WITHOUT persisting them. It receives the full persisted `*model.Campaign` so an adapter
-can reach the `PlatformCampaignID` and any child ids needed for aggregation. The orchestrator
-type-asserts it (returning `ErrMetricsUnsupported` when a platform hasn't wired it), so it can be
-added platform-by-platform without touching every adapter.
+`MetricsReader` is a second OPTIONAL dispatcher interface, alongside `StatusToggler` —
+`ReadMetrics(ctx, projectID, platform, campaign *model.Campaign, window model.MetricsWindow)
+(*model.CampaignMetrics, error)` — for a live, read-only performance snapshot of one
+campaign (impressions, clicks, cost, CTR) over a caller-supplied window. Same pattern as the
+toggle: the orchestrator's `ReadCampaignMetrics` type-asserts it (returning
+`ErrMetricsUnsupported` when a platform's dispatcher doesn't implement it, without ever
+contacting the platform), so it is added platform-by-platform without touching every adapter,
+and it receives the full persisted `*model.Campaign` so an adapter can reach any child ids it
+stored at creation (e.g. an ad group/ad set id, if a platform's reporting API needs it).
+Unlike `ToggleStatus`, a `ReadMetrics` call has no ambiguous mutation to protect — there is
+nothing to leave in an unknown state — so adapter errors propagate to the service verbatim; there
+is no UNCONFIRMED wrapping equivalent to `unconfirmedToggleError`.
 
-Window is a platform-defined predefined date-range literal (`TODAY`, `LAST_7_DAYS`, etc.); each
-platform's validator enforces its own allow-list and returns a clear error for unsupported ranges
-(NOT silent truncation/averaging/extrapolation). The return type is `*model.CampaignMetrics`
-(shared across platforms): `CampaignID`, `Window`, `Impressions`, `Clicks`, `CostMicros`
-(spend in micro-currency), and `Ctr` (clicks/impressions, 0 when impressions is 0). Campaigns
-with zero activity return zero-value metrics, not an error.
+`window` arrives as a closed, platform-agnostic `model.MetricsWindow` value (`today`,
+`yesterday`, `last_7_days`, `last_14_days`, `last_30_days`, `this_month`, `last_month`) — never
+a platform's own literal. Each platform adapter owns the mapping from this vocabulary to its
+platform's actual query syntax (e.g. Google Ads' GAQL `DURING` literals, Meta's Insights
+`date_preset`), and any platform-specific validation of the mapped value (e.g. an allow-list
+guard against GAQL injection) belongs in that platform's client package, not in the adapter or
+the orchestrator.
 
-**X/Twitter** implements it: `GetCampaignMetrics(ctx, campaignID, window)` queries the X Ads
-`/stats` endpoint. **CRITICAL: X's stats endpoint caps queryable date ranges at 7 days per
-request.** Only `TODAY` (1 day) and `LAST_7_DAYS` (7 days) are supported; `LAST_30_DAYS`,
-`THIS_MONTH`, `LAST_MONTH` return a clear error explaining the platform's API limitation (NOT
-a reduced range, average, or extrapolation). This is a permanent X API constraint documented in
-the knowledge base. Spend (returned by X as USD decimal) is converted to micro-currency (×1e6).
+**Microsoft Ads is NOT a `MetricsReader` and is not expected to become one under this
+contract.** Its Campaign Management API v13 (REST/JSON, synchronous — what the existing
+create dispatcher and status toggle use) has no metrics surface. Metrics live in a wholly
+separate service, the Reporting API v13: SOAP, and asynchronous
+(`SubmitGenerateReport` → poll `PollGenerateReport` until the status leaves `Pending` →
+download a zipped CSV via a `ReportDownloadUrl`). There is no synchronous "impressions for
+this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contract within
+`metricsCallTimeout` (20s). Closing this gap needs a design decision (e.g. a bounded
+submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
+live read) — deferred, not attempted here.
+
+**X/Twitter** implements it: `twitterMetricsWindow` maps the shared `model.MetricsWindow`
+vocabulary to X Ads' own `MetricsWindow` literals, then `GetCampaignMetrics(ctx, campaignID,
+window)` queries the X Ads `/stats` endpoint. **CRITICAL: X's stats endpoint caps queryable
+date ranges at 7 days per request.** Only `today` and `last_7_days` map to a supported X
+window (`TODAY`/`LAST_7_DAYS`); every other foundation window (`yesterday`, `last_14_days`,
+`last_30_days`, `this_month`, `last_month`) returns `twitter.ErrUnsupportedWindow` explaining
+the platform's API limitation (NOT a reduced range, average, or extrapolation). This is a
+permanent X API constraint documented in the knowledge base. Spend (returned by X as USD
+decimal) is converted to micro-currency (×1e6).
 
 ## Channel kinds: paid ads vs email
 

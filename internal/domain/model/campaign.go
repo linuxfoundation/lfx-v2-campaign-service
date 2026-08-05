@@ -83,6 +83,53 @@ func CampaignStatusToggleable(status string) bool {
 	}
 }
 
+// MetricsWindow is a platform-agnostic reporting window for a live metrics read. It is a
+// closed vocabulary (not a platform-defined literal) so the API surface never leaks one
+// platform's dialect — each MetricsReader adapter maps these values to its own platform's
+// query vocabulary (e.g. Google Ads' GAQL DURING literals, Meta's Insights date_preset).
+type MetricsWindow string
+
+// Metrics windows supported by every platform dispatcher's MetricsReader.
+const (
+	MetricsWindowToday      MetricsWindow = "today"
+	MetricsWindowYesterday  MetricsWindow = "yesterday"
+	MetricsWindowLast7Days  MetricsWindow = "last_7_days"
+	MetricsWindowLast14Days MetricsWindow = "last_14_days"
+	MetricsWindowLast30Days MetricsWindow = "last_30_days"
+	MetricsWindowThisMonth  MetricsWindow = "this_month"
+	MetricsWindowLastMonth  MetricsWindow = "last_month"
+)
+
+// IsValidMetricsWindow reports whether w is one of the closed set of supported windows. The
+// Goa HTTP layer already enforces the enum on requests that arrive over HTTP, but the service
+// layer validates independently — the same defense-in-depth as
+// IsCampaignRunStatus/CampaignStatusToggleable — so a direct/test caller can't pass an
+// unmapped value through to a platform adapter.
+func IsValidMetricsWindow(w MetricsWindow) bool {
+	switch w {
+	case MetricsWindowToday, MetricsWindowYesterday, MetricsWindowLast7Days, MetricsWindowLast14Days,
+		MetricsWindowLast30Days, MetricsWindowThisMonth, MetricsWindowLastMonth:
+		return true
+	default:
+		return false
+	}
+}
+
+// CampaignMetrics is a platform-agnostic, live read-through performance
+// snapshot for one campaign over one window. It is never persisted — a
+// MetricsReader dispatcher call populates it fresh on every read, the same
+// way StatusToggler's ToggleStatus call is always live rather than
+// DB-cached.
+type CampaignMetrics struct {
+	CampaignID  string
+	Window      MetricsWindow
+	Impressions int64
+	Clicks      int64
+	CostMicros  int64
+	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
+	Ctr float64
+}
+
 // JobStatus is the status vocabulary shared by campaign_jobs and the API's
 // JobCreateResponse/JobPollResponse.
 type JobStatus string
@@ -104,21 +151,6 @@ func (s JobStatus) Terminal() bool {
 	default:
 		return false
 	}
-}
-
-// CampaignMetrics is the aggregated performance snapshot for one campaign over
-// one metrics window. It is a live read-through of the ad platform — never
-// persisted. Window is a platform-defined literal (e.g. X Ads' LAST_7_DAYS,
-// Google Ads' GAQL predefined date ranges); this package does not constrain its
-// vocabulary, mirroring how Campaign.Status carries platform-mapped values.
-type CampaignMetrics struct {
-	CampaignID  string
-	Window      string
-	Impressions int64
-	Clicks      int64
-	CostMicros  int64
-	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
-	Ctr float64
 }
 
 // CampaignJob is the async multi-platform dispatch record. One job per brief

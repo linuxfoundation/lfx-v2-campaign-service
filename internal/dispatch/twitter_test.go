@@ -631,7 +631,7 @@ func TestTwitter_ReadMetrics_HappyPath(t *testing.T) {
 	metrics, err := d.ReadMetrics(
 		context.Background(), "proj", model.ProviderTwitterAds,
 		twitterToggleCampaign("cmp1", "li1"),
-		"LAST_7_DAYS",
+		model.MetricsWindowLast7Days,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -649,8 +649,8 @@ func TestTwitter_ReadMetrics_HappyPath(t *testing.T) {
 	if metrics.CostMicros != 100_000_000 {
 		t.Errorf("expected 100000000 costMicros, got %d", metrics.CostMicros)
 	}
-	if metrics.Window != "LAST_7_DAYS" {
-		t.Errorf("expected window LAST_7_DAYS, got %s", metrics.Window)
+	if metrics.Window != model.MetricsWindowLast7Days {
+		t.Errorf("expected window last_7_days, got %s", metrics.Window)
 	}
 }
 
@@ -665,7 +665,7 @@ func TestTwitter_ReadMetrics_UnsupportedWindow(t *testing.T) {
 	_, err := d.ReadMetrics(
 		context.Background(), "proj", model.ProviderTwitterAds,
 		twitterToggleCampaign("cmp1", "li1"),
-		"LAST_30_DAYS", // Unsupported: exceeds 7-day limit
+		model.MetricsWindowLast30Days, // Unsupported: exceeds 7-day limit
 	)
 	if err == nil {
 		t.Fatal("expected error for unsupported LAST_30_DAYS window, got nil")
@@ -685,7 +685,7 @@ func TestTwitter_ReadMetrics_ConnectionResolutionFails(t *testing.T) {
 	_, err := d.ReadMetrics(
 		context.Background(), "proj", model.ProviderTwitterAds,
 		twitterToggleCampaign("cmp1", "li1"),
-		"LAST_7_DAYS",
+		model.MetricsWindowLast7Days,
 	)
 	if err == nil {
 		t.Fatal("expected error for failed connection resolution, got nil")
@@ -710,7 +710,7 @@ func TestTwitter_ReadMetrics_ZeroCampaignActivity(t *testing.T) {
 	metrics, err := d.ReadMetrics(
 		context.Background(), "proj", model.ProviderTwitterAds,
 		twitterToggleCampaign("cmp1", "li1"),
-		"LAST_7_DAYS",
+		model.MetricsWindowLast7Days,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

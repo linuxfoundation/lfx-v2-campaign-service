@@ -129,6 +129,13 @@ const providerCallTimeout = 2 * time.Minute
 // on timeout the platform call is cancelled and surfaces as UNCONFIRMED (verify/retry).
 const toggleCallTimeout = 45 * time.Second
 
+// metricsCallTimeout bounds the SYNCHRONOUS metrics-read platform call, which — like the
+// status toggle above — runs on the HTTP request goroutine. A read has no cascade to child
+// resources (unlike a toggle, which may sequence PATCHes across a campaign's children), so
+// it needs less headroom than toggleCallTimeout while still leaving room under the server's
+// DefaultWriteTimeout.
+const metricsCallTimeout = 20 * time.Second
+
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
@@ -171,21 +178,17 @@ type StatusToggler interface {
 	ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error
 }
 
-// MetricsReader is an OPTIONAL dispatcher capability: read live campaign metrics from
-// the ad platform. Not every platform's dispatcher implements it. The design intent is
-// for the orchestrator to type-assert for it rather than adding it to PlatformDispatcher,
-// so a dispatcher that doesn't implement it yields a clean "not supported" error
-// (ErrMetricsUnsupported → 400) — but that orchestration entry point (the type assertion,
-// campaign validation, timeout, and service error mapping) is NOT YET WIRED on this
-// branch, which predates GA-5 (#70)'s merge to main where that wiring is added. Until
-// this branch is rebased past that merge, ReadMetrics is unreachable through the
-// service despite being implemented here.
+// MetricsReader is an OPTIONAL dispatcher capability: read live performance metrics for an
+// existing campaign from the platform. Not every platform's dispatcher implements it, so —
+// like StatusToggler — the orchestrator type-asserts for it rather than adding it to
+// PlatformDispatcher; a dispatcher that doesn't implement it yields a clean "not supported"
+// error (ErrMetricsUnsupported → 400). Unlike ToggleStatus this never mutates platform or DB
+// state — it is a pure read, never persisted by the orchestrator.
 type MetricsReader interface {
-	// ReadMetrics fetches the platform campaign's metrics for window (a platform-defined
-	// literal — e.g. X Ads' LAST_7_DAYS, Google Ads' GAQL predefined date ranges).
-	// campaign is the persisted row so an adapter can reach PlatformCampaignID and any
-	// child ids it needs to aggregate.
-	ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window string) (*model.CampaignMetrics, error)
+	// ReadMetrics fetches the platform campaign's metrics for window (a closed,
+	// platform-agnostic vocabulary — see model.MetricsWindow). campaign is the persisted row
+	// so an adapter can reach PlatformCampaignID and any child ids it needs to aggregate.
+	ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error)
 }
 
 // Status-toggle classification sentinels. These distinguish a client/state error (the
@@ -909,4 +912,25 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
 	return toggler.ToggleStatus(callCtx, projectID, platform, campaign, status)
+}
+
+// ReadCampaignMetrics fetches live performance metrics for one campaign from its ad
+// platform. It never mutates the platform or the DB — a pure read, not persisted here.
+func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	// Pre-platform guard, same rationale as ToggleCampaignStatus: never contact the ad
+	// platform for a campaign with nothing provisioned upstream yet.
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrMetricsUnsupported, platform)
+	}
+	reader, ok := d.(MetricsReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrMetricsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	return reader.ReadMetrics(callCtx, projectID, platform, campaign, window)
 }

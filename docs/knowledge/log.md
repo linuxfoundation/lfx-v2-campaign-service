@@ -16,9 +16,103 @@ plain `fmt.Errorf`. Softened the `MetricsReader` orchestrator doc comment — th
 predates GA-5/#70's merge to main, so the type-assertion wiring it described doesn't exist yet
 here; that's a base-branch staleness artifact shared with the LinkedIn/Meta metrics PRs, not
 something to fix on this branch.
+**Add** — Metrics-read foundation PR (LFXV2-3001): platform-agnostic `MetricsReader`
+capability, `model.MetricsWindow`/`CampaignMetrics`, `ErrMetricsUnsupported`, and the
+`GET .../campaigns/{id}/metrics` endpoint, landed once as a shared layer.
+
+Four platform-specific metrics PRs (Meta #72, LinkedIn #73, X/Twitter #74, Reddit #75) were
+already written and CI-green, but none could merge: `origin/main` had NO metrics
+infrastructure at all (it lives in the still-unmerged GA-5, buried in the Google Ads stack
+#66→#70), so each of the four PRs independently reinvented it — and diverged into two
+incompatible shapes (Meta/X used an untyped `window string` and a
+`CampaignMetrics{CampaignID, Window, ...}` shape; LinkedIn/Reddit used a typed
+`model.MetricsWindow` with no `CampaignID`/`Window` fields and `CTR` cased differently). All
+four also edit `internal/service/orchestrator.go`, so whichever pair merged first would break
+the other pair's build.
+
+This PR extracts the shared layer ONCE, choosing GA-5's field set (keeps `CampaignID`/`Window`,
+which the Goa result type needs) combined with LinkedIn/Reddit's TYPED window — but replaces
+the GA-5 design's GAQL-flavored enum (`LAST_30_DAYS`, `THIS_MONTH`, Google's own vocabulary)
+with a lowercase, platform-agnostic vocabulary (`last_30_days`, `this_month`, ...), since
+nothing was merged yet and this is the cheapest point to fix a design flaw that would otherwise
+bake one platform's dialect into every adapter permanently. Each platform's `ReadMetrics`
+adapter is responsible for mapping this vocabulary to its own platform's query syntax.
+
+Follows the already-merged `StatusToggler` optional-capability pattern exactly:
+`Orchestrator.ReadCampaignMetrics` type-asserts the platform dispatcher for `MetricsReader`
+at call time rather than requiring every dispatcher to implement it; a dispatcher that isn't
+one returns `ErrMetricsUnsupported` (400) without contacting the platform. `CampaignMetrics`
+is NEVER persisted — every read is a fresh platform call, matching `ToggleStatus`'s
+always-live (never DB-cached) semantics. Bounded by a new `metricsCallTimeout` (20s, distinct
+from the toggle's 45s — a read should fail fast).
+
+Microsoft Ads is explicitly OUT of `MetricsReader` scope: its only reporting surface is the
+Reporting API v13 (SOAP, async submit→poll→download-CSV), which cannot satisfy this
+capability's one-bounded-synchronous-call contract. Deferred pending a design decision
+(bounded submit-and-poll vs. a persisted/sweeper-refreshed snapshot), not attempted here.
+
+Once this lands on `main`, #72–#75 rebase onto it (dropping their duplicated shared-infra
+copies, which is what removes the mutual conflict), and GA-5 (#70) reconciles its own
+duplicate copy the same way.
 
 ## 2026-08-04
 
+**Update** — Every stuck claim now requires an upstream check (LFXV2-2665, PR #59 review).
+`stuckClaimRemediation` gave a bare `version = 1` row the weaker "verify no dispatch is in flight
+before deleting", on the theory that no upsert had happened so nothing could exist upstream. That
+inference is WRONG, and wrong on exactly the paths this diagnostic exists to surface:
+`dispatchOne` RETAINS the claim WITHOUT upserting on `(nil, nil)`, on an empty upstream id, and on
+a non-pre-create `(nil, err)` — its own comments say none of those prove the provider did not
+create a campaign. All three leave a row identical to an abandoned pre-create claim (version 1, no
+platform id, no result blob).
+
+The weaker guidance was therefore SATISFIABLE (the worker is gone) on a row whose paid campaign may
+be live, authorizing a duplicate create — the precise failure the claim exists to prevent. Both
+branches now require upstream verification and differ only in stating WHY it is owed. Guarded by
+`TestStuckClaimRemediation_AlwaysRequiresUpstreamCheck`, written as an invariant over every row
+shape rather than per-case strings; verified by reverting the bare-row branch, which fails on
+`version=1, id="", result=0 bytes`. Runbook updated to say the same.
+
+Credit where due: this was a Copilot suppressed comment that recurred across several rounds. It was
+correct, and reading it on merit rather than dismissing it as bot noise is what surfaced it.
+
+**Update** — Pinned the stuck-claim truncation contract with tests (LFXV2-2665, PR #59 review).
+`scanStuckDispatchClaims` clamps the reported batch to `DefaultStuckClaimLimit` and sets
+`truncated` when the repo's `limit+1` probe comes back saturated — the mechanism that lets an
+operator tell "exactly 100 stuck" from "at least 100, real total unknown". Nothing tested it.
+
+Added `TestScanStuckDispatchClaims_TruncationIsHonest` (under the cap / exactly the cap /
+saturated) and `TestScanStuckDispatchClaims_SilentWhenClean`, asserting against the actual emitted
+slog records. Each was verified by reverting the behavior it covers: dropping the clamp leaks the
+raw `101` probe row into the operator-facing `count` and reports `truncated=false`; forcing
+`truncated=false` alone still fails; removing the empty-result early return breaks the silent-when-
+clean guarantee (a clean scan is the normal state on every replica every 5 minutes, so it must log
+nothing).
+
+One trap worth recording: the detail-log assertion was first written as
+`details <= maxStuckClaimDetailLogs`, which compares the output against the very constant that
+produced it and therefore holds for ANY value of that constant — raising the cap to 1000 still
+passed. It is now an absolute bound (`<= 10`), which does fail on that change. A cap-vs-itself
+assertion is not a test.
+
+**Update** — Corrected the stated reason for `make_interval` in the stuck-claim scan (LFXV2-2665,
+PR #59 review). The comment in `campaign_repo.go` and `stuck_claims_test.go` claimed Postgres
+REJECTS the `"4m0s"` Go renders for `4 * time.Minute`, and that an earlier `$1::interval` version
+"would have errored on every scan". That is false — verified on PostgreSQL 16.10, `'4m0s'::interval`
+parses to `00:04:00` both as a literal and as a bound parameter.
+
+`make_interval(secs => $1)` is still correct and unchanged; only the justification was wrong, which
+matters because a future reader could "simplify" back to `$1::interval` after finding the stated
+reason doesn't reproduce. The real argument is narrower: it removes a standing dependency on Go's
+duration formatting matching Postgres's interval grammar. They DO diverge, just not at this value —
+Go renders `100ns` and `1µs` (Unicode mu) for smaller durations and Postgres rejects both outright,
+and `1.000000001s` silently truncates to `1s`. So retuning the constant to a sub-microsecond value
+would break the scan at runtime rather than at compile time. Binding numeric seconds sidesteps the
+grammar entirely and matches `JobRepo.FailStuckJobs`.
+
+Also confirmed while verifying: the `000008` partial index is actually chosen by the real query.
+`EXPLAIN ANALYZE` over 200k rows gives `Index Scan using idx_campaigns_stuck_claims`, 102 buffers,
+and no sort node — the index supplies `created_at ASC`, so the `LIMIT` stops early as intended.
 **Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where
 `MinLength(1)` actually bites (LFXV2-2812, PR #55 review).
 
@@ -84,6 +178,123 @@ toggles as follow-up work after both had landed; Microsoft is now the only outst
 
 ## 2026-08-03
 
+**Update** — Clear an INVALID stuck-claim index (LFXV2-2665, PR #59 review, migration 000009).
+A failed `CREATE INDEX CONCURRENTLY` does NOT roll back — it leaves the index marked INVALID.
+`IF NOT EXISTS` then sees that name, skips the rebuild and reports success, so the scan keeps
+full-scanning forever with no error anywhere. `force`-recovering a dirty migration marks the
+version applied WITHOUT running the down migration, so nothing else clears it.
+
+000009 drops an INVALID copy AND rebuilds it in the same step (a plain DROP+CREATE inside a DO
+block — an invalid index serves no query, so nothing that was working is blocked, and neither
+form of CONCURRENTLY can run inside the conditional). It must do both: `force`-recovering the
+dirty schema marks version 8 applied WITHOUT running it, so golang-migrate never re-executes
+000008 and its `IF NOT EXISTS` would skip regardless. Recovery therefore requires operator
+force + a subsequent deploy to apply 000009 (which then drops the INVALID and rebuilds VALID).
+This is either automatic (next deploy) or manual (reissue `CREATE INDEX CONCURRENTLY
+idx_campaigns_stuck_claims ON campaigns (created_at) WHERE status = 'pending'`) — waiting for
+deployment alone is the correct path. A VALID index is untouched, and both object names are
+schema-qualified so a future multi-schema setup cannot inspect one index and drop another.
+Verified on live PostgreSQL 16 across all three paths: INVALID → dropped and rebuilt VALID
+with a definition identical to 000008; healthy → no-op; absent → no-op, no error.
+
+**Update** — `idx_campaigns_stuck_claims` is now built CONCURRENTLY (LFXV2-2665, PR #59 review).
+A plain `CREATE INDEX` takes a lock blocking INSERT/UPDATE/DELETE on `campaigns` for the whole
+build, and migrations run during a ROLLING startup — other replicas are still claiming and
+finalizing dispatches at that moment, so a blocking build could stall a claim mid-flight and
+MANUFACTURE the ambiguous outcomes this diagnostic exists to report.
+
+Safe with this runner, and verified rather than assumed: the pgx/v5 golang-migrate driver
+executes each migration with a bare `ExecContext` and does NOT wrap it in a transaction
+(`database/pgx/v5/pgx.go`), which `CONCURRENTLY` requires. Keep this migration SINGLE-statement
+— a multi-statement file would be batched and reintroduce the transaction constraint. The down
+migration drops concurrently too, and clears the INVALID index a failed concurrent build leaves
+behind so a retry is clean.
+
+Also renamed `TestStaleClaimAgeExceedsProviderCallTimeout` →
+`TestStuckClaimReportAgeExceedsProviderCallTimeout` (@dealako): it asserts on
+`stuckClaimReportAge`, so the old name referenced a constant that never existed.
+
+**Update** — Added `idx_campaigns_stuck_claims` (LFXV2-2665, PR #59 review, migration 000008).
+The stuck-claim scan filters `campaigns` on `status = 'pending' AND created_at < …` and now runs
+every 5m on EVERY replica, with no supporting index — a full scan that grows unbounded as
+terminal campaign rows accumulate, while the set it cares about ('pending' claims) stays tiny and
+is usually empty.
+
+A PARTIAL index on `created_at WHERE status = 'pending'` keeps the index small and also serves
+the query's `ORDER BY created_at ASC`, so the `LIMIT` stops early instead of sorting the whole
+match set. This mirrors `idx_campaign_jobs_recovery` (000004), which exists for the same reason
+on the analogous stuck-JOB sweep — the periodic sweep added in this PR is what made the index
+necessary rather than merely nice.
+
+**Update** — Corrected the sweeper-stop reasoning (LFXV2-2665, PR #59 review). The bounded wait
+was right but its justification was WRONG: the comment claimed an abandoned sweeper "holds no
+pool reference". It does — `StuckDispatchClaims` runs a `pgxpool.Query`, which holds a pooled
+CONNECTION until its rows close, and pgxpool's `Close` is documented as blocking "until all
+connections are returned to pool and closed". So giving up on `<-sweepDone` does not bound
+shutdown on its own; `pool.Close()` would block on the same scan, just later and less visibly.
+
+What actually releases the connection is CANCELLING the sweeper context — pgx aborts the
+in-flight statement on cancellation and returns the connection. The wait exists only to let
+that release complete in the common case. The new test asserts the ordering invariant (the
+scan's context is cancelled by the time `Close` returns) rather than a nil-pool no-op; the
+previous test passed for the wrong reason because it deliberately used a nil pool.
+
+**Update** — Bounded the sweeper stop in `Close` (LFXV2-2665, PR #59 review). Cancelling
+`sweeperCtx` interrupts a scan but does NOT guarantee it returns: a driver already inside a
+statement can take until `stuckClaimScanTimeout` (5s) to unwind, and a scanner that ignores
+cancellation never returns at all. That wait sat BEFORE the dispatch drain, so it spent the
+drain's budget on a diagnostic — starving the phase that protects in-flight campaign creation.
+
+`Close` now waits at most `sweeperStopTimeout` (250ms) and abandons the goroutine on timeout;
+it holds no pool reference beyond its own bounded scan and only logs. The test wedges a scanner
+that ignores cancellation: with the unbounded wait, `Close` deadlocks (the test times out at
+30s) rather than merely running slow.
+
+**Update** — Two follow-ups on the stuck-claim scan (LFXV2-2665, PR #59 review):
+
+- The COLD-START scan ran on `context.Background()`, so a scan blocked in the database could
+  not be interrupted and `Close`'s `<-c.initDone` wait would overrun the bounded shutdown
+  budget by up to `stuckClaimScanTimeout`. It now derives from the init `ctx`, matching the
+  adjacent `FailStuckJobs` call which already did this for the same reason.
+- The per-row log implied a safe case that does not exist. The code comment said `version > 1`
+  distinguishes an ambiguous outcome from a bare claim "usually safe to delete", but
+  `upserted_after_claim=false` would read as SAFE for a claim whose dispatch is still in flight
+  — those look identical in the row. An explicit `remediation` field now states what must be
+  verified, and never says "safe to delete".
+
+**Update** — Added a periodic stuck-claim sweep (LFXV2-2665, PR #59 review). The startup scan
+alone left a real gap, and it is the COMMON case: a claim stranded seconds before a rolling
+deploy or crash-restart is YOUNGER than `stuckClaimReportAge` (4m), so the replacement pod's
+boot scan skips it — and nothing ever looked again, leaving the row silently blocking every
+future dispatch for its `(brief_id, platform)`. `startStuckClaimSweeper` re-scans every
+`stuckClaimSweepInterval` (5m, matching the orchestrator's `recoverySweepInterval`, which
+exists for the same reason applied to jobs).
+
+Still REPORT-ONLY — nothing reclaims or deletes. `pending` cannot distinguish a claim in
+flight from an ambiguous outcome where a paid campaign may already exist upstream, so a
+time-based takeover could authorize a duplicate paid create. That reasoning is unchanged.
+
+The sweeper is stopped by `Close`, deliberately AFTER the `<-c.initDone` wait: on the
+cold-start path the retry goroutine is what assigns `cancelSweep`, so reading it earlier
+would be an unsynchronized read that could also miss a sweeper started moments later.
+
+**Update** — Made stuck dispatch claims VISIBLE (LFXV2-2665, partial). A pod crashing between
+`ClaimCampaignDispatch` and `releaseClaim` strands a `pending` campaigns row which, because the
+claim is `ON CONFLICT (brief_id, platform)`, blocks EVERY future dispatch for the pair — with no
+signal anywhere. Operators discovered it only when someone reported a campaign not dispatching.
+`StuckDispatchClaims` reports `pending` rows older than `stuckClaimReportAge` (4m, above
+`providerCallTimeout` so healthy in-flight work is never flagged), bounded by a row limit.
+
+**Attempted and REVERTED before merge**: auto-reclaiming an expired claim via
+`ON CONFLICT DO UPDATE`. Review (copilot) correctly showed it was unsafe — `pending` is
+OVERLOADED, marking both a claim in flight AND an ambiguous dispatch outcome that the
+orchestrator persists as `pending` precisely because a paid campaign MAY already exist upstream.
+No column distinguishes them, so the reclaim would eventually authorize a duplicate paid create:
+the exact failure the claim exists to prevent. Recording the dead end so it is not re-attempted
+— safe auto-recovery needs provider idempotency keys or an authoritative reconcile first, both
+still open under LFXV2-2665. The linkedin concept, which called single-flight merely "planned", now states the
+reality: single-flight EXISTS (the unique-index claim), the claim is NOT reclaimed on a
+timer, and a crashed holder strands it until a human acts.
 **Update** — Split the brief WRITE payload from the response type (LFXV2-2812, PR #55 review).
 Putting `MinLength(1)` on `BriefInput` fixed the create side but broke the read side: the `Brief`
 RESPONSE type `Reference()`s `BriefInput`, and goa COPIES validations through `Reference`, so the

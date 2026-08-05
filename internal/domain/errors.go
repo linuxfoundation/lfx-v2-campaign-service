@@ -47,8 +47,8 @@ var (
 
 	// ErrMetricsUnsupported indicates the campaign's platform has no metrics-read
 	// capability wired (no dispatcher, or the dispatcher is not a MetricsReader).
-	// The platform is never contacted. Maps to 400. Lives here (not in the service
-	// layer) so a platform dispatcher can return it directly without importing the
-	// orchestration layer, and the service still maps it to an HTTP status.
+	// The platform is never contacted. Maps to 400. Lives here for the same reason
+	// as ErrToggleUnsupported: a platform dispatcher can return it directly without
+	// importing the orchestration layer.
 	ErrMetricsUnsupported = errors.New("metrics reads are not supported for this platform")
 )

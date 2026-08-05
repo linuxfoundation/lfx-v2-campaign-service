@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
@@ -410,4 +412,351 @@ func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.
 
 func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
 	return a, nil
+}
+
+// countingScanner records how many scans ran, and can report a claim that only becomes
+// visible AFTER the first scan — modelling the exact gap this sweeper exists to close.
+type countingScanner struct {
+	mu      sync.Mutex
+	calls   int
+	scanned chan struct{}
+}
+
+func (s *countingScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	select {
+	case s.scanned <- struct{}{}:
+	default:
+	}
+	return nil, nil
+}
+
+func (s *countingScanner) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// TestStuckClaimSweeper_RescansAfterStartup pins the fix for the startup-only gap: a claim
+// stranded seconds before a rolling deploy is YOUNGER than stuckClaimReportAge, so the new
+// pod's boot scan skips it. Without a periodic re-scan nothing ever looks again and the row
+// silently blocks every future dispatch for its (brief_id, platform).
+//
+// The assertion is deliberately "a scan happened that the startup path did not perform" —
+// that is the whole behavioural difference, and a startup-only implementation can never
+// satisfy it no matter how long the test waits.
+func TestStuckClaimSweeper_RescansAfterStartup(t *testing.T) {
+	orig := stuckClaimSweepInterval
+	stuckClaimSweepInterval = 10 * time.Millisecond
+	t.Cleanup(func() { stuckClaimSweepInterval = orig })
+
+	sc := &countingScanner{scanned: make(chan struct{}, 1)}
+	c := &Container{}
+	c.startStuckClaimSweeper(sc)
+	t.Cleanup(func() {
+		c.cancelSweep()
+		<-c.sweepDone
+	})
+
+	select {
+	case <-sc.scanned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sweeper never re-scanned: a claim stranded after startup would stay invisible forever")
+	}
+	assert.Positive(t, sc.count(), "expected at least one periodic scan")
+}
+
+// TestStuckClaimSweeper_StopsOnCancel proves the sweeper is bounded by the container's
+// lifecycle: Close must not hang waiting for it, and it must not keep querying a closing pool.
+func TestStuckClaimSweeper_StopsOnCancel(t *testing.T) {
+	orig := stuckClaimSweepInterval
+	stuckClaimSweepInterval = 10 * time.Millisecond
+	t.Cleanup(func() { stuckClaimSweepInterval = orig })
+
+	sc := &countingScanner{scanned: make(chan struct{}, 1)}
+	c := &Container{}
+	c.startStuckClaimSweeper(sc)
+	<-sc.scanned // it is running
+
+	c.cancelSweep()
+	select {
+	case <-c.sweepDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sweeper did not exit on cancel; Container.Close would hang")
+	}
+}
+
+// blockingScanner blocks until its context is cancelled, modelling a scan stuck on a slow or
+// unavailable database.
+type blockingScanner struct{ entered chan struct{} }
+
+func (b *blockingScanner) StuckDispatchClaims(ctx context.Context, _ int) ([]*model.Campaign, error) {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestScanStuckDispatchClaims_RespectsParentCancel pins that the scan derives from its parent
+// context. On the cold-start path the scan runs inside the init goroutine, which Close waits
+// on via <-c.initDone. If it used context.Background() instead, a scan blocked in the database
+// would be uninterruptible and Close would overrun its bounded shutdown budget by up to
+// stuckClaimScanTimeout — the same reasoning that already governs the FailStuckJobs call.
+func TestScanStuckDispatchClaims_RespectsParentCancel(t *testing.T) {
+	sc := &blockingScanner{entered: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanStuckDispatchClaims(ctx, sc, "at startup")
+	}()
+
+	<-sc.entered // the scan is blocked in the "database"
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the scan ignored its parent context: Close would block until stuckClaimScanTimeout expires")
+	}
+}
+
+// TestStuckClaimRemediation_NeverSaysSafe pins the operator-facing signal. 'pending' cannot
+// distinguish an abandoned claim from one whose dispatch is still running, so no row can be
+// reported as safe to delete — the only honest distinction is how much verification is owed.
+func TestStuckClaimRemediation_NeverSaysSafe(t *testing.T) {
+	cases := []struct {
+		name string
+		c    *model.Campaign
+		want string
+	}{
+		{"bare claim", &model.Campaign{Version: 1}, "verify upstream platform before deleting: a paid campaign may exist (a retained claim does not prove the provider was never called)"},
+		{"upserted after claim", &model.Campaign{Version: 2}, "verify upstream platform before deleting: a paid campaign may exist (dispatch recorded a partial or ambiguous result)"},
+		{"carries a platform id", &model.Campaign{Version: 1, PlatformCampaignID: "pc-1"}, "verify upstream platform before deleting: a paid campaign may exist (dispatch recorded a partial or ambiguous result)"},
+		{"carries a result blob", &model.Campaign{Version: 1, Result: []byte(`{"x":1}`)}, "verify upstream platform before deleting: a paid campaign may exist (dispatch recorded a partial or ambiguous result)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stuckClaimRemediation(tc.c)
+			assert.Equal(t, tc.want, got)
+			assert.NotContains(t, got, "safe to delete",
+				"no stuck claim may be reported as safe to delete: a dispatch may still be in flight")
+		})
+	}
+}
+
+// TestStuckClaimRemediation_AlwaysRequiresUpstreamCheck is the load-bearing half of the
+// remediation contract, and it is deliberately stated as an invariant over EVERY row shape
+// rather than as per-case strings.
+//
+// A bare version-1 row is NOT evidence that the provider was never called. dispatchOne retains
+// the claim without upserting on (nil, nil), on an empty upstream id, and on a non-pre-create
+// (nil, err) — all of which leave version 1, no platform id, no result blob, while a paid
+// campaign may already exist upstream. Guidance that let an operator clear such a row after
+// merely confirming no worker is running would authorize a duplicate paid create.
+func TestStuckClaimRemediation_AlwaysRequiresUpstreamCheck(t *testing.T) {
+	shapes := []*model.Campaign{
+		{Version: 1},                             // bare claim: the ambiguous retained-claim shape
+		{Version: 2},                             // upserted after claim
+		{Version: 1, PlatformCampaignID: "pc-1"}, // partial with an upstream id
+		{Version: 1, Result: []byte(`{"x":1}`)},  // id-less partial carrying a reconcile blob
+		{Version: 9, PlatformCampaignID: "pc-2", Result: []byte(`{}`)}, // everything at once
+	}
+	for _, c := range shapes {
+		got := stuckClaimRemediation(c)
+		assert.Contains(t, got, "verify upstream platform",
+			"every stuck claim must require an upstream check: the schema cannot prove a paid campaign does not exist (version=%d, id=%q, result=%d bytes)",
+			c.Version, c.PlatformCampaignID, len(c.Result))
+		assert.NotContains(t, got, "safe to delete",
+			"no stuck claim may be reported as safe to delete")
+	}
+}
+
+// fixedScanner returns a canned batch of stuck claims.
+type fixedScanner struct{ rows []*model.Campaign }
+
+func (f *fixedScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
+	return f.rows, nil
+}
+
+// stuckClaims builds n distinct 'pending' rows.
+func stuckClaims(n int) []*model.Campaign {
+	out := make([]*model.Campaign, 0, n)
+	for i := range n {
+		out = append(out, &model.Campaign{BriefID: fmt.Sprintf("b-%d", i), Version: 1})
+	}
+	return out
+}
+
+// summaryFor runs one scan against rows and returns the parsed "stuck dispatch claims detected"
+// summary record, plus how many per-claim detail lines were emitted.
+func summaryFor(t *testing.T, rows []*model.Campaign) (map[string]any, int) {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	scanStuckDispatchClaims(context.Background(), &fixedScanner{rows: rows}, "in test")
+
+	var summary map[string]any
+	details := 0
+	for _, line := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var rec map[string]any
+		require.NoError(t, json.Unmarshal(line, &rec))
+		switch rec["msg"] {
+		case "stuck dispatch claims detected in test":
+			summary = rec
+		case "stuck dispatch claim":
+			details++
+		}
+	}
+	return summary, details
+}
+
+// TestScanStuckDispatchClaims_TruncationIsHonest pins the one contract that decides whether an
+// operator sees the real size of an incident. The repo deliberately queries DefaultStuckClaimLimit+1
+// so a saturated cap is DISTINGUISHABLE from an exact count; if the scan reported a flat
+// count=100 with truncated=false, a crash-loop stranding thousands of claims would read as a
+// bounded 100-row problem. count must therefore never exceed the cap, and truncated must be
+// true exactly when the repo returned more than the cap.
+func TestScanStuckDispatchClaims_TruncationIsHonest(t *testing.T) {
+	cases := []struct {
+		name          string
+		returned      int
+		wantCount     float64
+		wantTruncated bool
+	}{
+		{"under the cap", 3, 3, false},
+		{"exactly the cap", postgres.DefaultStuckClaimLimit, float64(postgres.DefaultStuckClaimLimit), false},
+		// The repo queries limit+1, so this is what "at least the cap" looks like on the wire.
+		{"cap saturated", postgres.DefaultStuckClaimLimit + 1, float64(postgres.DefaultStuckClaimLimit), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			summary, details := summaryFor(t, stuckClaims(tc.returned))
+			require.NotNil(t, summary, "a non-empty scan must emit a summary line")
+
+			assert.Equal(t, tc.wantTruncated, summary["truncated"],
+				"truncated must be true exactly when the repo returned more rows than the cap, or a saturated scan understates the incident")
+			assert.Equal(t, tc.wantCount, summary["count"],
+				"count must be clamped to the cap and never report the +1 probe row")
+			// An ABSOLUTE bound, deliberately not `<= maxStuckClaimDetailLogs`: comparing the
+			// output against the very constant that produced it holds for any value of that
+			// constant, so it would not notice the cap being raised to something that floods
+			// the log during an incident. A stuck-claim burst is exactly when logging volume
+			// matters, and the summary line already carries the true total.
+			assert.LessOrEqual(t, details, 10,
+				"per-claim detail logging must stay bounded regardless of how many rows came back")
+			assert.Equal(t, float64(details), summary["reported"],
+				"reported must equal the number of detail lines actually emitted")
+		})
+	}
+}
+
+// TestScanStuckDispatchClaims_SilentWhenClean keeps the diagnostic from being noise: a clean
+// scan is the normal state on every replica every 5 minutes, so it must log nothing at all.
+func TestScanStuckDispatchClaims_SilentWhenClean(t *testing.T) {
+	summary, details := summaryFor(t, nil)
+	assert.Nil(t, summary, "a clean scan must not emit a summary line")
+	assert.Zero(t, details, "a clean scan must not emit detail lines")
+}
+
+// wedgedScanner ignores context cancellation until released, modelling a driver already
+// inside a statement that cannot unwind promptly.
+type wedgedScanner struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w *wedgedScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
+	select {
+	case w.entered <- struct{}{}:
+	default:
+	}
+	<-w.release // deliberately ignores ctx
+	return nil, nil
+}
+
+// TestClose_DoesNotWaitForWedgedSweeper pins the bound on the sweeper stop. Cancelling
+// sweeperCtx interrupts a scan but does not guarantee it RETURNS — a driver mid-statement can
+// take until stuckClaimScanTimeout to unwind. That wait sits before the dispatch drain, so an
+// unbounded one would spend the drain's budget on a diagnostic and starve in-flight campaign
+// creation, the phase that actually matters.
+func TestClose_DoesNotWaitForWedgedSweeper(t *testing.T) {
+	orig := stuckClaimSweepInterval
+	stuckClaimSweepInterval = 10 * time.Millisecond
+	t.Cleanup(func() { stuckClaimSweepInterval = orig })
+
+	ws := &wedgedScanner{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	c := &Container{} // nil pool and orch: isolate the sweeper wait
+	c.startStuckClaimSweeper(ws)
+	<-ws.entered // wedged inside a scan
+	t.Cleanup(func() { close(ws.release) })
+
+	start := time.Now()
+	require.NoError(t, c.Close(context.Background()))
+	elapsed := time.Since(start)
+
+	// Generous slack for scheduling, but far below stuckClaimScanTimeout (5s) — the point
+	// is that Close gave up rather than waiting out the wedged scan.
+	if elapsed > time.Second {
+		t.Fatalf("Close took %s waiting for a wedged sweeper (scan timeout is %s): the dispatch drain's budget was spent on a diagnostic",
+			elapsed, stuckClaimScanTimeout)
+	}
+}
+
+// TestClose_CancelsSweeperBeforeClosingPool pins the ORDERING that makes the bounded wait
+// safe. StuckDispatchClaims runs a pgxpool.Query, which holds a pooled CONNECTION until its
+// rows close, and pgxpool.Close "blocks until all connections are returned to pool and
+// closed". So merely giving up on <-sweepDone does not bound shutdown: pool.Close() would
+// block on the very same scan, just later.
+//
+// What actually releases the connection is cancelling sweeperCtx — pgx aborts the in-flight
+// statement on cancellation and returns the connection. This test asserts the sweeper's
+// context is already cancelled by the time Close reaches the pool, which is the property the
+// bounded wait depends on. (It cannot use a real pool: postgres.Pool embeds a concrete
+// *pgxpool.Pool, so there is no seam to substitute one.)
+func TestClose_CancelsSweeperBeforeClosingPool(t *testing.T) {
+	orig := stuckClaimSweepInterval
+	stuckClaimSweepInterval = 10 * time.Millisecond
+	t.Cleanup(func() { stuckClaimSweepInterval = orig })
+
+	observed := make(chan context.Context, 1)
+	sc := &ctxCapturingScanner{seen: observed}
+
+	c := &Container{}
+	c.startStuckClaimSweeper(sc)
+
+	scanCtx := <-observed // the ctx a real query would be running under
+	require.NoError(t, scanCtx.Err(), "precondition: the scan context starts live")
+
+	require.NoError(t, c.Close(context.Background()))
+
+	// After Close returns, the scan's context MUST be cancelled — that cancellation is what
+	// aborts the statement and returns the connection, so pool.Close() cannot deadlock on it.
+	require.Error(t, scanCtx.Err(),
+		"Close must cancel the sweeper's context: without it the scan keeps a pooled connection and pool.Close() blocks")
+	assert.ErrorIs(t, scanCtx.Err(), context.Canceled)
+}
+
+// ctxCapturingScanner hands the caller the context its "query" would run under, so a test can
+// assert that context is cancelled by shutdown.
+type ctxCapturingScanner struct{ seen chan context.Context }
+
+func (s *ctxCapturingScanner) StuckDispatchClaims(ctx context.Context, _ int) ([]*model.Campaign, error) {
+	select {
+	case s.seen <- ctx:
+	default:
+	}
+	<-ctx.Done() // model a query that unwinds only when its context is cancelled
+	return nil, ctx.Err()
 }
