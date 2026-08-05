@@ -183,13 +183,13 @@ func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix 
 	}
 	u, err := url.Parse(registrationURL)
 	if err != nil {
-		return "", fmt.Errorf("registration URL %q is not a valid URL: %w", registrationURL, err)
+		return "", fmt.Errorf("registration URL %q is not a valid URL", redactURLForError(registrationURL))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("registration URL %q must be http(s), got scheme %q", registrationURL, u.Scheme)
+		return "", fmt.Errorf("registration URL %q must be http(s), got scheme %q", redactURLForError(registrationURL), u.Scheme)
 	}
 	if u.Host == "" {
-		return "", fmt.Errorf("registration URL %q has no host", registrationURL)
+		return "", fmt.Errorf("registration URL %q has no host", redactURLForError(registrationURL))
 	}
 
 	campaign := sanitizeNamePart(eventSlug)
@@ -221,4 +221,22 @@ func setIfAbsent(q url.Values, key, value string) {
 		return
 	}
 	q.Set(key, value)
+}
+
+// redactURLForError reduces a caller-supplied registration URL to
+// scheme+host+path for inclusion in a validation error message, so the error
+// (which may be logged or persisted in a step/snapshot) never carries
+// userinfo/query/fragment that can hold secrets. A value that can't be parsed
+// as an absolute URL is reported as an opaque placeholder rather than echoed
+// raw. Mirrors redactURLForError in the twitter client and redactURL in the
+// reddit/meta clients.
+func redactURLForError(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
+		if err == nil && u.Scheme != "" && u.Host != "" {
+			return u.Scheme + "://" + u.Host
+		}
+		return "(redacted)"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 }
