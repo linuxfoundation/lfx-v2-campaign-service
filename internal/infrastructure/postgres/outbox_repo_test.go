@@ -262,11 +262,7 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
-//
-// 000008-000009: feat/LFXV2-2665-reclaim-expired-dispatch-claims (PR #59).
-var allowedVersionGaps = map[int]string{
-	8: "PR #59 owns 000008/000009 and must merge before this branch",
-}
+var allowedVersionGaps = map[int]string{}
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
 // exist yet in this tree.

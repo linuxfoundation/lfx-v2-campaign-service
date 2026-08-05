@@ -26,6 +26,32 @@ type CampaignRepo struct {
 // (possibly-cancelled) request context.
 const claimRollbackTimeout = 5 * time.Second
 
+// stuckClaimReportAge is how old a still-'pending' campaign row must be before it is REPORTED
+// as stuck. Named for reporting, not staleness: "stale" implies expiry/reclaim semantics that
+// this code deliberately does not have, and that wrong assumption is exactly what an earlier
+// revision of this change got wrong.
+//
+// Deliberately NOT auto-reclaimed: 'pending' is overloaded. It marks both a claim that is
+// merely in flight AND an AMBIGUOUS dispatch outcome, which the orchestrator persists as
+// 'pending' precisely because the provider MAY already have created a paid campaign
+// (see the retained-claim path in service.dispatchOne). No column distinguishes the two, so
+// a time-based reclaim would eventually authorize a duplicate paid create on a campaign that
+// already exists upstream — the exact failure the claim exists to prevent. Safe automatic
+// recovery needs provider idempotency keys or an authoritative reconcile first (LFXV2-2665);
+// until then a human decides, and this threshold is what tells them there is something to
+// decide about.
+//
+// The value is derived, not guessed: a claim is taken AFTER the dispatch semaphore is
+// acquired, and the provider call it wraps is hard-bounded by the orchestrator's
+// providerCallTimeout (2m), so a healthy claim never lives this long. The 2x headroom covers
+// the post-call persist/finalize write plus replica clock skew.
+const stuckClaimReportAge = 4 * time.Minute
+
+// DefaultStuckClaimLimit bounds StuckDispatchClaims when a caller passes no limit, so a
+// diagnostic query can never scan or allocate without an upper bound. Exported so a caller
+// can tell whether a returned batch SATURATED the cap (i.e. more rows exist).
+const DefaultStuckClaimLimit = 100
+
 // NewCampaignRepo returns a CampaignRepo backed by pool.
 func NewCampaignRepo(pool *Pool) *CampaignRepo { return &CampaignRepo{db: pool} }
 
@@ -34,11 +60,22 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
 // by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
 // unique index makes the claim single-winner across all replicas without holding
-// a connection or a blocking lock: INSERT ... ON CONFLICT DO NOTHING inserts a
-// row (claimed) or does nothing (already claimed/completed). No RETURNING is used
-// because ON CONFLICT DO NOTHING returns no row on conflict, so we detect the
-// winner via RowsAffected and then read the current row to return it.
+// a connection or a blocking lock.
+//
+// The claim is held until explicitly released and is NOT reclaimed on a timer — see
+// stuckClaimReportAge for why a time-based takeover would be unsafe. The consequence is that a
+// dispatcher which dies between claiming and releasing strands a 'pending' row that blocks
+// that (brief, platform) until a human intervenes; StuckDispatchClaims surfaces those rows.
+//
+// RowsAffected()==1 means this caller won the claim; 0 means the pair is already claimed or
+// already has a campaign. No RETURNING is used because ON CONFLICT DO NOTHING returns no row
+// on conflict, so we detect the winner via RowsAffected and then read the current row.
 func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
+	// DO NOTHING, deliberately — the claim is NOT auto-reclaimed on a timer. See
+	// stuckClaimReportAge: 'pending' marks both a claim in flight AND an ambiguous dispatch
+	// outcome where a paid campaign may already exist upstream, and nothing distinguishes
+	// them, so a time-based takeover could authorize a duplicate paid create.
+	// StuckDispatchClaims surfaces stranded claims for a human instead.
 	q := `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
 		VALUES ($1, $2, $3, $4, '', 'pending')
 		ON CONFLICT (brief_id, platform) DO NOTHING`
@@ -78,6 +115,74 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 		return false, nil, fmt.Errorf("read campaign after claim: %w", gerr)
 	}
 	return claimed, row, nil
+}
+
+// StuckDispatchClaims returns 'pending' campaign rows older than stuckClaimReportAge, OLDEST
+// first. It is READ-ONLY: nothing here reclaims, deletes, or redispatches.
+//
+// Cardinality: it returns up to limit+1 rows, NOT limit. The extra row is a deliberate
+// truncation probe — receiving limit+1 is how a caller distinguishes "exactly limit are stuck"
+// from "at least limit are stuck and the true total is unknown and larger", which matters
+// because a flat count would understate a crash-looping incident. Callers must therefore treat
+// len(result) > limit as the truncated signal and slice back to limit before reporting a count
+// (see scanStuckDispatchClaims in internal/container). Passing limit <= 0 uses
+// DefaultStuckClaimLimit, so the probe row makes that case return up to
+// DefaultStuckClaimLimit+1.
+//
+// Oldest-first is deliberate and interacts with the cap: a row seconds past the threshold may
+// still be a slow-but-live owner, whereas one stuck for days is unambiguously dead and is what
+// an operator should clear first. Newest-first would invert that triage order AND, once the
+// cap saturates, silently drop the longest-stuck rows — the worst cases — entirely.
+//
+// It exists because a stuck claim is otherwise INVISIBLE. A pod that crashes or is evicted
+// between claiming and releasing strands a 'pending' row, and since the claim is
+// ON CONFLICT (brief_id, platform) that row blocks every future dispatch for the pair — with
+// no signal anywhere that it happened. Operators currently discover it only when someone
+// reports that a campaign will not dispatch.
+//
+// Reporting rather than auto-reclaiming is deliberate: see stuckClaimReportAge. A row returned here
+// may be an abandoned claim (safe to delete) OR an ambiguous outcome where a paid campaign
+// already exists upstream (deleting it would authorize a duplicate). Distinguishing them
+// requires checking the ad platform, so a human decides until provider idempotency or
+// reconcile lands (LFXV2-2665).
+func (r *CampaignRepo) StuckDispatchClaims(ctx context.Context, limit int) ([]*model.Campaign, error) {
+	if limit <= 0 {
+		limit = DefaultStuckClaimLimit
+	}
+	// limit+1 so the caller can tell "exactly limit rows" from "at least limit, truncated".
+	// A bad deploy that crash-loops mid-dispatch is exactly the incident where reporting a
+	// flat count=100 would understate a possibly-thousands-row outage.
+	// make_interval(secs => $1), NOT $1::interval with a Go duration string. Postgres does
+	// accept the "4m0s" Go renders for this particular value, so this is not a bug fix at
+	// the current constant — it removes a standing dependency on Go's duration formatting
+	// happening to match Postgres's interval grammar, which nothing enforces and which does
+	// diverge: Go renders sub-microsecond durations as "100ns" and microseconds with a
+	// Unicode mu ("1µs"), both of which Postgres rejects outright, and it truncates
+	// nanosecond precision ("1.000000001s" parses as 1s). Changing stuckClaimReportAge to
+	// such a value would break the scan at runtime, not at compile time. Binding numeric
+	// seconds sidesteps the grammar entirely and matches JobRepo.FailStuckJobs.
+	q := `SELECT ` + campaignCols + ` FROM campaigns
+		WHERE status = 'pending' AND created_at < now() - make_interval(secs => $1)
+		ORDER BY created_at ASC
+		LIMIT $2`
+	rows, err := r.db.Query(ctx, q, stuckClaimReportAge.Seconds(), limit+1)
+	if err != nil {
+		return nil, fmt.Errorf("list stuck dispatch claims: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*model.Campaign
+	for rows.Next() {
+		c, serr := scanCampaign(rows)
+		if serr != nil {
+			return nil, fmt.Errorf("scan stuck dispatch claim: %w", serr)
+		}
+		out = append(out, c)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("iterate stuck dispatch claims: %w", rerr)
+	}
+	return out, nil
 }
 
 // DeleteDispatchClaim removes a still-'pending' claim row so a failed dispatch
