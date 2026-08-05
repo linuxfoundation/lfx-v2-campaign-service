@@ -25,6 +25,12 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
+// sweeperStopTimeout bounds how long Close waits for the stuck-claim sweeper to exit after
+// cancellation. Deliberately SMALL: the sweeper is a diagnostic, and this wait precedes the
+// dispatch drain, so any time spent here is taken from the budget that protects in-flight
+// campaign creation. Exceeding it abandons the goroutine rather than delaying shutdown.
+const sweeperStopTimeout = 250 * time.Millisecond
+
 // startupDBTimeout bounds ONE database migration+pool-open attempt. It is a var
 // (not a const) only so tests can shrink it; production never changes it.
 var startupDBTimeout = 15 * time.Second
@@ -125,6 +131,14 @@ type Container struct {
 	mu   sync.Mutex
 	pool *postgres.Pool
 	orch *service.Orchestrator
+
+	// cancelSweep stops the periodic stuck-claim sweeper, and sweepDone is closed when
+	// it exits so Close can wait for it (both nil when no sweeper runs — i.e. when there
+	// is no database). Kept SEPARATE from cancelInit: the sweeper starts once a live pool
+	// exists, which happens on either the fast path or the cold-start retry, so it does
+	// not share the init goroutine's lifetime.
+	cancelSweep context.CancelFunc
+	sweepDone   chan struct{}
 
 	// cancelInit stops the background DB-init goroutine (nil when none runs).
 	cancelInit context.CancelFunc
@@ -279,12 +293,182 @@ var dispatchableProviders = []model.Provider{
 	model.ProviderHubSpot,
 }
 
+// stuckClaimScanTimeout bounds the startup stuck-claim scan so a slow or unavailable database
+// cannot delay readiness. The scan is diagnostic only, so timing out is survivable.
+const stuckClaimScanTimeout = 5 * time.Second
+
+// maxStuckClaimDetailLogs caps the per-row detail lines. The realistic bad day is exactly the
+// one this diagnostic exists for — a rolling deploy stranding many claims — so an uncapped
+// loop would bury the startup log in the moment an operator most needs to read it. The
+// summary line reports how many rows were elided.
+const maxStuckClaimDetailLogs = 10
+
+// logStuckDispatchClaims reports 'pending' dispatch claims stranded by a previous process at
+// STARTUP — the moment they are most likely to exist, since the usual cause is a pod dying
+// mid-dispatch (a crash, an OOM kill, or an eviction during a rolling deploy).
+//
+// Without this the rows are INVISIBLE: the claim is ON CONFLICT (brief_id, platform), so a
+// stranded row silently blocks every future dispatch for that pair, and an operator finds out
+// only when someone reports a campaign that will not dispatch. Nothing here reclaims or
+// deletes — see stuckClaimReportAge for why a time-based takeover would be unsafe — the point is to
+// turn a silent block into an alertable log line.
+//
+// Runs inline on the wiring path (one bounded query) rather than as a background goroutine.
+// To be precise about what that does and does not buy: it does NOT avoid duplication — every
+// replica boots and scans, so a rolling deploy logs the same stuck row once per replica. What
+// it does buy is BOUNDED duplication: startup-only rather than every sweep interval forever.
+// (StartRecoverySweeper already runs on all replicas without leader election, so a goroutine
+// here would not have been unprecedented — just noisier.)
+//
+// The per-row lines are therefore kept few and the SUMMARY is the line to alert on: it is
+// low-cardinality and identical across replicas, so an alert built on it dedups naturally. A
+// gauge would be better still, but this service exposes no metrics endpoint today.
+func logStuckDispatchClaims(repo stuckClaimScanner) {
+	scanStuckDispatchClaims(context.Background(), repo, "at startup")
+}
+
+// scanStuckDispatchClaims performs ONE bounded scan and logs what it finds. phase names the
+// caller ("at startup" / "by periodic sweep") so an operator can tell a claim stranded by the
+// deploy that just happened from one the running process has been watching.
+func scanStuckDispatchClaims(parent context.Context, repo stuckClaimScanner, phase string) {
+	ctx, cancel := context.WithTimeout(parent, stuckClaimScanTimeout)
+	defer cancel()
+
+	// 0 = the repo's defaultStuckClaimLimit (100).
+	stuck, err := repo.StuckDispatchClaims(ctx, 0)
+	if err != nil {
+		// Diagnostic only — never block startup on it.
+		slog.WarnContext(ctx, "could not scan for stuck dispatch claims", "phase", phase, "error", err)
+		return
+	}
+	if len(stuck) == 0 {
+		return
+	}
+	// Summary FIRST: it is the line an operator alerts on, so it must not sit beneath the
+	// detail it summarizes. "truncated" distinguishes "exactly N stuck" from "at least N" —
+	// a saturated limit means the real number is unknown and larger.
+	// The repo queries limit+1, so more rows than the cap means the true total is unknown and
+	// larger — report that rather than a flat count that understates an incident.
+	truncated := len(stuck) > postgres.DefaultStuckClaimLimit
+	if truncated {
+		stuck = stuck[:postgres.DefaultStuckClaimLimit]
+	}
+	slog.WarnContext(ctx, "stuck dispatch claims detected "+phase,
+		"count", len(stuck), "truncated", truncated,
+		"reported", min(len(stuck), maxStuckClaimDetailLogs),
+		"runbook", "docs/knowledge/code/internal-dispatch.md")
+	for i, c := range stuck {
+		if i >= maxStuckClaimDetailLogs {
+			break
+		}
+		// A short, stable message so operators can group and alert on it; the remediation
+		// procedure lives in the runbook referenced above, not in the message field.
+		//
+		// created_at AND updated_at are both emitted because they mean different things here.
+		// created_at is the CLAIM time and is never rewritten (UpsertCampaign updates
+		// updated_at only), so for a row the orchestrator later upserted with an ambiguous
+		// outcome, created_at alone would make a days-old unreconciled row look like a fresh
+		// crash. version > 1 is the in-band signal that such an upsert happened — i.e. this is
+		// an ambiguous outcome where a paid campaign MAY exist upstream (verify before
+		// deleting), not a bare abandoned claim (usually safe to delete).
+		slog.WarnContext(ctx, "stuck dispatch claim",
+			"project_id", c.ProjectID, "brief_id", c.BriefID, "platform", c.Platform,
+			"job_id", c.JobID, "created_at", c.CreatedAt, "updated_at", c.UpdatedAt,
+			"version", c.Version, "upserted_after_claim", c.Version > 1,
+			// EXPLICIT rather than inferred from upserted_after_claim=false: a bare claim is
+			// only safe to delete once you know no dispatch is still running for it. Reading
+			// "false" as "safe" would be wrong for a claim whose dispatch is in flight right
+			// now, which looks identical in this row. Never "safe", only "needs verification"
+			// vs "MAY have created a paid campaign upstream".
+			"remediation", stuckClaimRemediation(c),
+			"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0)
+	}
+}
+
+// stuckClaimRemediation describes what an operator must verify before touching a stuck claim.
+// It deliberately never says "safe to delete", and it ALWAYS requires checking the upstream
+// platform.
+//
+// An earlier version gave a bare version-1 row the weaker "verify no dispatch is in flight"
+// on the theory that no upsert had happened, so nothing could exist upstream. That inference
+// is WRONG, and it is wrong on exactly the paths this diagnostic exists to surface.
+// orchestrator.dispatchOne RETAINS the claim WITHOUT upserting when a dispatcher returns
+// (nil, nil), when it returns an empty upstream id, or when it returns (nil, err) that is not
+// pre-create — and its own comments state that none of those prove the provider did not create
+// a campaign. All three leave a row that is byte-for-byte identical to an abandoned pre-create
+// claim: version 1, no platform id, no result blob.
+//
+// So the weaker guidance was satisfiable (the worker is gone) on a row whose paid campaign may
+// be live, which would authorize a duplicate create — the precise failure the claim exists to
+// prevent. The schema cannot separate the two cases, so the honest floor is upstream
+// verification for every row; version/id/result only sharpen WHY it is owed. The runbook
+// carries the procedure.
+func stuckClaimRemediation(c *model.Campaign) string {
+	if c.Version > 1 || c.PlatformCampaignID != "" || len(c.Result) > 0 {
+		return "verify upstream platform before deleting: a paid campaign may exist (dispatch recorded a partial or ambiguous result)"
+	}
+	// Deliberately the same REQUIREMENT as above, differing only in why it is owed.
+	return "verify upstream platform before deleting: a paid campaign may exist (a retained claim does not prove the provider was never called)"
+}
+
+// stuckClaimScanner is the one method the stuck-claim scan needs. Declared as an
+// interface (rather than taking *postgres.CampaignRepo) so the sweeper's re-scan
+// behaviour is testable without a live database — the property under test is that a
+// SECOND scan happens at all, which a startup-only implementation would never do.
+type stuckClaimScanner interface {
+	StuckDispatchClaims(ctx context.Context, limit int) ([]*model.Campaign, error)
+}
+
+// stuckClaimSweepInterval is how often the background sweeper re-scans for stranded
+// dispatch claims. Matches the orchestrator's recoverySweepInterval: the two solve the
+// same problem (a startup-only scan cannot see work stranded AFTER this pod booted) and
+// a shared cadence keeps the operational picture uniform.
+// A var, not a const, only so tests can shrink it; production never changes it.
+var stuckClaimSweepInterval = 5 * time.Minute
+
+// startStuckClaimSweeper re-runs the stuck-claim scan periodically.
+//
+// The startup scan alone is NOT sufficient, and the gap is exactly the common case: a claim
+// stranded seconds before a rolling deploy or crash-restart is YOUNGER than
+// stuckClaimReportAge (4m), so the replacement pod's boot scan skips it — and without a
+// periodic re-scan nothing ever looks again, leaving the row silently blocking every future
+// dispatch for its (brief_id, platform). This is the same reasoning that gave
+// Orchestrator.StartRecoverySweeper its sweep, applied to claims instead of jobs.
+//
+// Still REPORT-ONLY: nothing here reclaims or deletes (see stuckClaimReportAge for why a
+// time-based takeover would be unsafe — 'pending' cannot distinguish a claim in flight from
+// an ambiguous outcome where a paid campaign may already exist upstream).
+//
+// Like the startup scan this runs on every replica without leader election, so a stuck row is
+// logged once per replica per interval. That is accepted for the same reason: the summary line
+// is low-cardinality and identical across replicas, so an alert built on it dedups naturally.
+func (c *Container) startStuckClaimSweeper(repo stuckClaimScanner) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	c.cancelSweep = cancel
+	c.sweepDone = done
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(stuckClaimSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				scanStuckDispatchClaims(ctx, repo, "by periodic sweep")
+			}
+		}
+	}()
+}
+
 // logMissingDispatchers warns about providers that have no adapter yet — those channels
 // record jobs that finish "failed" with "no dispatcher registered".
 //
 // The channel KIND is logged alongside each provider so an operator can tell a missing PAID
 // platform (no campaigns will run, budget is unspent) from a missing EMAIL channel (no drafts
 // are staged) — different urgency, different remediation.
+
 func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispatcher) {
 	// Split by KIND into separate structured fields rather than formatting the kind into each
 	// string. An operator filtering for "which paid platforms are down" can then match a field
@@ -323,6 +507,12 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	audienceRepo := postgres.NewAudienceRepo(pool)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo)
 	logMissingDispatchers(dispatchers)
+	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
+	// silently block future dispatches for their (brief, platform) until a human acts.
+	logStuckDispatchClaims(campaignRepo)
+	// The startup scan can't see a claim stranded younger than the report age (the
+	// rolling-deploy case); a periodic sweep catches those. Stopped by Close.
+	c.startStuckClaimSweeper(campaignRepo)
 	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
@@ -375,6 +565,18 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
 			logMissingDispatchers(dispatchers)
+			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
+			// this is the first opportunity to see claims stranded by a previous process.
+			//
+			// Derived from ctx (the init context Close cancels), NOT context.Background():
+			// if shutdown begins while this scan is blocked in the DB, cancelling ctx
+			// interrupts the statement so Close's <-c.initDone wait can't overrun the
+			// bounded shutdown budget by up to stuckClaimScanTimeout. Same reasoning as the
+			// FailStuckJobs call below.
+			scanStuckDispatchClaims(ctx, campaignRepo, "at startup")
+			// Start the periodic sweep here too. Safe without a lock for the same reason
+			// as c.orch below: Close waits on <-c.initDone before reading these fields.
+			c.startStuckClaimSweeper(campaignRepo)
 			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
 			// goroutine returns) before it reads c.orch, so this write happens-before
@@ -513,6 +715,34 @@ func (c *Container) Close(ctx context.Context) error {
 	if c.cancelInit != nil {
 		c.cancelInit()
 		<-c.initDone
+	}
+	// Stop the periodic stuck-claim sweeper. This MUST come after the <-c.initDone wait
+	// above: on the cold-start path the retry goroutine is what assigns cancelSweep, so
+	// reading it earlier would be an unsynchronized read that could also miss a sweeper
+	// started moments later. Waiting first means the assignment happens-before this read.
+	//
+	// The wait is bounded so a wedged sweeper cannot spend the dispatch drain's budget on a
+	// diagnostic. But giving up on the wait is NOT sufficient on its own: the scan runs a
+	// pgxpool.Query, which holds a pooled CONNECTION until its rows are closed, and
+	// pgxpool.Close "blocks until all connections are returned to pool and closed" — so an
+	// abandoned sweeper still stalls pool.Close() below, just later and less visibly.
+	//
+	// Cancelling sweeperCtx is what actually releases the connection: pgx aborts the
+	// in-flight statement on context cancellation and returns the connection to the pool.
+	// The wait below therefore exists to give that release a moment to complete in the
+	// common case; the timeout only stops us blocking on a driver that is slow to unwind,
+	// and the release still happens before pool.Close() can finish.
+	if c.cancelSweep != nil {
+		c.cancelSweep()
+		select {
+		case <-c.sweepDone:
+		case <-time.After(sweeperStopTimeout):
+			// Not merely cosmetic: if this fires, pool.Close() below will wait for the same
+			// connection, so the delay is deferred rather than avoided. Log it so a shutdown
+			// that overruns its budget is attributable rather than mysterious.
+			slog.Warn("stuck-claim sweeper did not stop promptly; pool close may block until its scan unwinds",
+				"timeout", sweeperStopTimeout)
+		}
 	}
 	// Capture the orchestrator shutdown error but do NOT early-return on it: the
 	// pool must still be closed even if the drain timed out with dispatches still
