@@ -1333,6 +1333,29 @@ func TestBriefService_GetCampaignMetrics_PlatformFailureIs503(t *testing.T) {
 	}
 }
 
+// TestSafeErrSummary verifies that a platform error's text is scrubbed before it
+// would enter structured logs: control characters (the log-injection vector — a
+// stray newline could forge additional log lines) are stripped, and an
+// oversized message is capped, mirroring what an untrusted Meta Graph API error
+// body could otherwise carry into GetCampaignMetrics' failure log.
+func TestSafeErrSummary(t *testing.T) {
+	injected := safeErrSummary(errors.New("meta API POST /campaigns failed (400): bad\nlevel=error msg=\"forged log line\""))
+	if strings.Contains(injected, "\n") {
+		t.Errorf("safeErrSummary(%q) must not contain a raw newline", injected)
+	}
+	if !strings.Contains(injected, "forged log line") {
+		t.Errorf("safeErrSummary(%q) should still surface the scrubbed text, just without control characters", injected)
+	}
+
+	long := safeErrSummary(errors.New(strings.Repeat("x", 500)))
+	if len([]rune(long)) > 220 {
+		t.Errorf("safeErrSummary returned %d runes, want it capped near 200", len([]rune(long)))
+	}
+	if !strings.HasSuffix(long, "...(truncated)") {
+		t.Errorf("safeErrSummary(%q) should indicate truncation", long)
+	}
+}
+
 func TestBriefService_GetCampaignMetrics_WindowUnsupportedIs400(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderTwitterAds,

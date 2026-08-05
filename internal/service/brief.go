@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -360,7 +361,7 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		default:
 			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", merr)
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(merr))
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign metrics could not be read from the ad platform"}
 		}
 	}
@@ -684,6 +685,28 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be an integer version"}
 	}
 	return v, nil
+}
+
+// safeErrSummary bounds a platform read error's text before it enters structured
+// logs. This call site is platform-agnostic and can't assume every ReadMetrics
+// implementation's Error() has scrubbed the ad platform's raw response body —
+// Meta's *APIError.Error(), for one, renders the Graph API message verbatim,
+// which is untrusted (attacker-influenced campaign material can be echoed back
+// in it). Strip control characters (the log-injection vector — a stray newline
+// could forge additional log lines) and cap the length so one oversized or
+// malformed response body can't matter.
+func safeErrSummary(err error) string {
+	const maxRunes = 200
+	s := strings.Map(func(r rune) rune {
+		if !unicode.IsPrint(r) {
+			return ' '
+		}
+		return r
+	}, err.Error())
+	if runes := []rune(s); len(runes) > maxRunes {
+		s = string(runes[:maxRunes]) + "...(truncated)"
+	}
+	return s
 }
 
 func mapBriefErr(err error) error {

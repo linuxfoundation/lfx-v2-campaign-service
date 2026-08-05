@@ -1,5 +1,21 @@
 # Log
 
+## 2026-08-05 (Meta metrics reads: scrub the ad-platform error before logging it)
+
+**Fix** — Copilot flagged that `GetCampaignMetrics`'s failure-path log (`internal/service/brief.go`)
+wrote `merr` — the ad-platform read error — into structured logs unbounded and unscrubbed.
+Meta's `*APIError.Error()` renders the Graph API's `Message` field verbatim (the parsed error
+message, or the raw response body when the envelope isn't a Graph error), which is untrusted:
+it can echo request material back, and an unbounded or control-character-laced value could
+forge extra log lines or bloat log storage. This call site is platform-agnostic (shared by every
+`ReadMetrics` implementation) and can't assume every platform's `Error()` has already scrubbed
+its response text the way LinkedIn/Reddit/Twitter/Google Ads/Microsoft's client errors
+deliberately do. Added `safeErrSummary` in `brief.go`: strips non-printable characters (the
+log-injection vector) and caps the result to 200 runes before it's logged. Scoped to this one
+log call rather than changing Meta's `APIError.Error()` itself, which is pre-existing,
+deliberately tested behavior relied on elsewhere (surfacing the raw Graph body for campaign
+creation diagnostics) — out of scope for this metrics PR.
+
 ## 2026-08-05 (Meta metrics reads)
 
 **Update** — Added campaign metrics reads for Meta: a new optional `MetricsReader` dispatcher
