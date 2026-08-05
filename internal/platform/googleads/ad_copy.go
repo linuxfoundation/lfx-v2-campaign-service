@@ -36,9 +36,8 @@ const (
 
 // adTextAsset is one headline/description entry in a responsiveSearchAd.
 //
-// next stacked PR (GA-3b) and is not yet merged into this branch.
-//
 //nolint:unused // consumed by the ad group/ad cascade (adgroup_ad.go), which lands in the
+// next stacked PR (GA-3b) and is not yet merged into this branch.
 type adTextAsset struct {
 	Text string `json:"text"`
 }
@@ -57,7 +56,8 @@ func textAssets(ss []string) []adTextAsset {
 
 // composeAdCopy resolves the caller-supplied headlines/descriptions (if any)
 // into a valid Responsive Search Ad content set: each entry trimmed and
-// rune-capped to its limit, empties dropped, and duplicates (after trimming)
+// weight-capped to its limit (see truncateWeighted — CJK/full-width runes
+// count double), empties dropped, and duplicates (after trimming)
 // removed — Google rejects both an over-limit asset and a duplicate one within
 // the same ad. If fewer than the minimum survive, deterministic placeholders
 // derived from eventName are appended (never removed) until the minimum is
@@ -77,7 +77,7 @@ func composeAdCopy(callerHeadlines, callerDescriptions []string, eventName, proj
 		return nil, nil, fmt.Errorf("google-ads ad requires at least %d usable headline(s), got %d (need a non-empty eventName or caller-supplied headlines)", minHeadlines, len(headlines))
 	}
 	if len(descriptions) < minDescriptions {
-		return nil, nil, fmt.Errorf("google-ads ad requires at least %d usable description(s), got %d (need a non-empty eventName/project or caller-supplied descriptions)", minDescriptions, len(descriptions))
+		return nil, nil, fmt.Errorf("google-ads ad requires at least %d usable description(s), got %d (need a non-empty eventName or caller-supplied descriptions)", minDescriptions, len(descriptions))
 	}
 	return headlines, descriptions, nil
 }
