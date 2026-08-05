@@ -51,6 +51,46 @@ UNTOUCHED tokens only: a TAGGED anchor is re-serialized from parsed attributes, 
 normalized (`download` → `download=""`, names lower-cased, values double-quoted). Spec-equivalent
 and cosmetic, but stating the guarantee too broadly would invite a future change to rely on
 byte-identity that does not hold. Both are now pinned by tests.
+**Update** — Closed two test gaps on the X/Twitter status toggle (LFXV2-2808, PR #53 review).
+Both were unguarded contracts, not bugs: the code was already correct, but nothing would have
+caught a regression.
+
+The `twitter.IsOutcomeUnconfirmed` branch in `TwitterDispatcher.ToggleStatus` was untested. The
+two ambiguous shapes reach it differently, and only one depends on it to acquire the marker at
+all: a first-call 5xx surfaces as a plain `apiError`, which does NOT implement `Unconfirmed()`
+— `IsOutcomeUnconfirmed` recognizes it structurally via `createOutcomeAmbiguous`, and the
+dispatcher's wrap is what turns that into an error carrying the behavioral marker. A partial
+cascade already implements `Unconfirmed()` itself, so it would survive the branch's removal.
+Deleting the wrap therefore left every client test green while the 5xx outcome silently
+degraded to "not modified". Twitter was the only toggle-capable dispatcher without this
+boundary test (googleads, reddit and meta all had one). Pinned in BOTH directions — a definite
+4xx on the first call mutated nothing and must stay definite — so an unconditional wrap fails
+too.
+
+The deliberate create/toggle credential asymmetry was also undefended: `Dispatch` requires
+`funding_instrument_id`, `validateTwitterConnection` intentionally does not, because
+`UpdateCampaignAndChildrenStatus` only PUTs `entity_status` on entities that already exist and
+never puts that field on the wire. Requiring it in the shared validator would refuse an
+otherwise-valid pause. A future refactor folding the check into the shared validator now breaks
+a test instead of silently restoring the rejection the asymmetry exists to avoid. Recorded in
+`internal-dispatch.md` so the constraint is discoverable before someone attempts that tidy-up.
+
+**Fix** — A mutating 429 whose retry backoff is interrupted by the caller's deadline was
+misclassified as DEFINITE. `doRequest` returned the bare `ctx.Err()` from `sleepCtx`, erasing
+the 429 the server had already sent — and a mutating 429 is ambiguous, since X can report the
+throttle at or after the write is accepted. Reachable in production rather than theoretical:
+`maxRetryWait` (90s) exceeds the orchestrator's `toggleCallTimeout` (45s), so a server-declared
+`Retry-After` in between (e.g. 60s) passes the cap check, is accepted for sleeping, and is then
+cut short by the toggle deadline. The operator was told "not modified" about a pause that may
+well have applied — exactly the failure mode `partialCascadeError` exists to prevent, arriving
+through a different door.
+
+The client now returns the 429 as a typed `apiError` with the cancellation cause attached via a
+new `Unwrap`, so `IsOutcomeUnconfirmed` still classifies it while `errors.Is(err,
+context.DeadlineExceeded)` keeps working for callers that distinguish deadlines. `Error()` is
+unchanged and still renders only method/path/status, so nothing body-derived reaches a persisted
+Step. Also corrected `docs/architecture.md`, which still listed the X/Twitter and Google Ads
+toggles as follow-up work after both had landed; Microsoft is now the only outstanding one.
 
 ## 2026-08-03
 
@@ -196,6 +236,30 @@ concept as a deferred, unsolved follow-up rather than presented as handled.
 
 ## 2026-07-30
 
+**Update** — X/Twitter campaign status toggle (LFXV2-2808). `TwitterDispatcher` now implements
+`service.StatusToggler`, closing the toggle gap for the twitter adapter. New client method
+`UpdateCampaignAndChildrenStatus` PUTs `entity_status` (query params, not a JSON body — the same
+X Ads v12 contract `createRequest` documents) and a new exported `IsOutcomeUnconfirmed` mirrors
+the reddit client so the dispatcher can classify ambiguous outcomes across the package boundary.
+
+SCOPE is deliberately campaign + line item, NOT the promoted tweet: the create path leaves the
+association ACTIVE (the endpoint does not accept `entity_status`) and the LINE ITEM is X's
+delivery gate, so the association never needs to move. ORDER mirrors reddit — child first on
+ACTIVATE (nothing serves until the tree is ready), campaign gate first on PAUSE (delivery stops
+immediately). An ACTIVATE with an unknown line-item id is refused up front as
+`ErrCampaignNotProvisioned` → 409, never calling X.
+
+Connection rules are shared via `validateTwitterConnection`, which BOTH `Dispatch` and
+`ToggleStatus` call, so a create and a toggle accept exactly the same connections and cannot
+drift. Each caller keeps its own error wrapping (`Dispatch` wraps with `notCreated` for claim
+semantics; the toggle path must not). `funding_instrument_id` is checked only in `Dispatch` —
+it is a create-time field a toggle never uses, so requiring it would refuse a legitimate pause.
+A post-gate cascade failure returns `partialCascadeError` (`Unconfirmed() == true`) so a
+definite 4xx on the second entity is not misreported as "not modified" when the first already
+changed. `twitterChildIDs` reads the persisted `CampaignResult`
+blob, whose shape is pinned by a round-trip test (the blob is `json.Marshal` of an UNTAGGED
+struct, so the field is `LineItemID`; a renamed/nested field would silently yield "" and turn
+every ACTIVATE into a spurious 409).
 **Update** — Patched four indirect-dependency CVEs flagged by Dependabot on main
 (LFXV2-2811): `google.golang.org/grpc` 1.82.0→1.82.1 (HIGH, xDS RBAC + HTTP/2, reached via
 `goa.design/clue/debug`), `github.com/apache/thrift` 0.22.0→0.23.0 (HIGH,
