@@ -124,18 +124,15 @@ An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`) is wrapped
 boundary (same behavioral-interface pattern as `NoUpstreamCreate`) — every adapter's
 `ToggleStatus` below follows this contract.
 
-Which children a toggle must reach, and any asymmetric ACTIVATE/PAUSE handling, is
-per-platform and documented in each platform concept's "Dispatch adapter
-(internal/dispatch)" section: **reddit**, **meta**, and **linkedin** all CASCADE to
-child entities; [reddit](internal-platform-reddit.md) and
-[meta](internal-platform-meta.md) also serve as the model for a straightforward
-same-shape cascade, while [linkedin](internal-platform-linkedin.md) additionally
-tolerates an in-review-creative 400 on PAUSE. [X/Twitter](internal-platform-twitter.md)
-scopes the cascade to the campaign + line item only, since the promoted-tweet
-association can't itself be toggled. [Google Ads](internal-platform-googleads.md)
-implements PAUSE only — ACTIVATE is refused, because the create path provisions no
-children yet. Microsoft Ads has a creation dispatcher; its status-TOGGLE capability
-lands separately.
+Which children a toggle must reach, any asymmetric ACTIVATE/PAUSE handling, and
+whether a platform has wired `StatusToggler` at all, is per-platform and
+documented in that platform's own "Dispatch adapter (internal/dispatch)"
+section: [reddit](internal-platform-reddit.md), [linkedin](internal-platform-linkedin.md),
+[meta](internal-platform-meta.md), [twitter](internal-platform-twitter.md),
+[googleads](internal-platform-googleads.md), [microsoft](internal-platform-microsoft.md),
+[hubspot](internal-platform-hubspot.md) — not summarized here, since a
+platform wiring or changing its toggle behavior would otherwise mean editing
+this shared file too.
 
 ## Channel kinds: paid ads vs email
 
