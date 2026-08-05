@@ -104,8 +104,27 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		if row.CampaignID != id {
 			return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: row campaign id %q does not match requested campaign %q", row.CampaignID, id)}
 		}
+
+		// Validate counter values before accumulation: reject negative impressions/clicks and
+		// detect overflow before it corrupts the totals.
+		if row.Impressions < 0 {
+			return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: negative impressions %d", row.Impressions)}
+		}
+		if row.Clicks < 0 {
+			return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: negative clicks %d", row.Clicks)}
+		}
+		// Checked addition for impressions: overflow if metrics.Impressions > MaxInt64 - row.Impressions.
+		if row.Impressions > 0 && metrics.Impressions > math.MaxInt64-row.Impressions {
+			return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: impressions total would overflow")}
+		}
 		metrics.Impressions += row.Impressions
+
+		// Checked addition for clicks.
+		if row.Clicks > 0 && metrics.Clicks > math.MaxInt64-row.Clicks {
+			return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: clicks total would overflow")}
+		}
 		metrics.Clicks += row.Clicks
+
 		if row.Spend != "" {
 			spend, err := strconv.ParseFloat(row.Spend, 64)
 			// ParseFloat accepts "NaN"/"Inf" as valid floats, and a finite-but-huge value
@@ -122,7 +141,12 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 			// billed_charge_local_micro) — this is exactly the kind of detail that cannot be
 			// confirmed without the real contract, and rounds (not truncates) to avoid losing
 			// a fractional micro-unit.
-			metrics.CostMicros += int64(math.Round(spend * 1_000_000))
+			costMicros := int64(math.Round(spend * 1_000_000))
+			// Checked addition for cost: overflow if metrics.CostMicros > MaxInt64 - costMicros.
+			if costMicros > 0 && metrics.CostMicros > math.MaxInt64-costMicros {
+				return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: cost total would overflow")}
+			}
+			metrics.CostMicros += costMicros
 		}
 	}
 	if metrics.Impressions > 0 {
