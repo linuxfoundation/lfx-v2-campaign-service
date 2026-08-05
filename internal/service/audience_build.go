@@ -477,7 +477,7 @@ func safeBuildCause(err error) string {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "build request deadline exceeded"
 	}
-	if hubspot.IsUnconfirmed(err) {
+	if hubspot.IsUnconfirmed(err) || errors.Is(err, errUnconfirmedCreate) {
 		return "build outcome unconfirmed (the request may have succeeded upstream)"
 	}
 	return "build failed (see server logs for details)"
