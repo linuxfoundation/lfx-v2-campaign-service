@@ -200,8 +200,13 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	// a brief omits `location`.
 	unnarrowed := strings.TrimSpace(details.Location) == "" && len(editions) > 0
 	if unnarrowed {
+		// Cap logged editions to prevent a broad match from truncating the warning in log aggregators.
+		logEditions := editions
+		if len(logEditions) > 10 {
+			logEditions = logEditions[:10]
+		}
 		slog.WarnContext(ctx, "resolved past editions without a location predicate; they may span cities",
-			"brief_id", p.BriefID, "event", details.EventName, "editions", strings.Join(editions, ","))
+			"brief_id", p.BriefID, "event", details.EventName, "edition_count", len(editions), "editions_sample", strings.Join(logEditions, ","))
 	}
 
 	planInput := audience.PlanInput{

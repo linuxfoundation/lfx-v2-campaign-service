@@ -184,10 +184,12 @@ func TestBuildAudience_WarehouseOutageDegrades(t *testing.T) {
 	// here would tell an operator the opposite of the truth: that a returning event legitimately
 	// has no past editions, when in fact the audience is narrower than intended and should be
 	// rebuilt. InclusionSummary is the durable record that outlives the log line.
+	// The error message is redacted to avoid exposing connection details in the response/storage;
+	// the detailed error is only in the contextual slog.WarnContext call for trusted log sinks.
 	assert.Contains(t, *res.InclusionSummary, "could NOT be resolved",
 		"a warehouse outage must be reported as an outage")
-	assert.Contains(t, *res.InclusionSummary, "snowflake unreachable",
-		"and must carry the underlying cause")
+	assert.Contains(t, *res.InclusionSummary, "warehouse failure",
+		"a generic warehouse error message (redacted for security)")
 	assert.Contains(t, *res.InclusionSummary, "NARROWER THAN INTENDED")
 	assert.NotContains(t, *res.InclusionSummary, "Expected for a first-time event",
 		"an outage is NOT a first-time event; conflating them hides a rebuild that is needed")

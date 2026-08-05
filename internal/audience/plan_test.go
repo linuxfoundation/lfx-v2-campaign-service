@@ -62,6 +62,11 @@ func TestBuildPlan_FirstTimeEventStillBuilds(t *testing.T) {
 // but mean OPPOSITE things to an operator: the first is expected and final, the second means the
 // audience is narrower than intended and must be rebuilt. The log line rotates away; this note is
 // the durable record, so it has to say which one happened.
+//
+// The error message is redacted (safeErrorCause) to avoid persisting sensitive warehouse
+// connection details or driver errors into the API response or stored InclusionSummary. The
+// detailed cause is still available in the contextual log line (slog.WarnContext) if the log
+// sink is trusted, but the response/storage gets only a generic warehouse failure message.
 func TestBuildPlan_WarehouseErrorGetsTheOutageNote(t *testing.T) {
 	p, err := BuildPlan(PlanInput{
 		EventName:       "KubeCon Korea 2026",
@@ -75,8 +80,10 @@ func TestBuildPlan_WarehouseErrorGetsTheOutageNote(t *testing.T) {
 	joined := strings.Join(p.Notes, "\n")
 	assert.Contains(t, joined, "NARROWER THAN INTENDED",
 		"an operator must be told to rebuild; without this the audience looks final")
-	assert.Contains(t, joined, "bad private key",
-		"the underlying cause must survive into the record, not just the boot log")
+	assert.Contains(t, joined, "warehouse failure",
+		"the note must record that a warehouse error occurred, without exposing sensitive details")
+	assert.NotContains(t, joined, "bad private key",
+		"sensitive error details (key material, DSN) must not be persisted in the response/storage")
 	assert.NotContains(t, joined, "Expected for a first-time event",
 		"a warehouse outage must NOT borrow the first-time-event note: that note tells the "+
 			"operator nothing is wrong, which is the exact wrong conclusion here")

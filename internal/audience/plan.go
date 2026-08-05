@@ -4,10 +4,46 @@
 package audience
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 )
+
+// safeErrorCause renders a URL-free, DSN-free description of a warehouse error. Connection
+// strings and transport errors from the gosnowflake driver can carry sensitive details (account
+// names, user names, key material); this function strips them by rendering only well-known,
+// safe cases, collapsing everything else to a generic failure message.
+//
+// The function follows the pattern established by the HubSpot and Microsoft clients to avoid
+// persisting sensitive warehouse credentials or connection errors into the API response or
+// stored InclusionSummary.
+func safeErrorCause(err error) string {
+	if err == nil {
+		return "warehouse failure"
+	}
+	// Context outcomes are safe, well-known — surface them precisely.
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "warehouse request canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "warehouse request deadline exceeded"
+	}
+	// A timeout is common and worth naming, but never the error text.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "warehouse query timeout"
+	}
+	// Connection closed (EOF) is worth distinguishing.
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "warehouse connection closed"
+	}
+	// Anything else — including driver errors with DSN/connection details — collapses to generic.
+	return "warehouse failure"
+}
 
 // Group identifies one inclusion list in the regional-expansion model. The numbering matches
 // the operational runbook so a built audience can be reconciled against it by eye.
@@ -160,7 +196,7 @@ func BuildPlan(in PlanInput) (*Plan, error) {
 		// rebuilt once the lookup works — the opposite conclusion from a first-time event, so it
 		// must not share that note.
 		p.Notes = append(p.Notes,
-			"Past editions could NOT be resolved (warehouse error: "+in.PastEditionsErr.Error()+"). "+
+			"Past editions could NOT be resolved (warehouse error: "+safeErrorCause(in.PastEditionsErr)+"). "+
 				"Groups 5 and 7 (past-edition registrants) were not built, so this audience is "+
 				"NARROWER THAN INTENDED for a returning event — rebuild it once the lookup succeeds.")
 	case len(editions) == 0:
