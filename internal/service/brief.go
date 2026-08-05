@@ -542,13 +542,12 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// persist then loses — the platform and the row diverge even though this edit
 	// and that toggle were each individually consistent. Claiming here makes every
 	// campaign writer serialize through the same version-gated mutex.
-	claimed, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
-	if cerr != nil {
+	if _, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version); cerr != nil {
 		return nil, mapBriefErr(cerr)
 	}
 	// Ensure lock is released even if a panic or context cancellation occurs.
-	defer campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID) //nolint:errcheck
-	existing.Version = claimed.Version
+	defer func() { _ = campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID) }()
+
 	existing.CampaignName = p.Campaign.CampaignName
 	// Only overwrite the stored config when the caller actually supplied one.
 	// config is optional in CampaignUpdateInput, so an omitted value must leave
@@ -558,6 +557,10 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
+	// Gate the final write on the original claimed version. The claim acquired
+	// the lock but did NOT bump the version; ReplaceCampaign will bump it
+	// (from version to version+1) inside the outbox transaction, preserving the
+	// invariant that every campaign write co-commits its index event.
 	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
@@ -587,6 +590,17 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// Check the If-Match version against the LOADED row BEFORE any state checks or platform
+	// calls. Without this, a stale If-Match is validated against a row the client never saw:
+	// a concurrent UpdateCampaign can change existing.Status or other fields between the
+	// client's read and this request, and the status-mismatch check below would then compare
+	// the client's (now-stale) status field against the NEW existing.Status and return 400
+	// ("use the status-toggle endpoint") for what is actually a stale-ETag conflict —
+	// misreporting a 412 as a 400.
+	if existing.Version != version {
+		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
+	}
+
 	// Only a fully-created campaign (or one already in a run state) may be toggled. A
 	// "pending" ambiguous orphan or a "created_degraded" campaign (a sub-step still needs
 	// reconciliation) must NOT be toggled: doing so would activate an incomplete campaign
@@ -618,14 +632,15 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// diverged with no compensating rollback. The atomic claim closes that: only one caller can
 	// ever win a given expectedVersion, so the loser is rejected here, before either the
 	// platform is called or a claim is granted for anyone else to race against.
-	claimed, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
-	if cerr != nil {
+	if _, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version); cerr != nil {
 		return nil, mapBriefErr(cerr)
 	}
-	// Ensure lock is released even if a panic or context cancellation occurs. The lock
-	// guards the platform-call window, so it must not outlive this function.
-	defer campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID) //nolint:errcheck
-	existing.Version = claimed.Version
+	// Defer lock release: it MUST NOT be released until after persistence, and it MUST use
+	// a detached context because persistence will run on context.WithoutCancel after the
+	// platform call succeeds (to persist even if the request is cancelled). ReleaseCampaignLock
+	// internally uses context.WithoutCancel to guarantee the unlock runs even if the caller's
+	// context is cancelled.
+	defer func() { _ = campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID) }()
 
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
 	// lie that the campaign is paused when the platform still has it running).
@@ -681,6 +696,10 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	existing.Status = p.Status
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancel()
+	// Gate the final write on the original claimed version. The claim acquired the lock but
+	// did NOT bump the version; ReplaceCampaign will bump it (from version to version+1)
+	// inside the outbox transaction, preserving the invariant that every campaign write
+	// co-commits its index event.
 	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		// The platform WAS changed but the row write failed → platform and DB now diverge.

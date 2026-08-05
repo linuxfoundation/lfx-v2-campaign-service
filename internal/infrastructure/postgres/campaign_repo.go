@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -347,42 +349,62 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	return updated, nil
 }
 
-// ClaimCampaignVersion atomically bumps a campaign's version, gated on
-// expectedVersion, and returns the row at its new version. The UPDATE and row
-// read are atomic via RETURNING, so no separate re-fetch can be interleaved by
-// a concurrent writer.
+var activeCampaignLocks sync.Map // maps campaignID to *campaignLock
+
+// campaignLock holds the session-scoped advisory lock for a campaign.
+type campaignLock struct {
+	conn    *pgxpool.Conn
+	lockKey int64
+}
+
+// ClaimCampaignVersion gates a writer's exclusive access to a campaign version,
+// enforcing that only one writer can win a given expectedVersion. It acquires an
+// advisory lock on a dedicated connection and returns the campaign row at the
+// current version; the caller is responsible for gating all mutations on this
+// version number until the lock is released.
 //
-// Serialization is enforced via Postgres advisory locks, which prevents
-// concurrent writers from claiming and executing side-effecting calls (e.g.,
-// platform toggling) on the same campaign row simultaneously. Only the lock
-// holder can proceed to call external services or perform ReplaceCampaign with
-// the claimed version; any other caller attempting to claim while a lock is held
-// will wait for it to be released. Locks are released when the claim's associated
-// ReplaceCampaign completes or when the request context is cancelled.
+// Serialization is enforced via Postgres advisory locks held on a dedicated
+// connection, which prevents concurrent writers from claiming and executing
+// side-effecting calls (e.g., platform toggling) on the same campaign row
+// simultaneously. Only the lock holder can proceed to call external services or
+// perform ReplaceCampaign with the claimed version; any other caller attempting
+// to claim while a lock is held will wait for it to be released.
 //
-// Note: Callers MUST call ReleaseCampaignLock after claiming, either explicitly
-// or via defer, to ensure locks are released. Failure to do so will block other
-// writers indefinitely.
+// The lock is stored in a package-level map and MUST be released via
+// ReleaseCampaignLock to unblock other writers. Failure to release will strand
+// the session lock.
+//
+// CRITICAL: the version bump itself happens in ReplaceCampaign, not in this claim.
+// This keeps the version increment inside the outbox transaction, preserving the
+// invariant that EVERY campaign write co-commits its index event (see
+// campaign_repo.go:273-278).
 func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, error) {
-	// Acquire an advisory lock for this campaign to serialize concurrent writers.
-	// Use a deterministic hash of the campaign ID so the same campaign always gets
-	// the same lock key. Advisory locks are session-scoped and automatically released
-	// on connection close or explicit unlock.
+	// Acquire a dedicated connection from the pool. This connection is held for the
+	// duration of the claim and must be released by ReleaseCampaignLock on the same
+	// session (advisory locks are connection-scoped).
+	conn, err := r.db.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire connection for claim: %w", err)
+	}
+
+	// Acquire an advisory lock on the dedicated connection. Use a deterministic
+	// hash of the campaign ID so the same campaign always gets the same lock key.
 	lockKey := int64(hashCampaignID(campaignID))
-	if _, err := r.db.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
+		conn.Release()
 		return nil, fmt.Errorf("claim advisory lock: %w", err)
 	}
-	// Store the lock key in context so ReleaseCampaignLock can clean it up.
-	// (In practice, we'll rely on defer in the caller, but this documents the
-	// contract.)
 
-	q := `UPDATE campaigns SET version=version+1, updated_at=now()
-		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4
-		RETURNING ` + campaignCols
-	c, err := scanCampaign(r.db.QueryRow(ctx, q, campaignID, briefID, projectID, expectedVersion))
+	// Read the campaign at the expected version. Do NOT bump the version yet; that
+	// happens in ReplaceCampaign so it co-commits with the outbox message.
+	q := `SELECT ` + campaignCols + ` FROM campaigns
+		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
+	c, err := scanCampaign(conn.QueryRow(ctx, q, campaignID, briefID, projectID, expectedVersion))
 	if err != nil {
-		// On error, release the lock immediately since we won't proceed.
-		_ = r.ReleaseCampaignLock(ctx, campaignID)
+		// Release the lock immediately on error.
+		_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockKey)
+		conn.Release()
+
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Disambiguate: not-found vs. precondition-failed by checking if the row exists
 			// at any version. If GetCampaign returns not-found, the row is gone; if it
@@ -399,17 +421,46 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 		}
 		return nil, fmt.Errorf("claim campaign version: %w", err)
 	}
+
+	// Store the lock in the package-level map. The advisory lock ensures only
+	// one writer can hold a lock for a given campaign at a time, so this map
+	// is safe from concurrent modification for the same key.
+	activeCampaignLocks.Store(campaignID, &campaignLock{
+		conn:    conn,
+		lockKey: lockKey,
+	})
+
 	return c, nil
 }
 
 // ReleaseCampaignLock releases the advisory lock held by ClaimCampaignVersion.
-// Callers MUST call this after claiming, either directly or via defer, to allow
-// other writers to proceed. If this is not called, the lock remains held for the
-// duration of the connection, blocking all other campaign writers indefinitely.
+// It is a no-op if no lock is held for this campaign. Callers MUST call this
+// after claiming, either directly or via defer, to allow other writers to proceed.
 func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, campaignID string) error {
-	lockKey := int64(hashCampaignID(campaignID))
-	_, err := r.db.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockKey)
-	return err
+	val, ok := activeCampaignLocks.LoadAndDelete(campaignID)
+	if !ok {
+		// No lock held for this campaign. This is not necessarily an error;
+		// it can happen if claim failed.
+		return nil
+	}
+
+	lock := val.(*campaignLock)
+
+	// Release on a bounded detached context to guarantee the unlock runs even
+	// if the original context was cancelled (which may happen during platform
+	// calls or other operations with independent lifecycle).
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	if _, err := lock.conn.Exec(releaseCtx, "SELECT pg_advisory_unlock($1)", lock.lockKey); err != nil {
+		// Log but don't fail completely; the connection will be released
+		// and the lock will be cleaned up when the connection is returned to
+		// the pool (advisory locks are held per-session).
+		slog.WarnContext(ctx, "failed to release campaign advisory lock",
+			"campaign_id", campaignID, "error", err)
+	}
+	lock.conn.Release()
+	return nil
 }
 
 // hashCampaignID returns a stable hash of a campaign ID suitable for use as a

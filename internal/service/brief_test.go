@@ -860,7 +860,13 @@ func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string
 	cp := *r.got
 	return &cp, nil
 }
-func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	// Mirror the real implementation: gate on expectedVersion and bump the version.
+	if r.got.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	r.got.Version++
+	c.Version = r.got.Version
 	r.replaced = c
 	if indexPayload == nil {
 		return c, nil
@@ -873,8 +879,8 @@ func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaig
 	return c, nil
 }
 
-// ClaimCampaignVersion mirrors the real atomic version-gated bump against r.got,
-// the same backing row GetCampaign clones from.
+// ClaimCampaignVersion mirrors the real implementation: it gates on expectedVersion
+// and acquires a lock, but does NOT bump the version (that happens in ReplaceCampaign).
 func (r *toggleCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, _ string, expectedVersion int64) (*model.Campaign, error) {
 	if r.claimStatusErr != nil {
 		return nil, r.claimStatusErr
@@ -882,7 +888,7 @@ func (r *toggleCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, _ str
 	if r.got.Version != expectedVersion {
 		return nil, domain.ErrPreconditionFailed
 	}
-	r.got.Version++
+	// Return a copy of the campaign at the current version (no bump).
 	cp := *r.got
 	return &cp, nil
 }
