@@ -224,7 +224,7 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	adGroupID, adID := microsoftChildIDs(campaign)
 	// ACTIVATE requires the FULL servable tree (campaign + ad group + ad). A degraded/partial
 	// create can persist a campaign with a missing child id; activating it would leave part of
-	// the tree Paused and unable to serve. Refuse before any PATCH and return
+	// the tree Paused and unable to serve. Refuse before any PUT and return
 	// ErrCampaignNotProvisioned so the service classifies it as a 409 state error (the platform
 	// is never called), not a 503 — mirrors the reddit/meta dispatchers. Pausing needs no child
 	// id — pausing the campaign already stops delivery.

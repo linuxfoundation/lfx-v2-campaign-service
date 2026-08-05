@@ -352,6 +352,7 @@ func msToggleCampaign(campaignID, adGroupID, adID string) *model.Campaign {
 // (all three are PAUSED at creation, so a partial toggle would not serve).
 func TestMicrosoft_ToggleStatus_CascadesToTree(t *testing.T) {
 	type call struct{ method, path, status string }
+	var mu sync.Mutex
 	var got []call
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -375,7 +376,9 @@ func TestMicrosoft_ToggleStatus_CascadesToTree(t *testing.T) {
 		case len(body.Ads) > 0:
 			status = body.Ads[0].Status
 		}
+		mu.Lock()
 		got = append(got, call{r.Method, r.URL.Path, status})
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 	}))
@@ -399,6 +402,8 @@ func TestMicrosoft_ToggleStatus_CascadesToTree(t *testing.T) {
 		{http.MethodPut, "/CampaignManagement/v13/AdGroups", microsoft.StatusPaused},
 		{http.MethodPut, "/CampaignManagement/v13/Ads", microsoft.StatusPaused},
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if len(got) != len(want) {
 		t.Fatalf("issued %d PUTs, want %d: %+v", len(got), len(want), got)
 	}

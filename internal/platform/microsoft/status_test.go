@@ -10,13 +10,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
 // statusRecorder returns a test API server that records each Status PUT (method, path,
-// status) in call order, plus a client wired to it and a token server.
-func statusRecorder(t *testing.T, got *[]struct{ method, path, status string }) *Client {
+// status) in call order, plus a client wired to it and a token server. The returned
+// mutex guards got — the caller must hold it before reading got once the exercised
+// call returns.
+func statusRecorder(t *testing.T, got *[]struct{ method, path, status string }) (*Client, *sync.Mutex) {
 	t.Helper()
+	var mu sync.Mutex
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Campaigns []msStatusUpdate `json:"Campaigns"`
@@ -33,14 +37,16 @@ func statusRecorder(t *testing.T, got *[]struct{ method, path, status string }) 
 		case len(body.Ads) > 0:
 			status = body.Ads[0].Status
 		}
+		mu.Lock()
 		*got = append(*got, struct{ method, path, status string }{r.Method, r.URL.Path, status})
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"PartialErrors":[]}`))
 	}))
 	t.Cleanup(apiSrv.Close)
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
-	return NewClient(testCreds(), testAccount(), WithBaseURL(apiSrv.URL), WithTokenURL(tokenSrv.URL), WithClock(fixedClock()))
+	return NewClient(testCreds(), testAccount(), WithBaseURL(apiSrv.URL), WithTokenURL(tokenSrv.URL), WithClock(fixedClock())), &mu
 }
 
 // TestUpdateCampaignAndChildrenStatus_ActivateIsChildrenFirst verifies that on ACTIVATE the
@@ -49,7 +55,7 @@ func statusRecorder(t *testing.T, got *[]struct{ method, path, status string }) 
 func TestUpdateCampaignAndChildrenStatus_ActivateIsChildrenFirst(t *testing.T) {
 	type patch = struct{ method, path, status string }
 	var got []patch
-	c := statusRecorder(t, &got)
+	c, mu := statusRecorder(t, &got)
 
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "111", "222", "333", StatusActive); err != nil {
 		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
@@ -59,6 +65,8 @@ func TestUpdateCampaignAndChildrenStatus_ActivateIsChildrenFirst(t *testing.T) {
 		{http.MethodPut, "/CampaignManagement/v13/AdGroups", StatusActive},
 		{http.MethodPut, "/CampaignManagement/v13/Campaigns", StatusActive},
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if len(got) != len(want) {
 		t.Fatalf("issued %d PUTs, want %d: %+v", len(got), len(want), got)
 	}
@@ -74,7 +82,7 @@ func TestUpdateCampaignAndChildrenStatus_ActivateIsChildrenFirst(t *testing.T) {
 func TestUpdateCampaignAndChildrenStatus_PauseIsCampaignFirst(t *testing.T) {
 	type patch = struct{ method, path, status string }
 	var got []patch
-	c := statusRecorder(t, &got)
+	c, mu := statusRecorder(t, &got)
 
 	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "111", "222", "333", StatusPaused); err != nil {
 		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
@@ -84,6 +92,8 @@ func TestUpdateCampaignAndChildrenStatus_PauseIsCampaignFirst(t *testing.T) {
 		{http.MethodPut, "/CampaignManagement/v13/AdGroups", StatusPaused},
 		{http.MethodPut, "/CampaignManagement/v13/Ads", StatusPaused},
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if len(got) != len(want) {
 		t.Fatalf("issued %d PUTs, want %d: %+v", len(got), len(want), got)
 	}
