@@ -594,7 +594,7 @@ pacingLabel: string             — underspending | normal | constrained | overs
 - Token refresh with expiry buffer (tokens expire; must refresh before expiry)
 - Subreddit targeting uses subreddit **names** (the `r/` prefix stripped), not `t5_` IDs — the Ads API `communities` field rejects `t5_` values as "invalid communities" (matches the reference TS implementation, which sends the stripped names directly); if any supplied name is invalid the ad-group create falls back to keyword/geo-only targeting with a warning rather than orphaning the PAUSED campaign
 - Account must be whitelisted in runtime config
-- **Metrics reads are UNVERIFIED (LFXV2-2995)**: Reddit's v3 reporting endpoint has no public documentation (unlike Google/Meta/LinkedIn/X, which have public specs). The `POST /ad_accounts/{account_id}/reports` request/response shape is inferred from this client's own proven `{"data": ...}` conventions, not from Reddit's real (gated) contract — treat every field name as a placeholder pending official API access. See [internal/platform/reddit](../internal/platform/reddit) knowledge doc.
+- **Metrics reads are UNVERIFIED (LFXV2-2995)**: Reddit's v3 reporting endpoint has no public documentation (unlike Google/Meta/LinkedIn/X, which have public specs). The `POST /ad_accounts/{account_id}/reports` request/response shape is inferred from this client's own proven `{"data": ...}` conventions, not from Reddit's real (gated) contract — treat every field name as a placeholder pending official API access. See [internal/platform/reddit](knowledge/code/internal-platform-reddit.md) knowledge doc.
 
 ### X/Twitter Ads
 - OAuth 1.0a with HMAC-SHA1 signing (not OAuth 2.0)

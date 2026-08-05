@@ -101,7 +101,13 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		metrics.Clicks += row.Clicks
 		if row.Spend != "" {
 			spend, err := strconv.ParseFloat(row.Spend, 64)
-			if err != nil {
+			// ParseFloat accepts "NaN"/"Inf" as valid floats, and a finite-but-huge value
+			// overflows the micros conversion below — reject both as the same malformed-
+			// response error used elsewhere, rather than letting either corrupt CostMicros.
+			if err != nil || math.IsNaN(spend) || math.IsInf(spend, 0) || spend < 0 || spend > math.MaxInt64/1_000_000 {
+				if err == nil {
+					err = fmt.Errorf("out of range")
+				}
 				return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: invalid spend %q: %w", row.Spend, err)}
 			}
 			// GUESSED: spend is assumed to be a decimal-currency string (mirroring Meta/

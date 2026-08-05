@@ -628,3 +628,62 @@ func TestReddit_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
 		t.Errorf("expected err to still wrap reddit.ErrUnsupportedWindow, got: %v", err)
 	}
 }
+
+// TestReddit_ReadMetrics_Success verifies the happy path: resolveRedditClient succeeds
+// and ReadMetrics delegates to the client, returning its result unmodified.
+func TestReddit_ReadMetrics_Success(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"t3_c","impressions":1000,"clicks":10,"spend":"5.00"}]}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+	)
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderRedditAds,
+		toggleCampaign("t3_c", "t5_ag", "t6_ad"),
+		model.MetricsWindowToday,
+	)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if metrics.Impressions != 1000 || metrics.Clicks != 10 || metrics.CostMicros != 5_000_000 {
+		t.Errorf("unexpected metrics: %+v", metrics)
+	}
+}
+
+// TestReddit_ReadMetrics_MissingPlatformCampaignID verifies the guard against dispatching
+// to a campaign that was never provisioned (or is otherwise missing its platform id) —
+// resolveRedditClient is never reached, and the connection is never contacted.
+func TestReddit_ReadMetrics_MissingPlatformCampaignID(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	camp := toggleCampaign("", "t5_ag", "t6_ad")
+	_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderRedditAds, camp, model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("expected an error for a campaign with no platform campaign ID")
+	}
+}
+
+// TestReddit_ReadMetrics_ResolutionErrorPropagates verifies that a connection-resolution
+// failure (e.g. no connection on file) is returned to the caller instead of being masked.
+func TestReddit_ReadMetrics_ResolutionErrorPropagates(t *testing.T) {
+	wantErr := errors.New("connection lookup failed")
+	d := NewRedditDispatcher(fakeConnReader{err: wantErr}, identityEncryptor{})
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderRedditAds,
+		toggleCampaign("t3_c", "t5_ag", "t6_ad"),
+		model.MetricsWindowToday,
+	)
+	if !errors.Is(err, wantErr) {
+		t.Errorf("expected the resolution error to propagate, got: %v", err)
+	}
+}

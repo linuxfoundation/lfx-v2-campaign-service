@@ -127,9 +127,11 @@ real endpoint. `dateRangeForWindow` maps the shared `model.MetricsWindow` litera
 (`today`/`last_7_days`/`last_30_days`/`this_month`/`last_month`) to a `YYYY-MM-DD` start/end
 pair, handling the last-month-at-month-end boundary the same way the LinkedIn client's
 `dateRangeForWindow` does. `ErrInvalidCampaignID`/`ErrUnsupportedWindow` are typed sentinels
-(`errors.Is`-discriminable), matching the LinkedIn/X metrics clients' convention. A missing
-or zero-row response is real "no activity", not an error. CTR is clicks/impressions, 0 when
-impressions is 0.
+(`errors.Is`-discriminable), matching the LinkedIn/X metrics clients' convention. An explicit
+empty `data` array is real "no activity", not an error — but a missing/malformed `data`
+field is NOT: `json.Unmarshal` on the resulting nil/empty bytes fails decode, and that
+surfaces as the same transport/decode error used for any other malformed metrics response,
+not as zero-activity. CTR is clicks/impressions, 0 when impressions is 0.
 
 The `model.MetricsWindow`/`model.CampaignMetrics` types and the `service.MetricsReader`
 interface this depends on are NOT yet on `main` (GA-5, PR #70, is still an open, unmerged

@@ -22,6 +22,16 @@ branch was cut directly from `main` (GA-5/#70 is still an open, unmerged epic-st
 carries its own copy of that scaffold, mirroring the Meta/LinkedIn/X metrics branches. No live
 `Orchestrator.ReadCampaignMetrics` type-assertion caller exists yet on any of these branches;
 that wiring lands when they're reconciled.
+
+**Update** — Review fixes on PR #75: `GetCampaignMetrics` now rejects non-finite (`NaN`/`Inf`),
+negative, and out-of-range `spend` values before converting to micros, instead of letting a
+malformed upstream value silently corrupt `CostMicros`; `metrics_test.go`'s httptest handlers use
+`t.Error` instead of `t.Fatal` (`FailNow` is only valid on the test goroutine); the knowledge doc
+now distinguishes an explicit empty `data` array (real "no activity") from a missing/malformed
+`data` field (a decode error, not zero-activity); `api-catalog.md`'s knowledge-doc link points at
+the actual doc instead of the source directory; and `internal/dispatch/reddit_test.go` gained
+`ReadMetrics` coverage for the success path, the missing-platform-campaign-id guard, and
+connection-resolution error propagation.
 **Add** — Metrics-read foundation PR (LFXV2-3001): platform-agnostic `MetricsReader`
 capability, `model.MetricsWindow`/`CampaignMetrics`, `ErrMetricsUnsupported`, and the
 `GET .../campaigns/{id}/metrics` endpoint, landed once as a shared layer.

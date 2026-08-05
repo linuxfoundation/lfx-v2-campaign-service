@@ -114,7 +114,7 @@ func TestGetCampaignMetrics_NoActivity(t *testing.T) {
 
 func TestGetCampaignMetrics_EmptyCampaignID(t *testing.T) {
 	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("request should not reach the server for an invalid campaign id")
+		t.Error("request should not reach the server for an invalid campaign id")
 	})
 
 	_, err := client.GetCampaignMetrics(context.Background(), "", model.MetricsWindowToday)
@@ -125,7 +125,7 @@ func TestGetCampaignMetrics_EmptyCampaignID(t *testing.T) {
 
 func TestGetCampaignMetrics_InvalidCampaignIDCharacters(t *testing.T) {
 	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("request should not reach the server for a path-injection-shaped id")
+		t.Error("request should not reach the server for a path-injection-shaped id")
 	})
 
 	_, err := client.GetCampaignMetrics(context.Background(), "123/../other", model.MetricsWindowToday)
@@ -136,7 +136,7 @@ func TestGetCampaignMetrics_InvalidCampaignIDCharacters(t *testing.T) {
 
 func TestGetCampaignMetrics_UnsupportedWindow(t *testing.T) {
 	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("request should not reach the server for an unsupported window")
+		t.Error("request should not reach the server for an unsupported window")
 	})
 
 	_, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindow("last_90_days"))
