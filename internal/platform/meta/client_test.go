@@ -4278,7 +4278,7 @@ func TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst(t *testing.T)
 // matched campaign's ID when found.
 func TestFindCampaignByName_Match(t *testing.T) {
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body := `{"data":[{"id":"camp_123"}]}`
+		body := `{"data":[{"id":"camp_123","status":"PAUSED"}]}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -4429,7 +4429,7 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 		switch {
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
 			// Existing campaign found by name.
-			body = `{"data":[{"id":"existing_camp_123"}]}`
+			body = `{"data":[{"id":"existing_camp_123","status":"PAUSED"}]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
@@ -4492,7 +4492,7 @@ func TestFindCampaignByName_PaginationEmptyFirstPage(t *testing.T) {
 			body = `{"data":[],"paging":{"cursors":{"after":"CUR2"},"next":"https://graph.example/x?after=CUR2"}}`
 		case callOrder == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
 			// Second call: match on second page.
-			body = `{"data":[{"id":"camp_from_page_2"}],"paging":{}}`
+			body = `{"data":[{"id":"camp_from_page_2","status":"PAUSED"}],"paging":{}}`
 		default:
 			t.Errorf("unexpected call %d: %s %s", callOrder, req.Method, req.URL.Path)
 			return &http.Response{StatusCode: http.StatusNotFound}, nil
@@ -4579,7 +4579,7 @@ func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
 			if !strings.Contains(req.URL.RawQuery, "after=OPAQUE_CURSOR") {
 				t.Errorf("pagination did not use the cursor; query: %q", req.URL.RawQuery)
 			}
-			body = `{"data":[{"id":"camp_found"}]}`
+			body = `{"data":[{"id":"camp_found","status":"PAUSED"}]}`
 		default:
 			t.Errorf("unexpected call %d: %s %s", callOrder, req.Method, req.URL.Path)
 			return &http.Response{StatusCode: http.StatusNotFound}, nil

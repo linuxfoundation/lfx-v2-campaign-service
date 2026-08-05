@@ -443,14 +443,21 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 	if err != nil {
 		return "", fmt.Errorf("meta campaign lookup: encoding name filter: %w", err)
 	}
-	basePath := "/" + accountID + "/campaigns?fields=id&filtering=" + url.QueryEscape(string(filtering))
+	basePath := "/" + accountID + "/campaigns?fields=id,status&filtering=" + url.QueryEscape(string(filtering))
 
 	// Follow pagination like listAdIDs does, so an empty first page with a next link
 	// doesn't trick us into missing a match on a later page. Meta's Graph API can
 	// return an empty first page under filtering (visibility/privacy constraints)
 	// but still have results on subsequent pages.
+	// Accumulate all matches across all pages before deciding if the lookup is
+	// ambiguous or returns a unique campaign ID.
+	var allMatches []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
 	after := ""
-	for page := 0; page < adDiscoveryMaxPages; page++ {
+	page := 0
+	for page < adDiscoveryMaxPages {
 		path := basePath
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
@@ -460,7 +467,8 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 			// distinguishable from a present-but-empty `{"data":[]}` — see listAdIDs'
 			// identical reasoning. A malformed body must NOT be read as "no match".
 			Data *[]struct {
-				ID string `json:"id"`
+				ID     string `json:"id"`
+				Status string `json:"status"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -476,30 +484,49 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 			return "", fmt.Errorf("meta campaign lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
 		}
 		if len(*resp.Data) > 0 {
-			// Multiple matches mean name is not a unique identifier — we can't
-			// tell which is the intended campaign. Fail closed rather than
-			// silently pick the first one, which could attach to an unrelated
-			// campaign.
-			if len(*resp.Data) > 1 {
-				return "", fmt.Errorf("meta campaign lookup for %q matched %d existing campaigns; cannot disambiguate which is intended: %w", name, len(*resp.Data), errLookupAmbiguous)
-			}
-			id := strings.TrimSpace((*resp.Data)[0].ID)
-			if id == "" {
-				return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id: %w", name, errLookupAmbiguous)
-			}
-			return id, nil
+			allMatches = append(allMatches, *resp.Data...)
 		}
-		// Empty page; check for more pages.
+		// Empty page or final page; check for more pages.
 		if resp.Paging.Next == "" {
-			return "", nil // fully enumerated, no match found
+			break // fully enumerated
 		}
 		after = strings.TrimSpace(resp.Paging.Cursors.After)
 		if after == "" {
 			return "", fmt.Errorf("meta campaign lookup for %q has more pages but no cursor; cannot guarantee the campaign name is absent", name)
 		}
+		page++
 	}
-	// Reached page cap with pagination still pending: fail closed.
-	return "", fmt.Errorf("meta campaign lookup for %q exceeded %d pages; too many campaigns with that name to enumerate", name, adDiscoveryMaxPages)
+	if page >= adDiscoveryMaxPages && after != "" {
+		// Reached page cap with pagination still pending: fail closed.
+		return "", fmt.Errorf("meta campaign lookup for %q exceeded %d pages; too many campaigns with that name to enumerate", name, adDiscoveryMaxPages)
+	}
+
+	// No matches found.
+	if len(allMatches) == 0 {
+		return "", nil
+	}
+
+	// Multiple matches mean name is not a unique identifier — we can't
+	// tell which is the intended campaign. Fail closed rather than
+	// silently pick the first one, which could attach to an unrelated
+	// campaign.
+	if len(allMatches) > 1 {
+		return "", fmt.Errorf("meta campaign lookup for %q matched %d existing campaigns; cannot disambiguate which is intended: %w", name, len(allMatches), errLookupAmbiguous)
+	}
+
+	// Single match: validate status=PAUSED and return the campaign ID.
+	id := strings.TrimSpace(allMatches[0].ID)
+	if id == "" {
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id: %w", name, errLookupAmbiguous)
+	}
+	// Validate the matched campaign is in PAUSED state to avoid reusing an
+	// unrelated ACTIVE or differently-objective campaign if this is ever called
+	// again with the same name by a different brief.
+	status := strings.TrimSpace(allMatches[0].Status)
+	if status != "PAUSED" {
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with status=%q (expected PAUSED); cannot reuse a campaign with unexpected status: %w", name, status, errLookupAmbiguous)
+	}
+	return id, nil
 }
 
 // findAdSetByName mirrors findCampaignByName, scoped to the ad sets under a
@@ -510,19 +537,27 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 	if err != nil {
 		return "", fmt.Errorf("meta ad set lookup: encoding name filter: %w", err)
 	}
-	basePath := "/" + campaignID + "/adsets?fields=id&filtering=" + url.QueryEscape(string(filtering))
+	basePath := "/" + campaignID + "/adsets?fields=id,status&filtering=" + url.QueryEscape(string(filtering))
 
 	// Follow pagination like listAdIDs does, so an empty first page with a next link
 	// doesn't trick us into missing a match on a later page.
+	// Accumulate all matches across all pages before deciding if the lookup is
+	// ambiguous or returns a unique ad set ID.
+	var allMatches []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
 	after := ""
-	for page := 0; page < adDiscoveryMaxPages; page++ {
+	page := 0
+	for page < adDiscoveryMaxPages {
 		path := basePath
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
 		var resp struct {
 			Data *[]struct {
-				ID string `json:"id"`
+				ID     string `json:"id"`
+				Status string `json:"status"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -538,30 +573,49 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 			return "", fmt.Errorf("meta ad set lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
 		}
 		if len(*resp.Data) > 0 {
-			// Multiple matches mean name is not a unique identifier — we can't
-			// tell which is the intended ad set. Fail closed rather than
-			// silently pick the first one, which could attach newly created ads
-			// to an unrelated ad set.
-			if len(*resp.Data) > 1 {
-				return "", fmt.Errorf("meta ad set lookup for %q matched %d existing ad sets; cannot disambiguate which is intended: %w", name, len(*resp.Data), errLookupAmbiguous)
-			}
-			id := strings.TrimSpace((*resp.Data)[0].ID)
-			if id == "" {
-				return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id: %w", name, errLookupAmbiguous)
-			}
-			return id, nil
+			allMatches = append(allMatches, *resp.Data...)
 		}
-		// Empty page; check for more pages.
+		// Empty page or final page; check for more pages.
 		if resp.Paging.Next == "" {
-			return "", nil // fully enumerated, no match found
+			break // fully enumerated
 		}
 		after = strings.TrimSpace(resp.Paging.Cursors.After)
 		if after == "" {
 			return "", fmt.Errorf("meta ad set lookup for %q has more pages but no cursor; cannot guarantee the ad set name is absent", name)
 		}
+		page++
 	}
-	// Reached page cap with pagination still pending: fail closed.
-	return "", fmt.Errorf("meta ad set lookup for %q exceeded %d pages; too many ad sets with that name to enumerate", name, adDiscoveryMaxPages)
+	if page >= adDiscoveryMaxPages && after != "" {
+		// Reached page cap with pagination still pending: fail closed.
+		return "", fmt.Errorf("meta ad set lookup for %q exceeded %d pages; too many ad sets with that name to enumerate", name, adDiscoveryMaxPages)
+	}
+
+	// No matches found.
+	if len(allMatches) == 0 {
+		return "", nil
+	}
+
+	// Multiple matches mean name is not a unique identifier — we can't
+	// tell which is the intended ad set. Fail closed rather than
+	// silently pick the first one, which could attach newly created ads
+	// to an unrelated ad set.
+	if len(allMatches) > 1 {
+		return "", fmt.Errorf("meta ad set lookup for %q matched %d existing ad sets; cannot disambiguate which is intended: %w", name, len(allMatches), errLookupAmbiguous)
+	}
+
+	// Single match: validate status=PAUSED and return the ad set ID.
+	id := strings.TrimSpace(allMatches[0].ID)
+	if id == "" {
+		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id: %w", name, errLookupAmbiguous)
+	}
+	// Validate the matched ad set is in PAUSED state to avoid reusing an
+	// unrelated ACTIVE ad set if this is ever called again with the same name
+	// by a different brief.
+	status := strings.TrimSpace(allMatches[0].Status)
+	if status != "PAUSED" {
+		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with status=%q (expected PAUSED); cannot reuse an ad set with unexpected status: %w", name, status, errLookupAmbiguous)
+	}
+	return id, nil
 }
 
 // accountPreflight models the fields read from the ad-account object during the
