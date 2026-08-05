@@ -263,10 +263,15 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if err != nil {
 		return err
 	}
-	adGroupID, adID := googleAdsChildIDs(campaign)
-	if gaStatus == googleads.StatusEnabled && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
-		return fmt.Errorf("%w: google ads campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	// Refuse ACTIVATE: GA-3b creates ad group + ad but NO targeting criteria. A campaign
+	// without keywords/audience targeting cannot deliver, so activating reports false
+	// success (exactly what ErrCampaignNotProvisioned prevents). Activation will be
+	// reconsidered in GA-4 once targeting provisioning is implemented and the Result blob
+	// carries the targeting IDs.
+	if gaStatus == googleads.StatusEnabled {
+		return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword/audience targeting is not yet provisioned (GA-4 pending)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
+	adGroupID, adID := googleAdsChildIDs(campaign)
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
 	if err != nil {
 		return err
@@ -291,18 +296,25 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 			return nil
 		}
 		if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
-			return wrapUnconfirmed(uerr)
+			// After the campaign status succeeds, a child failure (even a definite 4xx) is a
+			// partial cascade: the parent changed but the child's outcome is unknown. Wrap it
+			// as Unconfirmed so the caller knows to verify the state before retry.
+			return &unconfirmedToggleError{err: uerr}
 		}
 		return nil
 	}
 
-	// ACTIVATE: children first (both ids are confirmed present by the guard above), campaign
-	// last — so the campaign only reports ENABLED once its ad group/ad already do.
+	// ACTIVATE (unreachable in GA-3c, re-enabled in GA-4): children first (both ids are
+	// confirmed present by the guard above), campaign last — so the campaign only reports
+	// ENABLED once its ad group/ad already do.
 	if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
-		return wrapUnconfirmed(uerr)
+		// Any failure once we're past the guard is a partial cascade.
+		return &unconfirmedToggleError{err: uerr}
 	}
 	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
-		return wrapUnconfirmed(uerr)
+		// After the children succeed, a campaign failure is a partial cascade: children are
+		// active but the parent's outcome is unknown.
+		return &unconfirmedToggleError{err: uerr}
 	}
 	return nil
 }
