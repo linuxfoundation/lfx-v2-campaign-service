@@ -2,7 +2,7 @@
 -- SPDX-License-Identifier: MIT
 
 -- Clear an INVALID idx_campaigns_stuck_claims left by a failed CONCURRENTLY build in
--- 000008. The rebuild itself lives in 000010, a separate migration file: the pgx/v5
+-- 000008. The rebuild itself lives in 000013, a separate migration file: the pgx/v5
 -- golang-migrate driver executes each file with a bare ExecContext and does NOT wrap
 -- it in a transaction, but it also does not split a file into per-statement
 -- executions — a file with more than one statement is sent to Postgres as one
@@ -42,7 +42,7 @@ BEGIN
           AND NOT i.indisvalid
     ) THEN
         EXECUTE 'DROP INDEX public.idx_campaigns_stuck_claims';
-        RAISE NOTICE 'dropped INVALID idx_campaigns_stuck_claims from a failed CONCURRENTLY build; 000010 will rebuild it';
+        RAISE NOTICE 'dropped INVALID idx_campaigns_stuck_claims from a failed CONCURRENTLY build; 000013 will rebuild it';
     END IF;
 END
 $$;

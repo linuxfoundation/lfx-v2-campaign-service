@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -78,18 +80,32 @@ func (notReady) Ready(context.Context) bool { return false }
 // HTTP-drain phase and this phase can't sum past it and get SIGKILLed. Validated by
 // the init() below.
 //
-// Sized so sweeperStopTimeout + dispatchDrainTimeout + CancelGracePeriod leaves a
-// positive HTTP-drain budget: CancelGracePeriod grew to cover the post-provider
-// persist AND the terminal finalize write (both detached, both must complete during
-// grace), so the drain window is trimmed to keep the total within DefaultShutdownTimeout.
-const dispatchDrainTimeout = 6 * time.Second
+// Sized so sweeperStopTimeout + relayStopTimeout + dispatchDrainTimeout +
+// CancelGracePeriod + indexer.DrainTimeout leaves a positive HTTP-drain budget:
+// CancelGracePeriod grew to cover the post-provider persist AND the terminal
+// finalize write (both detached, both must complete during grace), so the drain
+// window is trimmed to keep the total within DefaultShutdownTimeout. Trimmed again
+// (6s -> 4s) when indexer.DrainTimeout joined ContainerCloseTimeout, so the HTTP
+// phase keeps a positive budget rather than the total overrunning.
+//
+// relayStopTimeout bounds the wait for the index relay's in-flight pass at shutdown. Small
+// deliberately: this precedes the dispatch drain, and abandoning a pass is safe because
+// unpublished rows stay pending for the next process — that is what the outbox is for.
+const relayStopTimeout = 250 * time.Millisecond
+
+const dispatchDrainTimeout = 4 * time.Second
 
 // ContainerCloseTimeout is the wall-clock budget for Container.Close: the sweeper-stop
-// wait (sweeperStopTimeout), the orchestrator drain (dispatchDrainTimeout), plus its
-// post-cancel grace (service.CancelGracePeriod). The server budgets the HTTP-shutdown
+// wait (sweeperStopTimeout), the index relay's stop wait (relayStopTimeout), the
+// orchestrator drain (dispatchDrainTimeout), its post-cancel grace
+// (service.CancelGracePeriod), AND the index publisher's connection drain
+// (indexer.DrainTimeout). None of these terms are optional bookkeeping — Close really
+// does wait on all of them in sequence, so omitting any one understates the phase and
+// lets the two phases sum PAST DefaultShutdownTimeout, which is exactly the
+// SIGKILL-mid-drain this budget exists to prevent. The server budgets the HTTP-shutdown
 // phase and this container-close phase separately (see HTTPShutdownTimeout), so the
 // total graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
-const ContainerCloseTimeout = sweeperStopTimeout + dispatchDrainTimeout + service.CancelGracePeriod
+const ContainerCloseTimeout = sweeperStopTimeout + relayStopTimeout + dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout
 
 // HTTPShutdownTimeout is the wall-clock budget for draining in-flight HTTP
 // handlers before the container is closed. It is whatever remains of the overall
@@ -109,8 +125,10 @@ const HTTPShutdownTimeout = constants.DefaultShutdownTimeout - ContainerCloseTim
 const HandlerDrainTimeout = 2 * time.Second
 
 func init() {
-	if dispatchDrainTimeout+service.CancelGracePeriod > constants.DefaultShutdownTimeout {
-		panic("dispatchDrainTimeout + service.CancelGracePeriod exceeds DefaultShutdownTimeout")
+	// Every term Close actually spends must be inside the budget — including the index
+	// publisher's connection drain, which Close performs after the pool closes.
+	if ContainerCloseTimeout > constants.DefaultShutdownTimeout {
+		panic("ContainerCloseTimeout (dispatch drain + cancel grace + index drain) exceeds DefaultShutdownTimeout")
 	}
 	// The HTTP phase must have a positive budget once the container-close phase
 	// is reserved; otherwise HTTP handlers would get no drain window at all.
@@ -132,6 +150,16 @@ type Container struct {
 	mu   sync.Mutex
 	pool *postgres.Pool
 	orch *service.Orchestrator
+
+	// indexPublisher is built ONCE in NewContainer, before the fast-path/503-mode
+	// branch, and injected into every BriefService constructed on either path.
+	// Holding it here (rather than building it per-path) is what guarantees the
+	// two paths share one NATS connection and that Close can shut it down.
+	indexPublisher indexer.Publisher
+
+	// indexRelay drains the index outbox, delivering messages whose direct publish was lost
+	// (a process that died between the commit and the publish). Nil when there is no database.
+	indexRelay *indexer.Relay
 
 	// cancelSweep stops the periodic stuck-claim sweeper, and sweepDone is closed when
 	// it exits so Close can wait for it (both nil when no sweeper runs — i.e. when there
@@ -177,6 +205,18 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 
 	c := &Container{Config: cfg}
 
+	// Build the index publisher BEFORE any wiring branch. Indexing is independent of
+	// the database (a resource is published after its write commits), and there are
+	// THREE paths that construct a BriefService — no-database mode, the live fast
+	// path, and 503-mode + its background retry. Building it here and injecting the
+	// same instance everywhere is what stops a path from silently keeping the Noop
+	// and publishing nothing. It is a Noop when NATS is unconfigured or unreachable.
+	indexPub, iperr := newIndexPublisher(cfg)
+	if iperr != nil {
+		return nil, iperr
+	}
+	c.indexPublisher = indexPub
+
 	if cfg.DatabaseURL == "" {
 		slog.Warn("database URL not set; connection and brief/campaign endpoints will return 503 Service Unavailable")
 		c.Service = service.NewCampaignService(nil)
@@ -184,7 +224,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		// still mounted and return the typed 503 ServiceUnavailable advertised by
 		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
 		c.Connections = service.NewConnectionService(nil, nil)
-		c.Briefs = service.NewBriefService(nil, nil, nil, nil)
+		c.Briefs = c.newBriefService(nil, nil, nil, nil)
 		c.Audiences = service.NewAudienceService(nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
@@ -236,7 +276,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	// so brief + job routes go live without a pod restart.
 	campaign := service.NewCampaignService(notReady{})
 	connections := service.NewConnectionService(nil, enc)
-	briefs := service.NewBriefService(nil, nil, nil, nil)
+	briefs := c.newBriefService(nil, nil, nil, nil)
 	auds := service.NewAudienceService(nil)
 	c.Service = campaign
 	c.Connections = connections
@@ -514,9 +554,9 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// The startup scan can't see a claim stranded younger than the report age (the
 	// rolling-deploy case); a periodic sweep catches those. Stopped by Close.
 	c.startStuckClaimSweeper(campaignRepo)
-	orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
+	orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
-	c.Briefs = service.NewBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	c.Briefs = c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
 	c.Audiences = service.NewAudienceService(audienceRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
@@ -535,6 +575,11 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// stale cutoff (too new to look stuck at boot, never re-examined). A periodic
 	// sweep catches those; it stops on Shutdown via the orchestrator's root ctx.
 	orch.StartRecoverySweeper()
+
+	// Drain the index outbox: rows co-committed with their resource whose publish never
+	// landed. Without this a dropped message is lost, and a terminal write (archiving a
+	// brief) has no later write to repair the index.
+	c.setIndexRelay(indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken))
 
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
@@ -578,7 +623,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Start the periodic sweep here too. Safe without a lock for the same reason
 			// as c.orch below: Close waits on <-c.initDone before reading these fields.
 			c.startStuckClaimSweeper(campaignRepo)
-			orch := service.NewOrchestrator(campaignRepo, jobRepo, dispatchers)
+			orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers)
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
 			// goroutine returns) before it reads c.orch, so this write happens-before
 			// that read.
@@ -598,6 +643,10 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			}
 			cancelRecover()
 			orch.StartRecoverySweeper()
+
+			// Same relay as the fast path (see wireLiveBackends). Written under c.mu: this runs
+			// on the init goroutine while Close may be reading the field concurrently.
+			c.setIndexRelay(indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken))
 			// Flip readiness LAST, so /readyz only reports healthy after the brief
 			// service is fully wired (avoids a window where /readyz is OK but brief
 			// routes still 503).
@@ -707,16 +756,44 @@ var migrateMu sync.Mutex
 // (sweeperStopTimeout), a clean dispatch drain (dispatchDrainTimeout), then (only
 // if that elapses) a post-cancel grace (CancelGracePeriod). All three must fit
 // within ctx, so ctx MUST carry the full ContainerCloseTimeout (= sweeperStopTimeout
-// + dispatchDrainTimeout + CancelGracePeriod), not just the drain timeout — otherwise
-// the grace phase would have zero budget and the pool could close while a
-// just-cancelled dispatch is still finalizing job/campaign state.
+// + relayStopTimeout + dispatchDrainTimeout + CancelGracePeriod + indexer.DrainTimeout),
+// not just the drain timeout — otherwise the grace phase would have zero budget and
+// the pool could close while a just-cancelled dispatch is still finalizing
+// job/campaign state.
+// setIndexRelay installs and starts a relay under c.mu. The 503 cold-start path assigns from the
+// init goroutine while Close may read concurrently, so the field is mutex-guarded like c.pool.
+func (c *Container) setIndexRelay(relay *indexer.Relay) {
+	c.mu.Lock()
+	c.indexRelay = relay
+	c.mu.Unlock()
+	relay.Start()
+}
+
+// getIndexRelay reads the relay under c.mu. Callers must have joined the init goroutine first if
+// they need the FINAL value (see Close).
+func (c *Container) getIndexRelay() *indexer.Relay {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.indexRelay
+}
+
 func (c *Container) Close(ctx context.Context) error {
 	// Stop the background DB-init goroutine first (if the container booted in 503
 	// mode and is still retrying), and wait for it to exit so it can't open/swap a
 	// pool after we've decided to shut down.
+	// Join the DB-init goroutine BEFORE touching the relay. It is the goroutine that installs
+	// a relay on the 503 cold-start path, so reading the field first loses the race: a retry
+	// that succeeds just after the read starts a relay nothing then stops, and it would go on
+	// reading the outbox through the pool.Close below.
 	if c.cancelInit != nil {
 		c.cancelInit()
 		<-c.initDone
+	}
+	// Now the relay set is final. Stop it before the pool: it reads the outbox, so an in-flight
+	// pass must not outlive the pool. Bounded — abandoning a pass is safe because unpublished
+	// rows stay pending and the next process drains them, which is exactly what the outbox is for.
+	if relay := c.getIndexRelay(); relay != nil {
+		relay.Stop(relayStopTimeout)
 	}
 	// Stop the periodic stuck-claim sweeper. This MUST come after the <-c.initDone wait
 	// above: on the cold-start path the retry goroutine is what assigns cancelSweep, so
@@ -764,5 +841,91 @@ func (c *Container) Close(ctx context.Context) error {
 	if pool != nil {
 		pool.Close()
 	}
+	// Close the NATS connection AFTER the dispatch drain: a draining dispatch can
+	// still persist a campaign and publish its index event, and closing earlier
+	// would drop exactly those last writes from the search index.
+	if c.indexPublisher != nil {
+		c.indexPublisher.Close()
+	}
 	return shutdownErr
+}
+
+// newBriefService constructs a BriefService and injects the container's shared index
+// publisher. EVERY BriefService construction in this file must go through it: the
+// publisher is opt-in via SetIndexer (so the ~40 test call sites default to Noop), which
+// means a path that calls service.NewBriefService directly compiles, runs, serves traffic
+// and silently indexes NOTHING. Routing every path through one helper is what makes that
+// failure impossible rather than merely unlikely.
+func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) *service.BriefService {
+	s := service.NewBriefService(briefs, campaigns, jobs, orch)
+	s.SetIndexer(c.indexPublisher)
+	if c.indexingDisabled() {
+		s.DisableIndexing()
+	}
+	return s
+}
+
+// indexingDisabled reports whether indexing is DELIBERATELY off, from CONFIG alone.
+//
+// Deliberately not `_, isNoop := c.indexPublisher.(indexer.Noop)`: newIndexPublisher also yields
+// a Noop when the broker is merely UNREACHABLE at boot. Treating that as "disabled" would make a
+// pod that started during a broker restart skip the outbox for its entire life — permanently
+// losing those writes, since pending rows are never pruned and there is no reindex path. A
+// transient outage must still enqueue and let the relay deliver on reconnect.
+func (c *Container) indexingDisabled() bool {
+	return c.Config == nil || strings.TrimSpace(c.Config.NATSUrl) == ""
+}
+
+// newOrchestrator constructs an Orchestrator with the container's shared index
+// publisher injected. Campaign CREATES are persisted by the orchestrator (dispatchOne),
+// not by BriefService, so an orchestrator without the publisher leaves every newly
+// created campaign unsearchable until some later update republishes it. Same rationale
+// as newBriefService: route EVERY construction through one helper so a path cannot
+// silently keep the Noop.
+func (c *Container) newOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]service.PlatformDispatcher) *service.Orchestrator {
+	o := service.NewOrchestrator(campaigns, jobs, dispatchers)
+	o.SetIndexer(c.indexPublisher)
+	if c.indexingDisabled() {
+		o.DisableIndexing()
+	}
+	return o
+}
+
+// rawPublisher exposes the index publisher's raw-publish capability for the relay. The publisher
+// is always non-nil — a Noop stands in when indexing is disabled OR the broker was unreachable at
+// boot — and Noop.PublishRaw reports FAILURE, so the relay leaves rows PENDING rather than
+// retiring messages that were never sent. Retrying against a Noop is the correct outcome: the
+// alternative silently drains the outbox into nothing.
+func (c *Container) rawPublisher() indexer.RawPublisher {
+	if rp, ok := c.indexPublisher.(indexer.RawPublisher); ok {
+		return rp
+	}
+	return indexer.Noop{}
+}
+
+// newIndexPublisher builds the Query Service index publisher from config.
+//
+// A dial failure is logged, NOT fatal: the index is a read-side convenience served by another
+// service, whereas campaign dispatch is this service's reason to exist. Refusing to boot over
+// an unreachable broker would turn a degraded search experience into a total outage. An empty
+// NATSUrl disables indexing outright and returns a Noop.
+func newIndexPublisher(cfg *config.Config) (indexer.Publisher, error) {
+	p, err := indexer.NewNATSPublisher(cfg.NATSUrl)
+	if err != nil {
+		// FATAL, not a warning. The publisher is built with RetryOnFailedConnect, so an
+		// ordinary broker outage does NOT land here — it returns a reconnecting publisher that
+		// heals itself. Reaching this branch means the configuration can never work (a
+		// malformed URL, an unparseable scheme), and no retry will fix it.
+		//
+		// Carrying on with a Noop would be the worst of both worlds: NATS_URL is non-empty, so
+		// every write still enqueues an outbox row, into a table this process can never drain
+		// and whose pending rows are deliberately never pruned. The service would look healthy
+		// while accumulating undeliverable work forever. Failing fast surfaces a config error
+		// as a config error — matching how invalid database settings are already treated.
+		return nil, fmt.Errorf("nats configuration: %w", err)
+	}
+	if _, isNoop := p.(indexer.Noop); isNoop {
+		slog.Info("query-service indexing disabled (no NATS URL configured)")
+	}
+	return p, nil
 }

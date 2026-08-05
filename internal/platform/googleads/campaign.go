@@ -595,6 +595,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — a campaign may exist; verify in Google Ads before retrying): %w", budgetID, err)
 	}
+	// Validate that the campaign resource is in the exact current-account campaign shape
+	// before forwarding it to createAdGroupAndAd. A malformed 2xx such as
+	// customers/1234567890/adGroups/222 would be treated as a confirmed campaign and
+	// only fail after the real campaign has been created, persisting an untrustworthy ID.
+	if err := c.validateCampaignResource(campaignResource); err != nil {
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
+	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC)", campaignID))
 
 	res := budgetPartial()
@@ -634,6 +641,31 @@ func firstResourceName(body []byte) (resourceName, id string, err error) {
 		return "", "", fmt.Errorf("mutate response resource name %q is malformed (no id segment)", rn)
 	}
 	return rn, rid, nil
+}
+
+// validateCampaignResource validates that a resource name is exactly the
+// current-account campaign resource shape: customers/{currentCustomerID}/campaigns/{numericID}.
+// A malformed 2xx such as customers/1234567890/adGroups/222 could otherwise be
+// accepted as a confirmed campaign and only fail later when forwarded to adGroups:mutate,
+// after the real campaign has been created. This guard ensures that only a trustworthy
+// campaign resource is persisted.
+func (c *Client) validateCampaignResource(resourceName string) error {
+	pathParts := strings.Split(resourceName, "/")
+	// Require exactly 4 segments: customers, {id}, campaigns, {id}
+	if len(pathParts) != 4 {
+		return fmt.Errorf("campaign resource name %q has %d segments, want exactly 4", resourceName, len(pathParts))
+	}
+	if pathParts[0] != "customers" || pathParts[2] != "campaigns" {
+		return fmt.Errorf("campaign resource name %q has wrong resource kind (want customers/.../campaigns/...)", resourceName)
+	}
+	if pathParts[1] != c.account.CustomerID {
+		return fmt.Errorf("campaign resource name %q is from a different account (want customers/%s/...)", resourceName, c.account.CustomerID)
+	}
+	// Validate the trailing campaign ID is numeric.
+	if !numericID(pathParts[3]) {
+		return fmt.Errorf("campaign resource name %q has a non-numeric campaign id", resourceName)
+	}
+	return nil
 }
 
 // composeName builds a deterministic budget/campaign name from the input. The
@@ -720,18 +752,18 @@ func IsOutcomeUnconfirmed(err error) bool {
 // UpdateCampaignStatus toggles a campaign between ENABLED and PAUSED via campaigns:mutate
 // with an updateMask of "status".
 //
-// This method flips ONLY the campaign — it does not cascade to the ad group/ad. Unlike
-// reddit's single UpdateCampaignAndChildrenStatus, Google's cascade will be added to
-// GoogleAdsDispatcher.ToggleStatus (dispatch/googleads.go) as a future phase of GA-3:
-// once UpdateAdGroupAndAdStatus (adgroup_ad.go) is called from the dispatcher in the
-// children-first-on-ACTIVATE / campaign-first-on-PAUSE order the other adapters use.
-// Today the dispatcher rejects ACTIVATE because no ad group/ad exists yet to cascade to.
+// This method flips ONLY the campaign — it does not cascade to the ad group/ad. The cascade
+// is implemented in GoogleAdsDispatcher.ToggleStatus (dispatch/googleads.go): PAUSE cascades
+// campaign-first (stops delivery immediately) then the ad group/ad; ACTIVATE is deferred
+// until GA-4 provisions targeting criteria.
+//
 // Kept as two client methods (rather than one combined call) because the ad group/ad may
-// legitimately not exist yet (a duplicate-name orphan from GA-3's create path — see
+// legitimately not exist (a duplicate-name orphan from GA-3b's create path — see
 // createAdGroupAndAd) — the dispatcher's activate guard (ErrCampaignNotProvisioned) checks
-// for that BEFORE calling either method, but keeping them separate also lets a caller pause
-// a campaign whose children failed to create, without that call depending on child ids it
-// may not have.
+// for that BEFORE calling either method. Additionally, keeping them separate lets a caller
+// pause a campaign whose children failed to create, without that call depending on child ids
+// it may not have. Note: today the dispatcher rejects ACTIVATE unconditionally because GA-3b
+// has no targeting; GA-4 targeting provisioning will gate ACTIVATE's reachability.
 //
 // The mutate IS sent as idempotent (doRequest's last arg), unlike the create path. That flag
 // gates only bounded 429 retries, and the create path's reason for declining them (no
