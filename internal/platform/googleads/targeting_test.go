@@ -124,14 +124,25 @@ func TestValidateAudienceSegments(t *testing.T) {
 		}
 	})
 
-	t.Run("accepts user lists and custom audiences", func(t *testing.T) {
-		in := []string{"customers/1/userLists/2", "customers/1/customAudiences/3"}
+	t.Run("accepts user lists only", func(t *testing.T) {
+		in := []string{"customers/1/userLists/2"}
 		got, err := validateAudienceSegments(in)
 		if err != nil {
 			t.Fatalf("validateAudienceSegments: %v", err)
 		}
-		if len(got) != 2 {
-			t.Errorf("got %v, want both entries kept", got)
+		if len(got) != 1 {
+			t.Errorf("got %v, want the userList kept", got)
+		}
+	})
+
+	t.Run("rejects custom audiences (not supported for SEARCH campaigns)", func(t *testing.T) {
+		in := []string{"customers/1/customAudiences/3"}
+		_, err := validateAudienceSegments(in)
+		if err == nil {
+			t.Error("expected an error for custom audiences, which are not supported for SEARCH campaigns")
+		}
+		if !strings.Contains(err.Error(), "custom audiences") {
+			t.Errorf("expected error to mention custom audiences, got: %v", err)
 		}
 	})
 

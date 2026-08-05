@@ -340,13 +340,15 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   to the ad group (GA-4) as observation-only criteria — bid/report on
                                   the segment without narrowing delivery to it. This client does not
                                   create audiences; each entry must be a Customer Match user list
-                                  (`.../userLists/{id}`) or a custom audience (`.../customAudiences/{id}`)
-                                  the caller already built elsewhere — any other resource-name shape
-                                  (userInterest, combinedAudience, etc.) is rejected. At most 20
-                                  entries; duplicates are deduped. When non-empty, the client sets the
-                                  ad group's `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly)
-                                  on the ad group create so these segments stay observation-only rather than
-                                  Google's default of restricting delivery to the audience alone.
+                                  (`.../userLists/{id}`) the caller already built elsewhere. Custom
+                                  audiences are not supported (limited to Display/Demand Gen/Gmail/Video/
+                                  Performance Max by Google; this client creates SEARCH campaigns only).
+                                  Any other resource-name shape (customAudiences, userInterest,
+                                  combinedAudience, etc.) is rejected. At most 20 entries; duplicates are
+                                  deduped. When non-empty, the client sets the ad group's
+                                  `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly) on the ad group
+                                  create so these segments stay observation-only rather than Google's
+                                  default of restricting delivery to the audience alone.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)

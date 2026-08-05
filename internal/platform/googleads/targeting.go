@@ -178,7 +178,9 @@ func audienceCriterionField(resourceName string) (field string, ok bool) {
 // validateAudienceSegments trims/validates each caller-supplied audience
 // resource name and de-duplicates. Returns (nil, nil) for an empty input.
 // An unrecognized resource-name shape is a hard error — see
-// audienceCriterionField.
+// audienceCriterionField. This client creates only SEARCH campaigns, which
+// do not support Custom Audiences (Google limits them to Display, Demand Gen,
+// Gmail, Video, and Performance Max); only userLists are accepted.
 func validateAudienceSegments(segments []string) ([]string, error) {
 	if len(segments) == 0 {
 		return nil, nil
@@ -193,8 +195,14 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 		if s == "" {
 			return nil, fmt.Errorf("google-ads: audience segment resource name must not be empty")
 		}
-		if _, ok := audienceCriterionField(s); !ok {
+		field, ok := audienceCriterionField(s)
+		if !ok {
 			return nil, fmt.Errorf("google-ads: audience segment %q is not a recognized resource name (want a .../userLists/{id} or .../customAudiences/{id} resource name)", s)
+		}
+		// Reject customAudiences: this client only creates SEARCH campaigns,
+		// which do not support Custom Audiences per Google's documentation.
+		if field == "customAudience" {
+			return nil, fmt.Errorf("google-ads: custom audiences are not supported for SEARCH campaigns; only userLists are accepted")
 		}
 		if _, dup := seen[s]; dup {
 			continue
