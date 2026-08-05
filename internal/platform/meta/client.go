@@ -423,6 +423,12 @@ type createResponse struct {
 // Returns ("", nil) when no campaign with that name exists. A non-nil error means
 // the lookup itself failed — the caller cannot tell absence from a failed check,
 // so it must NOT proceed to create as if the name were confirmed free.
+//
+// errLookupAmbiguous marks a malformed-but-2xx lookup response (missing data
+// field, or a matched row with no usable id): Meta DID respond, so this is
+// classified ambiguous by createOutcomeAmbiguous like a 5xx, not a clean failure.
+var errLookupAmbiguous = errors.New("meta lookup response malformed; cannot confirm absence")
+
 func (c *Client) findCampaignByName(ctx context.Context, accountID, name string) (string, error) {
 	filtering, err := json.Marshal([]map[string]string{{"field": "name", "operator": "EQUAL", "value": name}})
 	if err != nil {
@@ -441,14 +447,14 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 		return "", err
 	}
 	if resp.Data == nil {
-		return "", fmt.Errorf("meta campaign lookup for %q returned a 2xx response with no data field; cannot confirm absence", name)
+		return "", fmt.Errorf("meta campaign lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
 	}
 	if len(*resp.Data) == 0 {
 		return "", nil
 	}
 	id := strings.TrimSpace((*resp.Data)[0].ID)
 	if id == "" {
-		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id", name)
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id: %w", name, errLookupAmbiguous)
 	}
 	return id, nil
 }
@@ -471,14 +477,14 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 		return "", err
 	}
 	if resp.Data == nil {
-		return "", fmt.Errorf("meta ad set lookup for %q returned a 2xx response with no data field; cannot confirm absence", name)
+		return "", fmt.Errorf("meta ad set lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
 	}
 	if len(*resp.Data) == 0 {
 		return "", nil
 	}
 	id := strings.TrimSpace((*resp.Data)[0].ID)
 	if id == "" {
-		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id", name)
+		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id: %w", name, errLookupAmbiguous)
 	}
 	return id, nil
 }
@@ -754,6 +760,13 @@ func isPreSendDialError(err error) bool {
 // false so the caller returns a clean (nil, err) / "failed" rather than "may
 // exist". Mirrors the reddit client's createOutcomeAmbiguous.
 func createOutcomeAmbiguous(err error) bool {
+	// A malformed-but-2xx lookup response (missing data field, or a matched row
+	// with no usable id) means Meta DID respond — it just can't be read as a
+	// confirmed absence — so it is ambiguous exactly like a 5xx, not a clean
+	// failure. See findCampaignByName/findAdSetByName.
+	if errors.Is(err, errLookupAmbiguous) {
+		return true
+	}
 	var te *transportError
 	if errors.As(err, &te) {
 		return true
@@ -2231,7 +2244,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if !createOutcomeAmbiguous(lookupErr) {
 			return nil, fmt.Errorf("meta campaign lookup failed: %w", lookupErr)
 		}
-		steps = append(steps, "Campaign lookup outcome is UNCONFIRMED (ambiguous response — timeout, server error, or an unfollowed redirect); cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
+		steps = append(steps, "Campaign lookup outcome is UNCONFIRMED (ambiguous response — timeout, server error, or a malformed successful response); cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
 		return &CampaignResult{
 			Platform:     "meta-ads",
 			CampaignName: campaignName,

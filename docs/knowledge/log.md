@@ -11,6 +11,17 @@ retries reach the same names and reconcile correctly. Lookup failures are classi
 ambiguous (transport/5xx) → UNCONFIRMED partial (may exist, verify first); pre-send/4xx
 → clean error. Four new tests cover match/no-match/malformed-data/reuse paths.
 
+**Update** — PR #79 review fix: a malformed-but-2xx lookup response (missing `data`
+field, or a matched row with no usable id) meant Meta DID respond, but was being classified
+as a clean failure rather than ambiguous — `createOutcomeAmbiguous` only recognized
+`transportError`/`*APIError`, not the plain errors `findCampaignByName`/`findAdSetByName`
+returned. Added an `errLookupAmbiguous` sentinel these two now wrap, and taught
+`createOutcomeAmbiguous` to recognize it, so a malformed 2xx now returns the UNCONFIRMED
+partial like a 5xx instead of a clean error. Also corrected an UNCONFIRMED message that
+listed "an unfollowed redirect" as a possible lookup outcome — impossible, since
+`createOutcomeAmbiguous`'s 3xx branch is gated to mutating methods and lookups are GETs.
+Added two tests covering the lookup 4xx-clean vs malformed-2xx-UNCONFIRMED paths.
+
 ## 2026-08-04
 
 **Update** — Every stuck claim now requires an upstream check (LFXV2-2665, PR #59 review).

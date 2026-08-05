@@ -4346,6 +4346,79 @@ func TestFindCampaignByName_MalformedData(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignLookup4xxReturnsCleanFailure verifies that a definite 4xx on
+// the campaign name-lookup GET (the lookup was cleanly rejected, nothing created)
+// returns a plain (nil, err) — not an UNCONFIRMED partial.
+func TestCreateCampaignLookup4xxReturnsCleanFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"bad filter","type":"OAuthException","code":100}}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a 4xx campaign name lookup")
+	}
+	if res != nil {
+		t.Errorf("expected NO partial result for a definite 4xx lookup (nothing created), got %+v", res)
+	}
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("expected a clean failure, not UNCONFIRMED: %v", err)
+	}
+}
+
+// TestCreateCampaignLookupMalformed2xxReturnsUnconfirmed verifies that a
+// malformed-but-2xx lookup response (Meta responded, but the body can't confirm
+// absence) is classified ambiguous — an UNCONFIRMED partial, not a clean failure —
+// because Meta DID receive and answer the request.
+func TestCreateCampaignLookupMalformed2xxReturnsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// 2xx with no "data" field: cannot confirm absence.
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a malformed 2xx campaign name lookup")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a non-nil partial result carrying the campaign name, got %+v", res)
+	}
+	if !anyStepContains(res.Steps, "UNCONFIRMED") {
+		t.Errorf("expected an UNCONFIRMED step, got %v", res.Steps)
+	}
+}
+
 // TestCreateCampaignReusesExistingByName verifies that when a campaign with the
 // given name already exists, CreateCampaign reuses its ID instead of creating a
 // new one.
