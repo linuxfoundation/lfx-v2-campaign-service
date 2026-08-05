@@ -36,8 +36,9 @@ const (
 
 // adTextAsset is one headline/description entry in a responsiveSearchAd.
 //
-//nolint:unused // consumed by the ad group/ad cascade (adgroup_ad.go), which lands in the
 // next stacked PR (GA-3b) and is not yet merged into this branch.
+//
+//nolint:unused // consumed by the ad group/ad cascade (adgroup_ad.go), which lands in the
 type adTextAsset struct {
 	Text string `json:"text"`
 }
