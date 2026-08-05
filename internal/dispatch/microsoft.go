@@ -171,6 +171,105 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	return campaignFromMicrosoft(ctx, result, cfg), nil
 }
 
+// ToggleStatus pauses or resumes an existing Microsoft campaign on the platform. It resolves
+// the connection (an inactive/undecryptable/incomplete connection is a clean error), builds
+// the client, and CASCADES the status to the campaign, its ad group, and its ad — Microsoft's
+// create PAUSES all three, so toggling only the campaign to Active would not serve. campaign
+// is the persisted row; the ad group/ad ids are read from its CampaignResult (mirrors the
+// meta/reddit dispatchers). status is model.CampaignRunActive or model.CampaignRunPaused.
+// Returns nil only when the platform confirms; an UNCONFIRMED outcome (including a partial
+// cascade) is wrapped so the caller reports "verify before retry" (via the Unconfirmed()
+// behavioral interface).
+func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
+	msStatus, err := microsoftRunStatus(status)
+	if err != nil {
+		return err
+	}
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	if res.status != model.StatusActive {
+		return fmt.Errorf("microsoft connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds microsoftCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return fmt.Errorf("decode microsoft credentials: %w", err)
+	}
+	clientID := strings.TrimSpace(creds.ClientID)
+	clientSecret := strings.TrimSpace(creds.ClientSecret)
+	developerToken := strings.TrimSpace(creds.DeveloperToken)
+	refreshToken := strings.TrimSpace(creds.RefreshToken)
+	if clientID == "" || clientSecret == "" || developerToken == "" || refreshToken == "" {
+		return fmt.Errorf("microsoft credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
+	}
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return fmt.Errorf("microsoft connection for project %s has no account id (customer account id)", projectID)
+	}
+	client := microsoft.NewClient(
+		microsoft.Credentials{
+			ClientID:       clientID,
+			ClientSecret:   clientSecret,
+			DeveloperToken: developerToken,
+			RefreshToken:   refreshToken,
+		},
+		microsoft.AccountConfig{
+			AccountID:  accountID,
+			CustomerID: strings.TrimSpace(res.providerConfig["customer_id"]),
+			Label:      res.label,
+		},
+		d.opts...,
+	)
+	adGroupID, adID := microsoftChildIDs(campaign)
+	// ACTIVATE requires the FULL servable tree (campaign + ad group + ad). A degraded/partial
+	// create can persist a campaign with a missing child id; activating it would leave part of
+	// the tree Paused and unable to serve. Refuse before any PATCH and return
+	// ErrCampaignNotProvisioned so the service classifies it as a 409 state error (the platform
+	// is never called), not a 503 — mirrors the reddit/meta dispatchers. Pausing needs no child
+	// id — pausing the campaign already stops delivery.
+	if msStatus == microsoft.StatusActive && (adGroupID == "" || adID == "") {
+		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, msStatus); uerr != nil {
+		if microsoft.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
+}
+
+// microsoftChildIDs pulls the ad group + ad ids the create path stored in the persisted
+// CampaignResult blob. A missing/unparseable blob yields empty ids (only the campaign is
+// toggled) rather than an error — the service already blocks toggling a degraded campaign.
+func microsoftChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return "", ""
+	}
+	var blob struct {
+		AdGroupID string `json:"adGroupId"`
+		AdID      string `json:"adId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return "", ""
+	}
+	return blob.AdGroupID, blob.AdID
+}
+
+// microsoftRunStatus maps the service-level run state (active/paused) to the microsoft
+// client's Status enum ("Active"/"Paused", Title-case).
+func microsoftRunStatus(status string) (string, error) {
+	switch status {
+	case model.CampaignRunActive:
+		return microsoft.StatusActive, nil
+	case model.CampaignRunPaused:
+		return microsoft.StatusPaused, nil
+	default:
+		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
+	}
+}
+
 // campaignFromMicrosoft maps the client result to the persistence model.
 func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg microsoftConfig) *model.Campaign {
 	c := &model.Campaign{

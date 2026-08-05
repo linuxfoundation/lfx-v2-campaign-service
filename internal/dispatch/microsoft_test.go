@@ -335,3 +335,223 @@ func TestMicrosoft_WhitespaceCredentialsNeverReachTheAPI(t *testing.T) {
 		})
 	}
 }
+
+// ---- ToggleStatus ------------------------------------------------------------
+
+// msToggleCampaign builds a persisted *model.Campaign carrying the ad group/ad ids the
+// create path would have stored in Result, matching the reddit/meta dispatch test fixtures.
+func msToggleCampaign(campaignID, adGroupID, adID string) *model.Campaign {
+	return &model.Campaign{
+		PlatformCampaignID: campaignID,
+		Result:             []byte(`{"adGroupId":"` + adGroupID + `","adId":"` + adID + `"}`),
+	}
+}
+
+// TestMicrosoft_ToggleStatus_CascadesToTree verifies the dispatcher resolves creds and PUTs
+// Status through the microsoft client — cascading to the campaign AND its child ad group + ad
+// (all three are PAUSED at creation, so a partial toggle would not serve).
+func TestMicrosoft_ToggleStatus_CascadesToTree(t *testing.T) {
+	type call struct{ method, path, status string }
+	var got []call
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Campaigns []struct {
+				Status string `json:"Status"`
+			} `json:"Campaigns"`
+			AdGroups []struct {
+				Status string `json:"Status"`
+			} `json:"AdGroups"`
+			Ads []struct {
+				Status string `json:"Status"`
+			} `json:"Ads"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		var status string
+		switch {
+		case len(body.Campaigns) > 0:
+			status = body.Campaigns[0].Status
+		case len(body.AdGroups) > 0:
+			status = body.AdGroups[0].Status
+		case len(body.Ads) > 0:
+			status = body.Ads[0].Status
+		}
+		got = append(got, call{r.Method, r.URL.Path, status})
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := msToggleCampaign("111", "222", "333")
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	want := []call{
+		{http.MethodPut, "/CampaignManagement/v13/Campaigns", microsoft.StatusPaused},
+		{http.MethodPut, "/CampaignManagement/v13/AdGroups", microsoft.StatusPaused},
+		{http.MethodPut, "/CampaignManagement/v13/Ads", microsoft.StatusPaused},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("issued %d PUTs, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("PUT[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+	// An unsupported run state is rejected before any call.
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, "RUNNING"); err == nil {
+		t.Error("expected an error for an unsupported run status")
+	}
+}
+
+// TestMicrosoft_ToggleStatus_ActivateWithoutChildIDsRejected verifies that ACTIVATING a
+// campaign with no known ad group/ad ids is refused before any PUT — activating only the
+// campaign would leave the ad group/ad Paused and the tree unable to serve.
+func TestMicrosoft_ToggleStatus_ActivateWithoutChildIDsRejected(t *testing.T) {
+	var count int
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count++
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{PlatformCampaignID: "111"} // no child ids
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error activating a campaign with no ad group/ad ids")
+	}
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Errorf("error = %v, want ErrCampaignNotProvisioned (a client/state error → 409, not 503)", err)
+	}
+	if count != 0 {
+		t.Errorf("issued %d PUTs, want 0 (rejected before any PUT)", count)
+	}
+}
+
+// TestMicrosoft_ToggleStatus_PartialCascadeIsUnconfirmed verifies that on a PAUSE — where the
+// campaign gate is flipped FIRST — a subsequent child PUT failure is UNCONFIRMED (partially
+// applied), not a clean failure.
+func TestMicrosoft_ToggleStatus_PartialCascadeIsUnconfirmed(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/AdGroups") {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msToggleCampaign("111", "222", "333"), model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error when a child PUT fails after the campaign PUT")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a partial cascade (campaign applied, child failed) must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestMicrosoft_ToggleStatus_ActivateChildFailureIsCleanNotServing verifies that on ACTIVATE
+// (children-first, campaign gate LAST) a child PUT failure returns an error but the campaign
+// gate is never opened.
+func TestMicrosoft_ToggleStatus_ActivateChildFailureIsCleanNotServing(t *testing.T) {
+	var campaignPatched bool
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/Campaigns") {
+			campaignPatched = true
+		}
+		if strings.HasSuffix(r.URL.Path, "/AdGroups") {
+			w.WriteHeader(http.StatusInternalServerError) // child fails before the gate flip
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msToggleCampaign("111", "222", "333"), model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when a child PUT fails during activate")
+	}
+	if campaignPatched {
+		t.Error("the campaign gate must NOT be opened when a child activate fails (nothing should serve)")
+	}
+}
+
+// TestMicrosoft_ToggleStatus_5xxIsUnconfirmed verifies a 5xx on the PUT surfaces as an error
+// whose Unconfirmed() is true (the change may have applied upstream).
+func TestMicrosoft_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on the PUT
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msToggleCampaign("111", "222", "333"), model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx toggle")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestMicrosoft_ToggleStatus_InactiveConnectionIsError verifies a non-active connection is
+// rejected before any PUT.
+func TestMicrosoft_ToggleStatus_InactiveConnectionIsError(t *testing.T) {
+	d := NewMicrosoftDispatcher(fakeConnReader{conn: &model.Connection{
+		Provider: model.ProviderMicrosoftAds, AccountID: "1234567",
+		EncryptedCredentials: []byte(goodMicrosoftCreds), Status: model.StatusInactive,
+	}}, identityEncryptor{})
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msToggleCampaign("111", "222", "333"), model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error toggling a campaign whose connection is inactive")
+	}
+}

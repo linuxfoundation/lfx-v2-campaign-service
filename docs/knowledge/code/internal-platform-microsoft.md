@@ -205,10 +205,42 @@ ad's `FinalUrls` is the registration URL with LFX `utm_*` params SET (`buildAdFi
 preserves every other query param). `AlreadyExisted` is true only when the campaign, ad
 group, AND ad ALL pre-existed (this run created nothing); creating any level makes it false.
 
+## Campaign status toggle
+
+`UpdateCampaignAndChildrenStatus(ctx, campaignID, adGroupID, adID, status)` (`status.go`)
+pauses/resumes a campaign AND cascades to its child ad group + ad, because MS-2/MS-2.5 create
+ALL THREE PAUSED — toggling only the campaign to Active would leave the ad group/ad Paused and
+the campaign would not serve. Each level is set via `PUT CampaignManagement/v13/{Campaigns,
+AdGroups,Ads}` with only `Id`/`Status` populated (the v13 Update* operations treat an omitted
+field as "leave unchanged", unlike Add*); `status` is `StatusActive`/`StatusPaused`
+(Title-case — Microsoft's own enum, distinct from the lower-case `model.CampaignRunActive`/
+`CampaignRunPaused` the dispatcher maps from). Like the create path, a per-entity failure on
+these operations is a `PartialErrors` entry on an otherwise-200 response (`updateResponse`,
+decoded with the same `boundedErrorItems` the create response already uses), NOT a non-2xx
+status — `putEntityStatus` treats any `PartialErrors` entry as a definite rejection.
+
+The cascade ordering is STATUS-DEPENDENT so a partial failure never leaves paid delivery
+running unattended (mirrors reddit/meta): on ACTIVATE it lifts the children first (ad, then ad
+group) while the campaign gate is still Paused and gates them, then flips the CAMPAIGN gate
+LAST — a child failure before the gate flip leaves nothing serving, a plain error. On PAUSE it
+flips the CAMPAIGN gate FIRST (delivery stops immediately), then the children — if the campaign
+PUT commits but a later child PUT fails, the result is a `partialCascadeError` whose
+`Unconfirmed()` is true (via the exported `IsOutcomeUnconfirmed` classifier, which also folds in
+the shared `createOutcomeAmbiguous` transport/5xx/429/3xx-mutating checks), so the service
+reports 503-unconfirmed ("verify before retry") rather than "not modified"; a retry re-runs the
+idempotent cascade. ACTIVATING requires the FULL servable tree: it is REFUSED before any PUT
+when EITHER the ad group id OR the ad id is missing (`domain.ErrCampaignNotProvisioned` → 409, a
+client/state error; the platform is never called) — the dispatcher's `ToggleStatus` reads both
+ids from the persisted `CampaignResult` blob (`adGroupId`/`adId`) via `microsoftChildIDs`.
+PAUSING with no child id is fine (pausing the parent already halts delivery) and toggles the
+campaign alone. `parseEntityID` validates every id is a numeric string (the v13 wire ids are
+`json.Number`) before interpolation into the request body.
+
 ## Scope
 
 MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PAUSED
 find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group + ad
 (`adgroup_ad.go`). MS-3 registers `microsoft-ads` and wires the stored
 `connection-microsoft-ads` credential into the orchestrator dispatcher
-(`internal/dispatch/microsoft.go`).
+(`internal/dispatch/microsoft.go`). The campaign status toggle (`status.go`, LFXV2-2805) is
+the platform side of `MicrosoftDispatcher.ToggleStatus`.

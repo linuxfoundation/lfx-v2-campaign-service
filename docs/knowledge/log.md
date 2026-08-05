@@ -1,5 +1,21 @@
 # Log
 
+## 2026-08-05
+
+**Feature** — Implemented the Microsoft Ads campaign status toggle (LFXV2-2805). Microsoft
+campaigns were created but stuck permanently Paused with no way to activate them — all other
+five platforms (Reddit, Meta, LinkedIn, X/Twitter, Google Ads) already supported the toggle.
+Added `internal/platform/microsoft/status.go`
+(`UpdateCampaignAndChildrenStatus`/`partialCascadeError`/`IsOutcomeUnconfirmed`), mirroring the
+reddit client's PATCH-based cascade but adapted for Microsoft's PUT-based v13 `Update*`
+operations and its `PartialErrors`-on-200 envelope. Added `MicrosoftDispatcher.ToggleStatus`
+(`internal/dispatch/microsoft.go`), which the orchestrator picks up automatically via the
+`StatusToggler` optional-capability type assertion — no explicit wiring needed. ACTIVATE cascades
+children-first (ad, then ad group, then the campaign gate last); PAUSE flips the campaign gate
+first, then children, so a child failure after the gate closes surfaces as a
+`partialCascadeError` (`Unconfirmed()`), not a plain error. Activating a campaign missing either
+child id is refused up front with `domain.ErrCampaignNotProvisioned` before any PUT.
+
 ## 2026-08-04
 
 **Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where
