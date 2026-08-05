@@ -416,10 +416,10 @@ const pruneQuery = `DELETE FROM index_outbox WHERE id IN (
 // unbounded until storage runs out. The partial index stays small either way (it only covers
 // pending rows), which is exactly why the growth would go unnoticed until it was a problem.
 //
-// Deleting by id via a bounded subquery keeps the statement short and lets the PRIMARY KEY do
-// the work: `ORDER BY id LIMIT n` is served by an index scan on the pkey with published_at as a
-// filter (verified with EXPLAIN on 20k rows), so no extra index is needed — and adding one on
-// published_at would only cost writes, since the planner would not choose it for this shape.
+// Deleting by id via a bounded subquery keeps the statement short. The partial index added in
+// migration 000012 (published_at, WHERE published_at IS NOT NULL) gives the inner SELECT a
+// direct path to prunable rows — without it, a large mostly-PENDING backlog would force an
+// id-ordered scan past every pending row before the LIMIT is satisfied, on every ~15s pass.
 func (r *OutboxRepo) PrunePublishedIndexMessages(ctx context.Context, olderThan time.Duration, limit int) (int64, error) {
 	if olderThan <= 0 {
 		olderThan = outboxRetention
