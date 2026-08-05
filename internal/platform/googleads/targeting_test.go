@@ -76,6 +76,20 @@ func TestValidateKeywords(t *testing.T) {
 			t.Errorf("got %+v, want 2 entries (same text, different match types kept; exact duplicate dropped)", got)
 		}
 	})
+
+	t.Run("dedupes case-insensitively (Google Ads keyword uniqueness ignores case)", func(t *testing.T) {
+		got, err := validateKeywords([]Keyword{
+			{Text: "Kubernetes", MatchType: MatchTypeBroad},
+			{Text: "kubernetes", MatchType: MatchTypeBroad},
+			{Text: "KUBERNETES", MatchType: MatchTypeBroad},
+		})
+		if err != nil {
+			t.Fatalf("validateKeywords: %v", err)
+		}
+		if len(got) != 1 {
+			t.Errorf("got %+v, want 1 entry (case-variant duplicates collapsed)", got)
+		}
+	})
 }
 
 // ---- audienceCriterionField / validateAudienceSegments ----------------------

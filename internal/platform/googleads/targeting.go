@@ -106,7 +106,12 @@ func validateKeywords(keywords []Keyword) ([]Keyword, error) {
 			return nil, fmt.Errorf("google-ads: keyword %q has unsupported match type %q (want %s, %s, or %s)",
 				text, kw.MatchType, MatchTypeExact, MatchTypePhrase, MatchTypeBroad)
 		}
-		key := matchType + "\x00" + text
+		// Google Ads treats keyword text as case-insensitive for uniqueness within an
+		// ad group, so the dedupe key case-folds text (the stored/sent Text keeps its
+		// original casing) — otherwise "Kubernetes" and "kubernetes" both pass this
+		// preflight check as distinct, then the whole adGroupCriteria:mutate fails as a
+		// definite 4xx after the budget/campaign/ad group/ad already exist.
+		key := matchType + "\x00" + strings.ToLower(text)
 		if _, dup := seen[key]; dup {
 			continue
 		}
