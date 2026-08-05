@@ -14,6 +14,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 )
 
 // fakeJobRepo records job status transitions.
@@ -97,6 +98,9 @@ func (r *fakeJobRepo) FailStuckJobs(_ context.Context, jobErr string) (int64, er
 type fakeCampaignRepo struct {
 	mu       sync.Mutex
 	upserted []*model.Campaign
+	// indexPayloads records the co-committed index messages, so a test can assert a campaign is
+	// indexed rather than only persisted.
+	indexPayloads [][]byte
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
@@ -163,11 +167,21 @@ func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string
 	return nil
 }
 
-func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c.Version = 1
 	r.upserted = append(r.upserted, c)
+	// Run the payload builder the way the real repo does — inside the "transaction", after the
+	// row is written — and record it, so a test can assert the campaign is actually indexed
+	// rather than merely persisted.
+	if indexPayload != nil {
+		payload, perr := indexPayload(c)
+		if perr != nil {
+			return nil, perr
+		}
+		r.indexPayloads = append(r.indexPayloads, payload)
+	}
 	// Mirror the real ON CONFLICT (brief_id, platform) DO UPDATE: the (brief,
 	// platform) row is updated in place, so a subsequent lookup sees the new
 	// platform_campaign_id/status.
@@ -177,7 +191,7 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) 
 	r.existing[c.BriefID+"|"+string(c.Platform)] = c
 	return c, nil
 }
-func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }
 
@@ -849,7 +863,7 @@ func TestOrchestrator_RecoversFromDispatcherPanic(t *testing.T) {
 // persistErrCampaignRepo fails UpsertCampaign with a raw DB-like error.
 type persistErrCampaignRepo struct{ fakeCampaignRepo }
 
-func (r *persistErrCampaignRepo) UpsertCampaign(context.Context, *model.Campaign) (*model.Campaign, error) {
+func (r *persistErrCampaignRepo) UpsertCampaign(context.Context, *model.Campaign, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, errors.New("pq: duplicate key value violates unique constraint \"campaigns_pkey\"")
 }
 
@@ -1375,12 +1389,14 @@ type ctxAssertingCampaignRepo struct {
 	upsertCalled chan struct{}
 }
 
-func (r *ctxAssertingCampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error) {
+func (r *ctxAssertingCampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.mu.Lock()
 	r.upsertCtxErr = ctx.Err()
 	r.mu.Unlock()
 	close(r.upsertCalled)
-	return r.fakeCampaignRepo.UpsertCampaign(ctx, c)
+	// Pass the builder THROUGH rather than dropping it: swallowing it here would hide whether
+	// a shutdown-window persist still co-commits its index message.
+	return r.fakeCampaignRepo.UpsertCampaign(ctx, c, indexPayload)
 }
 
 // TestOrchestrator_PersistSurvivesDispatchCancel verifies that a provider result
@@ -1455,3 +1471,48 @@ func TestBriefETagIsQuoted(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestOrchestrator_CampaignIndexCoCommitsWithoutACallerToken pins that a created campaign is
+// indexed via the OUTBOX, carrying no caller credential.
+//
+// Campaign creation is ASYNC: the dispatch runs on the orchestrator's root context, long after
+// the request returned. Publishing directly with the JWT captured at Start meant a slow dispatch
+// could publish with an EXPIRED token — which the indexer rejects — and with no outbox row there
+// was nothing to retry, so the campaign stayed permanently unsearchable. Co-committing removes
+// both the expiry dependency and the single-shot delivery.
+func TestOrchestrator_CampaignIndexCoCommitsWithoutACallerToken(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: okDispatcher{},
+	})
+	// A real (non-Noop) publisher: an orchestrator left on the default Noop deliberately
+	// enqueues nothing (the NATS_URL="" path), which is not what this test is about.
+	orch.SetIndexer(&failingIndexer{})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+
+	id, _ := orch.Start(context.Background(), brief, brief.Version,
+		[]model.Provider{model.ProviderGoogleAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	if len(camps.indexPayloads) != 1 {
+		t.Fatalf("a created campaign must co-commit exactly one index message, got %d", len(camps.indexPayloads))
+	}
+
+	var msg indexer.Transaction
+	if err := json.Unmarshal(camps.indexPayloads[0], &msg); err != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", err)
+	}
+	if msg.Action != indexer.ActionCreated {
+		t.Errorf("action = %q, want %q", msg.Action, indexer.ActionCreated)
+	}
+	// The stored payload must carry NO credential. The caller's token would be expired by the
+	// time a delayed relay pass publishes it, and the outbox is JSONB retained for audit with
+	// no pruning — so writing a live JWT there would persist it indefinitely. The relay stamps
+	// a service credential at publish time instead.
+	if auth := msg.Headers["authorization"]; auth != "" {
+		t.Errorf("stored payload carries an authorization header (%q); the relay must stamp it at publish time", auth)
+	}
+}
