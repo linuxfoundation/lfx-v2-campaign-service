@@ -5,8 +5,10 @@
 // conformance per OKF SPEC.md §9: every non-reserved .md file has a
 // parseable frontmatter block with a non-empty "type", index.md files
 // carry no frontmatter (except an optional okf_version at the bundle root)
-// and use the "* [Title](url) - description" bullet form, and log.md uses
-// "##"-level ISO 8601 date headings sorted newest first.
+// and use the "* [Title](url) - description" bullet form, a reserved log.md
+// uses "##"-level ISO 8601 date headings sorted newest first, and this
+// bundle's log/ directory holds one dated fragment per entry instead
+// ("YYYY-MM-DD-<slug>.md", no frontmatter, first H1 dated to match).
 package okfvalidate
 
 import (
@@ -31,6 +33,11 @@ func Validate(bundleDir string) []error {
 			return err
 		}
 		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+
+		if filepath.Clean(filepath.Dir(path)) == filepath.Clean(filepath.Join(bundleDir, "log")) {
+			errs = append(errs, validateLogFragment(path)...)
 			return nil
 		}
 
@@ -115,6 +122,47 @@ func validateIndex(path string, isRoot bool) []error {
 		}
 	}
 	return errs
+}
+
+var logFragmentNamePattern = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-[A-Za-z0-9][A-Za-z0-9._-]*\.md$`)
+var logFragmentHeadingPattern = regexp.MustCompile(`^# (\d{4}-\d{2}-\d{2})\b`)
+
+// validateLogFragment checks a docs/knowledge/log/ entry: its filename
+// matches "YYYY-MM-DD-<slug>.md", it declares no frontmatter block (a
+// fragment is not a concept), and its first H1 begins with the same date as
+// the filename.
+func validateLogFragment(path string) []error {
+	m := logFragmentNamePattern.FindStringSubmatch(filepath.Base(path))
+	if m == nil {
+		return []error{fmt.Errorf("%s: log fragment filename must match \"YYYY-MM-DD-<slug>.md\"", path)}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []error{fmt.Errorf("%s: reading file: %w", path, err)}
+	}
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+
+	if strings.HasPrefix(content, "---\n") {
+		return []error{fmt.Errorf("%s: log fragment must not declare a frontmatter block", path)}
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		hm := logFragmentHeadingPattern.FindStringSubmatch(trimmed)
+		if hm == nil {
+			return []error{fmt.Errorf("%s: first heading %q does not start with \"# YYYY-MM-DD\"", path, trimmed)}
+		}
+		if hm[1] != m[1] {
+			return []error{fmt.Errorf("%s: heading date %q does not match filename date %q", path, hm[1], m[1])}
+		}
+		return nil
+	}
+
+	return []error{fmt.Errorf("%s: no \"# YYYY-MM-DD\" heading found", path)}
 }
 
 var logDatePattern = regexp.MustCompile(`^## (\d{4}-\d{2}-\d{2})$`)

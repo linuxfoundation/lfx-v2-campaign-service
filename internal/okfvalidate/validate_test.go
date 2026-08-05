@@ -111,6 +111,59 @@ func TestValidateLogNotSorted(t *testing.T) {
 	}
 }
 
+func TestValidateLogFragment(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "log"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "log", "2026-08-05-LFXV2-2812-find-brief.md"),
+		"# 2026-08-05 — LFXV2-2812 find brief by event slug\n\n**Update** — did the thing.\n")
+
+	if errs := Validate(dir); len(errs) != 0 {
+		t.Errorf("Validate() = %v, want no errors", errs)
+	}
+}
+
+func TestValidateLogFragmentWithFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "log"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Fragments are not concepts; declaring frontmatter is disallowed.
+	writeFile(t, filepath.Join(dir, "log", "2026-08-05-LFXV2-2812-find-brief.md"),
+		"---\ntype: \"Note\"\n---\n\n# 2026-08-05 — LFXV2-2812 find brief\n\n**Update** — did the thing.\n")
+
+	if errs := Validate(dir); len(errs) == 0 {
+		t.Fatal("Validate() = no errors, want a frontmatter-not-allowed error")
+	}
+}
+
+func TestValidateLogFragmentBadFilename(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "log"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "log", "find-brief.md"),
+		"# 2026-08-05 — find brief\n\n**Update** — did the thing.\n")
+
+	if errs := Validate(dir); len(errs) == 0 {
+		t.Fatal("Validate() = no errors, want a bad-filename error")
+	}
+}
+
+func TestValidateLogFragmentHeadingDateMismatch(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "log"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "log", "2026-08-05-LFXV2-2812-find-brief.md"),
+		"# 2026-08-04 — find brief\n\n**Update** — did the thing.\n")
+
+	if errs := Validate(dir); len(errs) == 0 {
+		t.Fatal("Validate() = no errors, want a heading-date-mismatch error")
+	}
+}
+
 func TestValidateRealBundle(t *testing.T) {
 	// Use relative path from package directory to the real bundle at repo root
 	bundleDir := filepath.Join("..", "..", "docs", "knowledge")
