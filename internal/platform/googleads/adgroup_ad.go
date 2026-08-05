@@ -35,14 +35,14 @@ const (
 	// real limit, even though Google would accept it.
 	maxAdGroupNameRunes = 255
 
-	// maxFinalURLRunes bounds the ad's composed FinalUrls (the registration URL with the
-	// LFX utm_* params appended). Google Ads' v23 System Limits cap a Final URL at 2,048
-	// characters; validated on the COMPOSED url up front (mirrors the microsoft client's
-	// maxFinalURLRunes check) so a near-limit registration URL can't pass buildAdFinalURL's
-	// syntax check and then be rejected only at adGroupAds:mutate — after the budget,
-	// campaign, and ad group already exist, orphaning that paid hierarchy for what is purely
-	// a local length failure.
-	maxFinalURLRunes = 2048
+	// maxFinalURLBytes bounds the ad's composed FinalUrls (the registration URL with the
+	// LFX utm_* params appended). Google Ads' v23 System Limits cap a Final URL at 2,084
+	// UTF-8 BYTES (not characters — unlike Campaign.name/AdGroup.name, which are measured
+	// in runes), including the required protocol prefix; validated on the COMPOSED url up
+	// front so a near-limit registration URL can't pass buildAdFinalURL's syntax check and
+	// then be rejected only at adGroupAds:mutate — after the budget, campaign, and ad group
+	// already exist, orphaning that paid hierarchy for what is purely a local length failure.
+	maxFinalURLBytes = 2084
 
 	// errCodeDuplicateAdGroupName is Google's AdGroupError code when an ad group
 	// name already exists within the campaign — the ad-group analogue of
@@ -140,8 +140,8 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, de
 	if err != nil {
 		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
 	}
-	if n := utf8.RuneCountInString(finalURL); n > maxFinalURLRunes {
-		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (composed ad final URL is %d characters, exceeding the %d limit; shorten the registration URL)", n, maxFinalURLRunes)
+	if n := len(finalURL); n > maxFinalURLBytes {
+		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (composed ad final URL is %d bytes, exceeding the %d limit; shorten the registration URL)", n, maxFinalURLBytes)
 	}
 	headlines, descriptions, err = composeAdCopy(in.Headlines, in.Descriptions, in.EventName, in.Project)
 	if err != nil {
