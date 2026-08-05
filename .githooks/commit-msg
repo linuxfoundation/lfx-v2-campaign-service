@@ -28,7 +28,14 @@ fi
 # committer.*, then user.* config, in that precedence) — reading only
 # user.name/user.email here could diverge from what -s actually wrote and
 # reject a correctly signed commit.
-committer_ident=$(git var GIT_COMMITTER_IDENT)
+#
+# Checked explicitly rather than relying on `set -e` to catch a failure here:
+# `set -e` would abort the script on a nonzero exit before this point is ever
+# reached, so the identity-unresolvable error below would never print.
+if ! committer_ident=$(git var GIT_COMMITTER_IDENT); then
+  echo "error: could not resolve committer identity to verify DCO sign-off" >&2
+  exit 1
+fi
 committer_name_email=$(sed -E 's/ [0-9]+ [-+][0-9]{4}$//' <<<"$committer_ident")
 
 if [[ -z "$committer_name_email" ]]; then
