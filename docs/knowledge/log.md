@@ -1,5 +1,15 @@
 # Log
 
+## 2026-08-05 (Fix: 000010's down migration must not drop 000008's index)
+
+**Fix** — Cursor Bugbot correctly flagged that `000010_rebuild_stuck_claim_index.down.sql`
+(added in the entry directly below) unconditionally ran `DROP INDEX CONCURRENTLY IF EXISTS
+idx_campaigns_stuck_claims`. On the common path, `000010`'s up is itself a no-op (`IF NOT
+EXISTS`, since `000008` already built a valid index), so `000010` doesn't actually own the
+index — rolling back only version 10 would drop an index that `000008` (still applied) is
+relying on, leaving stuck-claim scans without their partial index. Changed `000010`'s down to
+a no-op (`SELECT 1`), mirroring `000009`'s down for the same ensure/repair-semantics reason.
+
 ## 2026-08-05 (Fix: split migration 000009's DROP and CONCURRENTLY rebuild into separate files)
 
 **Fix** — Cursor Bugbot correctly flagged that the "migration concurrency" fix below (item 2 of the
