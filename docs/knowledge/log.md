@@ -59,6 +59,20 @@ Pinned by new cases in `TestApply_AmbiguousSemicolonQueriesAreNotTagged`; one ex
 narrowed to point at `TestStripUTM_SurvivorKeepsItsOwnSeparator`, which pins the same
 separator-preservation property directly at the `stripUTM` level, unguarded by the ambiguity check.
 
+**Fix** — PR #79 review resolution: name-collision and objective-mismatch errors now treated as definite conflicts, not ambiguous lookups (LFXV2-2665).
+
+`findCampaignByName` and `findAdSetByName` had two bugs:
+1. A unique name match with non-PAUSED status was wrapped with `errLookupAmbiguous`, making `createOutcomeAmbiguous` return true and causing `CreateCampaign` to report UNCONFIRMED. But a status mismatch is a DEFINITE conflict (name already taken by a live campaign), not an ambiguous lookup.
+2. `findCampaignByName` never fetched or validated the campaign's objective, so a PAUSED campaign with a colliding name but different objective would silently be reused.
+
+Fixed by:
+- Adding `objective` to the lookup query's `fields` parameter.
+- Passing the expected `objParams.CampaignObjective` to `findCampaignByName` as a fourth parameter.
+- Replacing `errLookupAmbiguous` wraps with plain `fmt.Errorf` for both status and objective mismatches, so `createOutcomeAmbiguous` treats them as clean failures (4xx-equivalent), not UNCONFIRMED.
+- Updated all callers and test mocks to pass/include the objective.
+
+The fix ensures a definite conflict error returns cleanly to the caller without misleading UNCONFIRMED messaging, and prevents silently reusing campaigns with mismatched objectives.
+
 ## 2026-08-04
 
 **Fix** — Renumbered `000015_index_outbox_lease` → `000011_index_outbox_lease`. It COLLIDED with

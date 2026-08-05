@@ -438,12 +438,12 @@ type createResponse struct {
 // classified ambiguous by createOutcomeAmbiguous like a 5xx, not a clean failure.
 var errLookupAmbiguous = errors.New("meta lookup response malformed; cannot confirm absence")
 
-func (c *Client) findCampaignByName(ctx context.Context, accountID, name string) (string, error) {
+func (c *Client) findCampaignByName(ctx context.Context, accountID, name, expectedObjective string) (string, error) {
 	filtering, err := json.Marshal([]map[string]string{{"field": "name", "operator": "EQUAL", "value": name}})
 	if err != nil {
 		return "", fmt.Errorf("meta campaign lookup: encoding name filter: %w", err)
 	}
-	basePath := "/" + accountID + "/campaigns?fields=id,status&filtering=" + url.QueryEscape(string(filtering))
+	basePath := "/" + accountID + "/campaigns?fields=id,status,objective&filtering=" + url.QueryEscape(string(filtering))
 
 	// Follow pagination like listAdIDs does, so an empty first page with a next link
 	// doesn't trick us into missing a match on a later page. Meta's Graph API can
@@ -452,8 +452,9 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 	// Accumulate all matches across all pages before deciding if the lookup is
 	// ambiguous or returns a unique campaign ID.
 	var allMatches []struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		Objective string `json:"objective"`
 	}
 	after := ""
 	page := 0
@@ -467,8 +468,9 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 			// distinguishable from a present-but-empty `{"data":[]}` — see listAdIDs'
 			// identical reasoning. A malformed body must NOT be read as "no match".
 			Data *[]struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
+				ID        string `json:"id"`
+				Status    string `json:"status"`
+				Objective string `json:"objective"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -514,17 +516,27 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 		return "", fmt.Errorf("meta campaign lookup for %q matched %d existing campaigns; cannot disambiguate which is intended: %w", name, len(allMatches), errLookupAmbiguous)
 	}
 
-	// Single match: validate status=PAUSED and return the campaign ID.
+	// Single match: validate status=PAUSED and objective matches, then return the campaign ID.
 	id := strings.TrimSpace(allMatches[0].ID)
 	if id == "" {
 		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id: %w", name, errLookupAmbiguous)
 	}
-	// Validate the matched campaign is in PAUSED state to avoid reusing an
-	// unrelated ACTIVE or differently-objective campaign if this is ever called
-	// again with the same name by a different brief.
+	// Validate the matched campaign is in PAUSED state. A non-PAUSED campaign is a
+	// definite conflict (name already taken by a live campaign), not an ambiguous
+	// lookup — a name match with ACTIVE status means the name IS taken and cannot
+	// be reused. Return a definite error (not errLookupAmbiguous) so
+	// createOutcomeAmbiguous treats it as a clean failure, not UNCONFIRMED.
 	status := strings.TrimSpace(allMatches[0].Status)
 	if status != "PAUSED" {
-		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with status=%q (expected PAUSED); cannot reuse a campaign with unexpected status: %w", name, status, errLookupAmbiguous)
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with status=%q (expected PAUSED); campaign name is already in use and cannot be reused", name, status)
+	}
+	// Validate the matched campaign's objective matches the requested one. A
+	// mismatch is a definite conflict (name already taken by a differently-
+	// configured campaign), not an ambiguous lookup. Return a definite error (not
+	// errLookupAmbiguous) so createOutcomeAmbiguous treats it as a clean failure.
+	objective := strings.TrimSpace(allMatches[0].Objective)
+	if objective != expectedObjective {
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with objective=%q (expected %q); campaign name is already in use with a different objective and cannot be reused", name, objective, expectedObjective)
 	}
 	return id, nil
 }
@@ -608,12 +620,14 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 	if id == "" {
 		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id: %w", name, errLookupAmbiguous)
 	}
-	// Validate the matched ad set is in PAUSED state to avoid reusing an
-	// unrelated ACTIVE ad set if this is ever called again with the same name
-	// by a different brief.
+	// Validate the matched ad set is in PAUSED state. A non-PAUSED ad set is a
+	// definite conflict (name already taken by a live ad set), not an ambiguous
+	// lookup — a name match with ACTIVE status means the name IS taken and cannot
+	// be reused. Return a definite error (not errLookupAmbiguous) so
+	// createOutcomeAmbiguous treats it as a clean failure, not UNCONFIRMED.
 	status := strings.TrimSpace(allMatches[0].Status)
 	if status != "PAUSED" {
-		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with status=%q (expected PAUSED); cannot reuse an ad set with unexpected status: %w", name, status, errLookupAmbiguous)
+		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with status=%q (expected PAUSED); ad set name is already in use and cannot be reused", name, status)
 	}
 	return id, nil
 }
@@ -2366,7 +2380,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// than just returning "reconciliation required" and bailing. Without that
 	// orchestrator wiring, a retry after an ambiguous create will not reach this
 	// lookup and the retries remain blocked.
-	existingCampaignID, lookupErr := c.findCampaignByName(ctx, accountID, campaignName)
+	existingCampaignID, lookupErr := c.findCampaignByName(ctx, accountID, campaignName, objParams.CampaignObjective)
 	if lookupErr != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("meta campaign creation aborted during name lookup (caller context done; nothing created): %w", lookupErr)
