@@ -180,6 +180,30 @@ matching the reddit shape.
 
 Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
 
+## Metrics reads (optional capability)
+
+`MetricsReader` is an OPTIONAL dispatcher interface (separate from `PlatformDispatcher`) —
+`ReadMetrics(ctx, projectID, platform, campaign *model.Campaign, window string)` — for
+reading live campaign performance metrics (impressions, clicks, cost, CTR) from the
+ad platform WITHOUT persisting them. It receives the full persisted `*model.Campaign` so an adapter
+can reach the `PlatformCampaignID` and any child ids needed for aggregation. The orchestrator
+type-asserts it (returning `ErrMetricsUnsupported` when a platform hasn't wired it), so it can be
+added platform-by-platform without touching every adapter.
+
+Window is a platform-defined predefined date-range literal (`TODAY`, `LAST_7_DAYS`, etc.); each
+platform's validator enforces its own allow-list and returns a clear error for unsupported ranges
+(NOT silent truncation/averaging/extrapolation). The return type is `*model.CampaignMetrics`
+(shared across platforms): `CampaignID`, `Window`, `Impressions`, `Clicks`, `CostMicros`
+(spend in micro-currency), and `Ctr` (clicks/impressions, 0 when impressions is 0). Campaigns
+with zero activity return zero-value metrics, not an error.
+
+**X/Twitter** implements it: `GetCampaignMetrics(ctx, campaignID, window)` queries the X Ads
+`/stats` endpoint. **CRITICAL: X's stats endpoint caps queryable date ranges at 7 days per
+request.** Only `TODAY` (1 day) and `LAST_7_DAYS` (7 days) are supported; `LAST_30_DAYS`,
+`THIS_MONTH`, `LAST_MONTH` return a clear error explaining the platform's API limitation (NOT
+a reduced range, average, or extrapolation). This is a permanent X API constraint documented in
+the knowledge base. Spend (returned by X as USD decimal) is converted to micro-currency (×1e6).
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

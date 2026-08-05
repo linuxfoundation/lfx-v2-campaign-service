@@ -106,6 +106,21 @@ func (s JobStatus) Terminal() bool {
 	}
 }
 
+// CampaignMetrics is the aggregated performance snapshot for one campaign over
+// one metrics window. It is a live read-through of the ad platform — never
+// persisted. Window is a platform-defined literal (e.g. X Ads' LAST_7_DAYS,
+// Google Ads' GAQL predefined date ranges); this package does not constrain its
+// vocabulary, mirroring how Campaign.Status carries platform-mapped values.
+type CampaignMetrics struct {
+	CampaignID  string
+	Window      string
+	Impressions int64
+	Clicks      int64
+	CostMicros  int64
+	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
+	Ctr float64
+}
+
 // CampaignJob is the async multi-platform dispatch record. One job per brief
 // submission dispatches to multiple Campaign rows (one per platform).
 type CampaignJob struct {

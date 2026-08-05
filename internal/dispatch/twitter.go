@@ -301,3 +301,31 @@ func (d *TwitterDispatcher) ToggleStatus(ctx context.Context, projectID string, 
 	}
 	return nil
 }
+
+// ReadMetrics implements service.MetricsReader for X (Twitter) Ads. It resolves
+// the same connection ToggleStatus does and reads the campaign's live metrics;
+// window is passed through as a twitter.MetricsWindow (the client validates it
+// against its own allow-list, so an invalid caller value fails there rather than
+// being re-validated here).
+//
+// Note: X Ads API caps queryable date ranges at 7 days per request. Windows longer
+// than 7 days are NOT supported — no averaging, no truncation, no extrapolation.
+// The client returns a clear error explaining the limitation.
+func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window string) (*model.CampaignMetrics, error) {
+	client, err := d.resolveTwitterClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, twitter.MetricsWindow(window))
+	if err != nil {
+		return nil, err
+	}
+	return &model.CampaignMetrics{
+		CampaignID:  m.CampaignID,
+		Window:      string(m.Window),
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
+	}, nil
+}

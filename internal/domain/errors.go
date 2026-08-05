@@ -44,4 +44,11 @@ var (
 	// tree cannot be made servable. It is a client/state error: the platform is
 	// never contacted, and a retry now would fail the same way. Maps to 409.
 	ErrCampaignNotProvisioned = errors.New("campaign is not fully provisioned for this status change")
+
+	// ErrMetricsUnsupported indicates the campaign's platform has no metrics-read
+	// capability wired (no dispatcher, or the dispatcher is not a MetricsReader).
+	// The platform is never contacted. Maps to 400. Lives here (not in the service
+	// layer) so a platform dispatcher can return it directly without importing the
+	// orchestration layer, and the service still maps it to an HTTP status.
+	ErrMetricsUnsupported = errors.New("metrics reads are not supported for this platform")
 )

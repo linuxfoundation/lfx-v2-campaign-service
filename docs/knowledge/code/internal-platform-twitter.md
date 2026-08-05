@@ -129,4 +129,23 @@ nothing, so a definite 4xx stays definite. The exported `IsOutcomeUnconfirmed` f
 together with `createOutcomeAmbiguous` for callers across the package boundary (the
 dispatcher), mirroring the reddit client's helper of the same name.
 
+## Metrics reads
+
+`GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend metrics for
+a campaign from the X Ads `/stats` endpoint. It is a **LIVE READ ONLY** — never persisted, no
+async sweeper. Window is a predefined date-range literal (`WindowToday` or `WindowLast7Days`);
+an invalid window returns a clear error explaining the limitation rather than silently truncating
+or averaging.
+
+**CRITICAL DESIGN CONSTRAINT: X Ads API stats endpoint caps queryable date ranges at 7 days
+per request.** Only `WindowToday` (1 day) and `WindowLast7Days` (7 days) are supported. Any
+request for a longer window (`LAST_30_DAYS`, `THIS_MONTH`, `LAST_MONTH`) is REJECTED with a
+clear error message explaining the API limitation — NOT silently truncated, averaged, or
+extrapolated. This is a permanent platform constraint documented in the knowledge base.
+
+Metrics are returned as int64 values; spend (returned by X as USD decimal) is converted to
+micro-currency (×1e6) to match other platforms' integer-based cost fields. CTR is computed
+as clicks/impressions (0 when impressions is 0, never dividing by zero). Campaigns with zero
+activity in the window return zero-value metrics (not an error).
+
 See [internal/platform/twitter](../../../internal/platform/twitter).

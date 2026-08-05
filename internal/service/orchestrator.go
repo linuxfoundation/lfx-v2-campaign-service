@@ -171,6 +171,18 @@ type StatusToggler interface {
 	ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error
 }
 
+// MetricsReader is an OPTIONAL dispatcher capability: read live campaign metrics from
+// the ad platform. Not every platform's dispatcher implements it, so the orchestrator
+// type-asserts for it rather than adding it to PlatformDispatcher — a dispatcher that
+// doesn't implement it yields a clean "not supported" error (ErrMetricsUnsupported → 400).
+type MetricsReader interface {
+	// ReadMetrics fetches the platform campaign's metrics for window (a platform-defined
+	// literal — e.g. X Ads' LAST_7_DAYS, Google Ads' GAQL predefined date ranges).
+	// campaign is the persisted row so an adapter can reach PlatformCampaignID and any
+	// child ids it needs to aggregate.
+	ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window string) (*model.CampaignMetrics, error)
+}
+
 // Status-toggle classification sentinels. These distinguish a client/state error (the
 // toggle never reached the ad platform) from a real platform-call failure, so the service
 // can return an accurate status + message instead of blaming the platform for everything.
@@ -183,6 +195,8 @@ var (
 	// ErrCampaignNotProvisioned: the campaign is not fully provisioned for the toggle (no
 	// upstream id yet, or a missing child ad group/ad on ACTIVATE). Nothing serviceable to toggle.
 	ErrCampaignNotProvisioned = domain.ErrCampaignNotProvisioned
+	// ErrMetricsUnsupported: the campaign's platform has no metrics-read capability wired.
+	ErrMetricsUnsupported = domain.ErrMetricsUnsupported
 )
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
