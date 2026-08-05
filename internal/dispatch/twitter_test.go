@@ -348,3 +348,267 @@ func TestTwitter_DefiniteRejectionReleasesClaim(t *testing.T) {
 		t.Errorf("a definite campaign rejection must release the claim (NoUpstreamCreate), got %T: %v", err, err)
 	}
 }
+
+// ---- status toggle --------------------------------------------------------
+
+// twitterToggleCampaign builds a persisted campaign row whose Result blob uses the SAME
+// key casing campaignFromTwitter produces (json.Marshal of an untagged struct → Go field
+// names, i.e. "LineItemID"). Using lowerCamel here would silently yield an empty id.
+func twitterToggleCampaign(campaignID, lineItemID string) *model.Campaign {
+	return &model.Campaign{
+		Platform:           model.ProviderTwitterAds,
+		PlatformCampaignID: campaignID,
+		Result:             json.RawMessage(`{"CampaignID":"` + campaignID + `","LineItemID":"` + lineItemID + `","PromotedTweetID":"pt1"}`),
+	}
+}
+
+// TestTwitter_ToggleStatus_PutsEntityStatus verifies the dispatcher resolves creds and PUTs
+// entity_status through the client, cascading campaign + line item in the right order.
+func TestTwitter_ToggleStatus_PutsEntityStatus(t *testing.T) {
+	type put struct{ method, path, status string }
+	// Guarded: the handler runs on the server's goroutine while the assertions run on the
+	// test's. api.Close() only synchronizes at the deferred call — AFTER the reads below — so an
+	// unguarded slice is a genuine race even when -race happens not to flag it.
+	var (
+		mu  sync.Mutex
+		got []put
+	)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, put{r.Method, r.URL.Path, r.URL.Query().Get("entity_status")})
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer api.Close()
+
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+	camp := twitterToggleCampaign("cmp1", "li1")
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds, camp, model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	// PAUSE flips the campaign gate FIRST (delivery stops now), then the line item. The
+	// promoted tweet is deliberately NOT touched — the line item is X's delivery gate.
+	mu.Lock()
+	got = append([]put(nil), got...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("issued %d PUTs, want 2 (campaign + line item): %+v", len(got), got)
+	}
+	if !strings.Contains(got[0].path, "/campaigns/cmp1") || got[0].status != twitter.StatusPaused {
+		t.Errorf("PUT[0] = %+v, want the campaign gate paused first", got[0])
+	}
+	if !strings.Contains(got[1].path, "/line_items/li1") || got[1].status != twitter.StatusPaused {
+		t.Errorf("PUT[1] = %+v, want the line item paused second", got[1])
+	}
+	for _, g := range got {
+		if strings.Contains(g.path, "promoted_tweets") {
+			t.Errorf("the promoted tweet must not be toggled: %+v", g)
+		}
+	}
+}
+
+// TestTwitter_ToggleStatus_ActivateWithoutLineItemIsNotProvisioned pins the fail-closed
+// ACTIVATE guard: with no line-item id nothing could serve, so the dispatcher refuses with
+// ErrCampaignNotProvisioned (a 409 state error) WITHOUT calling X.
+func TestTwitter_ToggleStatus_ActivateWithoutLineItemIsNotProvisioned(t *testing.T) {
+	// Mutex-guarded: the handler goroutine writes this and the test goroutine reads it, and
+	// httptest.Server.Close only synchronizes at the deferred Close — which runs AFTER the
+	// assertion below.
+	var mu sync.Mutex
+	reached := false
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		reached = true
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer api.Close()
+
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+	camp := twitterToggleCampaign("cmp1", "")
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds, camp, model.CampaignRunActive)
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Fatalf("want ErrCampaignNotProvisioned, got %T: %v", err, err)
+	}
+	mu.Lock()
+	sawRequest := reached
+	mu.Unlock()
+	if sawRequest {
+		t.Error("no API call should be made — the refusal is a local state check")
+	}
+}
+
+// TestTwitter_ToggleStatus_ChildIDsMatchPersistedShape pins twitterChildIDs against the
+// blob campaignFromTwitter ACTUALLY writes — json.Marshal of an untagged
+// twitter.CampaignResult, i.e. Go field names ("LineItemID"). The round-trip below is the
+// real guard: if the persisted shape ever changes, this fails rather than silently yielding
+// "" and turning every ACTIVATE into a spurious not-provisioned 409.
+//
+// (Key CASING alone is not the risk: encoding/json matches object keys case-insensitively,
+// so both "LineItemID" and "lineItemId" resolve. A renamed or nested FIELD would not.)
+func TestTwitter_ToggleStatus_ChildIDsMatchPersistedShape(t *testing.T) {
+	marshaled, err := json.Marshal(&twitter.CampaignResult{CampaignID: "cmp1", LineItemID: "li9"})
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	if got := twitterChildIDs(&model.Campaign{Result: marshaled}); got != "li9" {
+		t.Fatalf("twitterChildIDs over the real persisted blob = %q, want %q (blob: %s)", got, "li9", marshaled)
+	}
+	// A blob with no line item yields "" (drives the not-provisioned ACTIVATE refusal).
+	if got := twitterChildIDs(&model.Campaign{Result: json.RawMessage(`{"CampaignID":"cmp1"}`)}); got != "" {
+		t.Errorf("a blob without a line item must yield \"\", got %q", got)
+	}
+	// Malformed / empty blobs must not panic.
+	if got := twitterChildIDs(&model.Campaign{Result: json.RawMessage(`{`)}); got != "" {
+		t.Errorf("a malformed blob must yield \"\", got %q", got)
+	}
+	if got := twitterChildIDs(nil); got != "" {
+		t.Errorf("a nil campaign must yield \"\", got %q", got)
+	}
+}
+
+// TestTwitter_ToggleStatus_RejectsUnsupportedStatus keeps the run-state vocabulary closed.
+func TestTwitter_ToggleStatus_RejectsUnsupportedStatus(t *testing.T) {
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{})
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds, twitterToggleCampaign("cmp1", "li1"), "archived")
+	if err == nil {
+		t.Fatal("an unsupported run status must be rejected")
+	}
+}
+
+// TestTwitter_ToggleStatus_UnconfirmedCrossesTheDispatcherBoundary pins the classification
+// branch in ToggleStatus, which is what actually feeds BriefService's verify-vs-retry
+// decision.
+//
+// The two ambiguous shapes reach it differently, and only one depends on the branch to
+// acquire the marker at all:
+//   - a first-call 5xx surfaces as a plain apiError, which does NOT implement
+//     Unconfirmed(). twitter.IsOutcomeUnconfirmed recognizes it structurally (via
+//     createOutcomeAmbiguous), and the dispatcher's wrap is what turns that into an error
+//     carrying the behavioral marker. Delete the branch and this outcome silently
+//     degrades to "not modified".
+//   - a partial cascade already implements Unconfirmed() itself (client.go
+//     partialCascadeError), so it would survive the branch's removal.
+//
+// Both are covered because the branch must classify them alike, but the 5xx row is the one
+// that would regress: without it, deleting the wrap leaves every client test green while
+// operators are told a possibly-applied update was "not modified".
+//
+// Both halves matter. A definite 4xx on the FIRST call mutated nothing and must stay
+// definite, otherwise the branch could be replaced by an unconditional wrap and still pass.
+func TestTwitter_ToggleStatus_UnconfirmedCrossesTheDispatcherBoundary(t *testing.T) {
+	cases := []struct {
+		name string
+		// status returned for the first PUT the dispatcher issues; on PAUSE that is the
+		// campaign gate, and the line item follows only if the gate succeeded.
+		firstStatus     int
+		secondStatus    int
+		wantUnconfirmed bool
+	}{
+		// Ambiguous on the first call: X may or may not have applied the gate flip.
+		{"5xx on the first put", http.StatusBadGateway, http.StatusOK, true},
+		// Definite rejection, nothing mutated — must NOT be softened to "verify".
+		{"4xx on the first put", http.StatusBadRequest, http.StatusOK, false},
+		// Post-first-write failure: the campaign gate ALREADY paused upstream, so even a
+		// definite 4xx on the line item leaves the cascade half-applied and ambiguous.
+		{"4xx after the gate applied", http.StatusOK, http.StatusBadRequest, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Guarded: written on the server goroutine, read on the test goroutine, and
+			// api.Close() only synchronizes at the deferred call — after the reads below.
+			var (
+				mu sync.Mutex
+				n  int
+			)
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				n++
+				seq := n
+				mu.Unlock()
+				code := tc.firstStatus
+				if seq > 1 {
+					code = tc.secondStatus
+				}
+				w.WriteHeader(code)
+				if code == http.StatusOK {
+					_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"errors":[{"code":"BAD","message":"nope"}]}`))
+			}))
+			defer api.Close()
+
+			d := NewTwitterDispatcher(
+				fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+				twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+			)
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds,
+				twitterToggleCampaign("cmp1", "li1"), model.CampaignRunPaused)
+			if err == nil {
+				t.Fatal("expected an error from the failing cascade")
+			}
+			var unconf interface{ Unconfirmed() bool }
+			got := errors.As(err, &unconf) && unconf.Unconfirmed()
+			if got != tc.wantUnconfirmed {
+				t.Errorf("Unconfirmed() = %v, want %v (err %T: %v)", got, tc.wantUnconfirmed, err, err)
+			}
+		})
+	}
+}
+
+// TestTwitter_ToggleStatus_SucceedsWithoutFundingInstrument defends the ONE intentional
+// difference between the create and toggle credential rules: Dispatch requires
+// funding_instrument_id (a create-time field), validateTwitterConnection deliberately does
+// not, because UpdateCampaignAndChildrenStatus only PUTs entity_status on entities that
+// already exist and never puts that field on the wire. Demanding it would refuse an
+// otherwise-valid pause on a connection that has drifted.
+//
+// TestTwitter_PreCreateErrorsReleaseClaim pins the create half ("missing funding
+// instrument" is a pre-create failure); this pins the toggle half. A refactor that folds
+// the funding-instrument check into the shared validator now breaks here instead of
+// silently restoring the rejection this asymmetry exists to avoid.
+func TestTwitter_ToggleStatus_SucceedsWithoutFundingInstrument(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer api.Close()
+
+	// Identical to activeTwitterConn EXCEPT that ProviderConfig carries no
+	// funding_instrument_id — the exact connection shape Dispatch rejects.
+	conn := &model.Connection{
+		Provider:             model.ProviderTwitterAds,
+		AccountID:            "acc1",
+		EncryptedCredentials: []byte(goodTwitterCreds),
+		Status:               model.StatusActive,
+	}
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"), model.CampaignRunPaused); err != nil {
+		t.Fatalf("a pause must not require funding_instrument_id: %v", err)
+	}
+	mu.Lock()
+	got := append([]string(nil), paths...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("issued %d PUTs, want 2 (campaign + line item): %v", len(got), got)
+	}
+}
