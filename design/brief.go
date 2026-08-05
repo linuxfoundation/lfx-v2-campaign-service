@@ -199,7 +199,7 @@ var Campaign = Type("campaign", func() {
 var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("campaign_id", String, "Campaign UUID")
 	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
-	Attribute("window", String, "Platform-agnostic reporting window the metrics were read for")
+	Attribute("window", String, "Platform-agnostic reporting window the metrics were read for", metricsWindowEnum)
 	Attribute("impressions", Int64, "Impressions in window")
 	Attribute("clicks", Int64, "Clicks in window")
 	Attribute("cost_micros", Int64, "Cost in window, in micros of the ad account's currency")
@@ -414,9 +414,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			projectIDAttr()
 			briefIDAttr()
 			campaignIDAttr()
-			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", func() {
-				Enum("today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month")
-			})
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
 			Required("project_id", "brief_id", "campaign_id")
 		})
 		Result(CampaignMetrics)
@@ -509,6 +507,15 @@ func briefIDAttr() {
 
 func campaignIDAttr() {
 	Attribute("campaign_id", String, "Campaign UUID", func() { Format(FormatUUID) })
+}
+
+// metricsWindowEnum applies the platform-agnostic reporting-window vocabulary
+// (model.MetricsWindow's seven values) to the current attribute. Shared between
+// get-campaign-metrics' request parameter and CampaignMetrics' result attribute so
+// the two stay in lockstep — a window value the request accepts but the result type
+// can't represent (or vice versa) would silently diverge otherwise.
+func metricsWindowEnum() {
+	Enum("today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month")
 }
 
 // commonBriefErrors declares the standard error set for a brief method.

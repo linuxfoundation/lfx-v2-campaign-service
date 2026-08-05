@@ -1254,7 +1254,7 @@ func lfxV2CampaignServiceBriefsUpdateCampaignUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-campaign --body '{\n      \"campaign\": {\n         \"campaign_name\": \"Facere voluptas quis nihil.\",\n         \"config\": \"Voluptatem fugiat et.\",\n         \"status\": \"Rem asperiores eligendi vero.\"\n      }\n   }' --project-id \"cncf\" --brief-id \"70e2af96-afa1-4d7f-acca-f54f6eabefd1\" --campaign-id \"dc7bfd5b-99b3-49d0-813a-c49ba9a2d314\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-campaign --body '{\n      \"campaign\": {\n         \"campaign_name\": \"Aperiam facere voluptas quis nihil.\",\n         \"config\": \"Voluptatem fugiat et.\",\n         \"status\": \"Rem asperiores eligendi vero.\"\n      }\n   }' --project-id \"cncf\" --brief-id \"c2e2af96-afa1-4d7f-acca-f54f6eabefd1\" --campaign-id \"dc7bfd5b-99b3-49d0-813a-c49ba9a2d314\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
 }
 
 func lfxV2CampaignServiceBriefsToggleCampaignStatusUsage() {

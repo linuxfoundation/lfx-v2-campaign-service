@@ -2336,6 +2336,11 @@ func ValidateGetCampaignMetricsResponseBody(body *GetCampaignMetricsResponseBody
 	if body.Ctr == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
 	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
 	return
 }
 
