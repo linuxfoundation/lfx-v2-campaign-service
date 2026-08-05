@@ -1,5 +1,34 @@
 # Log
 
+## 2026-08-05
+
+**Fix** — Closed two false negatives in the semicolon-ambiguity guard (LFXV2-2775, PR #62),
+both flagged by automated review against a merge commit that pulled in `origin/main`'s shared
+infra (the file itself was untouched by that merge).
+
+1. `hasAmbiguousSemicolon` only flagged ambiguity when a segment contained a BARE key (no `=`).
+   But `stripUTM` deletes the matched `utm_` token outright, and under a literal (non-separator)
+   reading of `;` that token was never a separate parameter — it was the tail of a neighbour's
+   value, keyed or not. `sig=a;utm_source=partner;b=2` was tagged even though stripping
+   `utm_source` deletes text a literal reading of `sig`'s value would have kept. The check is now
+   "does this segment contain any OTHER parameter at all," not "does it contain a bare one" —
+   more conservative, which is the right direction for a fail-safe that already prefers leaving a
+   query untouched over risking corruption. This also flips `utm_campaign=;a=1` from "not
+   ambiguous" to ambiguous, since the same corruption risk applies to it once traced through
+   `stripUTM`'s removal-and-rejoin.
+2. `hasBareKeysInSegmentWith`'s backward scan (renamed `hasOtherParamInSegmentWith`) started
+   looking for the segment boundary at `utmIndex-1` and never checked `parts[utmIndex]` itself. A
+   utm param whose OWN leading separator is `&` — meaning it opens its own segment — was
+   misread as continuing whatever segment preceded it when no earlier `&` existed, so a bare key
+   from a PRIOR, unrelated segment leaked in: `debug&utm_source=facebook;x=1` was left untagged
+   even though `utm_source`'s actual segment (`utm_source=facebook;x=1`) has no `debug` in it.
+   Fixed by starting the backward walk AT `utmIndex` and checking its own separator first.
+
+Both pinned by new cases in `TestApply_AmbiguousSemicolonQueriesAreNotTagged`; one existing test
+(`TestApply_SurvivorKeepsItsOwnSeparator`) encoded the same now-corrected assumption and was
+narrowed to point at `TestStripUTM_SurvivorKeepsItsOwnSeparator`, which pins the same
+separator-preservation property directly at the `stripUTM` level, unguarded by the ambiguity check.
+
 ## 2026-08-04
 
 **Fix** — Corrected a regression introduced by the separator-preservation change earlier the same

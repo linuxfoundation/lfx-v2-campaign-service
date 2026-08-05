@@ -414,18 +414,18 @@ func TestStripUTM_SurvivorKeepsItsOwnSeparator(t *testing.T) {
 
 // TestApply_SurvivorKeepsItsOwnSeparator is the end-to-end form: a sibling parameter must not
 // vanish from a tagged link because a utm_ pair was removed from beside it.
+//
+// "a=1;utm_source=fb&b=2" shares utm_source's segment with "a=1" (joined only by ';'), so it is
+// ambiguous per hasAmbiguousSemicolon and Apply must leave it untouched — the separator-keeping
+// behaviour this test name refers to is pinned directly at the stripUTM level, unguarded, by
+// TestStripUTM_SurvivorKeepsItsOwnSeparator.
 func TestApply_SurvivorKeepsItsOwnSeparator(t *testing.T) {
 	p := Params{Source: "s", Medium: "m", Campaign: "NEW"}
 
-	got := Apply("https://lf.dev/p?a=1;utm_source=fb&b=2", p, "")
-	assert.Contains(t, got, "a=1&b=2", "b=2 keeps its own '&' so it stays a separate parameter")
-	assert.NotContains(t, got, "a=1;b=2", "inheriting the removed pair's ';' would lose b entirely")
-	assert.NotContains(t, got, "fb", "the stale utm_source is still stripped")
-
-	u, err := url.Parse(got)
-	require.NoError(t, err)
-	assert.Equal(t, "2", u.Query().Get("b"), "the sibling must still be readable after tagging")
-	assert.Equal(t, "NEW", u.Query().Get("utm_campaign"))
+	raw := "https://lf.dev/p?a=1;utm_source=fb&b=2"
+	got := Apply(raw, p, "")
+	assert.Equal(t, raw, got,
+		"utm_source shares a semicolon segment with a=1, so the query is ambiguous and must not be tagged")
 }
 
 // TestApply_SemicolonInsideANonUTMValueSurvives is the end-to-end form of the same bug: the URL
@@ -572,11 +572,14 @@ func TestApply_SemicolonQueriesDoNotBypassTheNeverRetagGuard(t *testing.T) {
 			"an untagged query is appended to, never reshaped")
 	})
 
-	t.Run("an empty campaign is replaced without losing its siblings", func(t *testing.T) {
-		got := Apply("https://lf.dev/e?utm_campaign=;a=1", p, "")
-		assert.Contains(t, got, "utm_campaign=NEW", "a blank campaign is not a deliberate one")
-		assert.Contains(t, got, "a=1", "stripping the utm_ pair must keep the rest")
-		assert.Equal(t, 1, strings.Count(got, "utm_campaign="))
+	t.Run("an empty campaign sharing a semicolon segment with a sibling is ambiguous, not tagged", func(t *testing.T) {
+		// utm_campaign is semicolon-joined to a=1: stripping it would delete text that a
+		// literal (non-separator) reading of ';' would have kept as part of one value, keyed
+		// sibling or not. See TestApply_AmbiguousSemicolonQueriesAreNotTagged.
+		raw := "https://lf.dev/e?utm_campaign=;a=1"
+		got := Apply(raw, p, "")
+		assert.Equal(t, raw, got,
+			"a blank campaign sharing a semicolon segment with another param must not be tagged")
 	})
 }
 
@@ -710,4 +713,20 @@ func TestApply_AmbiguousSemicolonQueriesAreNotTagged(t *testing.T) {
 	got5 := Apply(raw5, p, "")
 	assert.Equal(t, raw5, got5,
 		"a bare key opening the segment before a semicolon-joined utm param must not be tagged")
+
+	// Every sibling in the segment is KEYED, not bare. The ambiguity is unchanged: under a
+	// literal (non-separator) reading of ';', "sig"'s value would still include the text that
+	// stripping utm_source deletes, whether or not the neighbours happen to contain '='.
+	raw6 := "https://lf.dev/p?sig=a;utm_source=partner;b=2"
+	got6 := Apply(raw6, p, "")
+	assert.Equal(t, raw6, got6,
+		"a semicolon-joined utm param with only keyed siblings must still be treated as ambiguous")
+
+	// The utm param itself OPENS its ampersand segment (its own preceding separator is '&'),
+	// with a bare key from the PRIOR segment immediately before it. That prior bare key must
+	// not leak into this segment's boundary.
+	raw7 := "https://lf.dev/p?debug&utm_source=facebook;x=1"
+	got7 := Apply(raw7, p, "")
+	assert.Equal(t, raw7, got7,
+		"a semicolon-joined sibling within the utm param's own segment must still be treated as ambiguous")
 }

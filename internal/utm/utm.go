@@ -434,9 +434,9 @@ func hasUTMPair(rawQuery string) bool {
 }
 
 // hasAmbiguousSemicolon reports whether a raw query contains a UTM parameter that sits within
-// a semicolon-delimited parameter group (i.e., surrounded by other parameters that are only
-// semicolon-separated), making it ambiguous whether the semicolons are parameter delimiters
-// or parts of parameter values.
+// a semicolon-delimited parameter group (i.e., shares an ampersand-delimited segment with
+// another parameter, joined only by semicolons), making it ambiguous whether the semicolons
+// are parameter delimiters or parts of parameter values.
 //
 // For example, in `sig=a;utm_source=partner;b`, the `utm_source` parameter is only separated
 // from `sig` and `b` by semicolons, not ampersands. We cannot reliably tell if `utm_source`
@@ -446,13 +446,18 @@ func hasUTMPair(rawQuery string) bool {
 //
 // The heuristic: a query is ambiguous if it contains a UTM parameter that:
 //  1. Is separated by a semicolon (not ampersand) in EITHER direction, AND
-//  2. Has at least one bare-key parameter (no '=' sign) on the SAME SIDE within the same
-//     ampersand-delimited segment.
+//  2. Shares its ampersand-delimited segment with at least one other parameter — keyed or
+//     bare. A keyed neighbour is just as much at risk as a bare one: stripUTM deletes the
+//     whole matched token, and under a literal (non-separator) reading of ';' that token was
+//     never a separate parameter at all — it was the tail of the neighbour's value. Deleting
+//     it removes that text from whatever the neighbour's literal value actually was, keyed or
+//     not.
 //
 // For instance:
-//   - `sig=a;utm_source=partner;b` is ambiguous (utm_source is semicolon-separated and has
-//     bare key `b` on the same segment)
-//   - `utm_campaign=;a=1` is not ambiguous (all params have '=')
+//   - `sig=a;utm_source=partner;b` is ambiguous (utm_source shares its segment with `sig`
+//     and the bare key `b`)
+//   - `sig=a;utm_source=partner;b=2` is ambiguous too (the neighbours are keyed, but stripping
+//     utm_source still deletes text that a literal reading of `sig`'s value would have kept)
 //   - `sig=a;b;c&utm_term=old` is not ambiguous (utm_term is ampersand-separated from the
 //     bare keys, so it's on a different segment)
 func hasAmbiguousSemicolon(rawQuery string) bool {
@@ -473,27 +478,25 @@ func hasAmbiguousSemicolon(rawQuery string) bool {
 			continue
 		}
 
-		// This utm param has a semicolon on at least one side.
-		// Only flag as ambiguous if there are bare keys on the same segment.
-		if hasBareKeysInSegmentWith(parts, i) {
+		// This utm param has a semicolon on at least one side. Flag as ambiguous if it
+		// shares its segment with any other parameter, keyed or bare.
+		if hasOtherParamInSegmentWith(parts, i) {
 			return true
 		}
 	}
 	return false
 }
 
-// hasBareKeysInSegmentWith checks if there are any bare-key parameters (without '=') on the
-// same ampersand-delimited segment as the given utmIndex.
-func hasBareKeysInSegmentWith(parts []queryPart, utmIndex int) bool {
-	// Find the boundaries of this segment (from last & before to next & after, or start/end).
-	segmentStart := 0
-	for i := utmIndex - 1; i >= 0; i-- {
-		if parts[i].sep == '&' {
-			// parts[i].sep records the separator that PRECEDES parts[i], so an '&' here
-			// means parts[i] itself opens the new segment, not parts[i+1].
-			segmentStart = i
-			break
-		}
+// hasOtherParamInSegmentWith reports whether any parameter other than the one at utmIndex
+// shares its ampersand-delimited segment.
+func hasOtherParamInSegmentWith(parts []queryPart, utmIndex int) bool {
+	// Walk backward from utmIndex to find where this segment starts: a part whose OWN
+	// leading separator is '&' opens a new segment, so it is itself the start — the walk
+	// must check parts[utmIndex] before ever stepping past it, not only the parts before it,
+	// or a segment that utmIndex itself opens is misread as continuing the previous one.
+	segmentStart := utmIndex
+	for segmentStart > 0 && parts[segmentStart].sep != '&' {
+		segmentStart--
 	}
 
 	segmentEnd := len(parts)
@@ -504,13 +507,7 @@ func hasBareKeysInSegmentWith(parts []queryPart, utmIndex int) bool {
 		}
 	}
 
-	// Check if any part in the segment (other than the utm param itself) is a bare key
-	for i := segmentStart; i < segmentEnd; i++ {
-		if i != utmIndex && !strings.Contains(parts[i].token, "=") {
-			return true
-		}
-	}
-	return false
+	return segmentEnd-segmentStart > 1
 }
 
 // isTaggable reports whether a link is a web destination that may carry UTM parameters.
