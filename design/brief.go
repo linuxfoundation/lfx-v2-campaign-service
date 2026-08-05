@@ -17,11 +17,20 @@ import (
 
 // ─── Brief types ───
 
-// BriefInput is the mutable brief payload (create/replace).
-var BriefInput = Type("brief-input", func() {
+// BriefData holds the shared brief attributes used by response types. It is Reference()d by
+// the Brief RESPONSE type. Do not add constraints here — they reach the response type through
+// Reference, breaking already-persisted empty-slug rows. Constraints belong in BriefInput
+// (the create/update payload type) only. Keep the two in sync: see BriefInput's doc comment.
+var BriefData = Type("brief-data", func() {
 	Attribute("program_type", String, "Funnel context", func() {
 		Enum("events", "education", "membership")
 	})
+	// NO MinLength here: BriefData is Reference()d by the Brief RESPONSE type, and goa copies
+	// validations through Reference — so constraining it here also constrains every brief
+	// response, making an already-persisted empty-slug row undecodable by generated clients
+	// (get-brief included). The empty-slug REQUEST is rejected by BriefInput below — the
+	// create/update payload type, which carries MinLength(1) — which is where the constraint
+	// belongs. Keep the two in sync: see BriefInput's doc comment.
 	Attribute("event_slug", String, "Event/course slug (unique within the project)")
 	Attribute("url", String, "Event/course page URL")
 	Attribute("platforms", ArrayOf(String), "Suggested default platforms (a planning hint; binding selection is on the campaign)")
@@ -32,18 +41,52 @@ var BriefInput = Type("brief-input", func() {
 	Required("program_type", "event_slug")
 })
 
-// Brief is the brief response view. It Reference()s BriefInput so the eight
+// BriefInput is the CREATE/UPDATE payload. It carries MinLength(1) on event_slug, enforcing
+// that the create/update contract rejects empty slugs — without that constraint reaching
+// response types (see BriefData).
+//
+// goa's Required() only checks that the JSON key is present, so an explicit "" satisfies it and
+// the TEXT NOT NULL column accepts it — a brief with an empty slug was creatable, occupied the
+// UNIQUE(project_id, event_slug) index, and could never be recalled through find-brief (whose
+// own MinLength(1) rejects the request with a 400 rather than the documented 404/200).
+//
+// MinLength(1) cannot live on BriefData: the Brief RESPONSE type Reference()s BriefData and goa
+// copies validations through Reference, so any already-persisted empty-slug row would become
+// undecodable by generated clients — breaking reads for exactly the rows this input type
+// prevents going forward. Requests reject empty slugs; responses stay readable.
+var BriefInput = Type("brief-input", func() {
+	Reference(BriefData)
+	Attribute("program_type")
+	Attribute("event_slug", String, "Event/course slug (unique within the project)", func() {
+		MinLength(1)
+	})
+	Attribute("url")
+	Attribute("platforms")
+	Attribute("event_details")
+	Attribute("copy")
+	Attribute("keywords")
+	Attribute("targeting")
+	Required("program_type", "event_slug")
+})
+
+// Brief is the brief response view. It Reference()s BriefData so the eight
 // shared attributes (program_type, event_slug, url, platforms, event_details,
 // copy, keywords, targeting) inherit their type/validation/description from a
-// single source of truth — a later change to BriefInput's program_type Enum or a
+// single source of truth — a later change to BriefData's program_type Enum or a
 // validation rule flows here automatically, so the two can't silently drift.
 // Brief then layers on its response-only fields.
 var Brief = Type("brief", func() {
-	Reference(BriefInput)
+	Reference(BriefData)
 	Attribute("id", String, "Brief UUID")
 	Attribute("project_id", String, "Owning project")
-	// Inherited from BriefInput via Reference (name-only Attribute calls).
+	// Inherited from BriefData via Reference (name-only Attribute calls).
 	Attribute("program_type")
+	// event_slug is inherited from BriefData via Reference (no constraint): BriefData has
+	// no MinLength, so that constraint (which exists in the CREATE payload BriefInput) does
+	// not leak into the RESPONSE validator. This keeps any already-persisted empty-slug row
+	// decodable by generated clients, preserving reads for exactly the rows the create-side
+	// constraint is meant to prevent going forward. Requests reject empty slugs; responses
+	// stay readable for legacy data.
 	Attribute("event_slug")
 	Attribute("url")
 	Attribute("platforms")
@@ -182,6 +225,44 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusCreated, func() { Header("etag:ETag") })
 			briefErrorResponses(true)
+		})
+	})
+
+	Method("find-brief", func() {
+		Description("Find the saved brief for an event slug. Returns 404 when the event has no brief yet, which is the ordinary first-time-generation case — the caller then generates one and POSTs it to create-brief.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// NO MaxLength: BriefData.event_slug is uncapped and the column is unbounded
+			// TEXT, so any cap here would make a brief the create contract accepted
+			// permanently unrecallable — the caller would get a validation error instead of
+			// its saved brief, then collide on re-create.
+			//
+			// MinLength(1) here is SAFE because BriefInput.event_slug — the CREATE/UPDATE
+			// payload — carries the same constraint. (Not BriefData: it stays unconstrained
+			// on purpose, because the Brief RESPONSE type References it and goa copies
+			// validations through Reference, which would make an already-persisted
+			// empty-slug row undecodable by generated clients. See the note on BriefData.)
+			// It did not originally: goa's Required() only checks that the JSON
+			// key is present, so an explicit "" was creatable and would then have been
+			// unrecallable through this endpoint — a 400 instead of the documented 404/200.
+			// The two contracts must stay in sync; loosening either one reopens that gap.
+			Attribute("event_slug", String, "Event slug derived from the event page URL.", func() {
+				Example("kubecon-eu-2026")
+				MinLength(1)
+			})
+			Required("project_id", "event_slug")
+		})
+		Result(Brief)
+		commonBriefErrors(false)
+		HTTP(func() {
+			// A query param, not a path segment: the slug is caller-derived free text, and
+			// a lookup that legitimately MISSES is the common case (404 = generate one).
+			GET("/projects/{project_id}/briefs")
+			Param("event_slug")
+			Header("bearer_token:Authorization")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses(false)
 		})
 	})
 

@@ -7,12 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
+	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
+	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	goahttp "goa.design/goa/v3/http"
 )
 
 // fakeBriefRepo is a minimal in-memory BriefRepository for handler tests.
@@ -28,6 +34,18 @@ func newFakeBriefRepo() *fakeBriefRepo {
 }
 
 func briefKey(projectID, id string) string { return projectID + "|" + id }
+
+// FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
+// repo's partial-unique-index semantics (archived rows free the slug).
+func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {
+	for _, b := range r.briefs {
+		if b.ProjectID == projectID && b.EventSlug == eventSlug && b.Status != model.BriefArchived {
+			cp := *b
+			return &cp, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
 
 func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
 	b, ok := r.briefs[briefKey(projectID, id)]
@@ -98,6 +116,13 @@ func TestBriefService_NilRepo_ReturnsServiceUnavailable(t *testing.T) {
 	if err := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{ProjectID: "cncf", BriefID: "b1"}); !isBriefUnavailable(err) {
 		t.Errorf("DeleteBrief: expected *briefs.ConnServiceUnavailableError, got %T (%v)", err, err)
 	}
+	// FindBrief must 503 like every other route during a cold start. Without this, a refactor
+	// touching only the lookup could drop its ready() call and start returning 404 instead —
+	// telling the caller "no brief exists" when the truth is "the database is not up yet",
+	// which for this endpoint means silently regenerating a brief that already exists.
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"}); !isBriefUnavailable(err) {
+		t.Errorf("FindBrief: expected *briefs.ConnServiceUnavailableError, got %T (%v)", err, err)
+	}
 }
 
 // TestBriefService_SetBackend_LateBinding verifies the container can inject the
@@ -116,6 +141,9 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 	if _, err := s.GetJob(ctx, &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"}); !isBriefUnavailable(err) {
 		t.Fatalf("GetJob: expected 503 before backend is set, got %T (%v)", err, err)
 	}
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"}); !isBriefUnavailable(err) {
+		t.Fatalf("FindBrief: expected 503 before backend is set, got %T (%v)", err, err)
+	}
 
 	// Inject live collaborators (as the background DB-init goroutine does).
 	repo := newFakeBriefRepo()
@@ -131,6 +159,10 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 	}
 	if _, err := s.GetJob(ctx, &briefs.GetJobPayload{ProjectID: "cncf", JobID: "missing"}); isBriefUnavailable(err) {
 		t.Fatalf("GetJob: expected the live repo after SetBackend, still got 503")
+	}
+	// A slug with no saved brief is the ordinary first-generation case: NotFound, not 503.
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "brand-new-event"}); isBriefUnavailable(err) {
+		t.Fatalf("FindBrief: expected the live repo after SetBackend, still got 503")
 	}
 }
 
@@ -917,6 +949,241 @@ func TestBriefService_ToggleCampaignStatus_PendingWithIDNotToggleable(t *testing
 	}
 	if tog.gotID != "" {
 		t.Error("the platform must NOT be called for a pending campaign")
+	}
+}
+
+// newBriefServiceWithRepo builds a BriefService with live collaborators around repo,
+// matching how the container injects them once the DB pool is ready.
+func newBriefServiceWithRepo(t *testing.T, repo *fakeBriefRepo) *BriefService {
+	t.Helper()
+	s := NewBriefService(nil, nil, nil, nil)
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	s.SetBackend(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	return s
+}
+
+// TestFindBrief_ReturnsSavedBriefForEventSlug covers the re-paste path: a brief was already
+// generated and saved for this event, so the lookup returns it (with its AI-generated
+// copy/keywords/targeting and any later edits) instead of the caller regenerating.
+func TestFindBrief_ReturnsSavedBriefForEventSlug(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		Status: model.BriefDraft,
+		Copy:   json.RawMessage(`{"headlines":["Join KubeCon EU 2026"]}`),
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"})
+	if err != nil {
+		t.Fatalf("FindBrief: %v", err)
+	}
+	if got.ID != "b1" {
+		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+}
+
+// TestFindBrief_NotFoundIsTheFirstGenerationCase pins the ordinary first-time path: no brief
+// exists for this event yet, so the lookup 404s and the caller generates one. This must be a
+// clean NotFound, not a server error — it is the COMMON case, not a failure.
+func TestFindBrief_NotFoundIsTheFirstGenerationCase(t *testing.T) {
+	ctx := context.Background()
+	s := newBriefServiceWithRepo(t, newFakeBriefRepo())
+
+	_, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "brand-new-event"})
+	if err == nil {
+		t.Fatal("expected a not-found error for an event with no brief")
+	}
+	var nf *briefs.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Errorf("want a 404 NotFoundError (first-generation case), got %T: %v", err, err)
+	}
+}
+
+// TestFindBrief_ArchivedBriefDoesNotMatch mirrors the partial unique index: archiving frees
+// the slug, so a re-paste after archiving must 404 and generate afresh rather than resurrect
+// the archived brief.
+func TestFindBrief_ArchivedBriefDoesNotMatch(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026", Status: model.BriefArchived,
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: "kubecon-eu-2026"}); err == nil {
+		t.Fatal("an archived brief must not be returned — the slug is free for a new brief")
+	}
+}
+
+// TestFindBrief_HandlesLongSlugs checks the SERVICE layer passes a long slug straight through
+// to the repo without truncating or rejecting it.
+//
+// This test alone does NOT pin the absence of a MaxLength on the contract: it calls FindBrief
+// directly, and a design-level cap is enforced by the generated DECODER, which this bypasses.
+// TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes is what binds that.
+func TestFindBrief_HandlesLongSlugs(t *testing.T) {
+	ctx := context.Background()
+	longSlug := strings.Repeat("a", 512)
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: longSlug, Status: model.BriefDraft,
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	got, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "cncf", EventSlug: longSlug})
+	if err != nil {
+		t.Fatalf("a slug the create contract accepts must be recallable: %v", err)
+	}
+	if got.ID != "b1" {
+		t.Errorf("brief id = %q, want b1", got.ID)
+	}
+}
+
+// TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes pins the find-brief QUERY-PARAM contract
+// at the layer that actually enforces it: the generated decoder.
+//
+// The load-bearing half is the LONG slug. A MaxLength MUST NOT be (re)introduced on this
+// lookup: BriefInput.event_slug is uncapped and the column is unbounded TEXT, so a cap
+// here would make a brief the CREATE contract accepted permanently unrecallable — the caller
+// would get a validation error instead of its saved brief, then collide on re-create against
+// the UNIQUE(project_id, event_slug) index. The service-level test above cannot catch that,
+// because a cap lives in design/brief.go and is generated into DecodeFindBriefRequest, not
+// into the service method. Verified binding: adding MaxLength(64) to design/brief.go and
+// regenerating fails this test.
+//
+// The empty-slug half is a guard, not a proof. Because event_slug is a REQUIRED query param,
+// goa rejects "" with a MissingFieldError from Required() alone — so this assertion still
+// passes if MinLength(1) is dropped from the design. MinLength(1) is therefore belt-and-braces
+// on THIS endpoint; the constraint that genuinely does work is the one on BriefInput
+// (a JSON body field, where Required() only checks key presence), which
+// TestBriefInput_RejectsEmptyEventSlug pins.
+func TestFindBriefDecoder_RejectsEmptySlugButNotLongOnes(t *testing.T) {
+	mux := goahttp.NewMuxer()
+	decode := briefsserver.DecodeFindBriefRequest(mux, goahttp.RequestDecoder)
+
+	// Route through the muxer so mux.Vars(r) resolves {project_id}; decoding a raw
+	// httptest request would silently yield an empty project_id and not exercise the
+	// real path. The handler runs synchronously inside ServeHTTP, so capturing the
+	// routed request without a lock is safe.
+	var routed *http.Request
+	mux.Handle(http.MethodGet, "/projects/{project_id}/briefs", func(_ http.ResponseWriter, rr *http.Request) {
+		routed = rr
+	})
+	newReq := func(t *testing.T, slug string) *http.Request {
+		t.Helper()
+		routed = nil
+		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet,
+			"/projects/cncf/briefs?event_slug="+url.QueryEscape(slug), nil))
+		if routed == nil {
+			t.Fatal("request was not routed; the decoder would not see path params")
+		}
+		return routed
+	}
+
+	// An empty slug must be rejected: it can never match a stored row. (Satisfied by
+	// Required() alone — see the doc comment.)
+	if _, err := decode(newReq(t, "")); err == nil {
+		t.Error("an empty event_slug must be rejected by the decoder")
+	}
+
+	// A very long slug must still decode. A MaxLength added to design/brief.go and regenerated
+	// would fail here — which is the regression this test exists to catch.
+	longSlug := strings.Repeat("a", 512)
+	got, err := decode(newReq(t, longSlug))
+	if err != nil {
+		t.Fatalf("a long slug must decode (no MaxLength on the contract), got: %v", err)
+	}
+	if got.EventSlug != longSlug {
+		t.Errorf("event_slug was altered by decoding: len = %d, want %d", len(got.EventSlug), len(longSlug))
+	}
+	if got.ProjectID != "cncf" {
+		t.Errorf("project_id = %q, want cncf", got.ProjectID)
+	}
+}
+
+// TestFindBrief_IsScopedToProject guards tenancy: the same event slug under a DIFFERENT
+// project must not leak across.
+func TestFindBrief_IsScopedToProject(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026", Status: model.BriefDraft,
+	}
+	s := newBriefServiceWithRepo(t, repo)
+
+	if _, err := s.FindBrief(ctx, &briefs.FindBriefPayload{ProjectID: "other-foundation", EventSlug: "kubecon-eu-2026"}); err == nil {
+		t.Fatal("a brief must not be visible to a different project")
+	}
+}
+
+// TestBriefInput_RejectsEmptyEventSlug pins that the CREATE contract and the find-by-slug
+// LOOKUP contract agree on event_slug.
+//
+// They originally did not. goa's Required() checks only that the JSON key is PRESENT, so an
+// explicit "" satisfied it, and the TEXT NOT NULL column accepts it — meaning a brief with an
+// empty slug was creatable, occupied the UNIQUE(project_id, event_slug) index, and could never
+// be recalled through find-brief (whose own MinLength(1) rejects the request with a 400
+// instead of the documented 404/200).
+//
+// Asserting on the GENERATED validator is the point: the constraint lives in design/brief.go,
+// so this fails if someone drops MinLength(1) there and regenerates.
+func TestBriefInput_RejectsEmptyEventSlug(t *testing.T) {
+	empty := ""
+	programType := "events"
+
+	err := briefsserver.ValidateBriefInputRequestBody(&briefsserver.BriefInputRequestBody{
+		ProgramType: &programType,
+		EventSlug:   &empty,
+	})
+	if err == nil {
+		t.Fatal("an empty event_slug must be rejected at create: it is creatable but permanently unrecallable")
+	}
+	if !strings.Contains(err.Error(), "event_slug") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+
+	// A real slug still passes — the constraint must not reject ordinary input.
+	slug := "kubecon-eu-2026"
+	if verr := briefsserver.ValidateBriefInputRequestBody(&briefsserver.BriefInputRequestBody{
+		ProgramType: &programType,
+		EventSlug:   &slug,
+	}); verr != nil {
+		t.Errorf("a real slug must still validate, got: %v", verr)
+	}
+}
+
+// TestBriefResponse_StillDecodesLegacyEmptySlug pins the OTHER half of the empty-slug contract:
+// requests reject an empty event_slug, but RESPONSES must still carry one.
+//
+// The constraint originally lived on BriefInput, which the Brief response type Reference()s —
+// and goa copies validations through Reference, so it landed in all five response validators
+// too. Any already-persisted empty-slug row then became undecodable by generated clients,
+// breaking even get-brief for exactly the rows the create-side fix exists to prevent going
+// forward. Hence the separate BriefInput and BriefData types.
+func TestBriefResponse_StillDecodesLegacyEmptySlug(t *testing.T) {
+	// A response body carrying the legacy empty slug must validate.
+	empty := ""
+	id := "b1"
+	projectID := "cncf"
+	programType := "events"
+	status := "approved"
+	var version int64 = 1
+
+	if err := briefsclient.ValidateGetBriefResponseBody(&briefsclient.GetBriefResponseBody{
+		ID: &id, ProjectID: &projectID, ProgramType: &programType,
+		EventSlug: &empty, Status: &status, Version: &version,
+	}); err != nil {
+		t.Fatalf("a legacy empty-slug row must still be readable, got: %v", err)
+	}
+
+	// ...while the WRITE path still rejects it.
+	if err := briefsserver.ValidateBriefInputRequestBody(&briefsserver.BriefInputRequestBody{
+		ProgramType: &programType, EventSlug: &empty,
+	}); err == nil {
+		t.Error("the create/update payload must still reject an empty event_slug")
 	}
 }
 

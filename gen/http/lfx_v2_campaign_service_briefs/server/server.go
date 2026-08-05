@@ -21,6 +21,7 @@ import (
 type Server struct {
 	Mounts               []*MountPoint
 	CreateBrief          http.Handler
+	FindBrief            http.Handler
 	GetBrief             http.Handler
 	UpdateBrief          http.Handler
 	ApproveBrief         http.Handler
@@ -61,6 +62,7 @@ func New(
 	return &Server{
 		Mounts: []*MountPoint{
 			{"CreateBrief", "POST", "/projects/{project_id}/briefs"},
+			{"FindBrief", "GET", "/projects/{project_id}/briefs"},
 			{"GetBrief", "GET", "/projects/{project_id}/briefs/{brief_id}"},
 			{"UpdateBrief", "PUT", "/projects/{project_id}/briefs/{brief_id}"},
 			{"ApproveBrief", "POST", "/projects/{project_id}/briefs/{brief_id}/approve"},
@@ -73,6 +75,7 @@ func New(
 			{"GetJob", "GET", "/projects/{project_id}/jobs/{job_id}"},
 		},
 		CreateBrief:          NewCreateBriefHandler(e.CreateBrief, mux, decoder, encoder, errhandler, formatter),
+		FindBrief:            NewFindBriefHandler(e.FindBrief, mux, decoder, encoder, errhandler, formatter),
 		GetBrief:             NewGetBriefHandler(e.GetBrief, mux, decoder, encoder, errhandler, formatter),
 		UpdateBrief:          NewUpdateBriefHandler(e.UpdateBrief, mux, decoder, encoder, errhandler, formatter),
 		ApproveBrief:         NewApproveBriefHandler(e.ApproveBrief, mux, decoder, encoder, errhandler, formatter),
@@ -92,6 +95,7 @@ func (s *Server) Service() string { return "lfx-v2-campaign-service-briefs" }
 // Use wraps the server handlers with the given middleware.
 func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.CreateBrief = m(s.CreateBrief)
+	s.FindBrief = m(s.FindBrief)
 	s.GetBrief = m(s.GetBrief)
 	s.UpdateBrief = m(s.UpdateBrief)
 	s.ApproveBrief = m(s.ApproveBrief)
@@ -111,6 +115,7 @@ func (s *Server) MethodNames() []string { return lfxv2campaignservicebriefs.Meth
 // endpoints.
 func Mount(mux goahttp.Muxer, h *Server) {
 	MountCreateBriefHandler(mux, h.CreateBrief)
+	MountFindBriefHandler(mux, h.FindBrief)
 	MountGetBriefHandler(mux, h.GetBrief)
 	MountUpdateBriefHandler(mux, h.UpdateBrief)
 	MountApproveBriefHandler(mux, h.ApproveBrief)
@@ -160,6 +165,59 @@ func NewCreateBriefHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "create-brief")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountFindBriefHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint.
+func MountFindBriefHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/briefs", f)
+}
+
+// NewFindBriefHandler creates a HTTP handler which loads the HTTP request and
+// calls the "lfx-v2-campaign-service-briefs" service "find-brief" endpoint.
+func NewFindBriefHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeFindBriefRequest(mux, decoder)
+		encodeResponse = EncodeFindBriefResponse(encoder)
+		encodeError    = EncodeFindBriefError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "find-brief")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

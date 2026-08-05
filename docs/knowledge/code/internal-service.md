@@ -23,7 +23,11 @@ gated on `If-Match` (same strong-validator parsing as briefs); the ETag mirrors 
 row version. Like the other services it late-binds via `SetBackend` after a
 cold-start DB retry and returns a typed `503` (routes mounted) when no repo is wired.
 
-`BriefService` implements brief CRUD and campaign endpoints. Campaign creation
+`BriefService` implements brief CRUD and campaign endpoints. `FindBrief` looks a brief up by
+`(project_id, event_slug)` rather than by id — the key a caller holds when re-visiting an event
+page — returning `ErrNotFound` when the event has no brief yet. That 404 is an ordinary
+outcome (first-time generation), not a failure. It never generates or mutates: regeneration is
+an explicit `UpdateBrief`, so edits to the AI-generated copy are never silently overwritten. Campaign creation
 (`CreateCampaigns`) requires an approved brief, rejects empty and duplicate
 platform sets (a duplicate would create two paid upstream campaigns), then hands
 off to the `Orchestrator`, which persists a job and dispatches per platform
