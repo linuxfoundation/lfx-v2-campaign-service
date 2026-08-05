@@ -148,17 +148,24 @@ func (c *Client) makeAdAnalyticsRequest(ctx context.Context, accountID, campaign
 		if err != nil {
 			return nil, err
 		}
-		if retry && attempt < retryMax && idempotent {
-			if wait <= 0 {
-				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
+		if retry {
+			if attempt < retryMax && idempotent {
+				if wait <= 0 {
+					wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
+				}
+				if wait > maxRetryWait {
+					wait = maxRetryWait
+				}
+				if err := sleepCtx(ctx, wait); err != nil {
+					return nil, err
+				}
+				continue
 			}
-			if wait > maxRetryWait {
-				wait = maxRetryWait
-			}
-			if err := sleepCtx(ctx, wait); err != nil {
-				return nil, err
-			}
-			continue
+			// Retries exhausted on the last attempt: falling through here would return
+			// (nil, nil) — a silent "success" with no data that panics on the caller's
+			// *resp.Elements dereference. Surface the exhaustion as a terminal error
+			// instead, same shape doRequest's inline 429 handling produces.
+			return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: "GET", Path: "adAnalytics", Body: "rate limited: retries exhausted"}
 		}
 		return resp, nil
 	}

@@ -297,6 +297,28 @@ func TestGetCampaignMetrics_RetriesOn429(t *testing.T) {
 	}
 }
 
+func TestGetCampaignMetrics_RetriesExhaustedReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+
+	// A permanently-429ing server must surface a terminal error once retryMax is
+	// exhausted, not a nil error with a nil *CampaignMetrics — the latter would
+	// panic on the caller's *resp.Elements dereference.
+	_, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("expected an error once retries are exhausted, got nil")
+	}
+}
+
 func TestDateRangeForWindow_Today(t *testing.T) {
 	fixedTime := time.Date(2025, 1, 15, 10, 30, 45, 0, time.UTC)
 	client := NewClient(
