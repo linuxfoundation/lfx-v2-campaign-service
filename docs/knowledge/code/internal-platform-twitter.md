@@ -60,7 +60,14 @@ toward the 1-req/sec limit; it does NOT enforce the account-wide write limit
 across concurrent dispatches or replicas (that needs cross-replica coordination,
 tracked in LFXV2-2665), so operators must not rely on this stateless client for
 cross-dispatch rate limiting. When the account limit is hit anyway, 429s are
-retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. Redirect
+retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. If the caller's
+context expires DURING that backoff sleep, the client returns the 429 as a typed
+`apiError` (with the cancellation cause attached via `Unwrap`) rather than a bare
+`ctx.Err()`: the throttle already happened, and a mutating 429 is ambiguous, so erasing
+it would report "not modified" for a write that may have applied. This is reachable —
+`maxRetryWait` (90s) exceeds the orchestrator's `toggleCallTimeout` (45s), so a
+server-declared `Retry-After` in between is accepted for sleeping and then interrupted.
+Redirect
 following is force-disabled (a shared `noFollow` `CheckRedirect` policy). For a
 `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
 carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
@@ -90,5 +97,36 @@ not applied), distinct from the ambiguous `transportError`.
 `createOutcomeAmbiguous` treats a mutating 3xx/5xx (and transport error) as
 UNCONFIRMED so a create that may have committed is not blind-retried into a
 duplicate; a `preSendError` is neither, so it stays a definite "not applied".
+
+## Status toggle
+
+`UpdateCampaignAndChildrenStatus(ctx, campaignID, lineItemID, status)` toggles an existing
+campaign between `ACTIVE` and `PAUSED` (X's `entity_status`). Like the create path it PUTs
+its parameters as QUERY PARAMS, not a JSON body (the X Ads v12 contract), and it takes the
+1-req/sec write pacing.
+
+SCOPE is the campaign + line item ONLY. `CreateCampaign` leaves the promoted-tweet
+association ACTIVE (that endpoint does not accept `entity_status`) and the LINE ITEM is X's
+delivery gate, so pausing the line item stops serving and re-activating it resumes serving
+without the association ever moving. Toggling the promoted tweet would be unnecessary and,
+on activate, unable to make an otherwise-paused tree serve.
+
+ORDER: on ACTIVATE the line item flips FIRST and the campaign gate LAST (nothing serves
+until the tree is ready); on PAUSE the campaign gate flips FIRST (delivery stops
+immediately). An ACTIVATE with a blank line-item id is refused BEFORE any call — the line
+item would stay PAUSED and nothing would serve. Pausing needs no line-item id.
+
+The account id and both entity ids are validated with `accountIDRe` BEFORE any request, the
+same up-front path-injection guard the create path applies — they interpolate into
+`accountURL` and the request path, so a stored id carrying `/`, `?`, or `#` could redirect a
+signed PUT to a different account or entity.
+
+OUTCOME CLASSIFICATION: once the first entity has been changed, a failure on the second
+returns a `partialCascadeError`, whose `Unconfirmed() bool` reports true — so even a
+DEFINITE 4xx on the child is an ambiguous OVERALL outcome (the parent genuinely changed) and
+the caller is told to verify rather than "not modified". A failure on the FIRST call mutates
+nothing, so a definite 4xx stays definite. The exported `IsOutcomeUnconfirmed` folds this
+together with `createOutcomeAmbiguous` for callers across the package boundary (the
+dispatcher), mirroring the reddit client's helper of the same name.
 
 See [internal/platform/twitter](../../../internal/platform/twitter).

@@ -16,6 +16,7 @@ import (
 // Client is the "lfx-v2-campaign-service-briefs" service client.
 type Client struct {
 	CreateBriefEndpoint          goa.Endpoint
+	FindBriefEndpoint            goa.Endpoint
 	GetBriefEndpoint             goa.Endpoint
 	UpdateBriefEndpoint          goa.Endpoint
 	ApproveBriefEndpoint         goa.Endpoint
@@ -29,9 +30,10 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, updateCampaign, toggleCampaignStatus, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, updateCampaign, toggleCampaignStatus, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
+		FindBriefEndpoint:            findBrief,
 		GetBriefEndpoint:             getBrief,
 		UpdateBriefEndpoint:          updateBrief,
 		ApproveBriefEndpoint:         approveBrief,
@@ -56,6 +58,24 @@ func NewClient(createBrief, getBrief, updateBrief, approveBrief, deleteBrief, cr
 func (c *Client) CreateBrief(ctx context.Context, p *CreateBriefPayload) (res *Brief, err error) {
 	var ires any
 	ires, err = c.CreateBriefEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*Brief), nil
+}
+
+// FindBrief calls the "find-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// FindBrief may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) FindBrief(ctx context.Context, p *FindBriefPayload) (res *Brief, err error) {
+	var ires any
+	ires, err = c.FindBriefEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
