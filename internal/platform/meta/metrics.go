@@ -146,6 +146,20 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 				Err:    fmt.Errorf("decode campaign metrics row: spend %q is not a finite number", row.Spend),
 			}
 		}
+		// Scale and check for overflow: a finite value like 1e307 can become +Inf
+		// when multiplied by 1_000_000, and out-of-range values must be rejected
+		// before int64 conversion to prevent underflow/corruption.
+		scaled := spend * 1_000_000
+		if math.IsInf(scaled, 0) || scaled > math.MaxInt64 || scaled < math.MinInt64 {
+			return nil, &transportError{
+				Method: http.MethodGet,
+				Path:   path,
+				Err:    fmt.Errorf("decode campaign metrics row: spend %q overflows int64 when scaled to micros", row.Spend),
+			}
+		}
+		spend = scaled
+	} else {
+		spend = 0
 	}
 
 	m := &CampaignMetrics{
@@ -153,7 +167,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		Window:      w,
 		Impressions: impressions,
 		Clicks:      clicks,
-		CostMicros:  int64(math.Round(spend * 1_000_000)),
+		CostMicros:  int64(math.Round(spend)),
 	}
 	if impressions > 0 {
 		m.Ctr = float64(clicks) / float64(impressions)

@@ -88,7 +88,6 @@ capability's one-bounded-synchronous-call contract. Deferred pending a design de
 Once this lands on `main`, #72–#75 rebase onto it (dropping their duplicated shared-infra
 copies, which is what removes the mutual conflict), and GA-5 (#70) reconciles its own
 duplicate copy the same way.
-## 2026-08-05
 
 **Docs** — Migration `000012_index_outbox_published_at` (PR #60) landed without a log entry,
 flagged in round-2 review. It adds a partial index on `index_outbox(published_at)` restricted to
