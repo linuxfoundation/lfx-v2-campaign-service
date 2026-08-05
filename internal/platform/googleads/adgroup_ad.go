@@ -215,6 +215,12 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	if err != nil {
 		return fmt.Errorf("google-ads ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", adGroupName, err)
 	}
+	// firstResourceName only extracts a trailing id; it does not check resource kind or
+	// account. Without this, a malformed/wrong-account 2xx (e.g. a different customer's
+	// adGroups resource) would be accepted as confirmed and its id persisted as AdGroupID.
+	if verr := c.validateResourceKind("adGroups", adGroupResource, true); verr != nil {
+		return fmt.Errorf("google-ads ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", adGroupName, verr)
+	}
 	res.AdGroupID = adGroupID
 	res.Steps = append(res.Steps, fmt.Sprintf("Ad group created: %s (PAUSED, %s)", adGroupID, adGroupTypeSearchStandard))
 
@@ -246,6 +252,13 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	adResource, _, err := firstResourceName(adResp)
 	if err != nil {
 		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; 2xx with no/malformed resource name — an ad may exist — verify in Google Ads before retrying): %w", adGroupID, err)
+	}
+	// adGroupAdID validates the resource KIND but not the account; without this, a
+	// wrong-account adGroupAds resource would still pass adGroupAdID and could be
+	// accepted as this ad. requireNumericID=false: the trailing segment is the
+	// composite "{adGroupId}~{adId}" shape, validated by adGroupAdID below.
+	if verr := c.validateResourceKind("adGroupAds", adResource, false); verr != nil {
+		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; %w — verify in Google Ads before retrying)", adGroupID, verr)
 	}
 	returnedAdGroupID, adID := adGroupAdID(adResource)
 	if adID == "" || returnedAdGroupID == "" {
