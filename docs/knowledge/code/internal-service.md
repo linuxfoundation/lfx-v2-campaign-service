@@ -68,7 +68,20 @@ only after the platform confirms. Only a fully-created campaign (`created`, or o
 (`model.CampaignStatusToggleable`); a `pending` ambiguous orphan or a `created_degraded`
 campaign is rejected 409 — toggling one would activate an incomplete campaign and/or
 overwrite its reconciliation marker with the run state (a non-empty `PlatformCampaignID`
-alone is not sufficient, since a partial/degraded campaign can carry an upstream id). A stale
+alone is not sufficient, since a partial/degraded campaign can carry an upstream id).
+Write ownership of the row is claimed via `CampaignRepo.ClaimCampaignVersion` (an
+atomic `UPDATE ... SET version=version+1 WHERE version=$expected`) BEFORE the paid
+platform call, not by comparing the read-time version in memory (LFXV2-2901): an
+in-memory comparison only rejects a stale caller, it does nothing to stop a SECOND
+caller that read the same version from also passing its own check and also calling
+the platform, so two toggles — or a toggle and `UpdateCampaign` — could both mutate
+the platform before either persisted. The atomic claim closes that window: only one
+caller can ever win a given version, so the loser is rejected at claim time, before
+it ever reaches the platform. `UpdateCampaign`, which has no I/O between its read and
+its write, claims first for the same reason — without it, its single-statement
+`ReplaceCampaign` could win the row out from under an in-flight toggle's claim,
+losing the toggle's own post-platform persist even though each write was
+individually consistent. A stale
 `If-Match` fails BEFORE the paid platform call;
 failures are classified (`ErrCampaignNotProvisioned` → 409 — a campaign with no upstream id yet,
 OR one that on ACTIVATE lacks the child ad group/ad ids needed to serve, so not every 409 means

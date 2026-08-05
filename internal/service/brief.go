@@ -346,6 +346,21 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// Claim write ownership at the read version BEFORE building the edit, not just
+	// at the final ReplaceCampaign. This path itself has no I/O in between, so a
+	// bare ReplaceCampaign(version) would already be race-free against another
+	// UpdateCampaign — but not against a concurrent ToggleCampaignStatus, which
+	// claims its own version before calling the ad platform. Without this claim, a
+	// name/config edit landing in that toggle's claim-to-persist window would win
+	// the version the toggle already reserved, so the toggle's own post-platform
+	// persist then loses — the platform and the row diverge even though this edit
+	// and that toggle were each individually consistent. Claiming here makes every
+	// campaign writer serialize through the same version-gated mutex.
+	claimed, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
+	if cerr != nil {
+		return nil, mapBriefErr(cerr)
+	}
+	existing.Version = claimed.Version
 	// This DB-only update MUST NOT be a back door for changing the RUN status
 	// (active/paused): that would persist a run state WITHOUT contacting the ad platform,
 	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists
@@ -373,7 +388,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
-	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version)
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, existing.Version)
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -402,11 +417,6 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
-	// Guard optimistic concurrency BEFORE the (side-effecting, paid) platform call, so a
-	// stale If-Match fails fast without touching the ad platform.
-	if existing.Version != version {
-		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "campaign has been modified; reload and retry"}
-	}
 	// Only a fully-created campaign (or one already in a run state) may be toggled. A
 	// "pending" ambiguous orphan or a "created_degraded" campaign (a sub-step still needs
 	// reconciliation) must NOT be toggled: doing so would activate an incomplete campaign
@@ -416,6 +426,21 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	if !model.CampaignStatusToggleable(existing.Status) {
 		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not in a toggleable state (it is still provisioning or needs reconciliation); resolve its status before toggling"}
 	}
+
+	// Claim write ownership at the read version BEFORE the (side-effecting, paid) platform
+	// call, atomically via the repository rather than by comparing existing.Version in memory.
+	// An in-memory comparison only rejects THIS caller if it's already stale; it does nothing
+	// to stop a second concurrent caller (another toggle, or UpdateCampaign) that read the
+	// same version from also passing its own check and also mutating the platform — both would
+	// then race the final persist, and only one wins, leaving the platform and the row
+	// diverged with no compensating rollback. The atomic claim closes that: only one caller can
+	// ever win a given expectedVersion, so the loser is rejected here, before either the
+	// platform is called or a claim is granted for anyone else to race against.
+	claimed, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
+	if cerr != nil {
+		return nil, mapBriefErr(cerr)
+	}
+	existing.Version = claimed.Version
 
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
 	// lie that the campaign is paused when the platform still has it running).
@@ -476,7 +501,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	existing.Status = p.Status
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancel()
-	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version)
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, existing.Version)
 	if uerr != nil {
 		// The platform WAS changed but the row write failed → platform and DB now diverge.
 		// Log it loudly as an operational reconcile signal (the run state on the platform is

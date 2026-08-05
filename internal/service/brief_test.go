@@ -528,6 +528,14 @@ func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign,
 	r.got = c
 	return c, nil
 }
+func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, _ string, expectedVersion int64) (*model.Campaign, error) {
+	if r.cur.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	r.cur.Version++
+	cp := *r.cur
+	return &cp, nil
+}
 
 // UpdateCampaign must NOT wipe the stored config when the caller omits config, and it must
 // leave the run status untouched (the caller round-trips the CURRENT status on a name edit;
@@ -735,9 +743,10 @@ func TestBriefService_GetJob_SkippedSurfacesNonFailure(t *testing.T) {
 // campaign from GetCampaign and records the ReplaceCampaign it receives.
 type toggleCampaignRepo struct {
 	fakeCampaignRepo
-	got      *model.Campaign
-	replaced *model.Campaign
-	getErr   error
+	got            *model.Campaign
+	replaced       *model.Campaign
+	getErr         error
+	claimStatusErr error
 }
 
 func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -750,6 +759,20 @@ func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string
 func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64) (*model.Campaign, error) {
 	r.replaced = c
 	return c, nil
+}
+
+// ClaimCampaignVersion mirrors the real atomic version-gated bump against r.got,
+// the same backing row GetCampaign clones from.
+func (r *toggleCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, _ string, expectedVersion int64) (*model.Campaign, error) {
+	if r.claimStatusErr != nil {
+		return nil, r.claimStatusErr
+	}
+	if r.got.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	r.got.Version++
+	cp := *r.got
+	return &cp, nil
 }
 
 // stubToggler implements PlatformDispatcher + StatusToggler, recording the toggle call.
@@ -839,6 +862,46 @@ func TestBriefService_ToggleCampaignStatus_StaleIfMatchSkipsPlatform(t *testing.
 	}
 	if tog.gotID != "" {
 		t.Error("a stale If-Match must fail BEFORE the platform is called")
+	}
+}
+
+// TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize pins the actual
+// race LFXV2-2901 closes: two toggles reading the SAME version must not both reach
+// the platform. The second call reuses the stale IfMatch the first call also read,
+// simulating two concurrent requests racing on one row.
+func TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 3,
+	}
+	tog := &stubToggler{}
+	s, camps := newToggleService(camp, tog)
+	im := "3"
+
+	if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	}); err != nil {
+		t.Fatalf("first toggle: %v", err)
+	}
+	if tog.gotStat != model.CampaignRunPaused {
+		t.Fatalf("first toggle never reached the platform: %+v", tog)
+	}
+	// The claim bumped the row's version, so the persisted row must reflect that
+	// bumped version, not the stale IfMatch the caller sent.
+	if camps.replaced == nil || camps.replaced.Version != 4 {
+		t.Fatalf("persisted version = %+v, want 4 (claimed version, not the stale IfMatch)", camps.replaced)
+	}
+
+	// A second, concurrent caller that read the row at the same version 3 (before
+	// either claim landed) must be rejected at claim time, before it ever calls the
+	// platform a second time.
+	if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunActive,
+	}); err == nil {
+		t.Fatal("expected the second concurrent toggle (stale version 3) to be rejected")
+	}
+	if tog.gotStat != model.CampaignRunPaused {
+		t.Errorf("the second, stale-version toggle reached the platform: %+v", tog)
 	}
 }
 

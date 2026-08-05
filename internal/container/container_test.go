@@ -123,6 +123,9 @@ func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign) (*m
 func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
+func (stubCampaignRepo) ClaimCampaignVersion(context.Context, string, string, string, int64) (*model.Campaign, error) {
+	return nil, domain.ErrNotFound
+}
 
 // TestClose_PropagatesShutdownError verifies Container.Close returns (does not
 // swallow) the orchestrator shutdown error when a dispatch is still running at

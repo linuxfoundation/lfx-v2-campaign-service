@@ -74,6 +74,29 @@ type CampaignWriter interface {
 	UpsertCampaign(ctx context.Context, c *model.Campaign) (*model.Campaign, error)
 	// ReplaceCampaign replaces a campaign's mutable fields, gating on version.
 	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64) (*model.Campaign, error)
+	// ClaimCampaignVersion atomically reserves write ownership of a campaign row by
+	// bumping its version, gated on expectedVersion. It returns ErrPreconditionFailed
+	// if expectedVersion is stale, or ErrNotFound if the row is gone.
+	//
+	// Every writer that must do external I/O (an ad-platform call) BETWEEN reading
+	// the row and persisting its outcome — currently only BriefService.
+	// ToggleCampaignStatus — calls this FIRST, before that I/O, instead of comparing
+	// the read-time version in memory. An in-memory comparison only rejects a stale
+	// caller; it does nothing to stop a SECOND caller reading the same version and
+	// also proceeding to call the platform, so two toggles (or a toggle and an
+	// update-campaign) can both pass the check and both mutate the platform before
+	// either persists. The atomic version bump here closes that window: only one
+	// concurrent caller can win a given expectedVersion, so the loser is rejected
+	// before it ever reaches the platform, not after.
+	//
+	// BriefService.UpdateCampaign — which has no I/O between its read and its write —
+	// also claims first so its single-statement write can never land in the gap
+	// between a toggle's claim and that toggle's own post-platform persist; without
+	// this, UpdateCampaign's plain ReplaceCampaign could win that gap's freshly
+	// bumped version out from under the in-flight toggle, so the toggle's own
+	// persist would then lose (a real divergence between the platform and the row,
+	// even though every individual write was individually consistent).
+	ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, error)
 }
 
 // CampaignRepository is the full persistence port for campaigns.

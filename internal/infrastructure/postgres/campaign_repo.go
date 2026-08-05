@@ -287,6 +287,32 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	return r.GetCampaign(ctx, c.ProjectID, c.BriefID, c.ID)
 }
 
+// ClaimCampaignVersion atomically bumps a campaign's version, gated on
+// expectedVersion, and returns the row at its new version. It shares
+// ReplaceCampaign's version-gated UPDATE + RowsAffected==0 disambiguation
+// (not-found vs. precondition-failed) but touches no content column, so it can
+// run before a side-effecting call whose outcome isn't known yet.
+func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, error) {
+	q := `UPDATE campaigns SET version=version+1, updated_at=now()
+		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
+	tag, err := r.db.Exec(ctx, q, campaignID, briefID, projectID, expectedVersion)
+	if err != nil {
+		return nil, fmt.Errorf("claim campaign version: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		_, gerr := r.GetCampaign(ctx, projectID, briefID, campaignID)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
+			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
+		}
+	}
+	return r.GetCampaign(ctx, projectID, briefID, campaignID)
+}
+
 func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 	var (
 		c          model.Campaign
