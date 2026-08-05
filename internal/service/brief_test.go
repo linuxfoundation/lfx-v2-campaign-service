@@ -1524,6 +1524,90 @@ func assertOneCampaignIndexMessage(t *testing.T, payloads [][]byte) {
 	}
 }
 
+// TestUpdateBrief_CoCommitsIndexMessage pins that an update operation co-commits an index message
+// the same way CreateBrief and ArchiveBrief do. A future refactor that drops the index-payload
+// argument from the ReplaceBrief call would compile and pass the existing suite; this assertion
+// catches that regression before it makes updates unsearchable.
+func TestUpdateBrief_CoCommitsIndexMessage(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	// Pre-populate a brief to update
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefDraft, Version: 1,
+		EventSlug: "kubecon-eu-2026", ProgramType: model.ProgramEvents,
+	}
+	s := newIndexTestBriefService(repo)
+	s.SetIndexer(&failingIndexer{})
+
+	ver := "1"
+	updated, err := s.UpdateBrief(ctx, &briefs.UpdateBriefPayload{
+		ProjectID: "cncf", BriefID: "b1", IfMatch: &ver,
+		Brief: &briefs.BriefInput{
+			EventSlug:   "kubecon-north-america-2026",
+			ProgramType: "events",
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateBrief: %v", err)
+	}
+	if updated == nil {
+		t.Fatal("expected the updated brief to be returned")
+	}
+	if len(repo.indexPayloads) == 0 {
+		t.Fatal("expected UpdateBrief to co-commit an index message")
+	}
+	// Assertion on the last payload: if there were multiple, we want the update's message, not an earlier one
+	var msg struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(repo.indexPayloads[len(repo.indexPayloads)-1], &msg); err != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", err)
+	}
+	if msg.Action != indexer.ActionUpdated {
+		t.Errorf("action = %q, want %q", msg.Action, indexer.ActionUpdated)
+	}
+}
+
+// TestApproveBrief_CoCommitsIndexMessage pins that an approve operation co-commits an index
+// message. A future refactor that drops the index-payload argument from the Approve call would
+// compile and pass the existing suite; this assertion catches that regression before it makes
+// approvals unsearchable.
+func TestApproveBrief_CoCommitsIndexMessage(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	// Pre-populate a brief to approve
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefDraft, Version: 2,
+		EventSlug: "kubecon-eu-2026", ProgramType: model.ProgramEvents,
+	}
+	s := newIndexTestBriefService(repo)
+	s.SetIndexer(&failingIndexer{})
+
+	ver := "2"
+	approved, err := s.ApproveBrief(ctx, &briefs.ApproveBriefPayload{
+		ProjectID: "cncf", BriefID: "b1", IfMatch: &ver,
+	})
+	if err != nil {
+		t.Fatalf("ApproveBrief: %v", err)
+	}
+	if approved == nil {
+		t.Fatal("expected the approved brief to be returned")
+	}
+	if len(repo.indexPayloads) == 0 {
+		t.Fatal("expected ApproveBrief to co-commit an index message")
+	}
+	// Assertion on the last payload
+	var msg struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(repo.indexPayloads[len(repo.indexPayloads)-1], &msg); err != nil {
+		t.Fatalf("co-committed payload is not valid JSON: %v", err)
+	}
+	if msg.Action != indexer.ActionUpdated {
+		t.Errorf("action = %q, want %q", msg.Action, indexer.ActionUpdated)
+	}
+}
+
 // TestDisabledIndexing_EnqueuesNothing pins the source-level answer to unbounded outbox growth.
 //
 // Pending rows are NEVER pruned — they are undelivered work and this service has no reindex

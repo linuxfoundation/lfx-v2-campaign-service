@@ -235,10 +235,11 @@ const ackOK = "OK"
 const maxReplyLen = 200
 
 func truncateReply(s string) string {
-	if len(s) <= maxReplyLen {
+	r := []rune(s)
+	if len(r) <= maxReplyLen {
 		return s
 	}
-	return s[:maxReplyLen] + "…"
+	return string(r[:maxReplyLen]) + "…"
 }
 
 // PublishRaw on a Noop reports FAILURE. Nothing was sent, so reporting success would let the

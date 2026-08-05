@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -213,8 +214,15 @@ func (r *OutboxRepo) DrainPendingIndexMessages(
 		// PHASE 3 — retire, in its own short transaction, guarded on still holding the lease.
 		// Uses a context detached from ctx: on shutdown the publish above may have SUCCEEDED,
 		// and a cancelled ctx would skip the retire and republish a delivered message next pass.
+		//
+		// Continue on a settle error rather than returning: a transient DB hiccup should not
+		// abandon the rest of the claimed batch. The failed row stays claimed with a live lease
+		// but will be retried next pass after the lease expires. Log it so it does not go
+		// unseen, but move to the next row rather than stalling the whole batch.
 		if rerr := r.settle(ctx, c, derr); rerr != nil {
-			return published, rerr
+			slog.WarnContext(ctx, "failed to settle index message (row will retry on next pass)",
+				"message_id", c.msg.ID, "error", rerr)
+			continue
 		}
 		if derr == nil {
 			published++
@@ -365,10 +373,11 @@ func recordFailureTx(ctx context.Context, tx pgx.Tx, id int64, cause, leaseOwner
 const maxOutboxErrLen = 500
 
 func truncateErr(s string) string {
-	if len(s) <= maxOutboxErrLen {
+	r := []rune(s)
+	if len(r) <= maxOutboxErrLen {
 		return s
 	}
-	return s[:maxOutboxErrLen]
+	return string(r[:maxOutboxErrLen])
 }
 
 // outboxRetention is how long a PUBLISHED row is kept before pruning.
