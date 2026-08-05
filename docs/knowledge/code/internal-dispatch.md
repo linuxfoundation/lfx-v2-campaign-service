@@ -238,6 +238,17 @@ this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contr
 submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
 live read) — deferred, not attempted here.
 
+**LinkedIn** implements it: `GetCampaignMetrics(ctx, accountID, campaignID, window)` maps the
+shared `model.MetricsWindow` to a Rest.li 2.0 nested date-range literal via
+`dateRangeForWindow`, then queries the Ad Analytics `adAnalytics` finder
+(`q=analytics`) scoped to the campaign/account URNs built from the persisted bare numeric
+`PlatformCampaignID`. All windows in the shared vocabulary map to a concrete date range (no
+platform-specific unsupported-window case). Spend (`costInUsd`, decimal USD) is converted to
+micro-currency (×1e6, rounded rather than truncated). `Ctr` is computed as clicks/impressions,
+0 when impressions is 0. A finder response with an empty (non-nil) `elements` array is
+zero-activity, not an error; a nil/missing `elements` field on a 2xx is rejected as a decode
+error rather than silently reported as zero.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

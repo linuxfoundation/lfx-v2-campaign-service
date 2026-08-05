@@ -165,31 +165,3 @@ type CampaignJob struct {
 	UpdatedAt time.Time
 	ExpiresAt *time.Time
 }
-
-// MetricsWindow is a platform-agnostic time window for campaign metrics reporting.
-type MetricsWindow string
-
-// Metrics windows supported by platform dispatchers.
-const (
-	MetricsWindowToday      MetricsWindow = "today"
-	MetricsWindowLast7Days  MetricsWindow = "last_7_days"
-	MetricsWindowLast30Days MetricsWindow = "last_30_days"
-	MetricsWindowThisMonth  MetricsWindow = "this_month"
-	MetricsWindowLastMonth  MetricsWindow = "last_month"
-)
-
-// CampaignMetrics is a platform-agnostic snapshot of campaign performance metrics
-// for a given time window. All platforms returning metrics must map their responses
-// to this shape.
-type CampaignMetrics struct {
-	// Impressions is the total number of ad impressions served during the window.
-	Impressions int64
-	// Clicks is the total number of ad clicks during the window.
-	Clicks int64
-	// CostMicros is the total spend in micros (amount * 1,000,000) of the platform's
-	// currency during the window.
-	CostMicros int64
-	// CTR is the click-through rate (clicks / impressions), a decimal between 0 and 1.
-	// If impressions is 0, CTR is 0.
-	CTR float64
-}

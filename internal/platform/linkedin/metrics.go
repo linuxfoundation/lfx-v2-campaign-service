@@ -67,7 +67,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	// as a decode error inside makeAdAnalyticsRequest) when the campaign had no
 	// activity in the window.
 	if len(*resp.Elements) == 0 {
-		return &model.CampaignMetrics{}, nil
+		return &model.CampaignMetrics{CampaignID: campaignID, Window: window}, nil
 	}
 
 	// Aggregate metrics from all elements. In practice there should be one element
@@ -83,10 +83,13 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 		}
 	}
 
-	// Calculate CTR: clicks / impressions. If impressions is 0, CTR stays 0.
+	// Calculate Ctr: clicks / impressions. If impressions is 0, Ctr stays 0.
 	if metrics.Impressions > 0 {
-		metrics.CTR = float64(metrics.Clicks) / float64(metrics.Impressions)
+		metrics.Ctr = float64(metrics.Clicks) / float64(metrics.Impressions)
 	}
+
+	metrics.CampaignID = campaignID
+	metrics.Window = window
 
 	return &metrics, nil
 }

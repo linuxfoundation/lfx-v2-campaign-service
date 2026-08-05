@@ -66,8 +66,8 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 		t.Errorf("expected cost micros 25500000, got %d", metrics.CostMicros)
 	}
 	expectedCTR := 50.0 / 1000.0
-	if metrics.CTR != expectedCTR {
-		t.Errorf("expected CTR %f, got %f", expectedCTR, metrics.CTR)
+	if metrics.Ctr != expectedCTR {
+		t.Errorf("expected CTR %f, got %f", expectedCTR, metrics.Ctr)
 	}
 
 	mu.Lock()
@@ -176,8 +176,8 @@ func TestGetCampaignMetrics_ZeroImpressions(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if metrics.CTR != 0 {
-		t.Errorf("expected CTR 0 when impressions are 0, got %f", metrics.CTR)
+	if metrics.Ctr != 0 {
+		t.Errorf("expected CTR 0 when impressions are 0, got %f", metrics.Ctr)
 	}
 }
 
