@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1329,6 +1330,23 @@ func TestBriefService_GetCampaignMetrics_PlatformFailureIs503(t *testing.T) {
 	var unavailable *briefs.ConnServiceUnavailableError
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("expected a ConnServiceUnavailableError (503), got %T: %v", err, err)
+	}
+}
+
+func TestBriefService_GetCampaignMetrics_WindowUnsupportedIs400(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderTwitterAds,
+		PlatformCampaignID: "x-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("x ads: %w", ErrMetricsWindowUnsupported)}
+	s := newMetricsService(camp, disp)
+	window := "last_30_days"
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("expected a BadRequestError (400) for a platform rejecting this window, got %T: %v", err, err)
 	}
 }
 
