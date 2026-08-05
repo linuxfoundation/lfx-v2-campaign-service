@@ -17,13 +17,13 @@ import (
 // CreateBriefRequestBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "create-brief" endpoint HTTP request body.
 type CreateBriefRequestBody struct {
-	Brief *BriefWriteInputRequestBody `form:"brief,omitempty" json:"brief,omitempty" xml:"brief,omitempty"`
+	Brief *BriefInputRequestBody `form:"brief,omitempty" json:"brief,omitempty" xml:"brief,omitempty"`
 }
 
 // UpdateBriefRequestBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "update-brief" endpoint HTTP request body.
 type UpdateBriefRequestBody struct {
-	Brief *BriefWriteInputRequestBody `form:"brief,omitempty" json:"brief,omitempty" xml:"brief,omitempty"`
+	Brief *BriefInputRequestBody `form:"brief,omitempty" json:"brief,omitempty" xml:"brief,omitempty"`
 }
 
 // CreateCampaignsRequestBody is the type of the
@@ -932,8 +932,8 @@ type PlatformResultResponseBody struct {
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
 }
 
-// BriefWriteInputRequestBody is used to define fields on request body types.
-type BriefWriteInputRequestBody struct {
+// BriefInputRequestBody is used to define fields on request body types.
+type BriefInputRequestBody struct {
 	// Funnel context
 	ProgramType *string `form:"program_type,omitempty" json:"program_type,omitempty" xml:"program_type,omitempty"`
 	// Event/course slug (unique within the project)
@@ -1883,7 +1883,7 @@ func NewGetJobNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError
 // create-brief endpoint payload.
 func NewCreateBriefPayload(body *CreateBriefRequestBody, projectID string, bearerToken *string) *lfxv2campaignservicebriefs.CreateBriefPayload {
 	v := &lfxv2campaignservicebriefs.CreateBriefPayload{}
-	v.Brief = unmarshalBriefWriteInputRequestBodyToLfxv2campaignservicebriefsBriefWriteInput(body.Brief)
+	v.Brief = unmarshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(body.Brief)
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
@@ -1916,7 +1916,7 @@ func NewGetBriefPayload(projectID string, briefID string, bearerToken *string) *
 // update-brief endpoint payload.
 func NewUpdateBriefPayload(body *UpdateBriefRequestBody, projectID string, briefID string, bearerToken *string, ifMatch *string) *lfxv2campaignservicebriefs.UpdateBriefPayload {
 	v := &lfxv2campaignservicebriefs.UpdateBriefPayload{}
-	v.Brief = unmarshalBriefWriteInputRequestBodyToLfxv2campaignservicebriefsBriefWriteInput(body.Brief)
+	v.Brief = unmarshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(body.Brief)
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.BearerToken = bearerToken
@@ -2019,7 +2019,7 @@ func ValidateCreateBriefRequestBody(body *CreateBriefRequestBody) (err error) {
 		err = goa.MergeErrors(err, goa.MissingFieldError("brief", "body"))
 	}
 	if body.Brief != nil {
-		if err2 := ValidateBriefWriteInputRequestBody(body.Brief); err2 != nil {
+		if err2 := ValidateBriefInputRequestBody(body.Brief); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -2033,7 +2033,7 @@ func ValidateUpdateBriefRequestBody(body *UpdateBriefRequestBody) (err error) {
 		err = goa.MergeErrors(err, goa.MissingFieldError("brief", "body"))
 	}
 	if body.Brief != nil {
-		if err2 := ValidateBriefWriteInputRequestBody(body.Brief); err2 != nil {
+		if err2 := ValidateBriefInputRequestBody(body.Brief); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -2082,9 +2082,9 @@ func ValidateToggleCampaignStatusRequestBody(body *ToggleCampaignStatusRequestBo
 	return
 }
 
-// ValidateBriefWriteInputRequestBody runs the validations defined on
-// brief-write-inputRequestBody
-func ValidateBriefWriteInputRequestBody(body *BriefWriteInputRequestBody) (err error) {
+// ValidateBriefInputRequestBody runs the validations defined on
+// brief-inputRequestBody
+func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 	if body.ProgramType == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("program_type", "body"))
 	}

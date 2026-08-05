@@ -30,7 +30,7 @@ func BuildCreateBriefPayload(lfxV2CampaignServiceBriefsCreateBriefBody string, l
 			err = goa.MergeErrors(err, goa.MissingFieldError("brief", "body"))
 		}
 		if body.Brief != nil {
-			if err2 := ValidateBriefWriteInputRequestBody(body.Brief); err2 != nil {
+			if err2 := ValidateBriefInputRequestBody(body.Brief); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -57,7 +57,7 @@ func BuildCreateBriefPayload(lfxV2CampaignServiceBriefsCreateBriefBody string, l
 	}
 	v := &lfxv2campaignservicebriefs.CreateBriefPayload{}
 	if body.Brief != nil {
-		v.Brief = marshalBriefWriteInputRequestBodyToLfxv2campaignservicebriefsBriefWriteInput(body.Brief)
+		v.Brief = marshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(body.Brief)
 	}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
@@ -141,7 +141,7 @@ func BuildUpdateBriefPayload(lfxV2CampaignServiceBriefsUpdateBriefBody string, l
 			err = goa.MergeErrors(err, goa.MissingFieldError("brief", "body"))
 		}
 		if body.Brief != nil {
-			if err2 := ValidateBriefWriteInputRequestBody(body.Brief); err2 != nil {
+			if err2 := ValidateBriefInputRequestBody(body.Brief); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -175,7 +175,7 @@ func BuildUpdateBriefPayload(lfxV2CampaignServiceBriefsUpdateBriefBody string, l
 	}
 	v := &lfxv2campaignservicebriefs.UpdateBriefPayload{}
 	if body.Brief != nil {
-		v.Brief = marshalBriefWriteInputRequestBodyToLfxv2campaignservicebriefsBriefWriteInput(body.Brief)
+		v.Brief = marshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(body.Brief)
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID

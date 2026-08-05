@@ -4262,8 +4262,8 @@ definitions:
             - event_slug
             - status
             - version
-    BriefWriteInput:
-        title: BriefWriteInput
+    BriefInput:
+        title: BriefInput
         type: object
         properties:
             copy:
@@ -4995,7 +4995,7 @@ definitions:
         type: object
         properties:
             brief:
-                $ref: '#/definitions/BriefWriteInput'
+                $ref: '#/definitions/BriefInput'
         example:
             brief:
                 copy: Atque atque dolores.
@@ -5067,7 +5067,7 @@ definitions:
         type: object
         properties:
             brief:
-                $ref: '#/definitions/BriefWriteInput'
+                $ref: '#/definitions/BriefInput'
         example:
             brief:
                 copy: Atque atque dolores.

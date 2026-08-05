@@ -1698,11 +1698,11 @@ func EncodeGetJobError(encoder func(context.Context, http.ResponseWriter) goahtt
 	}
 }
 
-// unmarshalBriefWriteInputRequestBodyToLfxv2campaignservicebriefsBriefWriteInput
-// builds a value of type *lfxv2campaignservicebriefs.BriefWriteInput from a
-// value of type *BriefWriteInputRequestBody.
-func unmarshalBriefWriteInputRequestBodyToLfxv2campaignservicebriefsBriefWriteInput(v *BriefWriteInputRequestBody) *lfxv2campaignservicebriefs.BriefWriteInput {
-	res := &lfxv2campaignservicebriefs.BriefWriteInput{
+// unmarshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput builds
+// a value of type *lfxv2campaignservicebriefs.BriefInput from a value of type
+// *BriefInputRequestBody.
+func unmarshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(v *BriefInputRequestBody) *lfxv2campaignservicebriefs.BriefInput {
+	res := &lfxv2campaignservicebriefs.BriefInput{
 		ProgramType:  *v.ProgramType,
 		EventSlug:    *v.EventSlug,
 		URL:          v.URL,

@@ -5933,7 +5933,7 @@ components:
                 - event_slug
                 - status
                 - version
-        BriefInput:
+        BriefData:
             type: object
             properties:
                 copy:
@@ -5990,7 +5990,7 @@ components:
             required:
                 - program_type
                 - event_slug
-        BriefWriteInput:
+        BriefInput:
             type: object
             properties:
                 copy:
@@ -6429,7 +6429,7 @@ components:
             type: object
             properties:
                 brief:
-                    $ref: '#/components/schemas/BriefWriteInput'
+                    $ref: '#/components/schemas/BriefInput'
             example:
                 brief:
                     copy: Atque atque dolores.
