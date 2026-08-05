@@ -8,6 +8,8 @@
 package server
 
 import (
+	"unicode/utf8"
+
 	lfxv2campaignservicebriefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -49,6 +51,36 @@ type ToggleCampaignStatusRequestBody struct {
 // CreateBriefResponseBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "create-brief" endpoint HTTP response body.
 type CreateBriefResponseBody struct {
+	// Brief UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Funnel context
+	ProgramType string `form:"program_type" json:"program_type" xml:"program_type"`
+	// Event/course slug (unique within the project)
+	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
+	// Event/course page URL
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+	// Suggested default platforms (a planning hint; binding selection is on the
+	// campaign)
+	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+	// Extracted event/course details
+	EventDetails any `form:"event_details,omitempty" json:"event_details,omitempty" xml:"event_details,omitempty"`
+	// Ad copy
+	Copy any `form:"copy,omitempty" json:"copy,omitempty" xml:"copy,omitempty"`
+	// Keyword list
+	Keywords any `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+	// Targeting recommendation
+	Targeting any `form:"targeting,omitempty" json:"targeting,omitempty" xml:"targeting,omitempty"`
+	// Lifecycle status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+}
+
+// FindBriefResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "find-brief" endpoint HTTP response body.
+type FindBriefResponseBody struct {
 	// Brief UUID
 	ID string `form:"id" json:"id" xml:"id"`
 	// Owning project
@@ -300,6 +332,56 @@ type CreateBriefInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "create-brief" endpoint HTTP
 // response body for the "NotFound" error.
 type CreateBriefNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// FindBriefBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "BadRequest" error.
+type FindBriefBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// FindBriefConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "Conflict" error.
+type FindBriefConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// FindBriefServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "ServiceUnavailable" error.
+type FindBriefServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// FindBriefInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "InternalServerError" error.
+type FindBriefInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// FindBriefNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "find-brief" endpoint HTTP response
+// body for the "NotFound" error.
+type FindBriefNotFoundResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -916,6 +998,31 @@ func NewCreateBriefResponseBody(res *lfxv2campaignservicebriefs.Brief) *CreateBr
 	return body
 }
 
+// NewFindBriefResponseBody builds the HTTP response body from the result of
+// the "find-brief" endpoint of the "lfx-v2-campaign-service-briefs" service.
+func NewFindBriefResponseBody(res *lfxv2campaignservicebriefs.Brief) *FindBriefResponseBody {
+	body := &FindBriefResponseBody{
+		ID:           res.ID,
+		ProjectID:    res.ProjectID,
+		ProgramType:  res.ProgramType,
+		EventSlug:    res.EventSlug,
+		URL:          res.URL,
+		EventDetails: res.EventDetails,
+		Copy:         res.Copy,
+		Keywords:     res.Keywords,
+		Targeting:    res.Targeting,
+		Status:       res.Status,
+		Version:      res.Version,
+	}
+	if res.Platforms != nil {
+		body.Platforms = make([]string, len(res.Platforms))
+		for i, val := range res.Platforms {
+			body.Platforms[i] = val
+		}
+	}
+	return body
+}
+
 // NewGetBriefResponseBody builds the HTTP response body from the result of the
 // "get-brief" endpoint of the "lfx-v2-campaign-service-briefs" service.
 func NewGetBriefResponseBody(res *lfxv2campaignservicebriefs.Brief) *GetBriefResponseBody {
@@ -1130,6 +1237,61 @@ func NewCreateBriefInternalServerErrorResponseBody(res *lfxv2campaignservicebrie
 // "lfx-v2-campaign-service-briefs" service.
 func NewCreateBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *CreateBriefNotFoundResponseBody {
 	body := &CreateBriefNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewFindBriefBadRequestResponseBody builds the HTTP response body from the
+// result of the "find-brief" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewFindBriefBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *FindBriefBadRequestResponseBody {
+	body := &FindBriefBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewFindBriefConflictResponseBody builds the HTTP response body from the
+// result of the "find-brief" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewFindBriefConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *FindBriefConflictResponseBody {
+	body := &FindBriefConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewFindBriefServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "find-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewFindBriefServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *FindBriefServiceUnavailableResponseBody {
+	body := &FindBriefServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewFindBriefInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "find-brief" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewFindBriefInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *FindBriefInternalServerErrorResponseBody {
+	body := &FindBriefInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewFindBriefNotFoundResponseBody builds the HTTP response body from the
+// result of the "find-brief" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewFindBriefNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *FindBriefNotFoundResponseBody {
+	body := &FindBriefNotFoundResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -1728,6 +1890,17 @@ func NewCreateBriefPayload(body *CreateBriefRequestBody, projectID string, beare
 	return v
 }
 
+// NewFindBriefPayload builds a lfx-v2-campaign-service-briefs service
+// find-brief endpoint payload.
+func NewFindBriefPayload(projectID string, eventSlug string, bearerToken *string) *lfxv2campaignservicebriefs.FindBriefPayload {
+	v := &lfxv2campaignservicebriefs.FindBriefPayload{}
+	v.ProjectID = projectID
+	v.EventSlug = eventSlug
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewGetBriefPayload builds a lfx-v2-campaign-service-briefs service get-brief
 // endpoint payload.
 func NewGetBriefPayload(projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.GetBriefPayload {
@@ -1921,6 +2094,11 @@ func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 	if body.ProgramType != nil {
 		if !(*body.ProgramType == "events" || *body.ProgramType == "education" || *body.ProgramType == "membership") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.program_type", *body.ProgramType, []any{"events", "education", "membership"}))
+		}
+	}
+	if body.EventSlug != nil {
+		if utf8.RuneCountInString(*body.EventSlug) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", *body.EventSlug, utf8.RuneCountInString(*body.EventSlug), 1, true))
 		}
 	}
 	return

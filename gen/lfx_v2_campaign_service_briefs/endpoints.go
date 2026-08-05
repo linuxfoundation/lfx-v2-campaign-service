@@ -17,6 +17,7 @@ import (
 // Endpoints wraps the "lfx-v2-campaign-service-briefs" service endpoints.
 type Endpoints struct {
 	CreateBrief          goa.Endpoint
+	FindBrief            goa.Endpoint
 	GetBrief             goa.Endpoint
 	UpdateBrief          goa.Endpoint
 	ApproveBrief         goa.Endpoint
@@ -35,6 +36,7 @@ func NewEndpoints(s Service) *Endpoints {
 	a := s.(Auther)
 	return &Endpoints{
 		CreateBrief:          NewCreateBriefEndpoint(s, a.JWTAuth),
+		FindBrief:            NewFindBriefEndpoint(s, a.JWTAuth),
 		GetBrief:             NewGetBriefEndpoint(s, a.JWTAuth),
 		UpdateBrief:          NewUpdateBriefEndpoint(s, a.JWTAuth),
 		ApproveBrief:         NewApproveBriefEndpoint(s, a.JWTAuth),
@@ -51,6 +53,7 @@ func NewEndpoints(s Service) *Endpoints {
 // service endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.CreateBrief = m(e.CreateBrief)
+	e.FindBrief = m(e.FindBrief)
 	e.GetBrief = m(e.GetBrief)
 	e.UpdateBrief = m(e.UpdateBrief)
 	e.ApproveBrief = m(e.ApproveBrief)
@@ -82,6 +85,29 @@ func NewCreateBriefEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpo
 			return nil, err
 		}
 		return s.CreateBrief(ctx, p)
+	}
+}
+
+// NewFindBriefEndpoint returns an endpoint function that calls the method
+// "find-brief" of service "lfx-v2-campaign-service-briefs".
+func NewFindBriefEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*FindBriefPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.FindBrief(ctx, p)
 	}
 }
 
