@@ -384,6 +384,26 @@ func TestCreateAdGroupAndAd_TargetingMalformedResponse(t *testing.T) {
 	}
 }
 
+// A criterion resourceName naming another customer's account must be rejected the
+// same way a wrong-kind or malformed one is: it does not describe the criterion this
+// call just created, so its id cannot be trusted enough to persist, and reporting it
+// as UNCONFIRMED (rather than silently accepting it) matches validateCampaignResource's
+// own cross-account check for campaign resources.
+func TestCreateAdGroupAndAd_TargetingWrongAccountResponse(t *testing.T) {
+	c := newTargetingClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/9999999999/adGroupCriteria/333~1"}]}`)
+	})
+	in := sampleInput()
+	in.Keywords = []Keyword{{Text: "kubernetes", MatchType: MatchTypeBroad}}
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected an error on an adGroupCriteria resource name from a different customer account")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error = %v, want it classified as UNCONFIRMED", err)
+	}
+}
+
 func TestCreateAdGroupAndAd_InvalidKeywordAbortsBeforeAnyMutate(t *testing.T) {
 	var mu sync.Mutex
 	var mutateCount int

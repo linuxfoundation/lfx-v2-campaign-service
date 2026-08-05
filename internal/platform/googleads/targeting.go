@@ -289,9 +289,9 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 	keywordIDs = make([]string, 0, len(keywords))
 	audienceIDs = make([]string, 0, len(audienceSegments))
 	for i, r := range mr.Results {
-		returnedAdGroupID, critID := adGroupCriterionID(r.ResourceName)
+		returnedAdGroupID, critID := c.adGroupCriterionID(r.ResourceName)
 		if critID == "" || returnedAdGroupID == "" {
-			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; malformed/wrong-kind criterion resource name %q at index %d — verify in Google Ads before retrying)", adGroupID, r.ResourceName, i)
+			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; malformed/wrong-kind/wrong-account criterion resource name %q at index %d — verify in Google Ads before retrying)", adGroupID, r.ResourceName, i)
 		}
 		// The adGroupCriterion resourceName's ad-group-id half must match the ad group this
 		// criterion was created under — a mismatch means the response doesn't describe the

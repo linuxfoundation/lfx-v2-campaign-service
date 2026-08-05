@@ -137,11 +137,14 @@ func adGroupAdID(resourceName string) (adGroupID, adID string) {
 // rather than a single numeric id. Requires EXACTLY two components and BOTH must be
 // a non-empty run of ASCII digits (numericID) — a third tilde-separated component
 // or a non-numeric half is rejected as malformed. ALSO validates that the resource
-// KIND is "adGroupCriteria" (not e.g. "campaigns" or "adGroupAds"), so a malformed
-// resource of a wrong type is correctly rejected. Returns ("", "") if the resource
-// name is empty, the resource kind is not "adGroupCriteria", or the trailing segment
-// isn't in that exact shape.
-func adGroupCriterionID(resourceName string) (adGroupID, criterionID string) {
+// KIND is "adGroupCriteria" (not e.g. "campaigns" or "adGroupAds") AND that the
+// customer segment is THIS client's current account, mirroring
+// validateCampaignResource's own cross-account check — a malformed/substituted
+// resourceName naming another customer's adGroupCriteria must not be trusted enough
+// to persist. Returns ("", "") if the resource name is empty, the resource kind is
+// not "adGroupCriteria", the customer segment doesn't match, or the trailing segment
+// isn't in the exact composite shape.
+func (c *Client) adGroupCriterionID(resourceName string) (adGroupID, criterionID string) {
 	// Validate the full resource path structure: customers/<id>/adGroupCriteria/<composite-id>
 	// Split by "/" to validate the resource kind is "adGroupCriteria" and not something else.
 	// Require EXACTLY 4 segments, matching adGroupAdID: extra segments indicate a
@@ -149,6 +152,9 @@ func adGroupCriterionID(resourceName string) (adGroupID, criterionID string) {
 	// extra segments silently ignored.
 	pathParts := strings.Split(resourceName, "/")
 	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupCriteria" {
+		return "", ""
+	}
+	if pathParts[1] != c.account.CustomerID {
 		return "", ""
 	}
 	return compositeResourceID(resourceName)

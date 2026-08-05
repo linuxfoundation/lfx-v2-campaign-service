@@ -1,5 +1,19 @@
 # Log
 
+## 2026-08-05 (continuation: validate adGroupCriterion resource's customer account)
+
+**Fix** — Resolve outstanding Copilot review thread on PR #69 GA-4
+(`internal/platform/googleads/targeting.go:295`).
+
+`adGroupCriterionID` validated the resource kind (`adGroupCriteria`) and the composite
+`{adGroupId}~{criterionId}` shape, but never checked that the resource name's customer
+segment matched this client's own account — unlike `validateCampaignResource`, which
+rejects a campaign resource from a different account. A malformed/substituted 2xx
+naming another customer's adGroupCriteria could otherwise be accepted as this call's
+own criterion and its id persisted. `adGroupCriterionID` is now a `*Client` method that
+also checks `pathParts[1] == c.account.CustomerID`, returning `("", "")` (classified
+UNCONFIRMED by the caller) on a mismatch, mirroring `validateCampaignResource`.
+
 ## 2026-08-05 (continuation: tighten adGroupCriterionID resource path check)
 
 **Fix** — Resolve outstanding Copilot review thread on PR #69 GA-4
