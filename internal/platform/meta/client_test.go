@@ -4475,3 +4475,129 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 		t.Errorf("expected 'Campaign already exists by name' step, got %v", res.Steps)
 	}
 }
+
+// TestFindCampaignByName_PaginationEmptyFirstPage verifies that an empty first
+// page with a next link does NOT trick the lookup into reporting "no match" — it
+// follows pagination and finds a match on a later page. This guards against
+// false absence when Meta's filtering returns an empty first page but has more
+// results under pagination.
+func TestFindCampaignByName_PaginationEmptyFirstPage(t *testing.T) {
+	callOrder := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		callOrder++
+		body := ""
+		switch {
+		case callOrder == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// First call: empty page with a next link.
+			body = `{"data":[],"paging":{"cursors":{"after":"CUR2"},"next":"https://graph.example/x?after=CUR2"}}`
+		case callOrder == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// Second call: match on second page.
+			body = `{"data":[{"id":"camp_from_page_2"}],"paging":{}}`
+		default:
+			t.Errorf("unexpected call %d: %s %s", callOrder, req.Method, req.URL.Path)
+			return &http.Response{StatusCode: http.StatusNotFound}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "camp_from_page_2" {
+		t.Errorf("id = %q, want camp_from_page_2 (from second page)", id)
+	}
+	if callOrder != 2 {
+		t.Errorf("made %d calls, want 2 (pagination followed)", callOrder)
+	}
+}
+
+// TestFindCampaignByName_PaginationNoMatchMultiplePages verifies that pagination
+// is exhausted even when there's no match, and the function returns empty string
+// when fully enumerated with no match found.
+func TestFindCampaignByName_PaginationNoMatchMultiplePages(t *testing.T) {
+	callOrder := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		callOrder++
+		body := ""
+		switch {
+		case callOrder == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// First call: empty page with a next link.
+			body = `{"data":[],"paging":{"cursors":{"after":"CUR2"},"next":"https://graph.example/x?after=CUR2"}}`
+		case callOrder == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// Second call: still empty, no next link — fully enumerated.
+			body = `{"data":[],"paging":{}}`
+		default:
+			t.Errorf("unexpected call %d: %s %s", callOrder, req.Method, req.URL.Path)
+			return &http.Response{StatusCode: http.StatusNotFound}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty string (no match after exhausting all pages)", id)
+	}
+	if callOrder != 2 {
+		t.Errorf("made %d calls, want 2 (pagination exhausted)", callOrder)
+	}
+}
+
+// TestFindCampaignByName_PaginationUsesCursorNotRawURL verifies that pagination
+// advances via the opaque `after` cursor built into our path, never reusing Meta's
+// raw paging.next URL — so a credential in paging.next can't leak into the request
+// path. Mirrors the listAdIDs pagination security model.
+func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
+	callOrder := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		callOrder++
+		body := ""
+		switch {
+		case callOrder == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// First call: empty page with a next link that would carry a credential.
+			body = `{"data":[],"paging":{"cursors":{"after":"OPAQUE_CURSOR"},"next":"https://graph.example/x?access_token=SECRET&after=OPAQUE_CURSOR"}}`
+		case callOrder == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// Second call: verify the URL does NOT contain the credential.
+			if strings.Contains(req.URL.RawQuery, "access_token") || strings.Contains(req.URL.RawQuery, "SECRET") {
+				t.Errorf("pagination leaked credential into query string: %q", req.URL.RawQuery)
+			}
+			if !strings.Contains(req.URL.RawQuery, "after=OPAQUE_CURSOR") {
+				t.Errorf("pagination did not use the cursor; query: %q", req.URL.RawQuery)
+			}
+			body = `{"data":[{"id":"camp_found"}]}`
+		default:
+			t.Errorf("unexpected call %d: %s %s", callOrder, req.Method, req.URL.Path)
+			return &http.Response{StatusCode: http.StatusNotFound}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "camp_found" {
+		t.Errorf("id = %q, want camp_found", id)
+	}
+}

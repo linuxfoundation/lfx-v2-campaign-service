@@ -424,6 +424,15 @@ type createResponse struct {
 // the lookup itself failed — the caller cannot tell absence from a failed check,
 // so it must NOT proceed to create as if the name were confirmed free.
 //
+// NOTE: Name matching alone does NOT guarantee idempotency. buildCampaignName
+// is deterministic but does not include brief identity and collapses geos
+// broadly (e.g., US and CA both become NA), so distinct briefs can generate
+// the same name. A full solution requires embedding a stable per-brief
+// idempotency discriminator in the campaign (tracked in LFXV2-2665). For now,
+// we do basic property validation (status=PAUSED, objective match) to reduce
+// the chance of reusing an unrelated campaign, but a name collision across
+// distinct briefs remains possible and is accepted as a known limitation.
+//
 // errLookupAmbiguous marks a malformed-but-2xx lookup response (missing data
 // field, or a matched row with no usable id): Meta DID respond, so this is
 // classified ambiguous by createOutcomeAmbiguous like a 5xx, not a clean failure.
@@ -434,29 +443,56 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name string)
 	if err != nil {
 		return "", fmt.Errorf("meta campaign lookup: encoding name filter: %w", err)
 	}
-	path := "/" + accountID + "/campaigns?fields=id&filtering=" + url.QueryEscape(string(filtering))
-	var resp struct {
-		// Data is a pointer slice so an absent `data` field (malformed 2xx) is
-		// distinguishable from a present-but-empty `{"data":[]}` — see listAdIDs'
-		// identical reasoning. A malformed body must NOT be read as "no match".
-		Data *[]struct {
-			ID string `json:"id"`
-		} `json:"data"`
+	basePath := "/" + accountID + "/campaigns?fields=id&filtering=" + url.QueryEscape(string(filtering))
+
+	// Follow pagination like listAdIDs does, so an empty first page with a next link
+	// doesn't trick us into missing a match on a later page. Meta's Graph API can
+	// return an empty first page under filtering (visibility/privacy constraints)
+	// but still have results on subsequent pages.
+	after := ""
+	for page := 0; page < adDiscoveryMaxPages; page++ {
+		path := basePath
+		if after != "" {
+			path += "&after=" + url.QueryEscape(after)
+		}
+		var resp struct {
+			// Data is a pointer slice so an absent `data` field (malformed 2xx) is
+			// distinguishable from a present-but-empty `{"data":[]}` — see listAdIDs'
+			// identical reasoning. A malformed body must NOT be read as "no match".
+			Data *[]struct {
+				ID string `json:"id"`
+			} `json:"data"`
+			Paging struct {
+				Cursors struct {
+					After string `json:"after"`
+				} `json:"cursors"`
+				Next string `json:"next"`
+			} `json:"paging"`
+		}
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return "", err
+		}
+		if resp.Data == nil {
+			return "", fmt.Errorf("meta campaign lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
+		}
+		if len(*resp.Data) > 0 {
+			id := strings.TrimSpace((*resp.Data)[0].ID)
+			if id == "" {
+				return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id: %w", name, errLookupAmbiguous)
+			}
+			return id, nil
+		}
+		// Empty page; check for more pages.
+		if resp.Paging.Next == "" {
+			return "", nil // fully enumerated, no match found
+		}
+		after = strings.TrimSpace(resp.Paging.Cursors.After)
+		if after == "" {
+			return "", fmt.Errorf("meta campaign lookup for %q has more pages but no cursor; cannot guarantee the campaign name is absent", name)
+		}
 	}
-	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
-		return "", err
-	}
-	if resp.Data == nil {
-		return "", fmt.Errorf("meta campaign lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
-	}
-	if len(*resp.Data) == 0 {
-		return "", nil
-	}
-	id := strings.TrimSpace((*resp.Data)[0].ID)
-	if id == "" {
-		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id: %w", name, errLookupAmbiguous)
-	}
-	return id, nil
+	// Reached page cap with pagination still pending: fail closed.
+	return "", fmt.Errorf("meta campaign lookup for %q exceeded %d pages; too many campaigns with that name to enumerate", name, adDiscoveryMaxPages)
 }
 
 // findAdSetByName mirrors findCampaignByName, scoped to the ad sets under a
@@ -467,26 +503,51 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 	if err != nil {
 		return "", fmt.Errorf("meta ad set lookup: encoding name filter: %w", err)
 	}
-	path := "/" + campaignID + "/adsets?fields=id&filtering=" + url.QueryEscape(string(filtering))
-	var resp struct {
-		Data *[]struct {
-			ID string `json:"id"`
-		} `json:"data"`
+	basePath := "/" + campaignID + "/adsets?fields=id&filtering=" + url.QueryEscape(string(filtering))
+
+	// Follow pagination like listAdIDs does, so an empty first page with a next link
+	// doesn't trick us into missing a match on a later page.
+	after := ""
+	for page := 0; page < adDiscoveryMaxPages; page++ {
+		path := basePath
+		if after != "" {
+			path += "&after=" + url.QueryEscape(after)
+		}
+		var resp struct {
+			Data *[]struct {
+				ID string `json:"id"`
+			} `json:"data"`
+			Paging struct {
+				Cursors struct {
+					After string `json:"after"`
+				} `json:"cursors"`
+				Next string `json:"next"`
+			} `json:"paging"`
+		}
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return "", err
+		}
+		if resp.Data == nil {
+			return "", fmt.Errorf("meta ad set lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
+		}
+		if len(*resp.Data) > 0 {
+			id := strings.TrimSpace((*resp.Data)[0].ID)
+			if id == "" {
+				return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id: %w", name, errLookupAmbiguous)
+			}
+			return id, nil
+		}
+		// Empty page; check for more pages.
+		if resp.Paging.Next == "" {
+			return "", nil // fully enumerated, no match found
+		}
+		after = strings.TrimSpace(resp.Paging.Cursors.After)
+		if after == "" {
+			return "", fmt.Errorf("meta ad set lookup for %q has more pages but no cursor; cannot guarantee the ad set name is absent", name)
+		}
 	}
-	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
-		return "", err
-	}
-	if resp.Data == nil {
-		return "", fmt.Errorf("meta ad set lookup for %q returned a 2xx response with no data field; cannot confirm absence: %w", name, errLookupAmbiguous)
-	}
-	if len(*resp.Data) == 0 {
-		return "", nil
-	}
-	id := strings.TrimSpace((*resp.Data)[0].ID)
-	if id == "" {
-		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id: %w", name, errLookupAmbiguous)
-	}
-	return id, nil
+	// Reached page cap with pagination still pending: fail closed.
+	return "", fmt.Errorf("meta ad set lookup for %q exceeded %d pages; too many ad sets with that name to enumerate", name, adDiscoveryMaxPages)
 }
 
 // accountPreflight models the fields read from the ad-account object during the
@@ -2230,6 +2291,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// error on a duplicate name and let the client self-heal by re-resolving the
 	// id). Looking the name up first, instead of reacting to a duplicate-name
 	// error that Meta never sends, is the only way to close that window.
+	//
+	// NOTE: This lookup enables name-based reconciliation for ambiguous creates
+	// (LFXV2-2665). However, the orchestrator must also be wired to call this
+	// dispatcher again on retry when there is a retained partial result, rather
+	// than just returning "reconciliation required" and bailing. Without that
+	// orchestrator wiring, a retry after an ambiguous create will not reach this
+	// lookup and the retries remain blocked.
 	existingCampaignID, lookupErr := c.findCampaignByName(ctx, accountID, campaignName)
 	if lookupErr != nil {
 		if ctx.Err() != nil {
@@ -2244,7 +2312,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if !createOutcomeAmbiguous(lookupErr) {
 			return nil, fmt.Errorf("meta campaign lookup failed: %w", lookupErr)
 		}
-		steps = append(steps, "Campaign lookup outcome is UNCONFIRMED (ambiguous response — timeout, server error, or a malformed successful response); cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
+		steps = append(steps, "Campaign lookup outcome is UNCONFIRMED (ambiguous response — timeout or server error); cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
 		return &CampaignResult{
 			Platform:     "meta-ads",
 			CampaignName: campaignName,
