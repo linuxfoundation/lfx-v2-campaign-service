@@ -342,10 +342,11 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// outbox payload is exactly what committed. The prior implementation re-read via
 	// GetCampaign after the UPDATE, which could observe a LATER concurrent write and index a
 	// snapshot this call never produced.
-	q := `UPDATE campaigns SET
-		campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
-		config_snapshot=$7, result=$8, version=version+1, updated_at=now()
-		WHERE id=$9 AND brief_id=$10 AND project_id=$11 AND version=$12
+	//
+	// This reuses replaceCampaignQuery (rather than a second, independently-maintained copy)
+	// so the soft-delete guard it documents is the guard actually executed here, not just the
+	// one a test happens to inspect.
+	q := replaceCampaignQuery + `
 		RETURNING ` + campaignCols
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

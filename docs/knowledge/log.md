@@ -1,5 +1,22 @@
 # Log
 
+## 2026-08-05 (continuation: close campaign-resurrection gap in ReplaceCampaign)
+
+**Fix** — Resolve outstanding Copilot review thread on PR #64 campaign delete
+(`internal/infrastructure/postgres/campaign_repo.go:283`).
+
+`ReplaceCampaign` built its own inline UPDATE string, which had no `status <> 'deleted'`
+guard — unlike the documented `replaceCampaignQuery` constant sitting right above it,
+which was never actually executed. A caller holding the pre-delete ETag could increment
+the predictable version and PUT a new live status into the soft-deleted row, resurrecting
+it and reoccupying the (brief, platform) slot the partial unique index had freed. The
+existing regression test only passed because it inspected the unused constant, not the
+query `ReplaceCampaign` runs.
+
+Removed the duplicate inline query; `ReplaceCampaign` now builds its statement from
+`replaceCampaignQuery` (`+ "RETURNING " + campaignCols`), so the guard the test checks is
+the guard that executes.
+
 ## 2026-08-05
 
 **Fix** — Renumbered this branch's migrations `000012`/`000013` → `000010`/`000011`. PR #59 and
