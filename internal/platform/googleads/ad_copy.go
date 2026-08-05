@@ -32,13 +32,14 @@ const (
 	minDescriptions      = 2
 	maxDescriptions      = 4
 	maxDescriptionWeight = 90
+	maxErrorComponentLen = 100 // cap caller-controlled URL components in error messages
 )
 
 // adTextAsset is one headline/description entry in a responsiveSearchAd.
-//
+// consumed by the ad group/ad cascade (adgroup_ad.go), which lands in the
 // next stacked PR (GA-3b) and is not yet merged into this branch.
 //
-//nolint:unused // consumed by the ad group/ad cascade (adgroup_ad.go), which lands in the
+//nolint:unused // GA-3b dependency explained above.
 type adTextAsset struct {
 	Text string `json:"text"`
 }
@@ -58,15 +59,15 @@ func textAssets(ss []string) []adTextAsset {
 // composeAdCopy resolves the caller-supplied headlines/descriptions (if any)
 // into a valid Responsive Search Ad content set: each entry trimmed and
 // weight-capped to its limit (see truncateWeighted — CJK/full-width runes
-// count double), empties dropped, and duplicates (after trimming)
-// removed — Google rejects both an over-limit asset and a duplicate one within
-// the same ad. If fewer than the minimum survive, deterministic placeholders
-// derived from eventName are appended (never removed) until the minimum is
-// met; the result is also capped at the maximum count. An eventName so long
-// none of its truncations are useful should not happen in practice (EventName
-// is capped upstream via the campaign name validation), but a caller supplying
-// zero usable text and an empty eventName is a hard error — there is nothing
-// to advertise.
+// count double toward Google's character weight), empties dropped, and
+// duplicates (after trimming and weight-truncation) removed — Google rejects
+// both an over-limit asset and a duplicate one within the same ad. If fewer
+// than the minimum survive, deterministic placeholders derived from eventName
+// are appended (never removed) until the minimum is met; the result is also
+// capped at the maximum count. An eventName so long none of its truncations
+// are useful should not happen in practice (EventName is capped upstream via
+// the campaign name validation), but a caller supplying zero usable text and
+// an empty eventName is a hard error — there is nothing to advertise.
 func composeAdCopy(callerHeadlines, callerDescriptions []string, eventName, project string) (headlines, descriptions []string, err error) {
 	headlines = boundedUniqueCopy(callerHeadlines, maxHeadlineWeight, maxHeadlines)
 	descriptions = boundedUniqueCopy(callerDescriptions, maxDescriptionWeight, maxDescriptions)
@@ -78,7 +79,7 @@ func composeAdCopy(callerHeadlines, callerDescriptions []string, eventName, proj
 		return nil, nil, fmt.Errorf("google-ads ad requires at least %d usable headline(s), got %d (need a non-empty eventName or caller-supplied headlines)", minHeadlines, len(headlines))
 	}
 	if len(descriptions) < minDescriptions {
-		return nil, nil, fmt.Errorf("google-ads ad requires at least %d usable description(s), got %d (need a non-empty eventName or caller-supplied descriptions)", minDescriptions, len(descriptions))
+		return nil, nil, fmt.Errorf("google-ads ad requires at least %d usable description(s), got %d (need a non-empty eventName or at least %d caller-supplied description(s))", minDescriptions, len(descriptions), minDescriptions)
 	}
 	return headlines, descriptions, nil
 }
@@ -190,10 +191,11 @@ func truncateWeighted(s string, maxWeight int) string {
 
 // defaultHeadlines derives deterministic placeholder headlines from the event
 // name so a caller that supplies none still gets a valid, non-generic-sounding
-// ad. Order matters: padUnique consumes these in order until the minimum is
-// reached.
+// ad. eventName is sanitized to remove control characters and normalize
+// whitespace before use. Order matters: padUnique consumes these in order until
+// the minimum is reached.
 func defaultHeadlines(eventName string) []string {
-	eventName = strings.TrimSpace(eventName)
+	eventName = sanitizeNamePart(eventName)
 	if eventName == "" {
 		return nil
 	}
@@ -207,9 +209,11 @@ func defaultHeadlines(eventName string) []string {
 }
 
 // defaultDescriptions mirrors defaultHeadlines for the description slots.
+// Both eventName and project are sanitized to remove control characters and
+// normalize whitespace before use.
 func defaultDescriptions(eventName, project string) []string {
-	eventName = strings.TrimSpace(eventName)
-	project = strings.TrimSpace(project)
+	eventName = sanitizeNamePart(eventName)
+	project = sanitizeNamePart(project)
 	if eventName == "" {
 		return nil
 	}
@@ -224,11 +228,21 @@ func defaultDescriptions(eventName, project string) []string {
 	return out
 }
 
+// capForError truncates s to maxErrorComponentLen characters for safe inclusion in
+// persisted error messages, adding "…" if truncated.
+func capForError(s string) string {
+	if len(s) <= maxErrorComponentLen {
+		return s
+	}
+	return s[:maxErrorComponentLen] + "…"
+}
+
 // buildAdFinalURL builds the ad's destination URL from the brief's
-// registration URL, tagging it with UTM parameters for attribution. Existing
-// query parameters on the registration URL are preserved; a utm_* key already
-// present is left untouched rather than overwritten (mirrors the reddit/meta/
-// twitter/microsoft clients' final-URL builders).
+// registration URL, tagging it with UTM parameters for attribution. utm_source
+// and utm_medium are set unconditionally to reflect the Google CPC channel,
+// overwriting any existing values; other utm_* parameters are preserved if
+// already present (mirrors the microsoft client's final-URL builder to avoid
+// misattribution).
 func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
 	registrationURL = strings.TrimSpace(registrationURL)
 	if registrationURL == "" {
@@ -243,7 +257,7 @@ func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix 
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("registration URL %q must be http(s), got scheme %q", redactURLForError(registrationURL), u.Scheme)
+		return "", fmt.Errorf("registration URL %q must be http(s), got scheme %q", redactURLForError(registrationURL), capForError(u.Scheme))
 	}
 	if u.Hostname() == "" {
 		return "", fmt.Errorf("registration URL %q has no host", redactURLForError(registrationURL))
@@ -270,8 +284,12 @@ func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix 
 	}
 
 	q := u.Query()
-	setIfAbsent(q, "utm_source", "google")
-	setIfAbsent(q, "utm_medium", "cpc")
+	// Set utm_source and utm_medium unconditionally: a click from a Google CPC ad
+	// must be attributed to Google/CPC, never to an earlier channel's utm_source
+	// from the caller-supplied URL (which would misattribute the ad spend).
+	q.Set("utm_source", "google")
+	q.Set("utm_medium", "cpc")
+	// Preserve existing utm_campaign and utm_content if already present.
 	if campaign != "" {
 		setIfAbsent(q, "utm_campaign", campaign)
 	}
@@ -295,19 +313,19 @@ func setIfAbsent(q url.Values, key, value string) {
 // redactURLForError reduces a caller-supplied registration URL to
 // scheme+host+path for inclusion in a validation error message, so the error
 // (which may be logged or persisted in a step/snapshot) never carries
-// userinfo/query/fragment that can hold secrets. A value that can't be parsed
-// as an absolute URL is reported as an opaque placeholder rather than echoed
-// raw. Identical to redactURLForError in the twitter client (the reddit/meta
-// clients' redactURL uses more permissive fallback heuristics — it strips a
-// trailing "?"/"#" and echoes the rest rather than falling back to a fixed
-// placeholder).
+// userinfo/query/fragment that can hold secrets. The returned URL is capped at
+// maxErrorComponentLen to prevent unbounded caller-controlled URL components
+// from bloating persisted errors. A value that can't be parsed as an absolute
+// URL is reported as an opaque placeholder rather than echoed raw.
 func redactURLForError(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
 		if err == nil && u.Scheme != "" && u.Host != "" {
-			return u.Scheme + "://" + u.Host
+			redacted := u.Scheme + "://" + u.Host
+			return capForError(redacted)
 		}
 		return "(redacted)"
 	}
-	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+	redacted := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+	return capForError(redacted)
 }
