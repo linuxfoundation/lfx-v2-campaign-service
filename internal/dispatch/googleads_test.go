@@ -665,6 +665,7 @@ func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
 	// Verify that the dispatcher wires keywords and audience segments from the config
 	// through to the client, and that both reach the criteria endpoint. A typo or dropped
 	// mapping in either field would leave this test green while the feature was broken.
+	var mu sync.Mutex
 	var sawCriteria bool
 	var criteriaOps []map[string]any
 	opts, _ := googleAdsServers(t,
@@ -686,7 +687,6 @@ func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
 		case strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate"):
-			sawCriteria = true
 			var body struct {
 				Operations []map[string]any `json:"operations"`
 			}
@@ -694,7 +694,10 @@ func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			mu.Lock()
+			sawCriteria = true
 			criteriaOps = body.Operations
+			mu.Unlock()
 			_, _ = io.WriteString(w, `{"results":[`+
 				`{"resourceName":"customers/1234567890/adGroupCriteria/333~1"},`+
 				`{"resourceName":"customers/1234567890/adGroupCriteria/333~2"},`+
@@ -724,26 +727,37 @@ func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
 	if camp == nil {
 		t.Fatal("expected a campaign result")
 	}
+	mu.Lock()
 	if !sawCriteria {
+		mu.Unlock()
 		t.Error("adGroupCriteria:mutate must be called when keywords/audience segments are supplied")
+		return
 	}
 	if len(criteriaOps) != 3 {
+		mu.Unlock()
 		t.Fatalf("criteria operations count = %d, want 3 (2 keywords + 1 audience segment)", len(criteriaOps))
 	}
 	// Verify the keyword operations have the correct shape
 	kw1 := criteriaOps[0]["create"].(map[string]any)
 	if kw, ok := kw1["keyword"].(map[string]any); !ok || kw["text"] != "kubernetes" || kw["matchType"] != "EXACT" {
+		mu.Unlock()
 		t.Errorf("keyword[0] = %v, want {text: kubernetes, matchType: EXACT}", kw1["keyword"])
+		return
 	}
 	kw2 := criteriaOps[1]["create"].(map[string]any)
 	if kw, ok := kw2["keyword"].(map[string]any); !ok || kw["text"] != "go programming" || kw["matchType"] != "PHRASE" {
+		mu.Unlock()
 		t.Errorf("keyword[1] = %v, want {text: go programming, matchType: PHRASE}", kw2["keyword"])
+		return
 	}
 	// Verify the audience segment operation has the correct shape
 	aud := criteriaOps[2]["create"].(map[string]any)
 	if ul, ok := aud["userList"].(map[string]any); !ok || ul["userList"] != "customers/123/userLists/456" {
+		mu.Unlock()
 		t.Errorf("audience segment = %v, want {userList: customers/123/userLists/456}", aud["userList"])
+		return
 	}
+	mu.Unlock()
 }
 
 // ---- googleAdsChildIDs ------------------------------------------------------

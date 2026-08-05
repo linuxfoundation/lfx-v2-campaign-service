@@ -143,14 +143,27 @@ func audienceCriterionField(resourceName string) (field string, ok bool) {
 		return "", false
 	}
 
-	// Extract the ID portion after the pattern to validate it's numeric
-	// and there's nothing after it.
-	parts := strings.Split(resourceName, pattern)
-	if len(parts) != 2 {
-		return "", false // Multiple occurrences or no occurrence after trim
+	// Parse the complete resource name: customers/{numericCustomerId}/{userLists|customAudiences}/{numericId}
+	// Extract the prefix before the pattern (should be customers/{id}/) and validate it.
+	patternIdx := strings.Index(resourceName, pattern)
+	if patternIdx < 0 {
+		return "", false // Should not happen given the switch above, but be safe.
 	}
-	id := parts[1]
-	if id == "" || !numericID(id) {
+
+	// Verify the prefix is "customers/{numericId}" (the / before pattern is part of pattern)
+	prefix := resourceName[:patternIdx]
+	if !strings.HasPrefix(prefix, "customers/") {
+		return "", false
+	}
+	custID := prefix[len("customers/"):]
+	if custID == "" || !numericID(custID) {
+		return "", false
+	}
+
+	// Extract and validate the ID portion after the pattern to ensure it's numeric
+	// and there's nothing after it.
+	idPart := resourceName[patternIdx+len(pattern):]
+	if idPart == "" || !numericID(idPart) {
 		return "", false // Empty or non-numeric ID
 	}
 

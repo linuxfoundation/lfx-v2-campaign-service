@@ -299,13 +299,19 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if err != nil {
 		return err
 	}
-	// Refuse ACTIVATE: GA-3b creates ad group + ad but NO targeting criteria. A campaign
-	// without keywords/audience targeting cannot deliver, so activating reports false
-	// success (exactly what ErrCampaignNotProvisioned prevents). Activation will be
-	// reconsidered in GA-4 once targeting provisioning is implemented and the Result blob
-	// carries the targeting IDs.
+	// Refuse ACTIVATE if targeting was not successfully provisioned: GA-4 requires at least
+	// one keyword criterion before allowing activation (audience criteria alone are
+	// observation-only and do not qualify for activation). Check the persisted targeting
+	// IDs in the Result blob; if both are empty, targeting was never attempted or failed
+	// before any criterion resource name could be parsed.
 	if gaStatus == googleads.StatusEnabled {
-		return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword/audience targeting is not yet provisioned (GA-4 pending)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		var result googleads.CampaignResult
+		if campaign.Result != nil {
+			_ = json.Unmarshal(campaign.Result, &result)
+		}
+		if len(result.KeywordCriteriaIDs) == 0 {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
 	}
 	adGroupID, adID := googleAdsChildIDs(campaign)
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
