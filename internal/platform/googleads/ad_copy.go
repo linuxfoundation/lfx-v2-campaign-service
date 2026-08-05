@@ -84,6 +84,7 @@ func boundedUniqueCopy(candidates []string, maxRunes, maxCount int) []string {
 			continue
 		}
 		s = truncateRunes(s, maxRunes)
+		s = strings.TrimSpace(s)
 		if s == "" {
 			continue
 		}
@@ -112,7 +113,9 @@ func padUnique(base, fallback []string, maxRunes, min, max int) []string {
 		if len(base) >= min || len(base) >= max {
 			break
 		}
-		s = truncateRunes(strings.TrimSpace(s), maxRunes)
+		s = strings.TrimSpace(s)
+		s = truncateRunes(s, maxRunes)
+		s = strings.TrimSpace(s)
 		if s == "" {
 			continue
 		}
@@ -188,10 +191,11 @@ func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix 
 		// can both be logged or persisted in a result step/snapshot.
 		return "", fmt.Errorf("registration URL %q is not a valid URL", redactURLForError(registrationURL))
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
 		return "", fmt.Errorf("registration URL %q must be http(s), got scheme %q", redactURLForError(registrationURL), u.Scheme)
 	}
-	if u.Host == "" {
+	if u.Hostname() == "" {
 		return "", fmt.Errorf("registration URL %q has no host", redactURLForError(registrationURL))
 	}
 	// Reject embedded userinfo (user[:password]@host): an ad destination never
