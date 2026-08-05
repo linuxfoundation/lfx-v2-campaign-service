@@ -495,7 +495,7 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
-	window := model.MetricsWindowLast30Days
+	window := model.MetricsWindowLast7Days
 	if p.Window != nil {
 		window = model.MetricsWindow(*p.Window)
 		if !model.IsValidMetricsWindow(window) {

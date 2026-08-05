@@ -245,8 +245,8 @@ date ranges at 7 days per request.** Only `today` and `last_7_days` map to a sup
 window (`TODAY`/`LAST_7_DAYS`); every other foundation window (`yesterday`, `last_14_days`,
 `last_30_days`, `this_month`, `last_month`) returns `twitter.ErrUnsupportedWindow` explaining
 the platform's API limitation (NOT a reduced range, average, or extrapolation). This is a
-permanent X API constraint documented in the knowledge base. Spend (returned by X as USD
-decimal) is converted to micro-currency (×1e6).
+permanent X API constraint documented in the knowledge base. Spend is returned by X as
+`billed_charge_local_micro`, already in micro-currency units (no USD parsing or conversion).
 
 ## Channel kinds: paid ads vs email
 

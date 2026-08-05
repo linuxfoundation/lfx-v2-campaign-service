@@ -89,7 +89,8 @@ func CampaignStatusToggleable(status string) bool {
 // query vocabulary (e.g. Google Ads' GAQL DURING literals, Meta's Insights date_preset).
 type MetricsWindow string
 
-// Metrics windows supported by every platform dispatcher's MetricsReader.
+// Metrics windows: the shared API vocabulary for metrics reads. Each MetricsReader
+// adapter supports a subset of these windows (see its documentation for exact support).
 const (
 	MetricsWindowToday      MetricsWindow = "today"
 	MetricsWindowYesterday  MetricsWindow = "yesterday"

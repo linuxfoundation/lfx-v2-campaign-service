@@ -326,11 +326,11 @@ func twitterMetricsWindow(w model.MetricsWindow) (twitter.MetricsWindow, error) 
 // Note: X Ads API caps queryable date ranges at 7 days per request. Windows longer
 // than 7 days are NOT supported — no averaging, no truncation, no extrapolation.
 func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
-	client, err := d.resolveTwitterClient(ctx, projectID, platform)
+	xWindow, err := twitterMetricsWindow(window)
 	if err != nil {
 		return nil, err
 	}
-	xWindow, err := twitterMetricsWindow(window)
+	client, err := d.resolveTwitterClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
