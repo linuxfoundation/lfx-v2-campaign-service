@@ -341,6 +341,7 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// Default to last_30_days when no window is specified by the caller.
 	window := model.MetricsWindowLast30Days
 	if p.Window != nil {
 		window = model.MetricsWindow(*p.Window)
