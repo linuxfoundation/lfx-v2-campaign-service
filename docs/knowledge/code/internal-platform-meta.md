@@ -138,13 +138,16 @@ CTR for one campaign over a predefined date-range window (e.g. `LAST_30_DAYS`) v
 Graph API `GET /{campaignID}/insights` read with a `date_preset` parameter. The window and
 campaign id are both validated against an allow-list of supported values BEFORE string
 interpolation into the request, since Meta's insights endpoint has fixed preset values.
-Numeric metric fields (`impressions`/`clicks`/`spend`) arrive as JSON strings and are parsed
-via `parseMetricInt`, which treats empty strings (Meta omits zero-valued optional fields) as
-zeros rather than parse errors. Cost is expressed in micros of the ad account's currency
-(consistent with the Google Ads metrics path, so a platform-agnostic dispatcher can normalize
-all platforms to the same unit), derived by multiplying spend by 1,000,000. CTR is computed
-client-side (Clicks/Impressions, 0 when Impressions is 0 — never divides by zero). The return
-type `CampaignMetrics` is distinct from the domain type `model.CampaignMetrics` (an
-application-level platform-agnostic staging area), converted at the dispatcher boundary.
+Numeric metric fields arrive as JSON strings. `impressions` and `clicks` (integers) are
+parsed via `parseMetricInt`, which treats empty strings (Meta omits zero-valued optional
+fields) as zeros rather than parse errors. `spend` (decimal) is parsed separately via
+`strconv.ParseFloat`, then scaled to micros (cost in whole units → ×1,000,000) and rounded
+(not truncated) to `CostMicros`, guarding against non-finite (`NaN`/`Inf`) results. Cost
+is expressed in micros of the ad account's currency (consistent with the Google Ads metrics
+path, so a platform-agnostic dispatcher can normalize all platforms to the same unit). CTR
+is computed client-side (Clicks/Impressions, 0 when Impressions is 0 — never divides by
+zero). The return type `CampaignMetrics` is distinct from the domain type
+`model.CampaignMetrics` (an application-level platform-agnostic staging area), converted at
+the dispatcher boundary.
 
 See [internal/platform/meta](../../../internal/platform/meta).
