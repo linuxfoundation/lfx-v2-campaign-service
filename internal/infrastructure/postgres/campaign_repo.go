@@ -285,25 +285,13 @@ const replaceCampaignQuery = `UPDATE campaigns SET
 // UpsertCampaign inserts or updates the (brief, platform) campaign row. On
 // conflict it updates in place (a brief change after campaigns exist).
 func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
-	q := `INSERT INTO campaigns
-		(project_id, brief_id, job_id, platform, platform_campaign_id, campaign_name, status,
-		 budget_amount, budget_type, start_date, end_date, config_snapshot, result)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-		ON CONFLICT (brief_id, platform) DO UPDATE SET
-			job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
-			campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
-			budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
-			start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
-			config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
-			version=campaigns.version+1, updated_at=now()
-		RETURNING ` + campaignCols
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("upsert campaign: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	row := tx.QueryRow(ctx, q,
+	row := tx.QueryRow(ctx, upsertCampaignQuery,
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType),
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
@@ -447,7 +435,7 @@ const deleteCampaignQuery = `UPDATE campaigns SET status='deleted', version=vers
 // mid-dispatch 'pending' claim, or a 'group_created'/'unconfirmed' partial orphan —
 // see model.CampaignStatusNeedsReconciliation), and domain.ErrPreconditionFailed on a
 // version mismatch.
-func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64) error {
+func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("delete campaign: begin tx: %w", err)
@@ -495,6 +483,21 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 
 	if _, uerr := tx.Exec(ctx, deleteCampaignQuery, id); uerr != nil {
 		return fmt.Errorf("delete campaign: soft delete: %w", uerr)
+	}
+	// Enqueue the deletion to the index, just as every other write does. A nil
+	// indexPayload means the caller does not want this delete indexed; the write
+	// still commits. This ensures the search index stays in sync: a campaign that
+	// was previously indexed must be removed when soft-deleted.
+	if indexPayload != nil {
+		deleted := &model.Campaign{
+			ID:        id,
+			BriefID:   briefID,
+			ProjectID: projectID,
+			Status:    model.CampaignStatusDeleted,
+		}
+		if ierr := enqueueCampaignIndex(ctx, tx, deleted, indexPayload); ierr != nil {
+			return fmt.Errorf("delete campaign: %w", ierr)
+		}
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
 		return fmt.Errorf("delete campaign: commit: %w", cerr)

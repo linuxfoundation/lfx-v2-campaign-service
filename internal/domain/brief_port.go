@@ -121,7 +121,11 @@ type CampaignWriter interface {
 	// a SELECT ... FOR UPDATE row lock, which is required to close the TOCTOU race
 	// against a concurrent claim/finalize under READ COMMITTED (see the
 	// implementation for the full isolation reasoning).
-	DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64) error
+	//
+	// The campaign is ALWAYS co-indexed on delete, just as every other write,
+	// so the indexer can remove it and keep search consistent. A nil indexPayload
+	// means the caller does not want the delete indexed; the soft delete still commits.
+	DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload CampaignIndexPayloadFunc) error
 }
 
 // CampaignRepository is the full persistence port for campaigns.

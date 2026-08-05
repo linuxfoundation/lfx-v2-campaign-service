@@ -672,7 +672,7 @@ func (s *BriefService) DeleteCampaign(ctx context.Context, p *briefs.DeleteCampa
 	if err != nil {
 		return err
 	}
-	derr := campaignRepo.DeleteCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
+	derr := campaignRepo.DeleteCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID, version, s.campaignIndexPayload(indexer.ActionDeleted))
 	if errors.Is(derr, domain.ErrConflict) {
 		// The repo returns ErrConflict only when the campaign's status is an unresolved
 		// reconciliation marker — a mid-dispatch 'pending' claim, or a

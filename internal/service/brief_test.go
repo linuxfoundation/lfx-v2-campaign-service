@@ -575,7 +575,12 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 	r.indexPayloads = append(r.indexPayloads, payload)
 	return nil
 }
-func (r *campaignEditRepo) DeleteCampaign(context.Context, string, string, string, int64) error {
+func (r *campaignEditRepo) DeleteCampaign(_ context.Context, _ string, _ string, _ string, _ int64, indexPayload domain.CampaignIndexPayloadFunc) error {
+	if indexPayload != nil {
+		// Record that the deletion was indexed, matching the real repo's behavior.
+		payload, _ := indexPayload(&model.Campaign{})
+		r.indexPayloads = append(r.indexPayloads, payload)
+	}
 	return nil
 }
 
@@ -1979,7 +1984,7 @@ type deleteCampaignRepo struct {
 	gotExpectedVers int64
 }
 
-func (r *deleteCampaignRepo) DeleteCampaign(_ context.Context, projectID, briefID, id string, expectedVersion int64) error {
+func (r *deleteCampaignRepo) DeleteCampaign(_ context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) error {
 	r.called = true
 	r.gotProject, r.gotBrief, r.gotCampaign, r.gotExpectedVers = projectID, briefID, id, expectedVersion
 	return r.err
