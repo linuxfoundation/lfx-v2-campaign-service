@@ -62,8 +62,14 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 	if metrics.CostMicros != 25_500_000 {
 		t.Errorf("expected 25500000 costMicros, got %d", metrics.CostMicros)
 	}
-	if metrics.CTR != 0.05 {
-		t.Errorf("expected CTR 0.05, got %f", metrics.CTR)
+	if metrics.Ctr != 0.05 {
+		t.Errorf("expected CTR 0.05, got %f", metrics.Ctr)
+	}
+	if metrics.CampaignID != "camp_123" {
+		t.Errorf("expected CampaignID camp_123, got %q", metrics.CampaignID)
+	}
+	if metrics.Window != model.MetricsWindowLast7Days {
+		t.Errorf("expected Window last_7_days, got %q", metrics.Window)
 	}
 
 	mu.Lock()
@@ -97,6 +103,12 @@ func TestGetCampaignMetrics_NoActivity(t *testing.T) {
 	}
 	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 {
 		t.Errorf("expected zero metrics, got %+v", metrics)
+	}
+	if metrics.CampaignID != "camp_123" {
+		t.Errorf("expected CampaignID camp_123, got %q", metrics.CampaignID)
+	}
+	if metrics.Window != model.MetricsWindowToday {
+		t.Errorf("expected Window today, got %q", metrics.Window)
 	}
 }
 

@@ -238,6 +238,20 @@ this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contr
 submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
 live read) — deferred, not attempted here.
 
+**Reddit implements it, but the entire request/response contract is an UNVERIFIED, BEST-EFFORT
+GUESS** (`internal/platform/reddit/metrics.go`). Unlike this client's create/toggle endpoints
+(ported from a working upstream client) and unlike Meta/LinkedIn/X's metrics clients (built
+against each platform's public API docs), Reddit's v3 reporting/metrics endpoint has no public
+documentation — it is gated behind Reddit's developer portal and a private Postman collection.
+The implementation is inferred only from this package's own proven v3 conventions (resource
+nesting, OAuth2 bearer + retry/backoff, the `{"data": ...}` envelope): a `POST
+/ad_accounts/{account_id}/reports` with a guessed `{"data": {starts_at, ends_at, campaign_ids,
+breakdowns, fields}}` body, decimal-string spend (converted to micros ×1e6, rounded), and an
+empty result rows array treated as zero-activity. This was investigated and recorded as BLOCKED
+on LFXV2-2995 before the file was written — treat every field name and the request/response
+shape as a placeholder to be corrected once official Reddit Ads API access confirms the real
+contract, not a confirmed integration.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

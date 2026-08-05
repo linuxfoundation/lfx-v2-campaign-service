@@ -92,7 +92,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	if len(rows) == 0 {
 		// No rows for the window is treated as real zero-activity, not an error — mirrors
 		// every sibling platform's "campaign exists but had no activity" handling.
-		return &model.CampaignMetrics{}, nil
+		return &model.CampaignMetrics{CampaignID: id, Window: window}, nil
 	}
 
 	var metrics model.CampaignMetrics
@@ -113,8 +113,10 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		}
 	}
 	if metrics.Impressions > 0 {
-		metrics.CTR = float64(metrics.Clicks) / float64(metrics.Impressions)
+		metrics.Ctr = float64(metrics.Clicks) / float64(metrics.Impressions)
 	}
+	metrics.CampaignID = id
+	metrics.Window = window
 	return &metrics, nil
 }
 
