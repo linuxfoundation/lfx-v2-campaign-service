@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,9 +27,13 @@ const (
 	// today — the standard type for a Search-network ad group.
 	adGroupTypeSearchStandard = "SEARCH_STANDARD"
 
-	// maxAdGroupNameBytes mirrors the budget's limit: AdGroup.name is 1..255
-	// UTF-8 bytes (trimmed), same unit/limit as CampaignBudget.name.
-	maxAdGroupNameBytes = 255
+	// maxAdGroupNameRunes mirrors the campaign's limit, not the budget's:
+	// AdGroup.name is bounded at 255 CHARACTERS (StringLengthError.TOO_LONG),
+	// counted the same way as Campaign.name, not in UTF-8 bytes like
+	// CampaignBudget.name. A multibyte ad-group name that fits in 255
+	// characters could be rejected by a byte-based check well before the
+	// real limit, even though Google would accept it.
+	maxAdGroupNameRunes = 255
 
 	// errCodeDuplicateAdGroupName is Google's AdGroupError code when an ad group
 	// name already exists within the campaign — the ad-group analogue of
@@ -130,7 +135,7 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, de
 		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
 	}
 	adGroupName = composeName("Ad Group", in)
-	if err := validateEntityName("ad group", adGroupName, len(adGroupName), maxAdGroupNameBytes, "UTF-8 bytes"); err != nil {
+	if err := validateEntityName("ad group", adGroupName, utf8.RuneCountInString(adGroupName), maxAdGroupNameRunes, "characters"); err != nil {
 		return "", nil, nil, "", err
 	}
 	return finalURL, headlines, descriptions, adGroupName, nil
