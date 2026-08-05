@@ -19,19 +19,24 @@ assumption from; Reddit has no such spec to point to at all. Treat this as a pla
 
 Also added `model.MetricsWindow`/`model.CampaignMetrics` and `service.MetricsReader` — this
 branch was cut directly from `main` (GA-5/#70 is still an open, unmerged epic-stacked PR), so it
-carries its own copy of that scaffold, mirroring the Meta/LinkedIn/X metrics branches. No live
-`Orchestrator.ReadCampaignMetrics` type-assertion caller exists yet on any of these branches;
-that wiring lands when they're reconciled.
+carries its own copy of that scaffold, mirroring the Meta/LinkedIn/X metrics branches. The
+published `briefs.GetCampaignMetrics` endpoint calls `orch.ReadCampaignMetrics` and is
+production-reachable for Reddit campaigns; the metrics read capability IS live and available to
+callers, though backed by an unverified API contract. Do not treat this as a confirmed
+integration — the request/response shapes remain placeholders pending official Reddit API
+verification.
 
-**Update** — Review fixes on PR #75: `GetCampaignMetrics` now rejects non-finite (`NaN`/`Inf`),
-negative, and out-of-range `spend` values before converting to micros, instead of letting a
-malformed upstream value silently corrupt `CostMicros`; `metrics_test.go`'s httptest handlers use
-`t.Error` instead of `t.Fatal` (`FailNow` is only valid on the test goroutine); the knowledge doc
-now distinguishes an explicit empty `data` array (real "no activity") from a missing/malformed
-`data` field (a decode error, not zero-activity); `api-catalog.md`'s knowledge-doc link points at
-the actual doc instead of the source directory; and `internal/dispatch/reddit_test.go` gained
-`ReadMetrics` coverage for the success path, the missing-platform-campaign-id guard, and
-connection-resolution error propagation.
+**Update** — Review fixes on PR #75 (2026-08-05): corrected documented acceptance/risk posture to
+acknowledge the brief.go endpoint is production-reachable for Reddit metrics reads (not a deferred
+scaffold); added comprehensive spend-validation tests (`NaN`, `Infinity`, negative, out-of-range);
+`GetCampaignMetrics` guards (already in place) reject non-finite and out-of-range `spend` values
+before converting to micros, preventing silent `CostMicros` corruption; `metrics_test.go`'s
+httptest handlers use `t.Error` instead of `t.Fatal` (`FailNow` is only valid on the test
+goroutine); the knowledge doc now explicitly distinguishes an explicit empty `data` array (real
+"no activity") from a missing/malformed `data` field (a decode error, not zero-activity);
+`api-catalog.md`'s knowledge-doc link is now properly labeled; and verified
+`internal/dispatch/reddit_test.go` has full `ReadMetrics` coverage (success path, missing
+platform campaign ID guard, connection-resolution error propagation, unsupported window).
 **Add** — Metrics-read foundation PR (LFXV2-3001): platform-agnostic `MetricsReader`
 capability, `model.MetricsWindow`/`CampaignMetrics`, `ErrMetricsUnsupported`, and the
 `GET .../campaigns/{id}/metrics` endpoint, landed once as a shared layer.

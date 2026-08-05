@@ -194,6 +194,51 @@ func TestGetCampaignMetrics_InvalidSpendIsDecodeError(t *testing.T) {
 	}
 }
 
+func TestGetCampaignMetrics_NaNSpendIsDecodeError(t *testing.T) {
+	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"camp_123","impressions":10,"clicks":1,"spend":"NaN"}]}`))
+	})
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday); err == nil {
+		t.Fatal("expected a decode error for NaN spend value")
+	}
+}
+
+func TestGetCampaignMetrics_InfinitySpendIsDecodeError(t *testing.T) {
+	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"camp_123","impressions":10,"clicks":1,"spend":"Inf"}]}`))
+	})
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday); err == nil {
+		t.Fatal("expected a decode error for Infinity spend value")
+	}
+}
+
+func TestGetCampaignMetrics_NegativeSpendIsDecodeError(t *testing.T) {
+	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"camp_123","impressions":10,"clicks":1,"spend":"-100.50"}]}`))
+	})
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday); err == nil {
+		t.Fatal("expected a decode error for negative spend value")
+	}
+}
+
+func TestGetCampaignMetrics_OversizedSpendIsDecodeError(t *testing.T) {
+	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Spend larger than MaxInt64/1_000_000
+		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"camp_123","impressions":10,"clicks":1,"spend":"9223372036854.776"}]}`))
+	})
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday); err == nil {
+		t.Fatal("expected a decode error for out-of-range spend value")
+	}
+}
+
 func TestDateRangeForWindow_Today(t *testing.T) {
 	fixed := time.Date(2026, 3, 15, 10, 30, 0, 0, time.UTC)
 	start, end, err := dateRangeForWindow(model.MetricsWindowToday, fixed)

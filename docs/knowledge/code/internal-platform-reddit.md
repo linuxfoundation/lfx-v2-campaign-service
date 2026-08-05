@@ -127,17 +127,15 @@ real endpoint. `dateRangeForWindow` maps the shared `model.MetricsWindow` litera
 (`today`/`last_7_days`/`last_30_days`/`this_month`/`last_month`) to a `YYYY-MM-DD` start/end
 pair, handling the last-month-at-month-end boundary the same way the LinkedIn client's
 `dateRangeForWindow` does. `ErrInvalidCampaignID`/`ErrUnsupportedWindow` are typed sentinels
-(`errors.Is`-discriminable), matching the LinkedIn/X metrics clients' convention. An explicit
-empty `data` array is real "no activity", not an error — but a missing/malformed `data`
-field is NOT: `json.Unmarshal` on the resulting nil/empty bytes fails decode, and that
-surfaces as the same transport/decode error used for any other malformed metrics response,
-not as zero-activity. CTR is clicks/impressions, 0 when impressions is 0.
+(`errors.Is`-discriminable), matching the LinkedIn/X metrics clients' convention.
+
+Response handling distinguishes two cases:
+- An **explicit empty `data` array** (`{"data": []}`) is treated as real "no activity" (zero metrics), not an error — the campaign existed but had no activity during the window.
+- A **missing or malformed `data` field** (absent from the response JSON, or the response is not JSON at all) causes `json.Unmarshal` to fail with a decode error (`unexpected end of JSON input` or similar). This surfaces as the same transport/decode error used for any other malformed metrics response, not as zero-activity. Consumers must not assume missing data means zero activity; they receive an error instead.
+
+CTR is calculated as clicks/impressions, or 0 when impressions is 0.
 
 The `model.MetricsWindow`/`model.CampaignMetrics` types and the `service.MetricsReader`
 interface this depends on are NOT yet on `main` (GA-5, PR #70, is still an open, unmerged
 epic-stacked PR) — this branch was cut from `main` directly and adds its own copy of that
-scaffold, mirroring the same pattern already used on the Meta/LinkedIn/X metrics branches. No
-live `Orchestrator.ReadCampaignMetrics` type-assertion caller exists on this branch yet; that
-wiring lands when the metrics-parity branches are reconciled.
-
-See [internal/platform/reddit](../../../internal/platform/reddit).
+scaffold, mirroring the same pattern already used on the Meta/LinkedIn/X metrics branches.
