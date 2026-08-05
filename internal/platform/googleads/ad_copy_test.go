@@ -33,6 +33,53 @@ func TestTruncateRunes(t *testing.T) {
 	}
 }
 
+func TestTruncateWeighted(t *testing.T) {
+	cases := []struct {
+		name      string
+		s         string
+		maxWeight int
+		want      string
+	}{
+		{"ascii under limit counts 1 per rune", "hello", 10, "hello"},
+		{"ascii over limit truncates by rune count", "hello world", 5, "hello"},
+		{"CJK counts 2 per rune, not 1", "日本語テスト", 6, "日本語"},
+		{"CJK never exceeds maxWeight, partial rune dropped entirely", "日本語", 5, "日本"},
+		{"fullwidth forms count 2 like CJK", "ＡＢＣ", 4, "ＡＢ"},
+		{"empty", "", 5, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncateWeighted(tc.s, tc.maxWeight)
+			if got != tc.want {
+				t.Errorf("truncateWeighted(%q, %d) = %q, want %q", tc.s, tc.maxWeight, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestComposeAdCopy_CJKHeadlineStaysUnderEffectiveWidth pins the actual bug: a CJK-heavy
+// eventName must not survive composeAdCopy with a headline whose double-width Google Ads weight
+// exceeds maxHeadlineWeight (30), even though its plain rune count is far under 30. A caller that
+// only rune-counts before dispatch would ship a headline Google Ads rejects at mutate time with
+// LINE_TOO_WIDE, orphaning the ad group/ad tree GA-3b builds around it.
+func TestComposeAdCopy_CJKHeadlineStaysUnderEffectiveWidth(t *testing.T) {
+	eventName := strings.Repeat("日本語テスト", 5) // 25 runes, weight 50 — over 30 by rune count is
+	// false (25 < 30) but true by Google's double-width weight (50 > 30).
+	headlines, _, err := composeAdCopy(nil, nil, eventName, "Project")
+	if err != nil {
+		t.Fatalf("composeAdCopy: %v", err)
+	}
+	for _, h := range headlines {
+		weight := 0
+		for _, r := range h {
+			weight += googleAdsCharWeight(r)
+		}
+		if weight > maxHeadlineWeight {
+			t.Errorf("headline %q has Google Ads weight %d, want <= %d (LINE_TOO_WIDE risk)", h, weight, maxHeadlineWeight)
+		}
+	}
+}
+
 func TestBoundedUniqueCopy(t *testing.T) {
 	cases := []struct {
 		name       string
