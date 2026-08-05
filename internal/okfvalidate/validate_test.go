@@ -151,6 +151,19 @@ func TestValidateLogFragmentBadFilename(t *testing.T) {
 	}
 }
 
+func TestValidateLogFragmentImpossibleDate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "log"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "log", "2026-99-99-find-brief.md"),
+		"# 2026-99-99 — find brief\n\n**Update** — did the thing.\n")
+
+	if errs := Validate(dir); len(errs) == 0 {
+		t.Fatal("Validate() = no errors, want an impossible-calendar-date error")
+	}
+}
+
 func TestValidateLogFragmentHeadingDateMismatch(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "log"), 0o755); err != nil {
