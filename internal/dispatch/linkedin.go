@@ -246,6 +246,50 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 	return nil
 }
 
+// ReadMetrics returns live campaign metrics from LinkedIn's Ad Analytics API for the
+// given campaign during the specified time window. campaign is the persisted row;
+// campaign.PlatformCampaignID (the LinkedIn campaign URN) is used to query the API.
+func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	if campaign.PlatformCampaignID == "" {
+		return nil, fmt.Errorf("campaign has no platform campaign ID")
+	}
+
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if res.status != model.StatusActive {
+		return nil, fmt.Errorf("linkedin connection for project %s is %s, not active", projectID, res.status)
+	}
+
+	var creds linkedinCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return nil, fmt.Errorf("decode linkedin credentials: %w", err)
+	}
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return nil, fmt.Errorf("linkedin credentials are incomplete (need accessToken)")
+	}
+
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("linkedin connection for project %s has no account id", projectID)
+	}
+
+	runtime := linkedin.RuntimeConfig{
+		DefaultAccountID: accountID,
+		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
+	}
+	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
+
+	// Call GetCampaignMetrics with the campaign URN and account ID.
+	metrics, err := client.GetCampaignMetrics(ctx, accountID, campaign.PlatformCampaignID, window)
+	if err != nil {
+		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", err)
+	}
+
+	return metrics, nil
+}
+
 // linkedinRunStatus maps the service run state (active/paused) to LinkedIn's status enum.
 func linkedinRunStatus(status string) (string, error) {
 	switch status {

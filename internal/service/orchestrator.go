@@ -185,6 +185,18 @@ var (
 	ErrCampaignNotProvisioned = domain.ErrCampaignNotProvisioned
 )
 
+// MetricsReader is an OPTIONAL dispatcher capability: read live campaign metrics from the
+// platform. Not every platform's dispatcher implements it, so the orchestrator type-asserts
+// for it rather than adding it to PlatformDispatcher — a dispatcher that doesn't implement
+// it yields a clean "not supported" error (ErrMetricsUnsupported → 400).
+type MetricsReader interface {
+	// ReadMetrics returns live campaign metrics for the given campaign during the
+	// specified time window. window must be one of the supported MetricsWindow values.
+	// campaign is the persisted row so an adapter can access the platform campaign ID
+	// and any other metadata it stored at creation.
+	ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error)
+}
+
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
 // BEFORE any upstream (paid) create call — e.g. input validation or config
 // errors — so the orchestrator can safely release the claim and allow a retry.
