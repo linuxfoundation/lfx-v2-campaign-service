@@ -640,3 +640,39 @@ func TestApply_TokenOnlyHrefsAreNotTagged(t *testing.T) {
 		})
 	}
 }
+
+// TestApply_AmbiguousSemicolonQueriesAreNotTagged covers the fail-safe for queries with
+// unencoded semicolons that might be delimiters or might be part of a value.
+//
+// splitQuery splits on every semicolon it sees, but without additional encoding there is no way
+// to know if a semicolon is a parameter delimiter (e.g., `a=1;b=2` → two params) or part of a
+// value (e.g., `sig=a;b` → one param with value `a;b`). For example, `sig=a;utm_source=x;b`
+// is ambiguous: either `sig` has value `a;utm_source=x;b` (and utm_source is not a real
+// parameter), or it's three separate params. Attempting to strip utm_source from an ambiguous
+// query risks corrupting a legitimate value — violating the byte-preservation contract. As a
+// fail-safe (matching the pattern used for token-only hrefs), ambiguous queries must pass
+// through unchanged.
+func TestApply_AmbiguousSemicolonQueriesAreNotTagged(t *testing.T) {
+	p := Params{Source: "s", Medium: "m", Campaign: "NEW"}
+
+	// The reported case: a signature-like parameter with internal semicolons.
+	raw := "https://lf.dev/p?sig=a;utm_source=partner;b"
+	got := Apply(raw, p, "")
+	assert.Equal(t, raw, got,
+		"an ambiguous semicolon query must not be tagged; stripping utm_source would corrupt the sig value")
+	assert.NotContains(t, got, "utm_campaign=NEW",
+		"the URL must not be modified, including no UTM params appended")
+
+	// Similar case with a redirect value.
+	raw2 := "https://lf.dev/p?redirect=https://example.com?a=1;b=2&utm_campaign=old"
+	got2 := Apply(raw2, p, "")
+	assert.Equal(t, raw2, got2,
+		"a query with semicolons in a nested URL value must not be tagged")
+
+	// A query with encoded semicolon (%3B) is NOT ambiguous and may be tagged.
+	raw3 := "https://lf.dev/p?sig=a%3Bb%3Bc"
+	got3 := Apply(raw3, p, "")
+	assert.NotEqual(t, raw3, got3, "an encoded semicolon is unambiguous and tagging may proceed")
+	assert.Contains(t, got3, "utm_campaign=NEW", "the URL should be tagged")
+	assert.Contains(t, got3, "sig=a%3Bb%3Bc", "encoded semicolons must be preserved")
+}

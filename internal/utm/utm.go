@@ -159,6 +159,17 @@ func Apply(rawURL string, p Params, content string) string {
 	// Drop any existing utm_* pairs before appending. Appending alone leaves the ORIGINAL
 	// values first, and readers taking the first occurrence would see those — a stale
 	// `utm_source=facebook` would out-rank the appended `email`.
+	//
+	// If the query contains unencoded semicolons in a way that makes it ambiguous whether they
+	// are parameter delimiters or part of values, and there are utm params to strip, attempting
+	// to strip risks corrupting innocent values. For example, in `sig=a;utm_source=partner;b`,
+	// we cannot tell if `utm_source` is a real parameter or part of `sig`'s value. As a fail-safe,
+	// do not tag such queries (matching the pattern used for token-only hrefs: when the query is
+	// unknowable, return the href unchanged).
+	if hasUTMPair(u.RawQuery) && hasAmbiguousSemicolon(u.RawQuery) {
+		return rawURL
+	}
+
 	base := stripUTM(u.RawQuery)
 
 	added := strings.Join(add, "&")
@@ -412,6 +423,81 @@ func rawQueryValues(rawQuery, key string) []string {
 func hasUTMPair(rawQuery string) bool {
 	for _, part := range splitQuery(rawQuery) {
 		if strings.HasPrefix(queryKey(part.token), "utm_") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAmbiguousSemicolon reports whether a raw query contains a UTM parameter that sits within
+// a semicolon-delimited parameter group (i.e., surrounded by other parameters that are only
+// semicolon-separated), making it ambiguous whether the semicolons are parameter delimiters
+// or parts of parameter values.
+//
+// For example, in `sig=a;utm_source=partner;b`, the `utm_source` parameter is only separated
+// from `sig` and `b` by semicolons, not ampersands. We cannot reliably tell if `utm_source`
+// is a real parameter or part of another parameter's value. Without additional encoding, there
+// is no way to know. When such ambiguity exists, the query is unsafe to modify (strip/retag),
+// as doing so risks corrupting innocent values.
+//
+// The heuristic: a query is ambiguous if it contains a UTM parameter that:
+//  1. Is separated by a semicolon (not ampersand) in EITHER direction, AND
+//  2. Has at least one bare-key parameter (no '=' sign) on the SAME SIDE within the same
+//     ampersand-delimited segment.
+//
+// For instance:
+//   - `sig=a;utm_source=partner;b` is ambiguous (utm_source is semicolon-separated and has
+//     bare key `b` on the same segment)
+//   - `utm_campaign=;a=1` is not ambiguous (all params have '=')
+//   - `sig=a;b;c&utm_term=old` is not ambiguous (utm_term is ampersand-separated from the
+//     bare keys, so it's on a different segment)
+func hasAmbiguousSemicolon(rawQuery string) bool {
+	// Scan through the query looking for utm_ parameters.
+	parts := splitQuery(rawQuery)
+	for i, part := range parts {
+		if !strings.HasPrefix(queryKey(part.token), "utm_") {
+			continue // Not a utm param
+		}
+
+		// Found a utm param. Check if it's separated by a semicolon (not ampersand).
+		// The separator tells us what preceded this param in the original query.
+		if part.sep != ';' && part.sep != 0 {
+			// Separated by ampersand or nothing (first param): not ambiguous on this boundary
+			continue
+		}
+
+		// This utm param is preceded by a semicolon or is first (sep=0).
+		// Only flag as ambiguous if there are bare keys on the same segment.
+		if hasBareKeysInSegmentWith(parts, i) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasBareKeysInSegmentWith checks if there are any bare-key parameters (without '=') on the
+// same ampersand-delimited segment as the given utmIndex.
+func hasBareKeysInSegmentWith(parts []queryPart, utmIndex int) bool {
+	// Find the boundaries of this segment (from last & before to next & after, or start/end).
+	segmentStart := 0
+	for i := utmIndex - 1; i >= 0; i-- {
+		if parts[i].sep == '&' {
+			segmentStart = i + 1
+			break
+		}
+	}
+
+	segmentEnd := len(parts)
+	for i := utmIndex + 1; i < len(parts); i++ {
+		if parts[i].sep == '&' {
+			segmentEnd = i
+			break
+		}
+	}
+
+	// Check if any part in the segment (other than the utm param itself) is a bare key
+	for i := segmentStart; i < segmentEnd; i++ {
+		if i != utmIndex && !strings.Contains(parts[i].token, "=") {
 			return true
 		}
 	}
