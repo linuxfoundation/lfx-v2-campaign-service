@@ -245,7 +245,9 @@ type GetCampaignMetricsResponseBody struct {
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
 	// Clicks in window
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
-	// Cost in window, in micros of the ad account's currency
+	// Cost in window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.)
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`

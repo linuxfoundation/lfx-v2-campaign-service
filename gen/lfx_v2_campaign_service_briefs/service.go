@@ -183,7 +183,9 @@ type CampaignMetrics struct {
 	Impressions int64
 	// Clicks in window
 	Clicks int64
-	// Cost in window, in micros of the ad account's currency
+	// Cost in window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.)
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64
@@ -264,7 +266,7 @@ type GetCampaignMetricsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
-	// Platform-agnostic reporting window; defaults to last_30_days when omitted
+	// Platform-agnostic reporting window (defaults to last_30_days when omitted)
 	Window *string
 }
 

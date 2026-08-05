@@ -1157,7 +1157,7 @@ paths:
             parameters:
                 - name: window
                   in: query
-                  description: Platform-agnostic reporting window; defaults to last_30_days when omitted
+                  description: Platform-agnostic reporting window (defaults to last_30_days when omitted)
                   required: false
                   type: string
                   enum:
@@ -4556,7 +4556,7 @@ definitions:
                 format: int64
             cost_micros:
                 type: integer
-                description: Cost in window, in micros of the ad account's currency
+                description: 'Cost in window, in micro-units of the platform''s native currency (platform-dependent: USD for LinkedIn/Reddit, X''s billing unit for Twitter, etc.)'
                 example: 3377636602522132266
                 format: int64
             ctr:
