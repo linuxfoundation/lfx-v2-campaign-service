@@ -172,9 +172,14 @@ type StatusToggler interface {
 }
 
 // MetricsReader is an OPTIONAL dispatcher capability: read live campaign metrics from
-// the ad platform. Not every platform's dispatcher implements it, so the orchestrator
-// type-asserts for it rather than adding it to PlatformDispatcher — a dispatcher that
-// doesn't implement it yields a clean "not supported" error (ErrMetricsUnsupported → 400).
+// the ad platform. Not every platform's dispatcher implements it. The design intent is
+// for the orchestrator to type-assert for it rather than adding it to PlatformDispatcher,
+// so a dispatcher that doesn't implement it yields a clean "not supported" error
+// (ErrMetricsUnsupported → 400) — but that orchestration entry point (the type assertion,
+// campaign validation, timeout, and service error mapping) is NOT YET WIRED on this
+// branch, which predates GA-5 (#70)'s merge to main where that wiring is added. Until
+// this branch is rebased past that merge, ReadMetrics is unreachable through the
+// service despite being implemented here.
 type MetricsReader interface {
 	// ReadMetrics fetches the platform campaign's metrics for window (a platform-defined
 	// literal — e.g. X Ads' LAST_7_DAYS, Google Ads' GAQL predefined date ranges).

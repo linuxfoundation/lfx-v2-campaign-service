@@ -9,7 +9,8 @@ tags:
   - x-ads
   - oauth1
   - go-package
-timestamp: "2026-07-13T19:18:36Z"
+  - metrics
+timestamp: "2026-08-05T00:00:00Z"
 ---
 
 # internal/platform/twitter
@@ -132,20 +133,39 @@ dispatcher), mirroring the reddit client's helper of the same name.
 ## Metrics reads
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend metrics for
-a campaign from the X Ads `/stats` endpoint. It is a **LIVE READ ONLY** — never persisted, no
-async sweeper. Window is a predefined date-range literal (`WindowToday` or `WindowLast7Days`);
-an invalid window returns a clear error explaining the limitation rather than silently truncating
-or averaging.
+a campaign from the X Ads synchronous analytics (`stats`) endpoint. It is a **LIVE READ ONLY**
+— never persisted, no async sweeper. Window is a predefined date-range literal (`WindowToday`
+or `WindowLast7Days`); an unsupported window returns the typed `ErrUnsupportedWindow` sentinel
+(discriminable via `errors.Is`, not string-matching) rather than silently truncating or
+averaging. Campaign ID validation similarly returns the typed `ErrInvalidCampaignID` sentinel.
 
 **CRITICAL DESIGN CONSTRAINT: X Ads API stats endpoint caps queryable date ranges at 7 days
 per request.** Only `WindowToday` (1 day) and `WindowLast7Days` (7 days) are supported. Any
-request for a longer window (`LAST_30_DAYS`, `THIS_MONTH`, `LAST_MONTH`) is REJECTED with a
-clear error message explaining the API limitation — NOT silently truncated, averaged, or
-extrapolated. This is a permanent platform constraint documented in the knowledge base.
+request for a longer window (`LAST_30_DAYS`, `THIS_MONTH`, `LAST_MONTH`) is REJECTED with
+`ErrUnsupportedWindow` — NOT silently truncated, averaged, or extrapolated. This is a permanent
+platform constraint documented in the knowledge base.
 
-Metrics are returned as int64 values; spend (returned by X as USD decimal) is converted to
-micro-currency (×1e6) to match other platforms' integer-based cost fields. CTR is computed
-as clicks/impressions (0 when impressions is 0, never dividing by zero). Campaigns with zero
-activity in the window return zero-value metrics (not an error).
+**The stats endpoint is NOT nested under `/accounts/{id}` the way every other endpoint this
+client calls is** — it's `{base}/{version}/stats/accounts/{id}` (account id trailing, not
+leading). `doRequest` always builds `accountURL()+path` (`/accounts/{id}/{path}`), so this
+method calls the new `statsURL()` + `doRequestAbs` directly instead, bypassing that prefixing.
+`doRequestAbs` is `doRequest`'s retry/OAuth core extracted so a caller can target a
+non-account-scoped URL while still getting the same 429 exponential-backoff/OAuth1-signing
+behavior; `doRequest` itself is now a thin wrapper that builds `accountURL()+path` and
+delegates to it.
+
+The response is `{"data":[{"id":"…","id_data":[{"metrics":{"impressions":[…],"clicks":[…],
+"billed_charge_local_micro":[…]}}]}]}` (Rest.li-flavored: each metric is an array indexed by
+time bucket; `granularity=TOTAL` in the request means exactly one bucket). `billed_charge_local_micro`
+is already in micro-currency units — no USD-decimal parse/round conversion, unlike platforms
+that report spend as a decimal-USD string. X omits a metric field entirely (not a zero) when
+there's no activity for it — a nil/missing array is read as 0, which is real "no data", not a
+decode failure. **UNVERIFIED ASSUMPTION**: the required `metric_groups=ENGAGEMENT,BILLING` and
+`placement=ALL_ON_TWITTER` params and this response shape follow the documented X Ads v12
+`stats/accounts/:account_id` contract, but have not been verified against a live X Ads account
+— mirrors the same disclosed-assumption convention in `internal/platform/googleads/metrics.go`
+and `internal/platform/linkedin/metrics.go`. CTR is computed as clicks/impressions (0 when
+impressions is 0, never dividing by zero). Campaigns with zero activity in the window return
+zero-value metrics (not an error).
 
 See [internal/platform/twitter](../../../internal/platform/twitter).

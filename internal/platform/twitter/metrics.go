@@ -6,10 +6,10 @@ package twitter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -28,15 +28,23 @@ type MetricsWindow string
 
 // Supported metrics windows. X Ads limits the date range to 7 days per request,
 // so only LAST_7_DAYS (7 days) and TODAY (1 day) are supported. Any other window
-// — LAST_30_DAYS, THIS_MONTH, LAST_MONTH — will return an error explaining the
-// 7-day API limitation. Do NOT extend this allow-list without also lifting X's
-// API ceiling; extrapolation or averaging is never acceptable.
+// — LAST_30_DAYS, THIS_MONTH, LAST_MONTH — will return ErrUnsupportedWindow
+// explaining the 7-day API limitation. Do NOT extend this allow-list without
+// also lifting X's API ceiling; extrapolation or averaging is never acceptable.
 const (
 	WindowToday     MetricsWindow = "TODAY"
 	WindowLast7Days MetricsWindow = "LAST_7_DAYS"
 
 	// defaultMetricsWindow is used when the caller passes an empty MetricsWindow.
 	defaultMetricsWindow = WindowLast7Days
+)
+
+// ErrInvalidCampaignID and ErrUnsupportedWindow are typed sentinels so callers
+// can discriminate an input-validation failure (errors.Is) from an upstream/
+// transport failure, rather than parsing the error message.
+var (
+	ErrInvalidCampaignID = errors.New("campaign id must be alphanumeric")
+	ErrUnsupportedWindow = errors.New("unsupported metrics window: X Ads API stats endpoint caps queryable date ranges at 7 days per request")
 )
 
 // CampaignMetrics is the aggregated performance snapshot for one campaign over
@@ -52,31 +60,38 @@ type CampaignMetrics struct {
 	Ctr float64 `json:"ctr"`
 }
 
-// xAdsStat is a single stat row from the X Ads API stats endpoint.
-type xAdsStat struct {
-	CampaignID  string `json:"campaign_id"`
-	Impressions string `json:"impressions"`
-	Clicks      string `json:"clicks"`
-	Spend       string `json:"spend"`
+// statsMetrics is the "metrics" object nested inside each id_data entry of a
+// stats/accounts response. Every field is an array indexed by time bucket;
+// with granularity=TOTAL the array always has exactly one element. X omits a
+// metric entirely (rather than returning a zero) when there was no activity,
+// so each field is a pointer slice and a nil/missing metric is treated as 0 —
+// this is a real "no data", not a decode failure, unlike a malformed envelope.
+type statsMetrics struct {
+	Impressions            []int64 `json:"impressions"`
+	Clicks                 []int64 `json:"clicks"`
+	BilledChargeLocalMicro []int64 `json:"billed_charge_local_micro"`
 }
 
-// parseMetricInt parses a metric string value, treating empty string as zero.
-// X Ads omits zero-valued metrics from JSON, leaving empty strings on unmarshaling;
-// this func treats empty as 0 rather than a parse error.
-func (c *Client) parseMetricInt(s string) (int64, error) {
-	if s == "" {
-		return 0, nil
-	}
-	return strconv.ParseInt(s, 10, 64)
+// statsIDData is one segment's worth of metrics for an entity. segment is
+// always null/omitted for our request (we never pass a segmentation_type
+// param), so exactly one element is expected per entity.
+type statsIDData struct {
+	Metrics statsMetrics `json:"metrics"`
 }
 
-// parseMetricFloat parses a metric string value to float64, treating empty string as zero.
-// Used for spend values which are typically returned as decimal strings.
-func (c *Client) parseMetricFloat(s string) (float64, error) {
-	if s == "" {
-		return 0, nil
+// statsEntity is one entity's (campaign's) stats row.
+type statsEntity struct {
+	ID     string        `json:"id"`
+	IDData []statsIDData `json:"id_data"`
+}
+
+// firstOrZero returns metrics[0], or 0 when metrics is empty (X omits a metric
+// entirely when there was no activity for it in the window).
+func firstOrZero(metrics []int64) int64 {
+	if len(metrics) == 0 {
+		return 0
 	}
-	return strconv.ParseFloat(s, 64)
+	return metrics[0]
 }
 
 // dateRangeForWindow computes the start and end dates for a metrics window,
@@ -101,20 +116,21 @@ func dateRangeForWindow(window MetricsWindow, now time.Time) (startDate, endDate
 }
 
 // GetCampaignMetrics reads impressions/clicks/spend for one campaign over window
-// (defaulting to WindowLast7Days when empty) via the X Ads stats endpoint.
+// (defaulting to WindowLast7Days when empty) via the X Ads synchronous analytics
+// (stats) endpoint.
 //
 // The X Ads stats endpoint caps queryable date ranges at 7 days per request. If
-// the caller requests a window longer than 7 days, this method returns a clear,
-// typed error explaining the limitation — NOT a silently-truncated result,
-// averaged data, or extrapolation. This is a permanent API constraint, not a TODO.
+// the caller requests a window longer than 7 days, this method returns
+// ErrUnsupportedWindow — NOT a silently-truncated result, averaged data, or
+// extrapolation. This is a permanent API constraint, not a TODO.
 //
-// A campaign with no impressions in the window is not an error: the stats endpoint
-// omits it from results entirely, and this method returns a zero-value
-// CampaignMetrics rather than surfacing "not found".
+// A campaign with no impressions in the window is not an error: the stats
+// endpoint omits it (or its metrics) from results entirely, and this method
+// returns a zero-value CampaignMetrics rather than surfacing "not found".
 func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, window MetricsWindow) (*CampaignMetrics, error) {
 	id := strings.TrimSpace(campaignID)
 	if id == "" || !campaignIDRe.MatchString(id) {
-		return nil, fmt.Errorf("get campaign metrics: campaign id %q must be alphanumeric", campaignID)
+		return nil, fmt.Errorf("get campaign metrics: campaign id %q: %w", campaignID, ErrInvalidCampaignID)
 	}
 
 	w := window
@@ -122,42 +138,52 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		w = defaultMetricsWindow
 	}
 
-	// Validate window against the allow-list. Windows longer than 7 days return an
-	// error that explicitly mentions the API limitation, not a generic "unsupported".
+	// Validate window against the allow-list. Windows longer than 7 days return
+	// ErrUnsupportedWindow so callers can discriminate this from an upstream
+	// failure via errors.Is.
 	switch w {
 	case WindowToday, WindowLast7Days:
 		// Valid; proceed
 	default:
-		// Return a clear error explaining WHY the window is unsupported:
-		// "X Ads API limit, not a TODO". Include the window in the message so the caller
-		// sees what they requested.
-		return nil, fmt.Errorf("get campaign metrics: unsupported window %q — X Ads API stats endpoint caps queryable date ranges at 7 days per request", w)
+		return nil, fmt.Errorf("get campaign metrics: window %q: %w", w, ErrUnsupportedWindow)
 	}
 
 	// Compute the date range for the window
 	startDate, endDate := dateRangeForWindow(w, c.timeFn())
 
-	// Query the X Ads stats endpoint. Parameters are passed as query strings.
-	// doRequest handles the URL building and parameter encoding uniformly.
+	// Query the X Ads stats endpoint. Per the X Ads v12 analytics contract:
+	//   - metric_groups is required and selects which metric families are
+	//     returned: ENGAGEMENT (impressions, clicks) and BILLING
+	//     (billed_charge_local_micro, already in micro-currency — no USD/micro
+	//     conversion needed or wanted here).
+	//   - placement is required; ALL_ON_TWITTER covers all delivery surfaces.
+	//   - granularity=TOTAL (not ALL) requests one aggregated bucket for the
+	//     whole date range rather than a time series.
+	// UNVERIFIED ASSUMPTION: this matches the documented X Ads v12
+	// stats/accounts/:account_id contract, but has not been verified against a
+	// live X Ads account. Mirrors the same disclosed-assumption convention used
+	// in internal/platform/googleads/metrics.go and internal/platform/linkedin/metrics.go.
 	params := map[string]string{
-		"start_time":  startDate + "T00:00:00Z",
-		"end_time":    endDate + "T23:59:59Z",
-		"granularity": "ALL",
-		"entity":      "CAMPAIGN",
-		"entity_ids":  id,
+		"start_time":    startDate + "T00:00:00Z",
+		"end_time":      endDate + "T23:59:59Z",
+		"granularity":   "TOTAL",
+		"entity":        "CAMPAIGN",
+		"entity_ids":    id,
+		"metric_groups": "ENGAGEMENT,BILLING",
+		"placement":     "ALL_ON_TWITTER",
 	}
 
-	// Use doRequest() for a GET with query parameters; unlike campaign creates
-	// (which use createRequest/POST), stats reads use GET with query params.
-	resp, err := c.doRequest(ctx, http.MethodGet, "stats", params)
+	// The stats endpoint is NOT nested under /accounts/{id} the way every other
+	// endpoint this client calls is (it's /stats/accounts/{id}), so this uses
+	// doRequestAbs directly against statsURL() rather than doRequest (which
+	// always prefixes accountURL()).
+	resp, err := c.doRequestAbs(ctx, http.MethodGet, c.statsURL(), "stats", params)
 	if err != nil {
 		return nil, fmt.Errorf("get campaign metrics: %w", err)
 	}
 
-	// Unmarshal the response. resp.Data contains the "data" field from the JSON
-	// response, which is an array of stat objects.
-	var stats []xAdsStat
-	if err := json.Unmarshal(resp.Data, &stats); err != nil {
+	var entities []statsEntity
+	if err := json.Unmarshal(resp.Data, &entities); err != nil {
 		return nil, &transportError{
 			Method: http.MethodGet,
 			Path:   "stats",
@@ -166,29 +192,17 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	}
 
 	// If no data is returned, return a zero-value metrics struct (campaign had no activity)
-	if len(stats) == 0 {
+	if len(entities) == 0 || len(entities[0].IDData) == 0 {
 		return &CampaignMetrics{CampaignID: id, Window: w}, nil
 	}
 
-	// Extract the first (and should be only) result
-	stat := stats[0]
-
-	// Parse metric values, treating empty strings as zero
-	impressions, errImpressions := c.parseMetricInt(stat.Impressions)
-	clicks, errClicks := c.parseMetricInt(stat.Clicks)
-
-	// Spend is returned as a decimal string (USD), convert to micro-currency (x1e6)
-	spendUSD, errSpend := c.parseMetricFloat(stat.Spend)
-	costMicros := int64(spendUSD * 1_000_000) // Convert USD to micros
-
-	if errImpressions != nil || errClicks != nil || errSpend != nil {
-		return nil, &transportError{
-			Method: http.MethodGet,
-			Path:   "stats",
-			Err: fmt.Errorf("decode campaign metrics row: impressions %q (%v), clicks %q (%v), spend %q (%v)",
-				stat.Impressions, errImpressions, stat.Clicks, errClicks, stat.Spend, errSpend),
-		}
-	}
+	metrics := entities[0].IDData[0].Metrics
+	impressions := firstOrZero(metrics.Impressions)
+	clicks := firstOrZero(metrics.Clicks)
+	// billed_charge_local_micro is already in micro-currency units (X's own
+	// billing scale) — no USD parse/round conversion, unlike platforms that
+	// report spend as a decimal-USD string.
+	costMicros := firstOrZero(metrics.BilledChargeLocalMicro)
 
 	m := &CampaignMetrics{
 		CampaignID:  id,

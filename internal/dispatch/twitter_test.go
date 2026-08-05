@@ -619,7 +619,7 @@ func TestTwitter_ReadMetrics_HappyPath(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"cmp1","impressions":"1000","clicks":"50","spend":"100.00"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"cmp1","id_data":[{"metrics":{"impressions":[1000],"clicks":[50],"billed_charge_local_micro":[100000000]}}]}]}`))
 	}))
 	defer api.Close()
 

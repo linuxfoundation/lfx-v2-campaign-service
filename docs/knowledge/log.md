@@ -1,5 +1,22 @@
 # Log
 
+## 2026-08-05
+
+**Update** — Rewrote `internal/platform/twitter` metrics read (LFXV2-2996) after review found
+the original implementation non-functional against the real X Ads API: it requested `stats`
+under the account-scoped path (`/accounts/{id}/stats`) when the real endpoint is
+`/stats/accounts/{id}`, and its request/response contract (flat `campaign_id`/`spend` string
+fields, `granularity=ALL`, missing `metric_groups`/`placement`) didn't match X's documented
+nested `id`/`id_data`/`metrics` (with `billed_charge_local_micro`) shape — a successful
+response would have decoded to all zeros. Extracted `doRequest`'s retry/OAuth core into a new
+`doRequestAbs` so the stats call can target its own non-account-scoped URL while keeping the
+same 429 backoff/OAuth1-signing behavior; added a `statsURL()` helper. Added typed
+`ErrInvalidCampaignID`/`ErrUnsupportedWindow` sentinels (`errors.Is`-discriminable) in place of
+plain `fmt.Errorf`. Softened the `MetricsReader` orchestrator doc comment — this branch
+predates GA-5/#70's merge to main, so the type-assertion wiring it described doesn't exist yet
+here; that's a base-branch staleness artifact shared with the LinkedIn/Meta metrics PRs, not
+something to fix on this branch.
+
 ## 2026-08-04
 
 **Update** — Pinned the find-brief "no MaxLength" guarantee at the DECODER, and recorded where
