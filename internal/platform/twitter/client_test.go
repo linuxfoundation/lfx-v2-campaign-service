@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -618,6 +619,105 @@ func TestContextCancellationDuringRetry(t *testing.T) {
 	// The 30s Retry-After sleep must have been aborted by cancellation, not slept.
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("expected fast return via cancelled backoff, took %v", elapsed)
+	}
+}
+
+// TestMutating429InterruptedByDeadlineStaysUnconfirmed pins the classification of a 429
+// whose retry backoff is cut short by the caller's deadline.
+//
+// This is reachable in production, not theoretical: maxRetryWait (90s) exceeds the
+// orchestrator's toggleCallTimeout (45s), so a server-declared Retry-After in between (60s
+// here) passes the maxRetryWait check, is accepted for sleeping, and is then interrupted by
+// the toggle deadline. Returning the bare ctx.Err() there erased the 429 the server had
+// ALREADY sent, and a mutating 429 is ambiguous — X can report the throttle at or after the
+// write is accepted. The operator was told "not modified" about a pause that may well have
+// applied.
+//
+// The cancellation cause must stay reachable via errors.Is so callers that distinguish
+// deadline-exceeded from other failures still can.
+func TestMutating429InterruptedByDeadlineStaysUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "60") // < maxRetryWait (90s), > toggleCallTimeout (45s)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL), WithAPIVersion("12"), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	// Stands in for toggleCallTimeout expiring during the backoff sleep.
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	err := c.UpdateCampaignAndChildrenStatus(ctx, "cmp1", "li1", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error when the deadline interrupts the 429 backoff")
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("a mutating 429 interrupted by the deadline must stay UNCONFIRMED (it may have applied), got %T: %v", err, err)
+	}
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("want the 429 preserved as a typed apiError, got %T: %v", err, err)
+	}
+	// The cause must remain matchable so callers can still tell a deadline apart.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("the cancellation cause must stay reachable via errors.Is, got %T: %v", err, err)
+	}
+	// The stringified error is persisted into Steps: it must stay body-free.
+	if strings.Contains(err.Error(), "Retry-After") {
+		t.Errorf("the error string must not carry response header/body material: %v", err)
+	}
+}
+
+// TestAPIErrorUnwrapDoesNotDisturbClassification guards the blast radius of adding
+// Err/Unwrap to apiError. Unwrap makes an apiError transparent to errors.As, and
+// createOutcomeAmbiguous tests for *transportError BEFORE *apiError — so a cause that
+// happened to be a transport error would silently reroute classification through the wrong
+// branch. Today the only cause ever stored is a bare context error, but nothing structural
+// enforces that, so pin the invariants rather than rely on it.
+func TestAPIErrorUnwrapDoesNotDisturbClassification(t *testing.T) {
+	withCause := &apiError{
+		StatusCode: http.StatusTooManyRequests, Method: http.MethodPut,
+		Path: "campaigns/1", Err: context.DeadlineExceeded,
+	}
+	var te *transportError
+	if errors.As(withCause, &te) {
+		t.Error("an apiError must not satisfy errors.As(*transportError) — that branch precedes it")
+	}
+	if isPreSendDialError(withCause) {
+		t.Error("a throttled write must not be classified as a pre-send dial failure (it reached X)")
+	}
+	if !createOutcomeAmbiguous(withCause) {
+		t.Error("a mutating 429 must stay ambiguous even with a cause attached")
+	}
+	if !errors.Is(withCause, context.DeadlineExceeded) {
+		t.Error("the cancellation cause must stay reachable via errors.Is")
+	}
+	// Error() is persisted into Steps: it must remain the stable, cause-free line.
+	if got, want := withCause.Error(), "x ads api PUT campaigns/1 -> 429"; got != want {
+		t.Errorf("Error() = %q, want %q (the cause must NOT be rendered)", got, want)
+	}
+	// A plain apiError (the overwhelmingly common case) must be unaffected.
+	plain := &apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPut, Path: "campaigns/1"}
+	if errors.Unwrap(plain) != nil {
+		t.Error("an apiError with no cause must unwrap to nil")
+	}
+	if createOutcomeAmbiguous(plain) {
+		t.Error("a definite 4xx must stay definite")
+	}
+	// A 429 on a NON-mutating method stays definite — the read was throttled, nothing wrote.
+	get := &apiError{
+		StatusCode: http.StatusTooManyRequests, Method: http.MethodGet,
+		Path: "campaigns", Err: context.Canceled,
+	}
+	if createOutcomeAmbiguous(get) {
+		t.Error("a 429 on a GET must stay definite even with a cause attached")
 	}
 }
 
@@ -3421,4 +3521,311 @@ func TestIsDuplicatePromotedTweetErr_Excludes429(t *testing.T) {
 	if isDuplicatePromotedTweetErr(&apiError{StatusCode: http.StatusTooManyRequests, ErrorCodes: dup}) {
 		t.Error("a 429 carrying DUPLICATE_PROMOTABLE_ENTITY must NOT be classified as a duplicate (verify-before-retry)")
 	}
+}
+
+// newToggleTestClient builds a client pointed at srv with pacing disabled.
+func newToggleTestClient(t *testing.T, srvURL string) *Client {
+	t.Helper()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srvURL),
+		WithAPIVersion("12"),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	return c
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildFirst pins the ACTIVATE ordering:
+// the line item must be enabled BEFORE the campaign gate, so the tree never sits in a state
+// where the campaign is serving but its line item is still paused.
+func TestUpdateCampaignAndChildrenStatus_ActivateOrdersChildFirst(t *testing.T) {
+	// Guarded: written on the server goroutine, read by the test. See the note on `paths`.
+	var (
+		mu    sync.Mutex
+		order []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/line_items/"):
+			mu.Lock()
+			order = append(order, "line_item")
+			mu.Unlock()
+		case strings.Contains(r.URL.Path, "/campaigns/"):
+			mu.Lock()
+			order = append(order, "campaign")
+			mu.Unlock()
+		}
+		if got := r.URL.Query().Get("entity_status"); got != StatusActive {
+			t.Errorf("entity_status = %q, want %q", got, StatusActive)
+		}
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %s, want PUT", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", StatusActive); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != "line_item" || got[1] != "campaign" {
+		t.Errorf("activate order = %v, want [line_item campaign] (child first, gate last)", got)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseOrdersCampaignFirst pins the PAUSE ordering: the
+// campaign gate stops delivery immediately, before the line item is touched.
+func TestUpdateCampaignAndChildrenStatus_PauseOrdersCampaignFirst(t *testing.T) {
+	// Guarded: written on the server goroutine, read by the test. See the note on `paths`.
+	var (
+		mu    sync.Mutex
+		order []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/line_items/"):
+			mu.Lock()
+			order = append(order, "line_item")
+			mu.Unlock()
+		case strings.Contains(r.URL.Path, "/campaigns/"):
+			mu.Lock()
+			order = append(order, "campaign")
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", StatusPaused); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != "campaign" || got[1] != "line_item" {
+		t.Errorf("pause order = %v, want [campaign line_item] (gate first)", got)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateRequiresLineItem refuses an ACTIVATE with no
+// known line item BEFORE any call: activating the campaign alone would leave the line item
+// paused and nothing serving, while the caller persisted a misleading "active".
+func TestUpdateCampaignAndChildrenStatus_ActivateRequiresLineItem(t *testing.T) {
+	var reached reachFlag
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.mark()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "  ", StatusActive)
+	if err == nil {
+		t.Fatal("activating without a line-item id must be refused")
+	}
+	if reached.hit() {
+		t.Error("no API call should be made — the refusal is up front")
+	}
+	// Pausing the same campaign WITHOUT a line item is fine: the gate stops delivery.
+	if perr := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "", StatusPaused); perr != nil {
+		t.Errorf("pause without a line-item id must succeed (the gate stops delivery): %v", perr)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_RejectsBadInput guards the input contract.
+func TestUpdateCampaignAndChildrenStatus_RejectsBadInput(t *testing.T) {
+	c := newToggleTestClient(t, "http://127.0.0.1:1")
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", "ENABLED"); err == nil {
+		t.Error("an unsupported entity_status must be rejected")
+	}
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), " ", "li1", StatusPaused); err == nil {
+		t.Error("an empty campaign id must be rejected")
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PostGateFailureIsUnconfirmed pins the partial-cascade
+// contract in BOTH directions. Once an upstream entity has been changed, a failure on the
+// downstream one — even a DEFINITE 4xx — leaves the tree partially applied, so the overall
+// outcome must be Unconfirmed (verify before retry), never "not modified".
+func TestUpdateCampaignAndChildrenStatus_PostGateFailureIsUnconfirmed(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     string
+		failOnPath string // the SECOND call in that direction
+	}{
+		// PAUSE: campaign gate succeeds first, then the line item 400s.
+		{"pause: line item fails after the gate paused", StatusPaused, "/line_items/"},
+		// ACTIVATE: line item succeeds first, then the campaign 400s.
+		{"activate: campaign fails after the line item activated", StatusActive, "/campaigns/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, tc.failOnPath) {
+					w.WriteHeader(http.StatusBadRequest) // DEFINITE rejection
+					_, _ = io.WriteString(w, `{"errors":[{"message":"bad request"}]}`)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+			}))
+			defer srv.Close()
+
+			c := newToggleTestClient(t, srv.URL)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", tc.status)
+			if err == nil {
+				t.Fatal("expected an error when the second entity fails")
+			}
+			if !IsOutcomeUnconfirmed(err) {
+				t.Errorf("a post-mutation failure must be UNCONFIRMED (the first entity DID change), got %T: %v", err, err)
+			}
+			var unconf interface{ Unconfirmed() bool }
+			if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+				t.Errorf("error must report Unconfirmed() == true, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_FirstCallFailureIsDefinite is the counterpart: when the
+// FIRST entity fails, nothing was mutated, so a definite 4xx must stay definite — otherwise
+// every clean rejection would be reported as "verify", which is noise.
+func TestUpdateCampaignAndChildrenStatus_FirstCallFailureIsDefinite(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"errors":[{"message":"bad request"}]}`)
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	// PAUSE hits the campaign gate first; it fails, so nothing has been mutated.
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "li1", StatusPaused)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("a definite 4xx on the FIRST call must stay definite (nothing mutated), got: %v", err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_RejectsUnsafeIDs pins the path-injection guard: the
+// account id interpolates into accountURL and the entity ids into the request path, so an id
+// carrying a path/query/fragment delimiter must be refused BEFORE any signed request.
+func TestUpdateCampaignAndChildrenStatus_RejectsUnsafeIDs(t *testing.T) {
+	cases := []struct {
+		name      string
+		accountID string
+		campaign  string
+		lineItem  string
+	}{
+		{"campaign id with a path delimiter", "acc1", "cmp1/../other", "li1"},
+		{"campaign id with a query delimiter", "acc1", "cmp1?x=1", "li1"},
+		{"line item id with a fragment", "acc1", "cmp1", "li1#frag"},
+		{"account id with a path delimiter", "acc1/evil", "cmp1", "li1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var reached reachFlag
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached.mark()
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: tc.accountID},
+				WithBaseURL(srv.URL), WithAPIVersion("12"), WithWriteDelay(0),
+			)
+			c.nonceFn = func() string { return "n" }
+			c.timeFn = staticTime
+			if err := c.UpdateCampaignAndChildrenStatus(context.Background(), tc.campaign, tc.lineItem, StatusPaused); err == nil {
+				t.Fatal("an unsafe id must be rejected")
+			}
+			if reached.hit() {
+				t.Error("no request may be sent — the guard is up front")
+			}
+		})
+	}
+}
+
+// TestPartialCascadeError_NamesTheAppliedEntity guards the message text: on ACTIVATE the LINE
+// ITEM changed first, so claiming "campaign status changed" would misstate which half of the
+// tree moved for anyone reading the log.
+func TestPartialCascadeError_NamesTheAppliedEntity(t *testing.T) {
+	activate := &partialCascadeError{applied: "line item", stage: "campaign", err: errors.New("boom")}
+	if !strings.Contains(activate.Error(), "line item status changed") || !strings.Contains(activate.Error(), "campaign update failed") {
+		t.Errorf("activate message must say the LINE ITEM changed and the CAMPAIGN failed, got: %s", activate.Error())
+	}
+	pause := &partialCascadeError{applied: "campaign", stage: "line item", err: errors.New("boom")}
+	if !strings.Contains(pause.Error(), "campaign status changed") || !strings.Contains(pause.Error(), "line item update failed") {
+		t.Errorf("pause message must say the CAMPAIGN changed and the LINE ITEM failed, got: %s", pause.Error())
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_WhitespaceLineItemStillPauses pins the pause contract
+// against the path-injection guard. A whitespace-only line-item id means ABSENT; treating it
+// as present made the guard reject the call before the campaign gate could pause, which
+// contradicts "pausing needs no child id" — the gate alone stops delivery.
+func TestUpdateCampaignAndChildrenStatus_WhitespaceLineItemStillPauses(t *testing.T) {
+	// Guarded: the handler runs on the SERVER's goroutine while the assertions below run on the
+	// test's. srv.Close() only synchronizes at the deferred call — AFTER the reads — so an
+	// unguarded slice is a genuine race even when -race happens not to flag it.
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer srv.Close()
+
+	c := newToggleTestClient(t, srv.URL)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "   ", StatusPaused); err != nil {
+		t.Fatalf("a whitespace-only line-item id must not block a pause: %v", err)
+	}
+	// Only the campaign gate is touched — there is no line item to pause.
+	mu.Lock()
+	got := append([]string(nil), paths...)
+	mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0], "/campaigns/cmp1") {
+		t.Errorf("want exactly one campaign PUT, got %v", got)
+	}
+	// ACTIVATE with the same input must still be refused: nothing would serve.
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "cmp1", "   ", StatusActive); err == nil {
+		t.Error("activating with a whitespace-only line-item id must be refused")
+	}
+}
+
+// reachFlag records whether the fake server was called. The handler goroutine writes it and the
+// test goroutine reads it, and httptest.Server.Close only synchronizes at the deferred Close —
+// which runs AFTER the assertions — so both sides are mutex-guarded.
+type reachFlag struct {
+	mu  sync.Mutex
+	set bool
+}
+
+func (r *reachFlag) mark() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.set = true
+}
+
+func (r *reachFlag) hit() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.set
 }

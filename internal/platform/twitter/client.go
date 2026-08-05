@@ -423,7 +423,19 @@ type apiError struct {
 	// for the bounds applied at parse time. Empty when the body wasn't a
 	// recognizable X error envelope.
 	ErrorCodes []string
+	// Err optionally carries an underlying cause, set when the status is inferred
+	// rather than read straight off a final response — today only when a 429's
+	// retry backoff is cut short by context cancellation. Keeping the cause
+	// attached (via Unwrap) lets callers still match errors.Is(err,
+	// context.DeadlineExceeded) while the 429 status drives the ambiguity
+	// classification. Deliberately NOT rendered by Error(): the status/method/path
+	// line stays the stable, body-free string that gets persisted into Steps.
+	Err error
 }
+
+// Unwrap exposes the cause behind an inferred status (see Err) so errors.Is/As can
+// still reach it. Nil for the ordinary response-derived case.
+func (e *apiError) Unwrap() error { return e.Err }
 
 func (e *apiError) Error() string {
 	// Deliberately DO NOT include e.ErrorCodes (or any body-derived text): the
@@ -765,7 +777,22 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 				}
 			}
 			if err := sleepCtx(ctx, waitDur); err != nil {
-				return nil, err
+				// The 429 already happened; we are only waiting to RETRY it. Returning the
+				// bare ctx.Err() here would erase that, and a mutating 429 is ambiguous —
+				// the throttle can be reported at or after the write is accepted. This is
+				// reachable in production: maxRetryWait (90s) exceeds the orchestrator's
+				// toggleCallTimeout (45s), so a server-declared Retry-After in between is
+				// accepted for sleeping and then interrupted by the deadline. Surfacing
+				// "not modified" there would tell an operator nothing changed after a
+				// pause that may well have applied. Preserve the 429 so
+				// createOutcomeAmbiguous/IsOutcomeUnconfirmed still classify it, and keep
+				// the cancellation cause attached for callers that inspect it.
+				return nil, &apiError{
+					StatusCode: http.StatusTooManyRequests,
+					Method:     method,
+					Path:       path,
+					Err:        err,
+				}
 			}
 			continue
 		}
@@ -1767,4 +1794,140 @@ func extractPromotedTweetID(resp *apiResponse) string {
 		return ""
 	}
 	return extractID(resp)
+}
+
+// Run states an X campaign/line item can be toggled between. X calls this
+// `entity_status`; ACTIVE is spelled ACTIVE on both entities (the create path uses
+// PAUSED, the same vocabulary).
+const (
+	// StatusActive is the X entity_status that lets an entity serve.
+	StatusActive = "ACTIVE"
+	// StatusPaused is the X entity_status that stops an entity serving.
+	StatusPaused = "PAUSED"
+)
+
+// IsOutcomeUnconfirmed reports whether err leaves the mutation's outcome AMBIGUOUS —
+// X may have applied it despite the error, so the caller must VERIFY before retrying
+// rather than assume "not applied". Exported so the dispatcher can classify across the
+// package boundary (mirrors the reddit client's helper of the same name).
+func IsOutcomeUnconfirmed(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		return true
+	}
+	return createOutcomeAmbiguous(err)
+}
+
+// partialCascadeError marks a cascade that PARTIALLY applied: an upstream entity was
+// already changed before a downstream one failed. It reports Unconfirmed() so
+// IsOutcomeUnconfirmed classifies it as verify-before-retry — a DEFINITE 4xx on the child
+// is still an ambiguous OVERALL outcome, because the parent change did land. Mirrors the
+// reddit client's type of the same name.
+type partialCascadeError struct {
+	// applied is the entity whose status DID change; stage is the one that then failed.
+	applied string
+	stage   string
+	err     error
+}
+
+// applied names the entity that DID change before stage failed. Stating the wrong one
+// misleads an operator reading the log about which half of the tree moved.
+func (e *partialCascadeError) Error() string {
+	return "twitter: " + e.applied + " status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+}
+func (e *partialCascadeError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *partialCascadeError) Unconfirmed() bool { return true }
+
+// updateEntityStatus PUTs a single entity's entity_status. Per the X Ads v12 contract
+// (the same one createRequest documents) parameters go in the QUERY STRING, not a JSON
+// body, and are folded into the OAuth signature base string.
+func (c *Client) updateEntityStatus(ctx context.Context, path, status string) error {
+	if err := c.pace(ctx); err != nil {
+		return err
+	}
+	_, err := c.doRequest(ctx, http.MethodPut, path, map[string]string{"entity_status": status})
+	return err
+}
+
+// UpdateCampaignAndChildrenStatus toggles an X campaign and its line item between
+// ACTIVE and PAUSED.
+//
+// SCOPE — campaign + line item ONLY; the promoted tweet is deliberately NOT touched.
+// CreateCampaign creates the campaign and line item PAUSED but the promoted-tweet
+// association is created ACTIVE by the API (that endpoint does not accept
+// entity_status): the LINE ITEM is the delivery gate on X, so pausing it stops serving
+// and re-activating it resumes serving without the association ever changing. Toggling
+// the promoted tweet would be both unnecessary and (on activate) unable to make an
+// otherwise-paused tree serve.
+//
+// ORDER mirrors the reddit cascade: on ACTIVATE, child FIRST then the campaign gate
+// LAST, so nothing serves until the whole tree is ready; on PAUSE, the campaign gate
+// FIRST so delivery stops immediately even if the line-item call then fails.
+//
+// Activating with an unknown line-item id is refused: the line item would stay PAUSED
+// and nothing would serve, so reporting "active" would be a lie. Pausing needs no child
+// id — pausing the campaign already stops delivery.
+func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, lineItemID, status string) error {
+	if status != StatusActive && status != StatusPaused {
+		return fmt.Errorf("twitter: unsupported entity_status %q (want %s or %s)", status, StatusActive, StatusPaused)
+	}
+	if strings.TrimSpace(campaignID) == "" {
+		return fmt.Errorf("twitter: cannot update status: campaign id is empty")
+	}
+
+	// TRIM ONCE and use the trimmed value throughout. A whitespace-only line-item id means
+	// "absent", and treating it as present below would reject a PAUSE at the path-injection
+	// guard — contradicting the contract that pausing needs no child id, since the campaign
+	// gate alone stops delivery. Mirrors the trim-then-validate order the sibling adapters use.
+	campaignID = strings.TrimSpace(campaignID)
+	lineItemID = strings.TrimSpace(lineItemID)
+	if status == StatusActive && lineItemID == "" {
+		return fmt.Errorf("twitter: cannot activate campaign %s: its line-item id must be known, so the tree cannot be made servable", campaignID)
+	}
+	// Same up-front path-injection guard the create path applies (see accountIDRe): the
+	// account id interpolates into accountURL and the entity ids into the request path, so a
+	// stored value carrying '/', '?', '#', or whitespace could redirect the signed PUT to a
+	// DIFFERENT account or entity. Validate BEFORE any mutating call.
+	if !accountIDRe.MatchString(c.account.AccountID) {
+		return fmt.Errorf("twitter: account id %q contains characters that are not allowed in a request path", c.account.AccountID)
+	}
+	if !accountIDRe.MatchString(campaignID) {
+		return fmt.Errorf("twitter: campaign id %q contains characters that are not allowed in a request path", campaignID)
+	}
+	if lineItemID != "" && !accountIDRe.MatchString(lineItemID) {
+		return fmt.Errorf("twitter: line item id %q contains characters that are not allowed in a request path", lineItemID)
+	}
+
+	campaignPath := "campaigns/" + url.PathEscape(campaignID)
+	lineItemPath := "line_items/" + url.PathEscape(lineItemID)
+
+	if status == StatusActive {
+		if err := c.updateEntityStatus(ctx, lineItemPath, status); err != nil {
+			return fmt.Errorf("twitter: line item %s activate failed: %w", lineItemID, err)
+		}
+		if err := c.updateEntityStatus(ctx, campaignPath, status); err != nil {
+			// The line item was already flipped to ACTIVE above, so the tree is partially
+			// applied even on a DEFINITE 4xx here: report Unconfirmed so the caller verifies
+			// rather than being told nothing changed.
+			return &partialCascadeError{applied: "line item", stage: "campaign", err: err}
+		}
+		return nil
+	}
+
+	// PAUSE: campaign gate first — delivery stops even if the line-item call fails below.
+	if err := c.updateEntityStatus(ctx, campaignPath, status); err != nil {
+		return fmt.Errorf("twitter: campaign %s pause failed: %w", campaignID, err)
+	}
+	if lineItemID == "" { // already trimmed above; see the TRIM ONCE note
+		return nil
+	}
+	if err := c.updateEntityStatus(ctx, lineItemPath, status); err != nil {
+		// The campaign gate is ALREADY paused (delivery has stopped), so the cascade is
+		// partially applied. Even a definite 4xx here must NOT be reported as "not modified":
+		// the campaign genuinely changed on X. Unconfirmed → verify before retry.
+		return &partialCascadeError{applied: "campaign", stage: "line item", err: err}
+	}
+	return nil
 }
