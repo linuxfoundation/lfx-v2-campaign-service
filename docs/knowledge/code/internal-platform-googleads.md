@@ -276,16 +276,42 @@ before any mutate runs, so a bad input never orphans an ad group with no ad.
 
 `Client.UpdateAdGroupAndAdStatus` sends the ad group status update then the ad
 status update, stopping on the first failure without attempting the second —
-the caller owns the all-or-nothing cascade semantics, not this method. (The
-dispatcher-level cascade that calls it — `GoogleAdsDispatcher.ToggleStatus` in
-`internal/dispatch/googleads.go` — is documented separately, GA-3c.)
+the caller owns the all-or-nothing cascade semantics, not this method.
+
+## Status toggling (GA-3c)
+
+`GoogleAdsDispatcher.ToggleStatus` (`internal/dispatch/googleads.go`) cascades
+the campaign-level PAUSE/ACTIVATE that GA-2 introduced down to the ad group +
+ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
+
+- **PAUSE flips the campaign first**, then the ad group/ad. Pausing the
+  parent stops delivery immediately regardless of whether the child update
+  that follows succeeds — if that child update fails or is UNCONFIRMED, the
+  error still surfaces to the caller (the campaign is left paused, the child
+  status is unresolved) rather than being swallowed. If either child id is
+  absent (e.g. a campaign shell with no fully-created ad group/ad — see
+  GA-3b's duplicate/ambiguous-outcome limitations), there is nothing to pause
+  downstream and only the campaign is toggled.
+- **ACTIVATE flips the children first, campaign last**, so a campaign never
+  reports ENABLED before its ad group/ad already do — the reverse order could
+  leave the campaign live for a moment with paused children. ACTIVATE is
+  refused up front (`domain.ErrCampaignNotProvisioned`, mapped to a 409
+  without calling Google) when either child id is unknown, since enabling
+  just the campaign in that state would report success while nothing can
+  serve.
+
+`googleAdsChildIDs` recovers the ad-group/ad ids from the campaign's
+persisted `Result` blob (the JSON GA-3b's create path stores) — a
+missing/unparseable blob yields empty ids, which is what drives the "nothing
+to cascade to" branches above.
 
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
 creation (`:mutate`); GA-3a is ad-copy generation and final-URL building
 (`ad_copy.go`, this file's previous section); GA-3b is the ad-group/ad
-creation cascade that consumes it. The orchestrator dispatcher (registering
-`google-ads` so briefs dispatch upstream) is wired in
+creation cascade that consumes it; GA-3c is the dispatcher-level
+status-toggle cascade over that ad group/ad. The orchestrator dispatcher
+(registering `google-ads` so briefs dispatch upstream) is wired in
 `internal/dispatch/googleads.go` (LFXV2-2636). Keyword/audience targeting
 (GA-4), metrics reads, and keyword actions follow in later GA slices.

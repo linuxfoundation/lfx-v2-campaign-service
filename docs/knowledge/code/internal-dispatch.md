@@ -153,15 +153,17 @@ the campaign is already the effective gate. An UNCONFIRMED client outcome (via `
 is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
 package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). 
 
-**Google Ads** implements PAUSE only; **ACTIVATE is refused** with `ErrCampaignNotProvisioned`
-(→409, raised locally without calling Google). The create path provisions only a PAUSED search
-campaign SHELL (budget → campaign) with no ad group, ad, or keywords, so flipping the campaign
-to ENABLED would report success while nothing can serve — the exact lie that sentinel exists to
-prevent. There is no cascade for the same reason: there are no children to cascade to.
-`UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE with `updateMask: "status"`.
-Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE. When GA-3+ adds
-ad groups/ads/keywords, this must grow BOTH a cascade and a real child-id-based activate guard,
-matching the reddit shape.
+**Google Ads** (GA-3c) CASCADES like reddit, now that GA-3b's create path provisions a real ad
+group + ad under the campaign: `GoogleAdsDispatcher.ToggleStatus` reads the ad-group/ad ids the
+create path persisted in the campaign's `Result` blob (`googleAdsChildIDs`). PAUSE flips the
+campaign FIRST (stops delivery immediately) then the ad group/ad via
+`Client.UpdateAdGroupAndAdStatus`; ACTIVATE flips the children FIRST and the campaign LAST, so a
+campaign never reports ENABLED before its ad group/ad already do. **ACTIVATE is still refused**
+with `ErrCampaignNotProvisioned` (→409, raised locally without calling Google) whenever either
+child id is unknown — a campaign whose ad-group/ad create hit a duplicate-name orphan or an
+unconfirmed outcome has nothing to cascade to, and enabling just the campaign in that state would
+report success while nothing can serve, the exact lie that sentinel exists to prevent. Note the
+vocabulary: Google spells the serving state **ENABLED**, not ACTIVE.
 
 X/Twitter and Microsoft Ads have creation dispatchers; their status-TOGGLE capability lands
 separately.
