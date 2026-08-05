@@ -13,6 +13,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -96,19 +97,16 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 		metrics.Impressions += elem.Impressions
 		metrics.Clicks += elem.Clicks
 		if elem.CostInUsd != nil {
-			// Parse the costInUsd field (returned as a JSON string by LinkedIn's API).
-			// LinkedIn's Ad Analytics API returns costInUsd as a BigDecimal serialized
-			// as a JSON string. Parse it to a float64 and convert to micros.
-			var costUsd float64
-			if _, err := fmt.Sscanf(*elem.CostInUsd, "%f", &costUsd); err != nil {
-				// If parsing fails, skip this cost value. This is defensive and should
-				// not happen on valid API responses, but better to lose one campaign's
-				// cost than fail the entire metrics read.
-				continue
+			// LinkedIn's Ad Analytics API returns costInUsd as a BigDecimal serialized as a
+			// JSON string. A present but malformed/non-finite/negative/overflowing value
+			// must fail the read, not be silently dropped: dropping it returns 200 with
+			// understated spend while impressions/clicks still report normally, which looks
+			// like a real (if low) cost rather than a decode failure.
+			micros, err := costInUsdToMicros(*elem.CostInUsd)
+			if err != nil {
+				return nil, fmt.Errorf("get campaign metrics: parse costInUsd %q: %w", *elem.CostInUsd, err)
 			}
-			// Convert USD to micros (multiply by 1,000,000), rounding rather than
-			// truncating so a value like 25.505 doesn't silently lose a micro.
-			metrics.CostMicros += int64(math.Round(costUsd * 1_000_000))
+			metrics.CostMicros += micros
 		}
 	}
 
@@ -121,6 +119,30 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	metrics.Window = window
 
 	return &metrics, nil
+}
+
+// costInUsdToMicros parses a LinkedIn Ad Analytics costInUsd decimal string (e.g.
+// "25.50") into micros of USD, rounding rather than truncating so a value like
+// 25.505 doesn't silently lose a micro. It rejects anything that isn't a clean,
+// finite, non-negative decimal, or that would overflow int64 once converted to
+// micros, so a malformed value surfaces as a decode error instead of being
+// silently coerced into an understated cost.
+func costInUsdToMicros(s string) (int64, error) {
+	costUsd, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("not a valid decimal: %w", err)
+	}
+	if math.IsNaN(costUsd) || math.IsInf(costUsd, 0) {
+		return 0, fmt.Errorf("non-finite value: %v", costUsd)
+	}
+	if costUsd < 0 {
+		return 0, fmt.Errorf("negative value: %v", costUsd)
+	}
+	micros := costUsd * 1_000_000
+	if micros > math.MaxInt64 {
+		return 0, fmt.Errorf("value overflows int64 micros: %v", costUsd)
+	}
+	return int64(math.Round(micros)), nil
 }
 
 // restLiDate renders a time.Time as a Rest.li 2.0 nested date object literal,

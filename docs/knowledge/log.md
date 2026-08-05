@@ -1,5 +1,24 @@
 # Log
 
+## 2026-08-05 (continuation: reject malformed costInUsd instead of dropping it)
+
+**Fix** — Resolve outstanding Copilot review thread on PR #73 LinkedIn metrics reads
+(`internal/platform/linkedin/metrics.go`, line 107).
+
+The cost-aggregation loop in `GetCampaignMetrics` previously `continue`d past an
+`elem.CostInUsd` that failed to parse, silently returning a 200 with understated
+spend while impressions/clicks still reported normally — indistinguishable from a
+real (if low) cost. Replaced the `fmt.Sscanf`-based inline parse with a new
+`costInUsdToMicros` helper that:
+- parses with `strconv.ParseFloat` (rejects trailing garbage `Sscanf` would ignore)
+- rejects non-finite (`NaN`/`Inf`), negative, and micros-overflow values
+- rounds rather than truncates when converting to micros
+
+Any failure now returns an error from `GetCampaignMetrics` (wrapped with the raw
+`costInUsd` string for diagnosability) instead of being swallowed, so a malformed
+value surfaces as a decode/response error rather than publishing partial financial
+metrics.
+
 ## 2026-08-05 (continued: address PR #73 cost serialization and currency issues)
 
 **Fix** — Address remaining Copilot/Cursor review findings on PR #73 LinkedIn metrics reads.
