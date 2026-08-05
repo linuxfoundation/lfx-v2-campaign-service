@@ -144,8 +144,11 @@ func adGroupAdID(resourceName string) (adGroupID, adID string) {
 func adGroupCriterionID(resourceName string) (adGroupID, criterionID string) {
 	// Validate the full resource path structure: customers/<id>/adGroupCriteria/<composite-id>
 	// Split by "/" to validate the resource kind is "adGroupCriteria" and not something else.
+	// Require EXACTLY 4 segments, matching adGroupAdID: extra segments indicate a
+	// malformed/substituted response and must be rejected, not accepted with the
+	// extra segments silently ignored.
 	pathParts := strings.Split(resourceName, "/")
-	if len(pathParts) < 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupCriteria" {
+	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupCriteria" {
 		return "", ""
 	}
 	return compositeResourceID(resourceName)

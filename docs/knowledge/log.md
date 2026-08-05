@@ -1,5 +1,16 @@
 # Log
 
+## 2026-08-05 (continuation: tighten adGroupCriterionID resource path check)
+
+**Fix** — Resolve outstanding Copilot review thread on PR #69 GA-4
+(`internal/platform/googleads/adgroup_ad.go:148`).
+
+`adGroupCriterionID` accepted a resourceName with `len(pathParts) < 4`, unlike its
+sibling `adGroupAdID` and `validateCampaignResource`, which both require EXACTLY 4
+path segments. A resource name with extra path segments (a malformed/substituted
+response) was silently accepted, with the extra segments ignored rather than
+rejected. Changed the check to `!= 4`, matching `adGroupAdID`.
+
 ## 2026-08-05 (Fix: 000013's down migration must not drop 000008's index)
 
 **Fix** — Cursor Bugbot correctly flagged that `000013_rebuild_stuck_claim_index.down.sql`
