@@ -72,23 +72,24 @@ func (notReady) Ready(context.Context) bool { return false }
 
 // dispatchDrainTimeout bounds how long Container.Close waits for in-flight
 // campaign dispatch to finish before the pool is closed. Together with the
-// orchestrator's post-cancel grace (service.CancelGracePeriod) it forms
-// ContainerCloseTimeout, which is reserved out of the overall graceful-shutdown
-// budget (constants.DefaultShutdownTimeout) so the HTTP-drain phase and this
-// phase can't sum past it and get SIGKILLed. Validated by the init() below.
+// orchestrator's post-cancel grace (service.CancelGracePeriod) and the sweeper-stop
+// wait (sweeperStopTimeout) it forms ContainerCloseTimeout, which is reserved out of
+// the overall graceful-shutdown budget (constants.DefaultShutdownTimeout) so the
+// HTTP-drain phase and this phase can't sum past it and get SIGKILLed. Validated by
+// the init() below.
 //
-// Sized so dispatchDrainTimeout + CancelGracePeriod leaves a positive HTTP-drain
-// budget: CancelGracePeriod grew to cover the post-provider persist AND the
-// terminal finalize write (both detached, both must complete during grace), so
-// the drain window is trimmed to keep the total within DefaultShutdownTimeout.
+// Sized so sweeperStopTimeout + dispatchDrainTimeout + CancelGracePeriod leaves a
+// positive HTTP-drain budget: CancelGracePeriod grew to cover the post-provider
+// persist AND the terminal finalize write (both detached, both must complete during
+// grace), so the drain window is trimmed to keep the total within DefaultShutdownTimeout.
 const dispatchDrainTimeout = 6 * time.Second
 
-// ContainerCloseTimeout is the wall-clock budget for Container.Close: the
-// orchestrator drain (dispatchDrainTimeout) plus its post-cancel grace
-// (service.CancelGracePeriod). The server budgets the HTTP-shutdown phase and
-// this container-close phase separately (see HTTPShutdownTimeout), so the total
-// graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
-const ContainerCloseTimeout = dispatchDrainTimeout + service.CancelGracePeriod
+// ContainerCloseTimeout is the wall-clock budget for Container.Close: the sweeper-stop
+// wait (sweeperStopTimeout), the orchestrator drain (dispatchDrainTimeout), plus its
+// post-cancel grace (service.CancelGracePeriod). The server budgets the HTTP-shutdown
+// phase and this container-close phase separately (see HTTPShutdownTimeout), so the
+// total graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
+const ContainerCloseTimeout = sweeperStopTimeout + dispatchDrainTimeout + service.CancelGracePeriod
 
 // HTTPShutdownTimeout is the wall-clock budget for draining in-flight HTTP
 // handlers before the container is closed. It is whatever remains of the overall
