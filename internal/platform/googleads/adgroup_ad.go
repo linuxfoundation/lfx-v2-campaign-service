@@ -281,10 +281,33 @@ func (c *Client) UpdateAdGroupAndAdStatus(ctx context.Context, adGroupID, adID, 
 		UpdateMask: "status",
 	}}}
 	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupAds:mutate"), adReq, true); err != nil {
-		return fmt.Errorf("google-ads ad %s (ad group %s) status update to %s failed: %w", adID, adGroupID, status, err)
+		// The ad group update already succeeded, and the ad update failed.
+		// This is a partial cascade: the tree is partially applied. Wrap the error
+		// so IsOutcomeUnconfirmed recognizes it as unconfirmed, matching the pattern
+		// used by the reddit and twitter cascade clients.
+		return &partialCascadeError{stage: "ad", err: err}
 	}
 	return nil
 }
+
+// partialCascadeError marks a cascade that changed the ad group upstream but then
+// failed on the ad entity: the run state is PARTIALLY applied. Its Unconfirmed()
+// reports true so the caller (via IsOutcomeUnconfirmed) treats it as "may be
+// applied — verify before retrying" rather than "not modified"; a retry re-runs
+// the idempotent cascade.
+type partialCascadeError struct {
+	stage string
+	err   error
+}
+
+func (e *partialCascadeError) Error() string {
+	return "google-ads: ad group status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+}
+
+func (e *partialCascadeError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *partialCascadeError) Unconfirmed() bool { return true }
 
 // numericID reports whether s is a non-empty run of ASCII digits — the same
 // shape check UpdateCampaignStatus applies to a campaign id, reused here so an
