@@ -5,6 +5,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
@@ -131,6 +132,12 @@ type CampaignWriter interface {
 	// It is a no-op if no lock is held for this campaign. Callers MUST call this
 	// after claiming, either directly or via defer, to allow other writers to proceed.
 	ReleaseCampaignLock(ctx context.Context, campaignID string) error
+	// ReleaseCampaignLockAfterCooldown releases the advisory lock held for campaignID after
+	// cooldown elapses, or immediately once the process starts shutting down — whichever
+	// comes first. Used instead of a bare ReleaseCampaignLock call when a caller must hold the
+	// lock past its own request's lifetime (see BriefService.ToggleCampaignStatus's UNCONFIRMED
+	// path) without leaking the held connection past process shutdown.
+	ReleaseCampaignLockAfterCooldown(campaignID string, cooldown time.Duration)
 }
 
 // CampaignRepository is the full persistence port for campaigns.

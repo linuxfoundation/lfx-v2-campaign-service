@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
 	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
@@ -586,6 +587,7 @@ func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, _ strin
 func (r *campaignEditRepo) ReleaseCampaignLock(context.Context, string) error {
 	return nil
 }
+func (r *campaignEditRepo) ReleaseCampaignLockAfterCooldown(string, time.Duration) {}
 
 // UpdateCampaign must validate status before claiming the version, so a rejected
 // request (400 validation error) does not bump the version. If validation failed

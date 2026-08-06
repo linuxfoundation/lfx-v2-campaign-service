@@ -54,7 +54,7 @@ func TestShutdownBudgetComposes(t *testing.T) {
 	// drain, the post-cancel grace, AND the index publisher's connection drain. The last
 	// was originally omitted, which understated the phase and let the two phases sum past
 	// DefaultShutdownTimeout — the SIGKILL-mid-drain this budget exists to prevent.
-	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+relayStopTimeout, ContainerCloseTimeout)
+	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+relayStopTimeout+cooldownStopTimeout, ContainerCloseTimeout)
 	// The HTTP phase gets a positive share of the remaining budget.
 	assert.Positive(t, HTTPShutdownTimeout, "HTTP shutdown phase must have a positive budget")
 	// The two phases together stay within the overall budget.
@@ -133,6 +133,7 @@ func (stubCampaignRepo) ClaimCampaignVersion(context.Context, string, string, st
 func (stubCampaignRepo) ReleaseCampaignLock(context.Context, string) error {
 	return nil
 }
+func (stubCampaignRepo) ReleaseCampaignLockAfterCooldown(string, time.Duration) {}
 
 // TestClose_PropagatesShutdownError verifies Container.Close returns (does not
 // swallow) the orchestrator shutdown error when a dispatch is still running at

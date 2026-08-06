@@ -695,17 +695,15 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// the SAME still-unbumped expectedVersion right away and call the platform again
 			// while THIS call's outcome is still unknown — doubling up on an already-ambiguous
 			// change. Hold the lock for a bounded cooldown instead of releasing it inline: skip
-			// the deferred release for this path and release asynchronously after
-			// unconfirmedLockCooldown, on a background context so it isn't tied to this
-			// request. This gives an operator/retry a window to reconcile before any other
-			// writer can proceed, without persisting anything (a crash before the cooldown
-			// elapses still releases the lock immediately — it's a Postgres session lock, so it
-			// drops the moment the holding connection closes).
+			// the deferred release for this path and let the repo release it asynchronously
+			// after unconfirmedLockCooldown. This gives an operator/retry a window to reconcile
+			// before any other writer can proceed, without persisting anything (a crash before
+			// the cooldown elapses still releases the lock immediately — it's a Postgres session
+			// lock, so it drops the moment the holding connection closes). The repo's cooldown
+			// release also cuts short at process shutdown instead of holding its pooled
+			// connection for the full 30s: see ReleaseCampaignLockAfterCooldown.
 			releaseNow = false
-			go func(campaignID string) {
-				time.Sleep(unconfirmedLockCooldown)
-				_ = campaignRepo.ReleaseCampaignLock(context.Background(), campaignID)
-			}(p.CampaignID)
+			campaignRepo.ReleaseCampaignLockAfterCooldown(p.CampaignID, unconfirmedLockCooldown)
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
 		default:
 			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution

@@ -222,6 +222,8 @@ func (r *fakeCampaignRepo) ReleaseCampaignLock(context.Context, string) error {
 	return nil
 }
 
+func (r *fakeCampaignRepo) ReleaseCampaignLockAfterCooldown(string, time.Duration) {}
+
 // okDispatcher always succeeds.
 type okDispatcher struct{}
 

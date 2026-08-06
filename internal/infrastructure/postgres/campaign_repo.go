@@ -429,7 +429,10 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 		if unlockErr != nil {
 			slog.WarnContext(ctx, "failed to release campaign advisory lock after claim error; destroying connection",
 				"campaign_id", campaignID, "error", unlockErr)
-			conn.Conn().Close(context.WithoutCancel(ctx))
+			if closeErr := conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
+				slog.WarnContext(ctx, "failed to close campaign advisory lock connection after unlock failure",
+					"campaign_id", campaignID, "error", closeErr)
+			}
 		}
 		conn.Release()
 
@@ -462,17 +465,30 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 }
 
 // ReleaseCampaignLock releases the advisory lock held by ClaimCampaignVersion.
-// It is a no-op if no lock is held for this campaign. Callers MUST call this
-// after claiming, either directly or via defer, to allow other writers to proceed.
+// It is a no-op if no lock is held for this campaign, OR if the entry currently held for
+// campaignID is no longer the one this caller expects to release (see the CompareAndDelete
+// below). Callers MUST call this after claiming, either directly or via defer, to allow other
+// writers to proceed.
 func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, campaignID string) error {
-	val, ok := activeCampaignLocks.LoadAndDelete(campaignID)
+	val, ok := activeCampaignLocks.Load(campaignID)
 	if !ok {
 		// No lock held for this campaign. This is not necessarily an error;
 		// it can happen if claim failed.
 		return nil
 	}
-
 	lock := val.(*campaignLock)
+
+	// CompareAndDelete, not LoadAndDelete: a delayed release (the UNCONFIRMED cooldown path
+	// in service.ToggleCampaignStatus schedules one up to unconfirmedLockCooldown after this
+	// lock's own session may have ended) must not blindly delete whatever is in the map now.
+	// If this session's connection died during the cooldown, Postgres drops its advisory lock
+	// on its own, and a NEW claimant can then Store its own *campaignLock under the same
+	// campaignID key. An unconditional delete-by-key here would remove and release THAT
+	// successor's lock and connection out from under it, re-opening the exact concurrent-write
+	// window the lock exists to prevent. Only release if the entry is still this exact lock.
+	if !activeCampaignLocks.CompareAndDelete(campaignID, lock) {
+		return nil
+	}
 
 	// Release on a bounded detached context to guarantee the unlock runs even
 	// if the original context was cancelled (which may happen during platform
@@ -488,10 +504,64 @@ func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, campaignID strin
 		// Destroy the connection instead of releasing it.
 		slog.WarnContext(ctx, "failed to release campaign advisory lock; destroying connection",
 			"campaign_id", campaignID, "error", err)
-		lock.conn.Conn().Close(context.WithoutCancel(ctx))
+		if closeErr := lock.conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
+			slog.WarnContext(ctx, "failed to close campaign advisory lock connection after unlock failure",
+				"campaign_id", campaignID, "error", closeErr)
+		}
 	}
 	lock.conn.Release()
 	return nil
+}
+
+// cooldownWG tracks in-flight ReleaseCampaignLockAfterCooldown goroutines so
+// StopCooldownsForShutdown can wait for them to finish releasing their held connection.
+// cooldownShutdown is closed exactly once, by StopCooldownsForShutdown, to make every pending
+// cooldown release immediately instead of waiting out the rest of its cooldown.
+var (
+	cooldownWG       sync.WaitGroup
+	cooldownShutdown = make(chan struct{})
+	cooldownOnce     sync.Once
+)
+
+// ReleaseCampaignLockAfterCooldown releases the advisory lock held for campaignID after
+// cooldown elapses, or immediately if StopCooldownsForShutdown is called first — whichever
+// comes first. Used by the UNCONFIRMED toggle path (see service.ToggleCampaignStatus) to hold
+// the claim lock past the request's lifetime without leaking it past process shutdown:
+// pgxpool.Close blocks until every checked-out connection is returned, so an unbounded-looking
+// time.Sleep here would otherwise make Container.Close overrun its shutdown budget waiting for
+// this one connection.
+func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(campaignID string, cooldown time.Duration) {
+	cooldownWG.Add(1)
+	go func() {
+		defer cooldownWG.Done()
+		select {
+		case <-time.After(cooldown):
+		case <-cooldownShutdown:
+		}
+		_ = r.ReleaseCampaignLock(context.Background(), campaignID)
+	}()
+}
+
+// StopCooldownsForShutdown signals every in-flight UNCONFIRMED lock cooldown (see
+// ReleaseCampaignLockAfterCooldown) to release its held connection immediately instead of
+// waiting out the rest of its cooldown, then waits up to timeout for them to finish. MUST be
+// called, and awaited, before the pool is closed: pgxpool.Close blocks until every checked-out
+// connection is returned, and a cooldown goroutine otherwise holds one for up to
+// unconfirmedLockCooldown. Safe to call more than once; only the first call's close takes
+// effect, and every call still waits for outstanding releases.
+func StopCooldownsForShutdown(timeout time.Duration) {
+	cooldownOnce.Do(func() { close(cooldownShutdown) })
+	done := make(chan struct{})
+	go func() {
+		cooldownWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		slog.Warn("pending UNCONFIRMED lock cooldowns did not release promptly; pool close may block",
+			"timeout", timeout)
+	}
 }
 
 // hashCampaignID returns a stable hash of a campaign ID suitable for use as a
