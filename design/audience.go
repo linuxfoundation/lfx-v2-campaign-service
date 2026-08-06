@@ -180,4 +180,25 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
 	})
+
+	Method("build-audience", func() {
+		Description("Build a brief's HubSpot audience from its event details: derive the regional-expansion inclusion lists, create them in HubSpot, and record the master list. Until an audience is built the email channel cannot dispatch.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Required("project_id", "brief_id")
+		})
+		Result(Audience)
+		commonBriefErrors(true)
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/audiences/build")
+			Header("bearer_token:Authorization")
+			// 202: the build calls Snowflake and several HubSpot creates, so it is
+			// reported as accepted-and-recorded rather than implying the platform-side
+			// lists were all confirmed within the request.
+			Response(StatusAccepted, func() { Header("etag:ETag") })
+			briefErrorResponses(true)
+		})
+	})
 })

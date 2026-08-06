@@ -24,6 +24,7 @@ type Server struct {
 	GetAudience    http.Handler
 	ListAudiences  http.Handler
 	UpdateAudience http.Handler
+	BuildAudience  http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -57,11 +58,13 @@ func New(
 			{"GetAudience", "GET", "/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}"},
 			{"ListAudiences", "GET", "/projects/{project_id}/briefs/{brief_id}/audiences"},
 			{"UpdateAudience", "PATCH", "/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}"},
+			{"BuildAudience", "POST", "/projects/{project_id}/briefs/{brief_id}/audiences/build"},
 		},
 		CreateAudience: NewCreateAudienceHandler(e.CreateAudience, mux, decoder, encoder, errhandler, formatter),
 		GetAudience:    NewGetAudienceHandler(e.GetAudience, mux, decoder, encoder, errhandler, formatter),
 		ListAudiences:  NewListAudiencesHandler(e.ListAudiences, mux, decoder, encoder, errhandler, formatter),
 		UpdateAudience: NewUpdateAudienceHandler(e.UpdateAudience, mux, decoder, encoder, errhandler, formatter),
+		BuildAudience:  NewBuildAudienceHandler(e.BuildAudience, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -74,6 +77,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetAudience = m(s.GetAudience)
 	s.ListAudiences = m(s.ListAudiences)
 	s.UpdateAudience = m(s.UpdateAudience)
+	s.BuildAudience = m(s.BuildAudience)
 }
 
 // MethodNames returns the methods served.
@@ -86,6 +90,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetAudienceHandler(mux, h.GetAudience)
 	MountListAudiencesHandler(mux, h.ListAudiences)
 	MountUpdateAudienceHandler(mux, h.UpdateAudience)
+	MountBuildAudienceHandler(mux, h.BuildAudience)
 }
 
 // Mount configures the mux to serve the lfx-v2-campaign-service-audiences
@@ -287,6 +292,60 @@ func NewUpdateAudienceHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "update-audience")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audiences")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountBuildAudienceHandler configures the mux to serve the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint.
+func MountBuildAudienceHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/audiences/build", f)
+}
+
+// NewBuildAudienceHandler creates a HTTP handler which loads the HTTP request
+// and calls the "lfx-v2-campaign-service-audiences" service "build-audience"
+// endpoint.
+func NewBuildAudienceHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeBuildAudienceRequest(mux, decoder)
+		encodeResponse = EncodeBuildAudienceResponse(encoder)
+		encodeError    = EncodeBuildAudienceError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "build-audience")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audiences")
 		payload, err := decodeRequest(r)
 		if err != nil {
