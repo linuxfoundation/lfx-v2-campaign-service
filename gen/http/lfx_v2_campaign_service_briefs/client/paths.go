@@ -61,6 +61,11 @@ func ToggleCampaignStatusLfxV2CampaignServiceBriefsPath(projectID string, briefI
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/status", projectID, briefID, campaignID)
 }
 
+// DeleteCampaignLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service delete-campaign HTTP endpoint.
+func DeleteCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v", projectID, briefID, campaignID)
+}
+
 // GetJobLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service get-job HTTP endpoint.
 func GetJobLfxV2CampaignServiceBriefsPath(projectID string, jobID string) string {
 	return fmt.Sprintf("/projects/%v/jobs/%v", projectID, jobID)
