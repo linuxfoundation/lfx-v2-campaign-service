@@ -169,6 +169,73 @@ msg_file() {
   rm -f .git/REBASE_HEAD
 }
 
+@test "rejects a modified replay whose 1-line context collides but wider context differs" {
+  # Both edit locations have the SAME immediate neighbor ("X") on both sides,
+  # so a 1-line context window sees identical surroundings for either edit —
+  # exactly the residual gap a fixed, finite context radius cannot fully
+  # eliminate. The lines 2-3 away from each location differ, so widening the
+  # window (-U3) still distinguishes them in this case.
+  printf 'p1\np2\nX\none\nX\nq1\nq2\ngap1\ngap2\ngap3\ngap4\ngap5\ngap6\ngap7\ngap8\nr1\nr2\nX\none\nX\ns1\ns2\n' >file.txt
+  git add file.txt
+  git commit -q -m "initial" --no-verify
+
+  # Original commit edits the FIRST "one" (surrounded by p1/p2 ... q1/q2).
+  printf 'p1\np2\nX\ntwo\nX\nq1\nq2\ngap1\ngap2\ngap3\ngap4\ngap5\ngap6\ngap7\ngap8\nr1\nr2\nX\none\nX\ns1\ns2\n' >file.txt
+  git add file.txt
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    GIT_COMMITTER_NAME="Original Author" GIT_COMMITTER_EMAIL="original@example.com" \
+    git commit -q -s -m "feat: original change"
+  replay_sha=$(git rev-parse HEAD)
+  echo "$replay_sha" >.git/REBASE_HEAD
+  git reset --soft HEAD^
+
+  # Modified replay edits the SECOND "one" instead (surrounded by r1/r2 ...
+  # s1/s2), leaving the first occurrence untouched. Immediate neighbors (X/X)
+  # match the original edit's; only the wider context (p1/p2/q1/q2 vs
+  # r1/r2/s1/s2) tells them apart.
+  git checkout -- file.txt
+  printf 'p1\np2\nX\none\nX\nq1\nq2\ngap1\ngap2\ngap3\ngap4\ngap5\ngap6\ngap7\ngap8\nr1\nr2\nX\ntwo\nX\ns1\ns2\n' >file.txt
+  git add file.txt
+
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    f=$(msg_file "$(git log -1 --format=%B "$replay_sha")")
+  run env GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" "$HOOK" "$f"
+  [ "$status" -ne 0 ]
+  rm -f .git/REBASE_HEAD
+}
+
+@test "rejects a replay that only toggles the trailing-newline marker" {
+  # Same "-one"/"+two" content lines in both diffs; the only difference is
+  # whether the file ends with a trailing newline afterward, which git marks
+  # via a "\ No newline at end of file" line. If that marker is dropped by
+  # the fingerprint filter, this content-changing amend hashes identically to
+  # the original and wrongly qualifies for the replay exemption.
+  printf 'one' >file.txt
+  git add file.txt
+  git commit -q -m "initial" --no-verify
+
+  # Original commit: "one" -> "two", still no trailing newline.
+  printf 'two' >file.txt
+  git add file.txt
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    GIT_COMMITTER_NAME="Original Author" GIT_COMMITTER_EMAIL="original@example.com" \
+    git commit -q -s -m "feat: original change"
+  replay_sha=$(git rev-parse HEAD)
+  echo "$replay_sha" >.git/REBASE_HEAD
+  git reset --soft HEAD^
+
+  # Modified replay: same "two" content, but WITH a trailing newline added —
+  # a genuine tree change (different blob) that must not be exempted.
+  printf 'two\n' >file.txt
+  git add file.txt
+
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    f=$(msg_file "$(git log -1 --format=%B "$replay_sha")")
+  run env GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" "$HOOK" "$f"
+  [ "$status" -ne 0 ]
+  rm -f .git/REBASE_HEAD
+}
+
 @test "ignores a diff.external/GIT_EXTERNAL_DIFF driver and still distinguishes different content" {
   cat >"$REPO/fake-external-diff" <<'EOS'
 #!/usr/bin/env bash

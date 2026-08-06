@@ -69,19 +69,27 @@ if [[ -n "$replay_head" ]]; then
   # that reads "one" appearing twice, changed to "two" at one occurrence in
   # the original and at the other in a modified replay) fingerprint
   # identically and wrongly qualify for the exemption — the +/- lines alone
-  # carry no positional signal once line numbers are stripped. Keeping 1 line
-  # of context (`-U1`) restores enough surrounding-content signal to tell
+  # carry no positional signal once line numbers are stripped. Keeping 3 lines
+  # of context (`-U3`) restores enough surrounding-content signal to tell
   # those apart in the common case without reintroducing the full line-number
-  # sensitivity `--stable` patch-id avoids; when even the 1-line context is
-  # identical at both locations the edit is truly ambiguous from content
-  # alone, and this hook fails closed (denies the exemption, falls through to
-  # requiring the current committer's sign-off) rather than guessing. `--no-
+  # sensitivity `--stable` patch-id avoids. This is risk REDUCTION, not a
+  # guarantee: any fixed, finite context radius can still be defeated by a
+  # pathological file where both edit locations share identical neighboring
+  # lines out to the chosen radius, in which case the two edits fingerprint
+  # identically and the exemption is wrongly granted (fails OPEN, not
+  # closed) — a real but narrow residual gap inherent to any bounded-context
+  # fingerprint. `--no-
   # ext-diff` pins this to git's built-in diff engine — otherwise a
   # `diff.external`/`GIT_EXTERNAL_DIFF` driver configured on the machine
   # replaces the diff BODY while `git diff --binary` still emits the ordinary
   # `diff --git` header, so the awk filter would keep the file-identity line
   # but silently lose the swapped-in body, letting a same-file content amend
-  # during a rebase `edit` hash identically to the original.
+  # during a rebase `edit` hash identically to the original. The filter also
+  # keeps `\ No newline at end of file` marker lines explicitly — without a
+  # matching rule they fell through to the trailing catch-all and were
+  # silently dropped, so a rebase `edit` amend that only toggled a file's
+  # trailing-newline presence fingerprinted identically to the original and
+  # wrongly qualified for the replay exemption.
   #
   # awk (not grep) does the filtering: grep exits 1 when nothing matches its
   # pattern, which happens whenever the diff is empty (e.g. `git diff
@@ -100,7 +108,7 @@ if [[ -n "$replay_head" ]]; then
   # "$original_fingerprint"` check below already treats as "not a proven
   # replay" — fail closed to requiring a fresh sign-off, never fail open.
   diff_fingerprint() {
-    git diff --no-ext-diff --binary -U1 "$@" -- 2>/dev/null | awk '
+    git diff --no-ext-diff --binary -U3 "$@" -- 2>/dev/null | awk '
       /^GIT binary patch$/ { print; inbin=1; next }
       inbin { print; if ($0 == "") inbin=0; next }
       /^diff --git / { print; next }
@@ -108,6 +116,7 @@ if [[ -n "$replay_head" ]]; then
       /^Binary files .* differ$/ { print; next }
       /^\+\+\+ / || /^--- / { next }
       /^@@ / { print "@@"; next }
+      /^\\ No newline at end of file$/ { print; next }
       /^[+ -]/ { print; next }
       { next }
     ' | git hash-object --stdin 2>/dev/null || true

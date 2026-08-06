@@ -384,7 +384,11 @@ a `commit-msg` git hook (`.githooks/commit-msg`, wired in through
 made, instead of failing the DCO check later on a pushed PR. The hook exempts
 merge commits (already made by git during merge operations) and replayed commits
 from `git rebase` and `git cherry-pick` (which already carry the original
-author's sign-off).
+author's sign-off). The replay exemption requires both the message and the
+committed content (compared via a base-independent content fingerprint) to be
+unchanged from the original commit — a content-only amend at an interactive
+rebase `edit` stop still requires a fresh sign-off even if the message and
+trailer are untouched.
 
 ### MegaLinter (local)
 
