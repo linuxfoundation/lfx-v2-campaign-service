@@ -113,62 +113,16 @@ of how the DB comes up. A provider without a registered adapter records jobs tha
 report "no dispatcher registered" (logged as a startup warning via
 `logMissingDispatchers`); adapters land incrementally per platform.
 
-Registered so far (`registerDispatchers`): **reddit**, **linkedin**, **meta**,
-**twitter** (the OAuth1 4-tuple adapter, LFXV2-2642), **googleads** (LFXV2-2636),
-**microsoft** (Bing Ads, LFXV2-2805), **hubspot** (the email channel, LFXV2-2777) — every
-provider CreateCampaigns accepts now has a dispatcher.
+The registered set is `registerDispatchers` in `internal/container` — check there for which
+providers currently have an adapter rather than duplicating the list here, since it grows
+per platform PR and the two drift.
 
-Each adapter interprets its own credential + config shape:
-- **reddit** — OAuth2 (clientId/secret/refreshToken); AccountID from the connection.
-- **linkedin** — a single OAuth2 accessToken; builds RuntimeConfig from the
-  connection's AccountID + `org_id` (must be the NUMERIC org id) plus caller-supplied
-  targeting profiles from config.
-- **meta** — a single OAuth2 accessToken; AccountConfig from AccountID (`act_...`) +
-  `page_id` (REQUIRED by the connection design — the dispatcher needs it to attach the
-  promoted-object page, so requiring it at connection time surfaces a 4xx instead of a
-  silent dispatch failure); Budget is in the ACCOUNT's currency (no FX), optional
-  CurrencyOffset.
-- **twitter** — OAuth1 4-tuple (consumer key/secret + access token/secret); AccountConfig
-  from AccountID + `funding_instrument_id`. Budget (`budgetAmount`) is in the ACCOUNT's
-  currency (no FX). Surfaces a `Reused` reuse/config-drift flag and classifies an
-  exhausted mutating 429 as UNCONFIRMED; validates the destination URL (https/http, no
-  embedded userinfo) up front. `validateTwitterConnection` holds the credential rules
-  shared by `Dispatch` and `ToggleStatus`, with ONE intentional asymmetry:
-  `funding_instrument_id` is required only by `Dispatch`. It is a create-time field that
-  `UpdateCampaignAndChildrenStatus` never puts on the wire, so requiring it in the shared
-  validator would refuse an otherwise-valid pause. Do not fold that check into
-  `validateTwitterConnection` — both halves are pinned by tests.
-- **googleads** — OAuth2 application (clientId/secret + refreshToken) PLUS a Google Ads
-  API developer token; AccountConfig from AccountID (the customer id) + an OPTIONAL
-  `login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
-  Budget (`googleAdsConfig.budget`) is in the ACCOUNT's currency (no FX). The client
-  today creates a PAUSED search-campaign shell (budget → campaign); its two-step
-  hierarchy means a PRE-attachment (budget-stage) orphan is reconciled by its deterministic
-  `CampaignBudgetName`, but once the campaign attaches a non-shared budget's name synchronizes
-  to the campaign name, so a campaign-stage partial reconciles the budget by `CampaignBudgetID`
-  instead (the partial carries both). Either way the dispatcher returns a non-nil result
-  (retaining the claim) on an ambiguous/duplicate-name create rather than releasing on an empty id.
-- **microsoft** — OAuth2 app (clientId/secret) + a developer token + refreshToken;
-  AccountConfig from the connection's AccountID (the DIGITS-ONLY `CustomerAccountId`, trimmed)
-  plus an optional `customer_id` (the manager/`CustomerId` header). The client builds the
-  full Campaign → AdGroup → Ad hierarchy (all PAUSED) — so the adapter needs no ad config
-  beyond `microsoftConfig.budget` (the DAILY budget, in the ACCOUNT's currency, no FX) and an
-  optional `timeZone`. `NameSuffix = brief.ID` gives deterministic retry-safe names (Microsoft
-  enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name and
-  cleanly REUSES the existing campaign (`AlreadyExisted=true`, no error) rather than
-  duplicating). A non-nil result accompanied by an error is a separate UNCONFIRMED partial
-  (claim retained); (nil, err) means nothing was created (claim released).
-- **hubspot** — the EMAIL channel (not an ad platform), single private-app token. Unlike the ad
-  adapters (which CREATE a campaign) it STAGES a marketing email: it CLONES a caller-specified
-  template (`hubspotConfig.sourceEmailId`) and points the clone's send list at the brief's BUILT
-  audience — resolved from the `campaign_audiences` resource (LFXV2-2773) via an injected
-  `audienceReader`, taking the newest hubspot audience and refusing if it is not yet `built`
-  (`PlatformMasterListID` → the send list, `SuppressionListIDs` → exclusions). The cloned email's
-  HubSpot id is the campaign's `PlatformCampaignID`; the clone is a DRAFT (a human sends it). AI
-  body content (LFXV2-2775) and audience building (LFXV2-2774) are separate steps. Claim
-  contract: an UNCONFIRMED clone (2xx-no-id / transport) retains the claim with a name-only
-  partial; a post-clone send-list failure is a partial (the email exists — retain + reconcile);
-  a definite pre-clone failure releases the claim.
+Each adapter interprets its own credential + config shape; see the "Dispatch adapter
+(internal/dispatch)" section of the matching platform concept for the per-platform detail:
+[reddit](internal-platform-reddit.md), [linkedin](internal-platform-linkedin.md),
+[meta](internal-platform-meta.md), [twitter](internal-platform-twitter.md),
+[googleads](internal-platform-googleads.md), [microsoft](internal-platform-microsoft.md),
+[hubspot](internal-platform-hubspot.md).
 
 ## Status toggle (optional capability)
 
@@ -178,46 +132,23 @@ pausing/resuming a live campaign on the platform (ACTIVE↔PAUSED). It receives 
 persisted `*model.Campaign` (not just the id) so an adapter can reach any child ids it stored
 at creation. The orchestrator's `ToggleCampaignStatus` type-asserts it (returning
 `ErrToggleUnsupported` when a platform hasn't wired it), so it can be added platform-by-platform
-without touching every adapter. **reddit** implements it: `resolveRedditClient` (shared with
-`Dispatch`, so a create and a toggle accept exactly the same connections) builds the client,
-then `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND
-its child ad group + ad (read from the persisted `CampaignResult`) — because the create path
-PAUSES all three, so toggling only the campaign would not serve. **meta** implements it too and
-CASCADES: its create PAUSES the campaign, ad set, and ads, so `UpdateCampaignAndChildrenStatus`
-POSTs the status to the campaign, the persisted ad set id, and each ad DISCOVERED via
-`GET /{adSetID}/ads` (Meta persists the ad set id but not the individual ad ids). It needs only
-the access token, not the page id. **linkedin** implements it and also
-CASCADES: its create leaves the campaign PAUSED and its creatives DRAFT, so a full ACTIVATE
-must lift the creatives too (a DRAFT creative never serves, and a creative's EFFECTIVE status
-is gated by its campaign). `UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the campaign
-status, DISCOVERS the creatives via the creatives FINDER (LinkedIn persists only a creative
-count, not ids), and PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE, a definite
-400 on an in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) —
-the campaign is already the effective gate. An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`)
-is wrapped in `unconfirmedToggleError` whose `Unconfirmed()` the service detects across the
-package boundary (same behavioral-interface pattern as `NoUpstreamCreate`). 
+without touching every adapter.
 
-**X/Twitter** implements it too, with a DIFFERENT cascade shape: scope is the campaign + line
-item ONLY. `CreateCampaign` creates both PAUSED but the promoted-tweet association is created
-ACTIVE by the API (that endpoint does not accept `entity_status`), and the LINE ITEM is X's
-delivery gate — so pausing the line item stops serving and re-activating it resumes serving
-without the association ever changing. Toggling the promoted tweet would be unnecessary and,
-on activate, unable to make an otherwise-paused tree serve. `UpdateCampaignAndChildrenStatus`
-PUTs `entity_status` (query params, not a JSON body, per the X Ads v12 contract), ordering
-child-first on ACTIVATE and campaign-gate-first on PAUSE. An ACTIVATE with an unknown
-line-item id is refused as `ErrCampaignNotProvisioned` (a 409) before any call.
+An UNCONFIRMED client outcome (via `<platform>.IsOutcomeUnconfirmed`) is wrapped in
+`unconfirmedToggleError`, whose `Unconfirmed()` the service detects across the package
+boundary (same behavioral-interface pattern as `NoUpstreamCreate`) — every adapter that
+implements `StatusToggler` follows this contract; see the linked platform concepts below
+for which do and their implementation details.
 
-**Google Ads** implements PAUSE only; **ACTIVATE is refused** with `ErrCampaignNotProvisioned`
-(→409, raised locally without calling Google). The create path provisions only a PAUSED search
-campaign SHELL (budget → campaign) with no ad group, ad, or keywords, so flipping the campaign
-to ENABLED would report success while nothing can serve — the exact lie that sentinel exists to
-prevent. There is no cascade for the same reason: there are no children to cascade to.
-`UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE with `updateMask: "status"`.
-Note the vocabulary: Google spells the serving state **ENABLED**, not ACTIVE. When GA-3+ adds
-ad groups/ads/keywords, this must grow BOTH a cascade and a real child-id-based activate guard,
-matching the reddit shape.
-
-Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
+Which children a toggle must reach, any asymmetric ACTIVATE/PAUSE handling, and
+whether a platform has wired `StatusToggler` at all, is per-platform and
+documented in that platform's own "Dispatch adapter (internal/dispatch)"
+section: [reddit](internal-platform-reddit.md), [linkedin](internal-platform-linkedin.md),
+[meta](internal-platform-meta.md), [twitter](internal-platform-twitter.md),
+[googleads](internal-platform-googleads.md), [microsoft](internal-platform-microsoft.md),
+[hubspot](internal-platform-hubspot.md) — not summarized here, since a
+platform wiring or changing its toggle behavior would otherwise mean editing
+this shared file too.
 
 ## Metrics read (optional capability)
 

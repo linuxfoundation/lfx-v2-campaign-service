@@ -109,4 +109,20 @@ rather than `AddDate(0, -1, 0)` on today's day-of-month, since `time.AddDate` si
 normalizes an invalid day (e.g. subtracting a month from the 31st) into the following month —
 that would otherwise shift both windows' boundaries on 29th/30th/31st-of-month days.
 
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` linkedin adapter (see [internal/dispatch](internal-dispatch.md))
+interprets a single OAuth2 accessToken; it builds RuntimeConfig from the connection's
+AccountID + `org_id` (must be the NUMERIC org id) plus caller-supplied targeting profiles
+from config.
+
+It implements `StatusToggler` and CASCADES: its create leaves the campaign PAUSED and its
+creatives DRAFT, so a full ACTIVATE must lift the creatives too (a DRAFT creative never
+serves, and a creative's EFFECTIVE status is gated by its campaign).
+`UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the campaign status, DISCOVERS the
+creatives via the creatives FINDER (LinkedIn persists only a creative count, not ids), and
+PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE, a definite 400 on an
+in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) — the
+campaign is already the effective gate.
+
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
