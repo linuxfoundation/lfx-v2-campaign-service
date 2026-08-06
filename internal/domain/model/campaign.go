@@ -125,6 +125,24 @@ func CampaignStatusNeedsReconciliation(status string) bool {
 	}
 }
 
+// CampaignStatusDeletable reports whether a campaign in the given status is a settled,
+// complete record that a soft-delete can safely retire: nothing about what happened
+// upstream is lost by overwriting the row with 'deleted'.
+//
+// Deliberately a whitelist, not "!CampaignStatusNeedsReconciliation(status)": the
+// campaigns.status column is unconstrained TEXT, so a status this predicate has never
+// seen — a typo, a future addition, upstream drift — must fail CLOSED (treated as not
+// yet safe to delete) rather than silently pass as deletable. The complement form fails
+// OPEN on exactly that input, which is the defect this function exists to avoid.
+func CampaignStatusDeletable(status string) bool {
+	switch status {
+	case CampaignStatusCreated, CampaignStatusCreatedDegraded, CampaignRunActive, CampaignRunPaused:
+		return true
+	default:
+		return false
+	}
+}
+
 // JobStatus is the status vocabulary shared by campaign_jobs and the API's
 // JobCreateResponse/JobPollResponse.
 type JobStatus string

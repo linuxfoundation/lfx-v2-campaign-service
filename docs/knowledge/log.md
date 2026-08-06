@@ -1,5 +1,26 @@
 # Log
 
+## 2026-08-05 (continuation: fail closed on an unrecognized status in the delete guard)
+
+**Fix** — Resolve outstanding Copilot review thread on PR #64 campaign delete
+(`internal/domain/model/campaign.go:124`).
+
+`DeleteCampaign`'s guard called `model.CampaignStatusNeedsReconciliation`, a BLOCKLIST that
+names only the three statuses known to be unresolved (`pending`, `group_created`,
+`unconfirmed`). `campaigns.status` is unconstrained `TEXT`, so a status this function has
+never seen — a typo, a future addition, upstream drift — fell through as `false` and was
+silently treated as deletable, contradicting the review comment's premise (and this file's
+prior "an unclassified status must fail classification" framing, which was itself wrong).
+Soft-deleting overwrites the row with `status='deleted'` and frees the (brief, platform)
+slot, so a malformed status could free a slot for a live, still-spending paid campaign.
+
+Added `model.CampaignStatusDeletable`, an explicit WHITELIST of settled states (`created`,
+`created_degraded`, `active`, `paused`); the postgres guard now checks
+`!CampaignStatusDeletable(status)` instead. An unrecognized status now fails CLOSED. Added
+`TestCampaignStatusDeletable`, pinning the whitelist over the full vocabulary plus
+`"something_new"`; updated the existing `TestCampaignStatusNeedsReconciliation` comments to
+stop claiming that predicate backs the delete guard.
+
 ## 2026-08-05 (continuation: cover the delete tombstone builder)
 
 **Fix** — Resolve outstanding Copilot review thread on PR #64 campaign delete

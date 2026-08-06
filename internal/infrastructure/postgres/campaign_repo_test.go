@@ -98,9 +98,9 @@ func TestDeleteCampaign_IsSoftDelete(t *testing.T) {
 //
 // This asserts on the locking read's SQL only. The guard DECISION it protects — which
 // statuses may be deleted — is pure logic and is tested exhaustively as
-// model.CampaignStatusNeedsReconciliation (see TestCampaignStatusNeedsReconciliation);
-// that split is deliberate, because this repo has no DB-backed test harness and the
-// predicate is the part that actually had the bug.
+// model.CampaignStatusDeletable (see TestCampaignStatusDeletable); that split is
+// deliberate, because this repo has no DB-backed test harness and the predicate is the
+// part that actually had the bug.
 //
 // A 'pending' campaign is an ACTIVE dispatch claim. Deleting one would free the
 // (brief, platform) slot while an in-flight dispatch still owns it, letting a

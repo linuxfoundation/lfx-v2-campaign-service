@@ -466,18 +466,16 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 	if status == model.CampaignStatusDeleted {
 		return domain.ErrNotFound
 	}
-	// Refuse to retire a row whose status is an unresolved reconciliation marker:
-	// 'pending' (a live dispatch claim, or one that died mid-flight) and the partial
-	// orphans 'group_created'/'unconfirmed'. Soft-deleting overwrites status with
-	// 'deleted', which both erases the only local record of WHAT went wrong and frees
-	// the (brief, platform) slot — so a re-dispatch then creates a fresh campaign with
-	// no indication that a half-created one may already exist upstream. The orphan must
-	// be reconciled first. This mirrors the run-state toggle's refusal to act on an
-	// unreconciled row (see CampaignStatusNeedsReconciliation).
-	//
-	// 'created_degraded' is deliberately NOT included: it means the campaign WAS fully
-	// created upstream, so its row is a complete record and retiring it loses nothing.
-	if model.CampaignStatusNeedsReconciliation(status) {
+	// Only retire a row whose status is a settled, complete record — CampaignStatusDeletable
+	// is a WHITELIST, not the complement of "needs reconciliation": campaigns.status is
+	// unconstrained TEXT, so an unrecognized status (typo, future addition, upstream drift)
+	// must fail closed here rather than pass through as deletable. Soft-deleting overwrites
+	// status with 'deleted', which both erases the only local record of WHAT went wrong and
+	// frees the (brief, platform) slot — so a re-dispatch then creates a fresh campaign with
+	// no indication that a half-created one may already exist upstream. An unresolved row
+	// (a live/died dispatch claim, or a partial orphan) must be reconciled first. This
+	// mirrors the run-state toggle's refusal to act on an unreconciled row.
+	if !model.CampaignStatusDeletable(status) {
 		return domain.ErrConflict
 	}
 	// Version is checked AFTER the state guards so a caller holding a stale ETag for

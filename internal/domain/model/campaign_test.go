@@ -31,16 +31,10 @@ func TestProgramType_Valid(t *testing.T) {
 	}
 }
 
-// TestCampaignStatusNeedsReconciliation pins the predicate the DELETE guard uses, over the
-// WHOLE status vocabulary rather than the handful of cases that motivated it.
-//
-// The bug this predicate fixed: DeleteCampaign enumerated only 'pending', so the partial
-// orphans 'group_created' and 'unconfirmed' passed the guard. Soft-deleting one overwrites
-// status with 'deleted' — erasing the only local record that a half-created campaign may
-// exist upstream — and frees the (brief, platform) slot, so the next dispatch creates a
-// fresh campaign with no sign of the orphan. Enumerating the full vocabulary here is what
-// makes a NEW status a deliberate decision: adding one to the model without classifying it
-// fails this test rather than silently defaulting to deletable.
+// TestCampaignStatusNeedsReconciliation pins this named-marker predicate over the WHOLE
+// status vocabulary. It is no longer what the DELETE guard calls directly (see
+// TestCampaignStatusDeletable below) but the two must stay complementary over every
+// KNOWN status, so both are pinned.
 func TestCampaignStatusNeedsReconciliation(t *testing.T) {
 	needs := map[string]bool{
 		// Unresolved — the row and the ad platform may disagree and this string is the
@@ -63,9 +57,10 @@ func TestCampaignStatusNeedsReconciliation(t *testing.T) {
 		}
 	}
 
-	// An unknown status must NOT be treated as needing reconciliation: the guard's job is
-	// to name the states it knows are unresolved, not to reject everything unfamiliar and
-	// make a campaign permanently undeletable on a status typo.
+	// This predicate itself still reads as "not a named unresolved marker" for an unknown
+	// status — that is fine for NeedsReconciliation in isolation. It is exactly why the
+	// DELETE guard does NOT call this function (or its negation) directly: see
+	// TestCampaignStatusDeletable, which pins the opposite default for the same input.
 	if CampaignStatusNeedsReconciliation("something_new") {
 		t.Error(`CampaignStatusNeedsReconciliation("something_new") = true, want false`)
 	}
@@ -77,5 +72,45 @@ func TestCampaignStatusNeedsReconciliation(t *testing.T) {
 	}
 	if CampaignStatusNeedsReconciliation(CampaignStatusCreatedDegraded) {
 		t.Error("created_degraded must be deletable: it was fully created upstream, so the row is a complete record")
+	}
+}
+
+// TestCampaignStatusDeletable pins the predicate the DELETE guard actually calls
+// (internal/infrastructure/postgres/campaign_repo.go), over the WHOLE status vocabulary
+// plus an unrecognized status.
+//
+// The bug this predicate fixed: the guard previously called
+// CampaignStatusNeedsReconciliation and refused only the statuses that function names.
+// campaigns.status is unconstrained TEXT, so any status this repo has never seen — a
+// typo, a future addition, upstream drift — fell through NeedsReconciliation as false
+// and was silently treated as deletable. CampaignStatusDeletable is instead an explicit
+// WHITELIST of settled, complete states, so an unrecognized status fails CLOSED (not
+// deletable) rather than open. That is the one assertion this test cannot skip.
+func TestCampaignStatusDeletable(t *testing.T) {
+	deletable := map[string]bool{
+		// Unresolved reconciliation markers — never deletable.
+		CampaignStatusPending:      false,
+		CampaignStatusGroupCreated: false,
+		CampaignStatusUnconfirmed:  false,
+		// Settled outcomes.
+		CampaignStatusCreated:         true,
+		CampaignStatusCreatedDegraded: true,
+		CampaignRunActive:             true,
+		CampaignRunPaused:             true,
+		// 'deleted' is handled by an earlier, separate guard in the repo (a second DELETE
+		// reads as 404) and is intentionally excluded from this whitelist: the repo never
+		// reaches CampaignStatusDeletable for an already-deleted row, so it must not read
+		// as re-deletable if that ordering ever changes.
+		CampaignStatusDeleted: false,
+	}
+	for status, want := range deletable {
+		if got := CampaignStatusDeletable(status); got != want {
+			t.Errorf("CampaignStatusDeletable(%q) = %v, want %v", status, got, want)
+		}
+	}
+
+	// The whole point of the whitelist: an unrecognized status must fail CLOSED.
+	if CampaignStatusDeletable("something_new") {
+		t.Error(`CampaignStatusDeletable("something_new") = true, want false — an unknown status must not be treated as deletable`)
 	}
 }

@@ -417,7 +417,7 @@ func TestPartialOrphanStatusValues(t *testing.T) {
 		t.Errorf("campaignStatusUnconfirmed = %q; the service partialOrphanStatuses map expects %q — update both in lockstep", campaignStatusUnconfirmed, "unconfirmed")
 	}
 	// These two are also exported from the model package, where the postgres delete guard
-	// consumes them via CampaignStatusNeedsReconciliation (postgres cannot import this
+	// checks them via CampaignStatusDeletable's whitelist (postgres cannot import this
 	// package). A divergence would silently make a partial orphan deletable again.
 	if campaignStatusGroupCreated != model.CampaignStatusGroupCreated {
 		t.Errorf("campaignStatusGroupCreated = %q but model.CampaignStatusGroupCreated = %q; the postgres delete guard keys off the model constant — update both in lockstep", campaignStatusGroupCreated, model.CampaignStatusGroupCreated)
