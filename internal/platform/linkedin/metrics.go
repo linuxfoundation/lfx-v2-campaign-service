@@ -274,11 +274,13 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		text := buf.String()
-		if len(text) > 400 {
-			text = text[:400]
-		}
-		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: text}
+		// Body is deliberately NOT retained: this analytics path never classifies on
+		// the response body (unlike isInReviewPauseRejection's write-path use of
+		// apiError.Body above), so there's no reason to hold an untrusted,
+		// possibly credential-bearing response body on an exported struct field,
+		// where it risks exposure via reflection/JSON-based logging even though
+		// apiError.Error() itself omits it.
+		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics"}
 	}
 
 	var analytics AdAnalyticsResponse

@@ -1,5 +1,22 @@
 # Log
 
+## 2026-08-05 (continuation: drop untrusted response body from adAnalytics apiError)
+
+**Fix** — Resolve outstanding review thread (Copilot, PR #73 LinkedIn metrics
+reads) on `internal/platform/linkedin/metrics.go:281`.
+
+`doAdAnalyticsAttempt`'s non-2xx path stored the raw LinkedIn response body in the
+exported `apiError.Body` field. `apiError.Error()` deliberately omits `Body` (see
+its doc comment), but that only protects stringification — it does nothing for
+reflection- or JSON-based logging of the struct's exported fields, and the body is
+untrusted (can echo request or credential material). Unlike
+`isInReviewPauseRejection` elsewhere in this package, which reads `apiError.Body`
+for write-path classification (in-review-rejection detection), the analytics path
+never reads `Body` back — nothing classifies on it — so there's no reason to
+retain it. Fixed by constructing the `apiError` without populating `Body` at this
+call site; the other three `apiError` constructions in `metrics.go` were already
+safe (synthetic strings, not raw response bytes).
+
 ## 2026-08-05 (continuation: fix float64/int64 overflow gap in costInUsdToMicros)
 
 **Fix** — Resolve two outstanding review threads (Cursor Bugbot and Copilot,
