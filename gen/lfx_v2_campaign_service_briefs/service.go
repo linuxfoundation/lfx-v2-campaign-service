@@ -183,7 +183,8 @@ type CampaignMetrics struct {
 	Impressions int64
 	// Clicks in window
 	Clicks int64
-	// Cost in window, in micros of the ad account's currency
+	// Cost in window, in micros of USD (LinkedIn's Ad Analytics API returns
+	// USD-normalized spend)
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64

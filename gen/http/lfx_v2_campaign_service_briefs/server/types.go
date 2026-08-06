@@ -245,7 +245,8 @@ type GetCampaignMetricsResponseBody struct {
 	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
 	// Clicks in window
 	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
-	// Cost in window, in micros of the ad account's currency
+	// Cost in window, in micros of USD (LinkedIn's Ad Analytics API returns
+	// USD-normalized spend)
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
