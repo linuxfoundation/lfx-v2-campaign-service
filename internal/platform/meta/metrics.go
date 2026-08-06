@@ -149,8 +149,16 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		// Scale and check for overflow: a finite value like 1e307 can become +Inf
 		// when multiplied by 1_000_000, and out-of-range values must be rejected
 		// before int64 conversion to prevent underflow/corruption.
-		scaled := spend * 1_000_000
-		if math.IsInf(scaled, 0) || scaled > math.MaxInt64 || scaled < math.MinInt64 {
+		//
+		// Round BEFORE comparing: math.MaxInt64 is not exactly representable as a
+		// float64, so float64(math.MaxInt64) rounds UP to 2^63. Comparing the
+		// unrounded product with '>' lets a value in [2^63-0.5, 2^63) — which rounds
+		// to exactly 2^63 — pass this guard and then overflow int64 on conversion,
+		// corrupting the cost. Round first, then compare with '>=' so the rounded
+		// boundary itself is rejected, mirroring the budget-scaling guard in
+		// client.go's applyBudget.
+		scaled := math.Round(spend * 1_000_000)
+		if math.IsInf(scaled, 0) || scaled >= float64(math.MaxInt64) || scaled <= float64(math.MinInt64) {
 			return nil, &transportError{
 				Method: http.MethodGet,
 				Path:   path,
