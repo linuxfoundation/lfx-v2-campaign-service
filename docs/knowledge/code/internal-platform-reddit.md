@@ -103,4 +103,16 @@ alone and is retained as the per-entity building block / for callers with only a
 The child ids are read from the persisted `CampaignResult` (`adGroupId`/`adId`) by the reddit
 dispatcher's `ToggleStatus`, which now receives the full persisted `*model.Campaign`.
 
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` reddit adapter (see [internal/dispatch](internal-dispatch.md))
+interprets OAuth2 (clientId/secret/refreshToken) credentials; AccountID comes from the
+connection.
+
+It implements `StatusToggler`: `resolveRedditClient` (shared with `Dispatch`, so a create
+and a toggle accept exactly the same connections) builds the client, then
+`client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND its
+child ad group + ad (read from the persisted `CampaignResult`) — because the create path
+PAUSES all three, so toggling only the campaign would not serve.
+
 See [internal/platform/reddit](../../../internal/platform/reddit).

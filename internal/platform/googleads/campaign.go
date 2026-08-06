@@ -650,20 +650,35 @@ func firstResourceName(body []byte) (resourceName, id string, err error) {
 // after the real campaign has been created. This guard ensures that only a trustworthy
 // campaign resource is persisted.
 func (c *Client) validateCampaignResource(resourceName string) error {
+	return c.validateResourceKind("campaigns", resourceName, true)
+}
+
+// validateResourceKind validates that resourceName is exactly the current-account
+// resource shape customers/{currentCustomerID}/{kind}/{id}, checking segment count,
+// resource kind, and that the resource belongs to THIS account. A malformed or
+// wrong-account 2xx (e.g. a different customer's adGroups resource, or a campaigns
+// resource returned where an adGroups resource was expected) could otherwise be
+// accepted as confirmed and persisted, or forwarded into a later mutate/resourceName
+// only to fail confusingly downstream.
+//
+// requireNumericID validates the trailing id segment is a plain numeric id — set
+// false for composite trailing segments (e.g. adGroupAds' "{adGroupId}~{adId}"),
+// whose shape is validated separately by compositeResourceID/adGroupAdID/
+// adGroupCriterionID.
+func (c *Client) validateResourceKind(kind, resourceName string, requireNumericID bool) error {
 	pathParts := strings.Split(resourceName, "/")
-	// Require exactly 4 segments: customers, {id}, campaigns, {id}
+	// Require exactly 4 segments: customers, {id}, {kind}, {id}
 	if len(pathParts) != 4 {
-		return fmt.Errorf("campaign resource name %q has %d segments, want exactly 4", resourceName, len(pathParts))
+		return fmt.Errorf("%s resource name %q has %d segments, want exactly 4", kind, resourceName, len(pathParts))
 	}
-	if pathParts[0] != "customers" || pathParts[2] != "campaigns" {
-		return fmt.Errorf("campaign resource name %q has wrong resource kind (want customers/.../campaigns/...)", resourceName)
+	if pathParts[0] != "customers" || pathParts[2] != kind {
+		return fmt.Errorf("%s resource name %q has wrong resource kind (want customers/.../%s/...)", kind, resourceName, kind)
 	}
 	if pathParts[1] != c.account.CustomerID {
-		return fmt.Errorf("campaign resource name %q is from a different account (want customers/%s/...)", resourceName, c.account.CustomerID)
+		return fmt.Errorf("%s resource name %q is from a different account (want customers/%s/...)", kind, resourceName, c.account.CustomerID)
 	}
-	// Validate the trailing campaign ID is numeric.
-	if !numericID(pathParts[3]) {
-		return fmt.Errorf("campaign resource name %q has a non-numeric campaign id", resourceName)
+	if requireNumericID && !numericID(pathParts[3]) {
+		return fmt.Errorf("%s resource name %q has a non-numeric id", kind, resourceName)
 	}
 	return nil
 }

@@ -63,8 +63,8 @@ func TestTruncateWeighted(t *testing.T) {
 // only rune-counts before dispatch would ship a headline Google Ads rejects at mutate time with
 // LINE_TOO_WIDE, orphaning the ad group/ad tree GA-3b builds around it.
 func TestComposeAdCopy_CJKHeadlineStaysUnderEffectiveWidth(t *testing.T) {
-	eventName := strings.Repeat("日本語テスト", 5) // 25 runes, weight 50 — over 30 by rune count is
-	// false (25 < 30) but true by Google's double-width weight (50 > 30).
+	eventName := strings.Repeat("日本語テスト", 4) // 24 runes, weight 48 — below 30 by rune count but
+	// above 30 by Google's double-width weight (48 > 30).
 	headlines, _, err := composeAdCopy(nil, nil, eventName, "Project")
 	if err != nil {
 		t.Fatalf("composeAdCopy: %v", err)
@@ -145,8 +145,11 @@ func TestDefaultHeadlinesAndDescriptions(t *testing.T) {
 		t.Errorf("defaultDescriptions(empty event) = %v, want nil", got)
 	}
 	withProject := defaultDescriptions("KubeCon", "CNCF")
-	if len(withProject) == 0 || !strings.Contains(withProject[0], "CNCF") {
-		t.Errorf("defaultDescriptions with a project must mention it, got %v", withProject)
+	if len(withProject) == 0 {
+		t.Fatalf("defaultDescriptions with a project must return at least one entry, got empty slice")
+	}
+	if !strings.Contains(withProject[0], "CNCF") {
+		t.Errorf("defaultDescriptions with a project must mention it in the first entry, got %v", withProject)
 	}
 	withoutProject := defaultDescriptions("KubeCon", "")
 	if len(withoutProject) == 0 {
@@ -281,21 +284,24 @@ func TestBuildAdFinalURL(t *testing.T) {
 		}
 	})
 
-	t.Run("preserves existing query params and does not overwrite an existing utm key", func(t *testing.T) {
-		got, err := buildAdFinalURL("https://example.com/register?utm_source=newsletter&ref=abc", "slug", "Event", "Proj", "suffix")
+	t.Run("overwrites utm_source and utm_medium but preserves other params", func(t *testing.T) {
+		got, err := buildAdFinalURL("https://example.com/register?utm_source=newsletter&utm_medium=email&ref=abc", "slug", "Event", "Proj", "suffix")
 		if err != nil {
 			t.Fatalf("buildAdFinalURL: %v", err)
 		}
 		u, _ := url.Parse(got)
 		q := u.Query()
-		if q.Get("utm_source") != "newsletter" {
-			t.Errorf("utm_source = %q, want the pre-existing value preserved", q.Get("utm_source"))
-		}
-		if q.Get("ref") != "abc" {
-			t.Errorf("ref = %q, want the pre-existing param preserved", q.Get("ref"))
+		if q.Get("utm_source") != "google" {
+			t.Errorf("utm_source = %q, want google (overwrite pre-existing for accurate attribution)", q.Get("utm_source"))
 		}
 		if q.Get("utm_medium") != "cpc" {
-			t.Errorf("utm_medium = %q, want cpc added", q.Get("utm_medium"))
+			t.Errorf("utm_medium = %q, want cpc (overwrite pre-existing for accurate attribution)", q.Get("utm_medium"))
+		}
+		if q.Get("ref") != "abc" {
+			t.Errorf("ref = %q, want the pre-existing non-utm param preserved", q.Get("ref"))
+		}
+		if q.Get("utm_campaign") != "slug" {
+			t.Errorf("utm_campaign = %q, want slug", q.Get("utm_campaign"))
 		}
 	})
 }

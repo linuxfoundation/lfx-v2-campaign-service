@@ -23,6 +23,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -62,6 +63,12 @@ type briefBackendSetter interface {
 // *AudienceService implements it.
 type audienceBackendSetter interface {
 	SetBackend(domain.AudienceRepository)
+	// SetBriefRepo and SetBuilder are part of this interface so the cold-start path CANNOT
+	// late-bind the repo while silently leaving the build dependencies nil. It did exactly
+	// that: BuildAudience needs all three, so a cold-started pod served every build request
+	// with a 503 forever while looking fully wired.
+	SetBriefRepo(domain.BriefRepository)
+	SetBuilder(service.AudienceBuilder)
 }
 
 // notReady is a ReadinessChecker that always reports not-ready. It is wired as
@@ -151,6 +158,11 @@ type Container struct {
 	pool *postgres.Pool
 	orch *service.Orchestrator
 
+	// audienceBuilder performs the platform side of an audience build (Snowflake lookups +
+	// HubSpot list creation). Nil when neither is configured, in which case the build endpoint
+	// reports a typed 503 and the audience CRUD routes are unaffected.
+	audienceBuilder service.AudienceBuilder
+
 	// indexPublisher is built ONCE in NewContainer, before the fast-path/503-mode
 	// branch, and injected into every BriefService constructed on either path.
 	// Holding it here (rather than building it per-path) is what guarantees the
@@ -174,6 +186,11 @@ type Container struct {
 	// initDone is closed when the background goroutine exits, so Close can wait
 	// for it (nil when no goroutine runs).
 	initDone chan struct{}
+
+	// snowflakeClient is the optional Snowflake connection pool for audience enrichment.
+	// Stored here so it can be closed during Container.Close(), releasing database sessions
+	// and connection pool resources. Nil when Snowflake is not configured.
+	snowflakeClient *snowflake.Client
 }
 
 // NewContainer creates and wires all application dependencies.
@@ -225,7 +242,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
 		c.Connections = service.NewConnectionService(nil, nil)
 		c.Briefs = c.newBriefService(nil, nil, nil, nil)
-		c.Audiences = service.NewAudienceService(nil)
+		c.Audiences = c.newAudienceService(nil, nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
 	}
@@ -277,7 +294,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	campaign := service.NewCampaignService(notReady{})
 	connections := service.NewConnectionService(nil, enc)
 	briefs := c.newBriefService(nil, nil, nil, nil)
-	auds := service.NewAudienceService(nil)
+	auds := c.newAudienceService(nil, nil)
 	c.Service = campaign
 	c.Connections = connections
 	c.Briefs = briefs
@@ -332,6 +349,69 @@ var dispatchableProviders = []model.Provider{
 	model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds,
 	model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds,
 	model.ProviderHubSpot,
+}
+
+// newAudienceBuilder builds the platform-side audience builder from config.
+//
+// Snowflake is OPTIONAL and configured as a GROUP: with account/user/key not all present the
+// warehouse is treated as unconfigured and the builder resolves no past editions, so an
+// audience is still built from the event's own country and records the narrower scope. A
+// warehouse misconfiguration must not block the email channel — enriching an audience with
+// past editions is an enrichment, not a correctness requirement.
+//
+// HubSpot needs no config here: its credentials are per-project encrypted connections the
+// builder resolves per call, exactly as the dispatchers do.
+//
+// Returns (builder, snowflakeClient). The snowflakeClient (if non-nil) owns database
+// sessions and must be closed during Container.Close to release those resources.
+func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg *config.Config) (service.AudienceBuilder, *snowflake.Client) {
+	var snow dispatch.PastEditionResolver
+	var client *snowflake.Client
+	if cfg.SnowflakeAccount != "" && cfg.SnowflakeUser != "" && cfg.SnowflakePrivateKey != "" {
+		var err error
+		client, err = snowflake.NewClient(snowflake.Config{
+			Account:       cfg.SnowflakeAccount,
+			User:          cfg.SnowflakeUser,
+			PrivateKeyPEM: cfg.SnowflakePrivateKey,
+			Warehouse:     cfg.SnowflakeWarehouse,
+			Role:          cfg.SnowflakeRole,
+		})
+		if err != nil {
+			// Log and continue: a bad key is a config error, but failing boot over it would
+			// take down campaign dispatch for a read-only enrichment.
+			//
+			// The error is CARRIED, not just logged. Dropping it here (as this originally did)
+			// left a nil resolver, which ResolvePastEditions reports as (nil, nil) — the same
+			// answer as "no warehouse configured". A returning KubeCon would then lose its
+			// entire past-registrant audience while the build reported success and stored the
+			// benign first-time-event note. This boot log rotates away; the audience row does not.
+			slog.Warn("snowflake is configured but unusable; audiences will be built country-only",
+				"error", err)
+			return dispatch.NewDegradedAudienceBuilder(repo, enc, err), nil
+		}
+		snow = client
+	} else {
+		slog.Info("snowflake not configured; audiences will be built from the event's country only")
+	}
+	return dispatch.NewAudienceBuilder(repo, enc, snow), client
+}
+
+// newAudienceService constructs an AudienceService with the audience-build dependencies
+// injected. EVERY construction in this file goes through it: the builder is opt-in via
+// SetBuilder, so a path that constructs the service directly still compiles and serves — the
+// build endpoint would just return 503 forever, silently.
+//
+// A nil audienceBuilder is normal, not a failure: it means HubSpot/Snowflake are unconfigured,
+// and BuildAudience then returns the contract's typed 503 while the CRUD routes stay usable.
+func (c *Container) newAudienceService(repo domain.AudienceRepository, briefs domain.BriefRepository) *service.AudienceService {
+	s := service.NewAudienceService(repo)
+	if briefs != nil {
+		s.SetBriefRepo(briefs)
+	}
+	if c.audienceBuilder != nil {
+		s.SetBuilder(c.audienceBuilder)
+	}
+	return s
 }
 
 // stuckClaimScanTimeout bounds the startup stuck-claim scan so a slow or unavailable database
@@ -546,6 +626,8 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// ad-platform + email adapters land incrementally, LFXV2-2636..2642 / 2777);
 	// warn so that gap is visible in production logs.
 	audienceRepo := postgres.NewAudienceRepo(pool)
+	// Must precede newAudienceService below, which reads c.audienceBuilder.
+	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo)
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
@@ -557,7 +639,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	c.Briefs = c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
-	c.Audiences = service.NewAudienceService(audienceRepo)
+	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
 	// dispatch goroutine lived only in that process, so fail them forward now
@@ -609,6 +691,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			jobRepo := postgres.NewJobRepo(pool)
 			// Same dispatcher set as the fast path (see registerDispatchers).
 			audienceRepo := postgres.NewAudienceRepo(pool)
+			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
@@ -630,6 +713,11 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			c.orch = orch
 			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
 			ab.SetBackend(audienceRepo)
+			// The audience service was constructed in 503 mode with no brief repo and no
+			// builder, so binding only the repo leaves BuildAudience permanently 503 on this
+			// path. Bind the other two here (the builder was created just above).
+			ab.SetBriefRepo(briefRepo)
+			ab.SetBuilder(c.audienceBuilder)
 			// Derive from ctx (the init context Close cancels), NOT context.Background():
 			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
 			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the
@@ -840,6 +928,15 @@ func (c *Container) Close(ctx context.Context) error {
 	c.mu.Unlock()
 	if pool != nil {
 		pool.Close()
+	}
+	// Close the Snowflake client AFTER the dispatch drain, as audience builds may still
+	// be running and holding connections to the warehouse. Closing before dispatches finish
+	// would abandon connections and sessions in the pool.
+	if c.snowflakeClient != nil {
+		if err := c.snowflakeClient.Close(); err != nil {
+			slog.Warn("error closing snowflake client", "error", err)
+			// Non-fatal: log it but don't override shutdownErr if the dispatch drain failed.
+		}
 	}
 	// Close the NATS connection AFTER the dispatch drain: a draining dispatch can
 	// still persist a campaign and publish its index event, and closing earlier

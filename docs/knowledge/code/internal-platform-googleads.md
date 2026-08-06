@@ -296,12 +296,13 @@ ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
   GA-3b's duplicate/ambiguous-outcome limitations), there is nothing to pause
   downstream and only the campaign is toggled.
 
-- **ACTIVATE is unconditionally refused** in GA-3c with `domain.ErrCampaignNotProvisioned`
-  (mapped to a 409 without calling Google) because GA-3b creates the ad group/ad but no
-  targeting criteria (keywords, audiences). A campaign without targeting cannot deliver, so
-  enabling it would report false success. Targeting provisioning is deferred to GA-4; once
-  GA-4 lands, ACTIVATE will cascade with children-first ordering (children activated before
-  campaign) so a campaign never reports ENABLED before its ad group/ad already do.
+- **ACTIVATE is refused** with `domain.ErrCampaignNotProvisioned` (mapped to a 409 without
+  calling Google) unless the ad group/ad are fully provisioned AND GA-4's targeting step
+  persisted at least one keyword criterion (audience criteria alone are observation-only and
+  don't qualify — see "Keyword + audience targeting (GA-4)" below). A campaign without keyword
+  targeting cannot deliver, so enabling it would report false success. When the guard passes,
+  ACTIVATE cascades children-first (children activated before campaign) so a campaign never
+  reports ENABLED before its ad group/ad already do.
 
 `googleAdsChildIDs` recovers the ad-group/ad ids from the campaign's
 persisted `Result` blob (the JSON GA-3b's create path stores) — a
@@ -391,3 +392,24 @@ targeting on that same ad group. The orchestrator dispatcher (registering
 `internal/dispatch/googleads.go` (LFXV2-2636). Metrics reads and keyword
 actions (pause/adjust an individual keyword post-creation) follow in later GA
 slices.
+
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` googleads adapter (see [internal/dispatch](internal-dispatch.md))
+interprets an OAuth2 application (clientId/secret + refreshToken) PLUS a Google Ads API
+developer token; AccountConfig comes from AccountID (the customer id) + an OPTIONAL
+`login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
+Budget (`googleAdsConfig.budget`) is in the ACCOUNT's currency (no FX). The client today
+creates a PAUSED search-campaign shell (budget → campaign); its two-step hierarchy means a
+PRE-attachment (budget-stage) orphan is reconciled by its deterministic
+`CampaignBudgetName`, but once the campaign attaches a non-shared budget's name
+synchronizes to the campaign name, so a campaign-stage partial reconciles the budget by
+`CampaignBudgetID` instead (the partial carries both). Either way the dispatcher returns a
+non-nil result (retaining the claim) on an ambiguous/duplicate-name create rather than
+releasing on an empty id.
+
+It implements PAUSE/ACTIVATE cascading — see "Status toggling (GA-3c)" above for the
+cascade order and the ACTIVATE provisioning gate. Note the vocabulary: Google spells the
+serving state **ENABLED**, not ACTIVE.
+
+Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
