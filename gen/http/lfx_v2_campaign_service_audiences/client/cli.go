@@ -23,7 +23,7 @@ func BuildCreateAudiencePayload(lfxV2CampaignServiceAudiencesCreateAudienceBody 
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudiencesCreateAudienceBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"audience\": {\n         \"inclusion_summary\": \"Omnis eveniet esse aut et rem suscipit.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Maxime provident quas repudiandae voluptatem vitae.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Modi laborum voluptatem dignissimos necessitatibus consequuntur aliquam.\",\n            \"Fugit dignissimos ipsum voluptatem et quam beatae.\"\n         ]\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"audience\": {\n         \"inclusion_summary\": \"Quidem doloribus.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Esse aut et rem suscipit similique.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Quis qui.\",\n            \"Dolore animi possimus.\",\n            \"Qui enim ratione voluptatem eos explicabo.\"\n         ]\n      }\n   }'")
 		}
 		if body.Audience == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("audience", "body"))
@@ -143,7 +143,7 @@ func BuildUpdateAudiencePayload(lfxV2CampaignServiceAudiencesUpdateAudienceBody 
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudiencesUpdateAudienceBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"audience\": {\n         \"clear_suppression_lists\": true,\n         \"inclusion_summary\": \"Aperiam doloribus aut.\",\n         \"platform_master_list_id\": \"Ut blanditiis dolor modi nobis aliquid.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Officiis velit.\",\n            \"Dolores assumenda accusantium mollitia fugiat dolore similique.\",\n            \"Omnis voluptates quaerat.\",\n            \"Quos cum porro architecto.\"\n         ]\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"audience\": {\n         \"clear_suppression_lists\": true,\n         \"inclusion_summary\": \"Deserunt aliquid omnis explicabo doloremque et sed.\",\n         \"platform_master_list_id\": \"Veritatis cumque nisi ex distinctio.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Assumenda natus.\",\n            \"Esse est.\"\n         ]\n      }\n   }'")
 		}
 		if body.Audience == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("audience", "body"))
@@ -198,6 +198,36 @@ func BuildUpdateAudiencePayload(lfxV2CampaignServiceAudiencesUpdateAudienceBody 
 	v.AudienceID = audienceID
 	v.BearerToken = bearerToken
 	v.IfMatch = ifMatch
+
+	return v, nil
+}
+
+// BuildBuildAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-audiences build-audience endpoint from CLI flags.
+func BuildBuildAudiencePayload(lfxV2CampaignServiceAudiencesBuildAudienceProjectID string, lfxV2CampaignServiceAudiencesBuildAudienceBriefID string, lfxV2CampaignServiceAudiencesBuildAudienceBearerToken string) (*lfxv2campaignserviceaudiences.BuildAudiencePayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceAudiencesBuildAudienceProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceAudiencesBuildAudienceBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudiencesBuildAudienceBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceAudiencesBuildAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiences.BuildAudiencePayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
 
 	return v, nil
 }

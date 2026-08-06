@@ -30,3 +30,8 @@ func ListAudiencesLfxV2CampaignServiceAudiencesPath(projectID string, briefID st
 func UpdateAudienceLfxV2CampaignServiceAudiencesPath(projectID string, briefID string, audienceID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/audiences/%v", projectID, briefID, audienceID)
 }
+
+// BuildAudienceLfxV2CampaignServiceAudiencesPath returns the URL path to the lfx-v2-campaign-service-audiences service build-audience HTTP endpoint.
+func BuildAudienceLfxV2CampaignServiceAudiencesPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/audiences/build", projectID, briefID)
+}

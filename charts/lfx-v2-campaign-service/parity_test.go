@@ -23,7 +23,9 @@
 package charts_test
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"regexp/syntax"
 	"strings"
@@ -483,5 +485,69 @@ func TestDeploymentUsesRecreateStrategy(t *testing.T) {
 	if strings.Contains(rendered, "RollingUpdate") {
 		t.Errorf("deployment must NOT use RollingUpdate while a backward-incompatible migration "+
 			"(000011, DROP CONSTRAINT) ships in this release.\nrendered:\n%s", rendered)
+	}
+}
+
+// TestEveryConfiguredEnvVarIsWiredInTheChart is a second parity invariant: an environment
+// variable the SERVICE reads must be one the CHART actually injects.
+//
+// The failure mode is silent and total. Snowflake shipped this way: five SNOWFLAKE_* vars were
+// read by config.go, none appeared in values.yaml, so on every deployed environment the
+// warehouse lookup was disabled, audience groups 5 and 7 never built, and each audience recorded
+// "no past editions resolved" — which reads as "this is a first-time event" rather than "this
+// feature is not wired". Nothing failed; the feature was simply absent.
+//
+// Deliberately one-directional. It asserts code ⊆ chart, not the reverse: the chart legitimately
+// sets OTEL_* and other vars consumed by libraries rather than by pkg/constants, so requiring
+// chart ⊆ code would fail on correct config.
+func TestEveryConfiguredEnvVarIsWiredInTheChart(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "pkg", "constants", "constants.go"))
+	if err != nil {
+		t.Fatalf("read constants: %v", err)
+	}
+	// Every `EnvSomething = "NAME"` constant is a var the service reads from the environment.
+	names := regexp.MustCompile(`Env[A-Za-z0-9_]*\s*=\s*"([A-Z0-9_]+)"`).FindAllStringSubmatch(string(src), -1)
+	if len(names) == 0 {
+		t.Fatal("found no Env* constants; the extraction regex is stale")
+	}
+
+	rendered := helmTemplate(t, "templates/deployment.yaml")
+
+	// Vars that are deliberately NOT chart-injected, each with the reason it is exempt.
+	exempt := map[string]string{
+		// Local-development escape hatches. Wiring these would make it possible to disable auth
+		// in a deployed environment by editing values.yaml, which is exactly what must not be
+		// one edit away.
+		"JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL": "local dev only; deliberately not deployable",
+
+		// Have working in-code defaults, and the chart's own values (service.port, the
+		// container's listen address) are the source of truth. Injecting them would create two
+		// places to change one setting.
+		"PORT":  "defaulted in code; chart sets service.port instead",
+		"HOST":  "defaulted in code (listen on all interfaces in a container)",
+		"DEBUG": "defaulted off; LOG_LEVEL is the deployed knob",
+
+		// Superseded by the PG* vars, which the chart DOES inject from the ExternalSecret. The
+		// app composes the DSN in-process so the password never lands in the pod spec; a
+		// DATABASE_URL would defeat that.
+		"DATABASE_URL": "superseded by PGHOST/PGUSER/PGPASSWORD/PGDATABASE from the secret",
+
+		// Optional JWT claim check. Empty means "do not verify the issuer", which is the
+		// intended default for the platform's Heimdall-issued tokens.
+		"JWT_ISSUER": "optional claim check; empty means no issuer verification",
+	}
+
+	for _, m := range names {
+		name := m[1]
+		if reason, ok := exempt[name]; ok {
+			t.Logf("skipping %s: %s", name, reason)
+			continue
+		}
+		if !strings.Contains(rendered, "name: "+name) {
+			t.Errorf("%s is read by the service (pkg/constants) but never injected by the chart, "+
+				"so the feature behind it is silently disabled in every deployed environment. "+
+				"Add it to app.environment in values.yaml, or add it to the exempt map with a reason.",
+				name)
+		}
 	}
 }
