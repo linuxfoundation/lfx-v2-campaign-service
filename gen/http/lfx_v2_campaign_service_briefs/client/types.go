@@ -938,6 +938,76 @@ type ToggleCampaignStatusPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "BadRequest" error.
+type DeleteCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "Conflict" error.
+type DeleteCampaignConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type DeleteCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "InternalServerError" error.
+type DeleteCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "NotFound" error.
+type DeleteCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "PreconditionFailed" error.
+type DeleteCampaignPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "PreconditionRequired" error.
+type DeleteCampaignPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetJobBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-job" endpoint HTTP response
 // body for the "BadRequest" error.
@@ -2010,6 +2080,84 @@ func NewToggleCampaignStatusPreconditionFailed(body *ToggleCampaignStatusPrecond
 // lfx-v2-campaign-service-briefs service toggle-campaign-status endpoint
 // PreconditionRequired error.
 func NewToggleCampaignStatusPreconditionRequired(body *ToggleCampaignStatusPreconditionRequiredResponseBody) *lfxv2campaignservicebriefs.PreconditionRequiredError {
+	v := &lfxv2campaignservicebriefs.PreconditionRequiredError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignBadRequest builds a lfx-v2-campaign-service-briefs service
+// delete-campaign endpoint BadRequest error.
+func NewDeleteCampaignBadRequest(body *DeleteCampaignBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignConflict builds a lfx-v2-campaign-service-briefs service
+// delete-campaign endpoint Conflict error.
+func NewDeleteCampaignConflict(body *DeleteCampaignConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service delete-campaign endpoint ServiceUnavailable error.
+func NewDeleteCampaignServiceUnavailable(body *DeleteCampaignServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignInternalServerError builds a lfx-v2-campaign-service-briefs
+// service delete-campaign endpoint InternalServerError error.
+func NewDeleteCampaignInternalServerError(body *DeleteCampaignInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignNotFound builds a lfx-v2-campaign-service-briefs service
+// delete-campaign endpoint NotFound error.
+func NewDeleteCampaignNotFound(body *DeleteCampaignNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignPreconditionFailed builds a lfx-v2-campaign-service-briefs
+// service delete-campaign endpoint PreconditionFailed error.
+func NewDeleteCampaignPreconditionFailed(body *DeleteCampaignPreconditionFailedResponseBody) *lfxv2campaignservicebriefs.PreconditionFailedError {
+	v := &lfxv2campaignservicebriefs.PreconditionFailedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignPreconditionRequired builds a
+// lfx-v2-campaign-service-briefs service delete-campaign endpoint
+// PreconditionRequired error.
+func NewDeleteCampaignPreconditionRequired(body *DeleteCampaignPreconditionRequiredResponseBody) *lfxv2campaignservicebriefs.PreconditionRequiredError {
 	v := &lfxv2campaignservicebriefs.PreconditionRequiredError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -3168,6 +3316,90 @@ func ValidateToggleCampaignStatusPreconditionFailedResponseBody(body *ToggleCamp
 // validations defined on
 // toggle-campaign-status_PreconditionRequired_response_body
 func ValidateToggleCampaignStatusPreconditionRequiredResponseBody(body *ToggleCampaignStatusPreconditionRequiredResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignBadRequestResponseBody runs the validations defined on
+// delete-campaign_BadRequest_response_body
+func ValidateDeleteCampaignBadRequestResponseBody(body *DeleteCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignConflictResponseBody runs the validations defined on
+// delete-campaign_Conflict_response_body
+func ValidateDeleteCampaignConflictResponseBody(body *DeleteCampaignConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignServiceUnavailableResponseBody runs the validations
+// defined on delete-campaign_ServiceUnavailable_response_body
+func ValidateDeleteCampaignServiceUnavailableResponseBody(body *DeleteCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignInternalServerErrorResponseBody runs the validations
+// defined on delete-campaign_InternalServerError_response_body
+func ValidateDeleteCampaignInternalServerErrorResponseBody(body *DeleteCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignNotFoundResponseBody runs the validations defined on
+// delete-campaign_NotFound_response_body
+func ValidateDeleteCampaignNotFoundResponseBody(body *DeleteCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignPreconditionFailedResponseBody runs the validations
+// defined on delete-campaign_PreconditionFailed_response_body
+func ValidateDeleteCampaignPreconditionFailedResponseBody(body *DeleteCampaignPreconditionFailedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignPreconditionRequiredResponseBody runs the validations
+// defined on delete-campaign_PreconditionRequired_response_body
+func ValidateDeleteCampaignPreconditionRequiredResponseBody(body *DeleteCampaignPreconditionRequiredResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

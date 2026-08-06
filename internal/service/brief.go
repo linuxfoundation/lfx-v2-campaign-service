@@ -695,6 +695,43 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	return campaignResult(updated), nil
 }
 
+// DeleteCampaign soft-deletes a campaign LOCALLY, freeing its (brief, platform) slot
+// so the brief can be re-dispatched to that platform.
+//
+// It deliberately does NOT touch the ad platform. Removing the local row while a real
+// paid campaign keeps spending is the worst available outcome, so the alternative —
+// deleting upstream — would need a verified delete/remove API on every provider
+// adapter, and none of the platform clients in internal/platform implement one. Rather
+// than invent an unverified upstream call, this endpoint is explicitly local-only and
+// says so in its API description: a campaign already created upstream keeps running
+// until it is stopped there (the status-toggle endpoint pauses it).
+//
+// That is also why the delete is SOFT: the row carries platform_campaign_id, the only
+// local pointer to whatever may still exist upstream. Hard-deleting would free the slot
+// but destroy the sole record needed to find and stop the campaign that is still
+// spending — the audit trail matters most in exactly the case that motivates deleting.
+func (s *BriefService) DeleteCampaign(ctx context.Context, p *briefs.DeleteCampaignPayload) error {
+	_, campaignRepo, _, _, err := s.ready()
+	if err != nil {
+		return err
+	}
+	version, err := parseBriefIfMatch(p.IfMatch)
+	if err != nil {
+		return err
+	}
+	derr := campaignRepo.DeleteCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID, version, s.campaignIndexPayload(indexer.ActionDeleted))
+	if errors.Is(derr, domain.ErrConflict) {
+		// The repo returns ErrConflict only when the campaign's status is an unresolved
+		// reconciliation marker — a mid-dispatch 'pending' claim, or a
+		// 'group_created'/'unconfirmed' partial orphan. mapBriefErr would render that as
+		// "the resource already exists", which describes a uniqueness violation and tells
+		// the caller nothing actionable. Name the real cause and both remedies instead: an
+		// in-flight dispatch clears on its own, an orphan needs reconciling.
+		return &briefs.ConflictError{Code: "409", Message: "the campaign cannot be deleted while its dispatch is unresolved; if a dispatch is in flight, wait for it to finish and retry, otherwise the campaign is a partially-created orphan that must be reconciled first"}
+	}
+	return mapBriefErr(derr)
+}
+
 func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*briefs.JobPollResponse, error) {
 	_, _, jobRepo, _, err := s.ready()
 	if err != nil {

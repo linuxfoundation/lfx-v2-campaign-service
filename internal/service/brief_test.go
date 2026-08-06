@@ -576,6 +576,14 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 	r.indexPayloads = append(r.indexPayloads, payload)
 	return nil
 }
+func (r *campaignEditRepo) DeleteCampaign(_ context.Context, _ string, _ string, _ string, _ int64, indexPayload domain.CampaignIndexPayloadFunc) error {
+	if indexPayload != nil {
+		// Record that the deletion was indexed, matching the real repo's behavior.
+		payload, _ := indexPayload(&model.Campaign{})
+		r.indexPayloads = append(r.indexPayloads, payload)
+	}
+	return nil
+}
 
 // UpdateCampaign must NOT wipe the stored config when the caller omits config, and it must
 // leave the run status untouched (the caller round-trips the CURRENT status on a name edit;
@@ -2074,4 +2082,166 @@ func TestBriefService_GetCampaignMetrics_InvalidWindowIs400(t *testing.T) {
 	if !errors.As(err, &bad) {
 		t.Fatalf("expected a BadRequestError (400) for an invalid window, got %T: %v", err, err)
 	}
+}
+
+// ─── DeleteCampaign ───
+
+// deleteCampaignRepo records the DeleteCampaign call and returns a configurable error,
+// so the service-layer tests can pin how each repo sentinel is mapped to the API.
+type deleteCampaignRepo struct {
+	fakeCampaignRepo
+	err error
+	// called records the arguments of the last DeleteCampaign call.
+	called          bool
+	gotProject      string
+	gotBrief        string
+	gotCampaign     string
+	gotExpectedVers int64
+	// gotIndexPayload is the JSON the builder produced when invoked with the deleted
+	// row, mirroring what the real repo does before it commits (see
+	// CampaignRepo.DeleteCampaign's enqueueCampaignIndex call). nil if the builder
+	// itself was nil (indexing disabled) or was never invoked.
+	gotIndexPayload []byte
+}
+
+func (r *deleteCampaignRepo) DeleteCampaign(_ context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) error {
+	r.called = true
+	r.gotProject, r.gotBrief, r.gotCampaign, r.gotExpectedVers = projectID, briefID, id, expectedVersion
+	if r.err == nil && indexPayload != nil {
+		payload, perr := indexPayload(&model.Campaign{
+			ID: id, BriefID: briefID, ProjectID: projectID, Status: model.CampaignStatusDeleted,
+		})
+		if perr != nil {
+			return perr
+		}
+		r.gotIndexPayload = payload
+	}
+	return r.err
+}
+
+func newDeleteService(repoErr error) (*BriefService, *deleteCampaignRepo) {
+	camps := &deleteCampaignRepo{err: repoErr}
+	jobs := newFakeJobRepo()
+	return NewBriefService(newFakeBriefRepo(), camps, jobs, NewOrchestrator(camps, jobs, nil)), camps
+}
+
+// A successful delete forwards the parsed If-Match version to the repo, which is what
+// makes the delete optimistically concurrent: without it a client could delete a
+// campaign that changed (e.g. finished dispatching) since it was read.
+func TestBriefService_DeleteCampaign_ForwardsVersionAndScope(t *testing.T) {
+	s, camps := newDeleteService(nil)
+	im := "7"
+	if err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+	}); err != nil {
+		t.Fatalf("DeleteCampaign: %v", err)
+	}
+	if !camps.called {
+		t.Fatal("repo DeleteCampaign was not called")
+	}
+	if camps.gotExpectedVers != 7 {
+		t.Errorf("expectedVersion = %d, want 7 (the If-Match value must gate the delete)", camps.gotExpectedVers)
+	}
+	// Project and brief must both be forwarded: they scope the delete for tenant
+	// isolation, so a campaign UUID alone cannot delete across projects.
+	if camps.gotProject != "cncf" || camps.gotBrief != "b1" || camps.gotCampaign != "c1" {
+		t.Errorf("scope = (%q,%q,%q), want (cncf,b1,c1)", camps.gotProject, camps.gotBrief, camps.gotCampaign)
+	}
+}
+
+// If-Match is REQUIRED. A delete is destructive and unrecoverable through the API (the
+// row becomes invisible), so an unconditional delete must be refused with 428 and must
+// never reach the repo.
+func TestBriefService_DeleteCampaign_RequiresIfMatch(t *testing.T) {
+	s, camps := newDeleteService(nil)
+	err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: nil,
+	})
+	var pre *briefs.PreconditionRequiredError
+	if !errors.As(err, &pre) {
+		t.Fatalf("err = %#v, want PreconditionRequiredError (428)", err)
+	}
+	if camps.called {
+		t.Error("the repo was called despite a missing If-Match; the delete must be refused before it reaches persistence")
+	}
+}
+
+// TestBriefService_DeleteCampaign_EnqueuesTheDeletedTombstone pins that the service
+// passes a REAL builder producing an ActionDeleted tombstone for the deleted campaign,
+// not just some indexPayload value. Without this, deleteCampaignRepo.DeleteCampaign's
+// indexPayload argument could be dropped or built with the wrong action and every
+// other test here would still pass, leaving a successful 204 with the old live
+// campaign still visible in Query Service.
+func TestBriefService_DeleteCampaign_EnqueuesTheDeletedTombstone(t *testing.T) {
+	s, camps := newDeleteService(nil)
+	im := "1"
+	if err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+	}); err != nil {
+		t.Fatalf("DeleteCampaign: %v", err)
+	}
+
+	if len(camps.gotIndexPayload) == 0 {
+		t.Fatal("no index message was built for the delete: a dropped builder would leave the campaign searchable forever")
+	}
+
+	var msg map[string]any
+	if uerr := json.Unmarshal(camps.gotIndexPayload, &msg); uerr != nil {
+		t.Fatalf("the enqueued payload must be a valid index message: %v", uerr)
+	}
+	if msg["action"] != indexer.ActionDeleted {
+		t.Errorf("action = %v, want %q (a deleted campaign must be REMOVED from the index)", msg["action"], indexer.ActionDeleted)
+	}
+	if msg["data"] != "c1" {
+		t.Errorf("delete data = %v, want the bare object id %q", msg["data"], "c1")
+	}
+}
+
+// A mid-dispatch campaign surfaces as a 409 whose message says the dispatch is in
+// flight and to retry. mapBriefErr would otherwise render domain.ErrConflict as "the
+// resource already exists" — a uniqueness message that misdescribes the state and
+// gives the caller nothing actionable.
+func TestBriefService_DeleteCampaign_PendingIsActionableConflict(t *testing.T) {
+	s, _ := newDeleteService(domain.ErrConflict)
+	im := "1"
+	err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %#v, want ConflictError (409)", err)
+	}
+	if strings.Contains(conflict.Message, "already exists") {
+		t.Errorf("message = %q; the generic uniqueness wording misdescribes a mid-dispatch campaign", conflict.Message)
+	}
+	if !strings.Contains(conflict.Message, "dispatch") {
+		t.Errorf("message = %q, want it to explain that a dispatch is in flight", conflict.Message)
+	}
+}
+
+// The remaining repo sentinels keep their standard mappings, so a deleted/absent
+// campaign is a 404 and a stale ETag is a 412 (not, say, a 500).
+func TestBriefService_DeleteCampaign_MapsRepoErrors(t *testing.T) {
+	t.Run("not found", func(t *testing.T) {
+		s, _ := newDeleteService(domain.ErrNotFound)
+		im := "1"
+		err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+		})
+		var nf *briefs.NotFoundError
+		if !errors.As(err, &nf) {
+			t.Fatalf("err = %#v, want NotFoundError (404)", err)
+		}
+	})
+	t.Run("stale version", func(t *testing.T) {
+		s, _ := newDeleteService(domain.ErrPreconditionFailed)
+		im := "1"
+		err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+		})
+		var pf *briefs.PreconditionFailedError
+		if !errors.As(err, &pf) {
+			t.Fatalf("err = %#v, want PreconditionFailedError (412)", err)
+		}
+	})
 }
