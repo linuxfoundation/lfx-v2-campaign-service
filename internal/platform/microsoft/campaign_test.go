@@ -9,7 +9,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -828,5 +831,628 @@ func TestCreateCampaign_DuplicateNameRaceSelfHeals(t *testing.T) {
 	// Campaign self-healed and the ad group + ad both pre-existed → nothing created this run.
 	if !res.AlreadyExisted {
 		t.Error("AlreadyExisted = false, want true when the reconciled campaign + ad group + ad all pre-existed")
+	}
+}
+
+// ---- status cascade -------------------------------------------------------
+
+// statusCascadeRecorder collects the entity path + decoded body of every status PUT, under a
+// mutex: the handler runs on the server goroutine and t.Cleanup(srv.Close) fires only AFTER
+// the assertions, so it orders nothing for the test goroutine.
+type statusCascadeRecorder struct {
+	mu    sync.Mutex
+	calls []statusCall
+}
+
+type statusCall struct {
+	entity string
+	body   map[string]any
+}
+
+func (r *statusCascadeRecorder) record(path string, body map[string]any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, statusCall{entity: path[strings.LastIndex(path, "/")+1:], body: body})
+}
+
+func (r *statusCascadeRecorder) snapshot() []statusCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]statusCall(nil), r.calls...)
+}
+
+func (r *statusCascadeRecorder) entities() []string {
+	out := []string{}
+	for _, c := range r.snapshot() {
+		out = append(out, c.entity)
+	}
+	return out
+}
+
+// newStatusCascadeClient wires a client whose API server records each status PUT and replies
+// with the per-entity body from replies (an empty string means a clean `{"PartialErrors":[]}`).
+func newStatusCascadeClient(t *testing.T, rec *statusCascadeRecorder, replies map[string]string) *Client {
+	t.Helper()
+	return newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		entity := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		rec.record(r.URL.Path, body)
+		w.Header().Set("Content-Type", "application/json")
+		if reply, ok := replies[entity]; ok && reply != "" {
+			_, _ = io.WriteString(w, reply)
+			return
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseGatesParentFirst pins the PAUSE order: the campaign
+// gate flips FIRST so delivery stops immediately, even if a child call fails afterwards.
+func TestUpdateCampaignAndChildrenStatus_PauseGatesParentFirst(t *testing.T) {
+	rec := &statusCascadeRecorder{}
+	c := newStatusCascadeClient(t, rec, nil)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns", "AdGroups", "Ads"}) {
+		t.Fatalf("pause order = %v, want [Campaigns AdGroups Ads] (gate first)", got)
+	}
+	assertCascadeParentIDs(t, rec.snapshot(), StatusPaused)
+	// Verify the Status value is actually sent as Paused for all three entities
+	for _, call := range rec.snapshot() {
+		for _, key := range []string{"Campaigns", "AdGroups", "Ads"} {
+			list, ok := call.body[key].([]any)
+			if !ok || len(list) == 0 {
+				continue
+			}
+			entry, _ := list[0].(map[string]any)
+			if entry["Status"] != StatusPaused {
+				t.Errorf("%s entry Status = %v, want %s", call.entity, entry["Status"], StatusPaused)
+			}
+		}
+	}
+}
+
+// assertCascadeParentIDs pins each child PUT to its OWN parent: the ad group scopes to the
+// campaign and the ad scopes to the AD GROUP. Passing the campaign id as AdGroupId would
+// address a different entity entirely and silently toggle nothing (or the wrong thing).
+// If expectedStatus is non-empty, it also checks that all cascade entities sent that status value.
+func assertCascadeParentIDs(t *testing.T, calls []statusCall, expectedStatus ...string) {
+	t.Helper()
+	var sawAdGroup, sawAd bool
+	for _, call := range calls {
+		switch call.entity {
+		case "AdGroups":
+			sawAdGroup = true
+			if got := call.body["CampaignId"]; got != json.Number("321") && got != float64(321) {
+				t.Errorf("AdGroups body CampaignId = %v, want the campaign id 321", got)
+			}
+		case "Ads":
+			sawAd = true
+			if got := call.body["AdGroupId"]; got != json.Number("654") && got != float64(654) {
+				t.Errorf("Ads body AdGroupId = %v, want the AD GROUP id 654, not the campaign id", got)
+			}
+		}
+		// Check Status value if provided
+		if len(expectedStatus) > 0 {
+			for _, key := range []string{"Campaigns", "AdGroups", "Ads"} {
+				list, ok := call.body[key].([]any)
+				if !ok || len(list) == 0 {
+					continue
+				}
+				entry, _ := list[0].(map[string]any)
+				if entry["Status"] != expectedStatus[0] {
+					t.Errorf("%s entry Status = %v, want %s", call.entity, entry["Status"], expectedStatus[0])
+				}
+			}
+		}
+	}
+	if !sawAdGroup || !sawAd {
+		t.Errorf("cascade must PUT both children (saw ad group=%v, ad=%v)", sawAdGroup, sawAd)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_ActivateEnablesChildrenFirst pins the reverse order: on
+// ACTIVATE the children go first so the campaign never serves over paused children.
+func TestUpdateCampaignAndChildrenStatus_ActivateEnablesChildrenFirst(t *testing.T) {
+	rec := &statusCascadeRecorder{}
+	c := newStatusCascadeClient(t, rec, nil)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusActive); err != nil {
+		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
+	}
+	if got := rec.entities(); !reflect.DeepEqual(got, []string{"AdGroups", "Ads", "Campaigns"}) {
+		t.Fatalf("activate order = %v, want [AdGroups Ads Campaigns] (gate last)", got)
+	}
+	assertCascadeParentIDs(t, rec.snapshot())
+	for _, call := range rec.snapshot() {
+		for _, key := range []string{"Campaigns", "AdGroups", "Ads"} {
+			list, ok := call.body[key].([]any)
+			if !ok || len(list) == 0 {
+				continue
+			}
+			entry, _ := list[0].(map[string]any)
+			if entry["Status"] != StatusActive {
+				t.Errorf("%s entry Status = %v, want %s", call.entity, entry["Status"], StatusActive)
+			}
+		}
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PartialCascadeIsUnconfirmed pins the honesty rule: once
+// an entity HAS been changed, a later definite rejection is an ambiguous OVERALL outcome, so
+// it must classify as Unconfirmed rather than "nothing applied".
+func TestUpdateCampaignAndChildrenStatus_PartialCascadeIsUnconfirmed(t *testing.T) {
+	rejected := `{"PartialErrors":[{"Code":1234,"Message":"nope"}]}`
+	for _, tc := range []struct {
+		name    string
+		status  string
+		replies map[string]string
+		// wantApplied is the entity text that must appear: it names what DID change.
+		wantApplied string
+	}{
+		{"activate: ad fails after ad group applied", StatusActive, map[string]string{"Ads": rejected}, "ad group"},
+		{"activate: campaign fails after both children", StatusActive, map[string]string{"Campaigns": rejected}, "ad group and ad"},
+		{"pause: ad group fails after campaign gated", StatusPaused, map[string]string{"AdGroups": rejected}, "campaign"},
+		{"pause: ad fails after campaign + ad group", StatusPaused, map[string]string{"Ads": rejected}, "campaign and ad group"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &statusCascadeRecorder{}
+			c := newStatusCascadeClient(t, rec, tc.replies)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", tc.status)
+			if err == nil {
+				t.Fatal("a rejected status PUT must not be reported as success")
+			}
+			if !IsOutcomeUnconfirmed(err) {
+				t.Errorf("a PARTIALLY applied cascade must be Unconfirmed (verify before retry), got %T: %v", err, err)
+			}
+			if !strings.Contains(err.Error(), tc.wantApplied+" status changed") {
+				t.Errorf("error must name what DID apply (%q), got: %v", tc.wantApplied, err)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_FirstStepFailureStaysDefinite is the counterpart: when
+// the FIRST call fails nothing was mutated, so a definite rejection must stay definite —
+// classifying it Unconfirmed would strand the caller in verify-before-retry forever.
+func TestUpdateCampaignAndChildrenStatus_FirstStepFailureStaysDefinite(t *testing.T) {
+	rejected := `{"PartialErrors":[{"Code":1234,"Message":"nope"}]}`
+	for _, tc := range []struct {
+		name, status, firstEntity string
+	}{
+		{"pause gates the campaign first", StatusPaused, "Campaigns"},
+		{"activate enables the ad group first", StatusActive, "AdGroups"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &statusCascadeRecorder{}
+			c := newStatusCascadeClient(t, rec, map[string]string{tc.firstEntity: rejected})
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", tc.status)
+			if err == nil {
+				t.Fatal("a rejected status PUT must not be reported as success")
+			}
+			if IsOutcomeUnconfirmed(err) {
+				t.Errorf("a first-step rejection mutated nothing, so it must stay DEFINITE, got: %v", err)
+			}
+			if got := rec.entities(); len(got) != 1 {
+				t.Errorf("cascade issued %v, want it to stop after the failed first step", got)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseWithoutChildIDs covers the pause path with unknown
+// children: pausing the parent already stops delivery, so it must succeed and skip the
+// child calls rather than refuse (the ACTIVATE guard is deliberately one-sided).
+func TestUpdateCampaignAndChildrenStatus_PauseWithoutChildIDs(t *testing.T) {
+	rec := &statusCascadeRecorder{}
+	c := newStatusCascadeClient(t, rec, nil)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "", "", StatusPaused); err != nil {
+		t.Fatalf("pausing with unknown children must still gate the campaign, got: %v", err)
+	}
+	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns"}) {
+		t.Errorf("calls = %v, want only the campaign gate when no child ids are known", got)
+	}
+	// Verify Status is actually Paused for the campaign
+	for _, call := range rec.snapshot() {
+		list, ok := call.body["Campaigns"].([]any)
+		if !ok || len(list) == 0 {
+			continue
+		}
+		entry, _ := list[0].(map[string]any)
+		if entry["Status"] != StatusPaused {
+			t.Errorf("Campaigns entry Status = %v, want %s", entry["Status"], StatusPaused)
+		}
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_RejectsBadInputWithoutCalling pins every local
+// fail-closed check: each refusal must happen BEFORE any request reaches Microsoft.
+func TestUpdateCampaignAndChildrenStatus_RejectsBadInputWithoutCalling(t *testing.T) {
+	for _, tc := range []struct {
+		name, campaignID, adGroupID, adID, status, wantMsg string
+	}{
+		{"unsupported status", "321", "654", "987", "Deleted", "unsupported status"},
+		{"empty status", "321", "654", "987", "", "unsupported status"},
+		{"non-numeric campaign id", "urn:li:campaign:321", "654", "987", StatusPaused, "campaign id"},
+		{"empty campaign id", "", "654", "987", StatusPaused, "campaign id"},
+		{"non-numeric ad group id", "321", "ag-654", "987", StatusPaused, "ad group id"},
+		{"non-numeric ad id", "321", "654", "ad-987", StatusPaused, "ad id"},
+		{"activate without an ad group", "321", "", "987", StatusActive, "cannot activate"},
+		{"activate without an ad", "321", "654", "", StatusActive, "cannot activate"},
+		{"activate with whitespace-only ad group", "321", "   ", "987", StatusActive, "cannot activate"},
+		// An ad id with NO ad-group id is unaddressable: the Ads PUT is scoped by AdGroupId,
+		// and json.Number("") marshals to a bare 0, so sending it would target a nonexistent
+		// ad group and report a no-op as success. Skipping it would leave the ad Active while
+		// returning nil. Both are wrong — refuse the pair.
+		{"pause with an ad but no ad group", "321", "", "987", StatusPaused, "no ad group id"},
+		{"pause with an ad but whitespace-only ad group", "321", "  ", "987", StatusPaused, "no ad group id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &statusCascadeRecorder{}
+			c := newStatusCascadeClient(t, rec, nil)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), tc.campaignID, tc.adGroupID, tc.adID, tc.status)
+			if err == nil {
+				t.Fatal("malformed input must be rejected")
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.wantMsg)
+			}
+			if got := rec.entities(); len(got) != 0 {
+				t.Errorf("issued %v, want NO upstream call — the refusal is a local check", got)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_UndecodableBodyIsUnconfirmed pins putStatus's malformed-
+// 200 handling: Microsoft may have applied the change, so it must never read as success.
+func TestUpdateCampaignAndChildrenStatus_UndecodableBodyIsUnconfirmed(t *testing.T) {
+	rec := &statusCascadeRecorder{}
+	c := newStatusCascadeClient(t, rec, map[string]string{"Campaigns": `{"PartialErrors":`})
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("an undecodable 200 must not be reported as success — the update may have applied")
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("an undecodable 200 leaves the outcome AMBIGUOUS, want Unconfirmed, got %T: %v", err, err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_OmittedPartialErrorsIsUnconfirmed pins the gap between a
+// DECODABLE body and an ANSWERED one.
+//
+// `{}` and a top-level `null` are valid JSON and unmarshal without error, leaving PartialErrors
+// zero — which reads identically to Microsoft affirming "no entity failed". Before the presence
+// check, both reported SUCCESS and the service persisted a status Microsoft never confirmed. The
+// distinction matters because these are exactly what a proxy error page or a truncated response
+// looks like after it parses.
+func TestUpdateCampaignAndChildrenStatus_OmittedPartialErrorsIsUnconfirmed(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty object":    `{}`,
+		"top-level null":  `null`,
+		"unrelated field": `{"CampaignIds":[321]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &statusCascadeRecorder{}
+			c := newStatusCascadeClient(t, rec, map[string]string{"Campaigns": body})
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+			if err == nil {
+				t.Fatal("a body that never reported PartialErrors must not read as success")
+			}
+			if !IsOutcomeUnconfirmed(err) {
+				t.Errorf("an unanswered PartialErrors leaves the outcome AMBIGUOUS, want Unconfirmed, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_AcceptsEmptyPartialErrorForms is the other half of the
+// presence check: `null` and `[]` ARE Microsoft answering "no per-entity failures", so treating
+// absence as unconfirmed must not also reject the valid empty forms.
+func TestUpdateCampaignAndChildrenStatus_AcceptsEmptyPartialErrorForms(t *testing.T) {
+	for name, body := range map[string]string{
+		"null":         `{"PartialErrors":null}`,
+		"empty array":  `{"PartialErrors":[]}`,
+		"with ids too": `{"CampaignIds":[321],"PartialErrors":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &statusCascadeRecorder{}
+			c := newStatusCascadeClient(t, rec, map[string]string{"Campaigns": body})
+			if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
+				t.Fatalf("an explicitly empty PartialErrors means no failure, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_RetriesThrottledStatusPut pins the status PUT as IDEMPOTENT.
+//
+// Re-applying Active/Paused converges on the same state and cannot double-commit a paid resource,
+// so a 429 must be absorbed by the client's bounded retry. Passing idempotent=false turned routine
+// Microsoft throttling into an Unconfirmed toggle the dispatcher then had to verify before
+// retrying — a strictly worse outcome than one retried request.
+// The counter is mutex-guarded like statusCascadeRecorder above: it is written on the httptest
+// server's goroutines and read by the assertion, and neither the client returning nor
+// t.Cleanup(srv.Close) establishes happens-before with that read. The requests happen to be
+// serialized today, so this is a latent race rather than a live one — which is exactly the kind
+// that surfaces as a -race flake after an unrelated change.
+func TestUpdateCampaignAndChildrenStatus_RetriesThrottledStatusPut(t *testing.T) {
+	var (
+		mu               sync.Mutex
+		campaignAttempts int
+	)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		entity := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		w.Header().Set("Content-Type", "application/json")
+		if entity == "Campaigns" {
+			mu.Lock()
+			campaignAttempts++
+			first := campaignAttempts == 1
+			mu.Unlock()
+			if first {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
+		t.Fatalf("a throttled status PUT must be retried, not surfaced: %v", err)
+	}
+	mu.Lock()
+	attempts := campaignAttempts
+	mu.Unlock()
+	if attempts < 2 {
+		t.Errorf("campaign status PUT attempts = %d, want >= 2 (the 429 must be retried)", attempts)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_PauseWithAdGroupOnly covers the one asymmetric pause
+// shape that IS allowed: an ad group with no ad. The ad group is addressable (its PUT is
+// scoped by CampaignId), so it must be paused and the ad step simply skipped — and the
+// error text for a failure there must not claim the ad group applied when it did.
+func TestUpdateCampaignAndChildrenStatus_PauseWithAdGroupOnly(t *testing.T) {
+	rec := &statusCascadeRecorder{}
+	c := newStatusCascadeClient(t, rec, nil)
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "", StatusPaused); err != nil {
+		t.Fatalf("pausing with a known ad group and no ad must succeed, got: %v", err)
+	}
+	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns", "AdGroups"}) {
+		t.Errorf("calls = %v, want [Campaigns AdGroups] — the ad step has nothing to address", got)
+	}
+	// Verify Status is actually Paused for both sent entities
+	for _, call := range rec.snapshot() {
+		for _, key := range []string{"Campaigns", "AdGroups"} {
+			list, ok := call.body[key].([]any)
+			if !ok || len(list) == 0 {
+				continue
+			}
+			entry, _ := list[0].(map[string]any)
+			if entry["Status"] != StatusPaused {
+				t.Errorf("%s entry Status = %v, want %s", call.entity, entry["Status"], StatusPaused)
+			}
+		}
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_AppliedTextNamesOnlyRealChanges pins the operator-facing
+// text on a PARTIAL cascade. "applied" is read to decide what to verify by hand, so it must
+// never name an entity that was skipped: with no ad group, a failing ad-group step is
+// impossible, but a campaign-only cascade that later fails must say "campaign", not
+// "campaign and ad group".
+func TestUpdateCampaignAndChildrenStatus_AppliedTextNamesOnlyRealChanges(t *testing.T) {
+	rejected := `{"PartialErrors":[{"Code":1234,"Message":"nope"}]}`
+	rec := &statusCascadeRecorder{}
+	c := newStatusCascadeClient(t, rec, map[string]string{"AdGroups": rejected})
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("a rejected ad-group update must not be reported as success")
+	}
+	if strings.Contains(err.Error(), "ad group status changed") {
+		t.Errorf("the ad group was REJECTED, so it must not be listed as applied: %v", err)
+	}
+	if !strings.Contains(err.Error(), "campaign status changed") {
+		t.Errorf("the campaign DID apply and must be named so an operator knows to verify it: %v", err)
+	}
+}
+
+// roundTripperFunc adapts a function to http.RoundTripper so a test can act on the exact
+// moment a response has been fully delivered.
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestUpdateCampaignAndChildrenStatus_CancelledContextStopsCascade pins the ctx check between
+// steps: a cancellation after the gate applied must stop the cascade and report a PARTIAL
+// (Unconfirmed) outcome naming the campaign, not silently dispatch the remaining PUTs.
+func TestUpdateCampaignAndChildrenStatus_CancelledContextStopsCascade(t *testing.T) {
+	rec := &statusCascadeRecorder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	// cancelAfterCampaign is armed by the handler (server goroutine) and fired by the
+	// RoundTripper wrapper (client goroutine). It MUST be atomic: RoundTrip returns once the
+	// response headers are read, which is not ordered against the handler returning, and
+	// t.Cleanup(srv.Close) fires only after the assertions — so nothing else supplies a
+	// happens-before edge. A plain bool would both race and flake (a stale false read would
+	// skip cancel(), the cascade would complete, and the failure would point at production
+	// code that is correct). CompareAndSwap additionally gives the fire-once semantics a
+	// Load/Store pair would not.
+	var cancelAfterCampaign atomic.Bool
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		rec.record(r.URL.Path, body)
+		if strings.HasSuffix(r.URL.Path, "Campaigns") {
+			cancelAfterCampaign.Store(true)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	base := c.httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	c.httpClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		resp, err := base.RoundTrip(r)
+		// The campaign PUT completed and its status DID apply; only now cancel, so the next
+		// step is abandoned cleanly between requests. CompareAndSwap fires exactly once.
+		if err == nil && cancelAfterCampaign.CompareAndSwap(true, false) {
+			cancel()
+		}
+		return resp, err
+	})
+	err := c.UpdateCampaignAndChildrenStatus(ctx, "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("a cancelled cascade must not report success — the children were never paused")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("want a context.Canceled cause, got %T: %v", err, err)
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("the campaign gate DID apply, so the outcome is partial/Unconfirmed, got: %v", err)
+	}
+	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns"}) {
+		t.Errorf("calls = %v, want the cascade to STOP at the cancellation, not dispatch more PUTs", got)
+	}
+	// NOTE ON WHAT THIS DOES AND DOES NOT PIN: the explicit ctx.Err() check between steps and
+	// a cancelled putStatus produce the SAME partialCascadeError here, so deleting the check
+	// would not fail this test — it only avoids dispatching a request that is already doomed.
+	// What IS pinned, and what would break without the surrounding structure, is the reported
+	// shape: a cancellation after the gate applied must be a partial (Unconfirmed) naming the
+	// campaign, never a bare error implying nothing changed.
+	var partial *partialCascadeError
+	if !errors.As(err, &partial) {
+		t.Fatalf("a between-step cancellation must be a partialCascadeError, got %T: %v", err, err)
+	}
+	if partial.applied != "campaign" {
+		t.Errorf("applied = %q, want %q — only the campaign gate had been applied", partial.applied, "campaign")
+	}
+	if partial.stage != "ad group" {
+		t.Errorf("stage = %q, want %q — the ad group is the step that was abandoned", partial.stage, "ad group")
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_CancelledDuring429BackoffReportsUnconfirmed pins the
+// fix for the context cancellation during 429 backoff bug: a cancelled context while
+// doRequest is sleeping out a 429 retry must wrap the ctx.Err() in a transportError so
+// that IsOutcomeUnconfirmed correctly classifies it as ambiguous (the PUT may have already
+// applied), not as a definite failure. Without the wrap, the bare ctx.Err() would match
+// neither transportError nor apiError, misleading the cascade into thinking nothing changed.
+func TestUpdateCampaignAndChildrenStatus_CancelledDuring429BackoffReportsUnconfirmed(t *testing.T) {
+	var (
+		mu               sync.Mutex
+		campaignAttempts int
+	)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		entity := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		w.Header().Set("Content-Type", "application/json")
+		if entity == "Campaigns" {
+			mu.Lock()
+			campaignAttempts++
+			first := campaignAttempts == 1
+			mu.Unlock()
+			if first {
+				// Return 429 with a long retry so the RoundTripper wrapper has time to cancel
+				// the context while doRequest is sleeping.
+				w.Header().Set("Retry-After", "10")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	base := c.httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var cancelledDuring429 atomic.Bool
+	c.httpClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		resp, err := base.RoundTrip(r)
+		// If this is a 429 on the Campaigns endpoint, arm a separate goroutine to cancel
+		// the context after a short delay (allowing the 429 retry loop to enter time.After).
+		if err == nil && resp.StatusCode == http.StatusTooManyRequests &&
+			strings.HasSuffix(r.URL.Path, "Campaigns") &&
+			cancelledDuring429.CompareAndSwap(false, true) {
+			go func() {
+				time.Sleep(10 * time.Millisecond) // Let the 429 backoff start
+				cancel()
+			}()
+		}
+		return resp, err
+	})
+	err := c.UpdateCampaignAndChildrenStatus(ctx, "321", "654", "987", StatusPaused)
+	if err == nil {
+		t.Fatal("a cancellation during 429 backoff must report an error — the outcome is ambiguous")
+	}
+	// The key check: the cancellation during backoff must be classified as ambiguous/Unconfirmed.
+	// Without the fix (wrapping ctx.Err() in transportError), the bare context.Canceled would
+	// match neither transportError nor apiError, so IsOutcomeUnconfirmed would return false.
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("a 429 that was received and then cancelled during backoff is ambiguous (the PUT may have applied), want IsOutcomeUnconfirmed==true, got: %v", err)
+	}
+}
+
+// TestUpdateCampaignAndChildrenStatus_MalformedPartialErrorsList pins the fix for the
+// malformed PartialErrors array bug: a response like {"PartialErrors":[null]} decodes
+// without error, but the array contains no valid error codes and should be treated as an
+// unconfirmed outcome (the status Microsoft returned is unusable), not as success.
+func TestUpdateCampaignAndChildrenStatus_MalformedPartialErrorsList(t *testing.T) {
+	tests := []struct {
+		name      string
+		respBody  string
+		wantError bool
+	}{
+		{
+			name:      "null-only-list",
+			respBody:  `{"PartialErrors":[null]}`,
+			wantError: true, // Malformed array with null should be rejected
+		},
+		{
+			name:      "empty-object-in-list",
+			respBody:  `{"PartialErrors":[{}]}`,
+			wantError: true, // Malformed array with {} should be rejected
+		},
+		{
+			name:      "empty-list",
+			respBody:  `{"PartialErrors":[]}`,
+			wantError: false, // Empty list is a valid "no errors" response
+		},
+		{
+			name:      "null-field",
+			respBody:  `{"PartialErrors":null}`,
+			wantError: false, // null field is a valid "no errors" response
+		},
+		{
+			name:      "valid-error",
+			respBody:  `{"PartialErrors":[{"Code":1234}]}`,
+			wantError: true, // Real error should be rejected
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tt.respBody)
+			})
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+			if tt.wantError && err == nil {
+				t.Errorf("response %q should be rejected but was accepted", tt.respBody)
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("response %q should be accepted but got error: %v", tt.respBody, err)
+			}
+			// The null-only and empty-object cases should specifically be Unconfirmed,
+			// not generic rejections.
+			if (tt.name == "null-only-list" || tt.name == "empty-object-in-list") && err != nil {
+				if !IsOutcomeUnconfirmed(err) {
+					t.Errorf("malformed PartialErrors should be Unconfirmed, got: %v", err)
+				}
+			}
+		})
 	}
 }
