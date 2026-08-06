@@ -59,9 +59,9 @@ claim, not allowlist scoping.
 
 ---
 
-## 3. `**Creation**` is reserved for the initial bundle entry in `log.md`
+## 3. `**Creation**` is reserved for the initial bundle entry in `log/`
 
-**The claim:** a new concept's `docs/knowledge/log.md` entry must use
+**The claim:** a new concept's `docs/knowledge/log/` fragment must use
 `**Update** — …` because `**Creation**` is reserved for the bundle's first entry.
 Raised on PRs #20, #21 and #22.
 
@@ -73,8 +73,11 @@ collapsed into "one valid entry"
 ([`r3575026604`](https://github.com/linuxfoundation/lfx-v2-campaign-service/pull/20#discussion_r3575026604)),
 which the developer did as a single `**Creation**` entry in `d7de627`.
 
-**Current proof:** `docs/knowledge/log.md` on `origin/main` contains **13**
-`**Creation**` entries, including the ones that were flagged.
+**Current proof:** the archived
+`docs/knowledge/log/2026-07-09-archive-through-2026-08-05.md` (the original
+`log.md`, moved verbatim when the log was split into one-file-per-entry
+fragments) contains **13** `**Creation**` entries, including the ones that
+were flagged.
 
 Encoding this would push reviewers to fight a settled convention. The choice
 between `**Creation**` and `**Update**` is not a finding.

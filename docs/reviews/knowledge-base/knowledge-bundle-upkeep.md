@@ -15,7 +15,9 @@ describes**, without **both** of:
 1. a concept file under `docs/knowledge/**` covering it (new, with OKF
    frontmatter `type`, `title`, `description` — or an edit to the concept whose
    subject changed);
-2. a dated entry appended to `docs/knowledge/log.md`.
+2. a new dated fragment under `docs/knowledge/log/`
+   (`YYYY-MM-DD-<slug>.md`, one file per entry — not an edit to another
+   entry's file).
 
 **And, only when the patch adds a concept, renames one, or changes a concept's
 indexed description**, the containing `index.md` bullet added or updated.
@@ -34,9 +36,10 @@ supposed to be enforcing.
 `.github/workflows/validate-okf.yml` is `paths:`-filtered to `docs/knowledge/**`
 and the okf tooling, so a patch that adds a package and skips the bundle **never
 runs the validator at all**. And the validator is shallow even when it does run:
-it checks little beyond a non-empty `type` field and the `##` heading lines of
-`log.md`. The bundle is what `CLAUDE.md` points every agent at as its map of the
-repo, so a stale bundle silently degrades every future agent's context.
+it checks little beyond a non-empty `type` field and, for each `docs/knowledge/log/`
+fragment, the filename pattern and a matching dated H1. The bundle is what
+`CLAUDE.md` points every agent at as its map of the repo, so a stale bundle
+silently degrades every future agent's context.
 
 **Evidence:**
 
@@ -92,6 +95,6 @@ the very finding the entry was promoted on. "Wholly inside one function" is not 
 test — a one-function fix that changes documented behaviour still owes the concept
 and the log entry; a sprawling fix that changes nothing documented owes neither.
 
-Do not demand a `log.md` entry marker other than the one the bundle actually
+Do not demand a log-fragment marker other than the one the bundle actually
 uses; `**Creation**` and `**Update**` are both in active use and the choice between
 them is not a finding (see `known-false-positives.md`).
