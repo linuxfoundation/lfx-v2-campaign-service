@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/okfgen"
 )
@@ -113,7 +114,7 @@ func run() error {
 	}); err != nil {
 		return fmt.Errorf("write root index: %w", err)
 	}
-	if err := appendLogDeviationNote(bundleRoot + "/index.md"); err != nil {
+	if err := okfgen.AppendNote(bundleRoot+"/index.md", strings.TrimPrefix(logDeviationNote, "\n")); err != nil {
 		return fmt.Errorf("append log deviation note: %w", err)
 	}
 
@@ -135,16 +136,3 @@ carries an ISO date in its name, so a conformant ` + "`log.md`" + ` can be recon
 normalizing each fragment's H1 into an ` + "`## YYYY-MM-DD`" + ` heading any time an
 external OKF consumer needs one.
 `
-
-func appendLogDeviationNote(path string) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	_, writeErr := f.WriteString(logDeviationNote)
-	closeErr := f.Close()
-	if writeErr != nil {
-		return writeErr
-	}
-	return closeErr
-}
