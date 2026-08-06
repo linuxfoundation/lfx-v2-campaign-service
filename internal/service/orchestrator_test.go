@@ -1575,6 +1575,23 @@ func TestOrchestrator_ReadCampaignMetrics_DispatcherErrorPropagates(t *testing.T
 	}
 }
 
+func TestOrchestrator_ReadCampaignMetrics_NilNilReaderResultIsError(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	disp := &metricsOnlyDispatcher{} // metrics == nil, err == nil
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+
+	campaign := &model.Campaign{PlatformCampaignID: "555"}
+	m, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("expected an error when the MetricsReader returns (nil, nil), got nil")
+	}
+	if m != nil {
+		t.Errorf("expected a nil result alongside the error, got %+v", m)
+	}
+}
+
 func TestOrchestrator_ReadCampaignMetrics_EnforcesCallTimeout(t *testing.T) {
 	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
 	disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
@@ -1588,7 +1605,13 @@ func TestOrchestrator_ReadCampaignMetrics_EnforcesCallTimeout(t *testing.T) {
 	callCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Bracket the call itself, not just the assertion, so the tolerance window covers exactly
+	// the wall-clock span the deadline could have been derived from — computing it only after
+	// the call let slow CI scheduling between the call and the check widen the window without
+	// actually loosening the tolerance on the deadline's derivation.
+	beforeCall := time.Now()
 	_, err := orch.ReadCampaignMetrics(callCtx, "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days)
+	afterCall := time.Now()
 	if err != nil {
 		t.Fatalf("ReadCampaignMetrics: %v", err)
 	}
@@ -1598,12 +1621,11 @@ func TestOrchestrator_ReadCampaignMetrics_EnforcesCallTimeout(t *testing.T) {
 		t.Error("dispatcher did not receive a context with a deadline")
 	}
 
-	// The deadline should be within a reasonable margin of metricsCallTimeout (20 seconds).
-	// Allow up to 100ms of clock skew.
-	expectedMaxDeadline := time.Now().Add(20*time.Second + 100*time.Millisecond)
-	expectedMinDeadline := time.Now().Add(20*time.Second - 100*time.Millisecond)
+	// The deadline should be within [beforeCall, afterCall] + metricsCallTimeout (20 seconds).
+	expectedMinDeadline := beforeCall.Add(20 * time.Second)
+	expectedMaxDeadline := afterCall.Add(20 * time.Second)
 	if disp.gotDeadline.Before(expectedMinDeadline) || disp.gotDeadline.After(expectedMaxDeadline) {
-		t.Errorf("deadline %v not approximately 20s from now (min=%v, max=%v)",
+		t.Errorf("deadline %v not within [%v, %v] (beforeCall/afterCall + 20s)",
 			disp.gotDeadline, expectedMinDeadline, expectedMaxDeadline)
 	}
 }
