@@ -413,6 +413,10 @@ func (fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudie
 	return a, nil
 }
 
+func (fakeAudienceRepo) CreateAudienceForApprovedBrief(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
+	return a, nil
+}
+
 func (fakeAudienceRepo) GetAudience(_ context.Context, _, _, _ string) (*model.CampaignAudience, error) {
 	return &model.CampaignAudience{}, nil
 }
@@ -423,6 +427,36 @@ func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.
 
 func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
 	return a, nil
+}
+
+// TestNewAudienceBuilder_SnowflakeOptional pins that an unconfigured or misconfigured warehouse
+// does NOT block audience building. Snowflake only enriches an audience with past editions; the
+// country-scoped group needs no warehouse, so failing here would take the whole email channel
+// down for a read-only lookup.
+//
+// It also guards the typed-nil trap: assigning a nil *snowflake.Client into the interface would
+// make `snow == nil` false and produce a nil-dereference on first use instead of the intended
+// degrade.
+func TestNewAudienceBuilder_SnowflakeOptional(t *testing.T) {
+	cases := map[string]*config.Config{
+		"nothing configured": {},
+		"partial config":     {SnowflakeAccount: "acct", SnowflakeUser: "usr"}, // no key
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			b, client := newAudienceBuilder(nil, nil, cfg)
+			require.NotNil(t, b, "a builder must always be returned: HubSpot list creation does not need Snowflake")
+			// The client must be nil when Snowflake is not fully configured, otherwise
+			// it remains unclosed and leaks connections.
+			require.Nil(t, client, "client should only be non-nil when all Snowflake config fields are present")
+
+			// The degrade path must yield no editions and NO error — the caller records the
+			// narrower scope rather than failing the build.
+			names, err := b.ResolvePastEditions(context.Background(), "KubeCon", "Korea", "2026")
+			require.NoError(t, err, "an unconfigured warehouse is not an error")
+			assert.Empty(t, names)
+		})
+	}
 }
 
 // TestNewContainer_AllPathsInjectIndexer pins the wiring bug that made PR #60 publish
@@ -721,6 +755,89 @@ func TestStuckClaimRemediation_NeverSaysSafe(t *testing.T) {
 				"no stuck claim may be reported as safe to delete: a dispatch may still be in flight")
 		})
 	}
+}
+
+// TestNewAudienceBuilder_UnusableKeyIsAnOutage_NotSilence pins the DIFFERENCE between the two
+// degrades, which is the part that actually costs an audience.
+//
+// A malformed or rotated SNOWFLAKE_PRIVATE_KEY must not look like "no warehouse configured".
+// Both leave the resolver unusable, but only this one means a returning event's past-registrant
+// groups were LOST. If the construction error is dropped, ResolvePastEditions answers (nil, nil),
+// BuildAudience takes its success branch, and the stored summary claims a first-time event —
+// every signal reports success while a returning KubeCon silently ships a country-only audience.
+//
+// The service-side consequence of this error (the "NARROWER THAN INTENDED" note) is pinned
+// separately in audience.TestBuildPlan_WarehouseErrorGetsTheOutageNote.
+func TestNewAudienceBuilder_UnusableKeyIsAnOutage_NotSilence(t *testing.T) {
+	cfg := &config.Config{
+		SnowflakeAccount: "acct", SnowflakeUser: "usr",
+		SnowflakePrivateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----", // secretlint-disable-line -- non-key fixture asserting an unusable key degrades
+	}
+	b, client := newAudienceBuilder(nil, nil, cfg)
+	require.NotNil(t, b, "boot must not fail: a read-only enrichment cannot take down dispatch")
+	// An unusable key means the client is never created; the builder is degraded but not nil.
+	require.Nil(t, client, "client should be nil when key initialization fails")
+
+	names, err := b.ResolvePastEditions(context.Background(), "KubeCon", "Korea", "2026")
+	require.Error(t, err,
+		"a CONFIGURED but unusable warehouse must report an error; returning (nil, nil) makes it "+
+			"indistinguishable from an unconfigured deployment and loses the audience silently")
+	assert.Contains(t, err.Error(), "snowflake is configured but unusable",
+		"the error must name the cause so the stored summary tells an operator what to fix")
+	assert.Empty(t, names)
+}
+
+// TestNewAudienceService_InjectsBuilder pins the wiring guarantee for the audience service, the
+// same one PR #60 had to fix for the indexer: SetBuilder is opt-in, so a construction path that
+// skips it compiles and serves while the build endpoint returns 503 forever.
+//
+// It asserts on the SERVICE's own view (BuilderIsSet) rather than on a BuildAudience error: a
+// nil repo short-circuits before the builder is consulted, so both wired and unwired services
+// return the same typed 503 and an error-based assertion passes vacuously. (Verified: an
+// earlier version of this test did exactly that and stayed green with SetBuilder removed.)
+func TestNewAudienceService_InjectsBuilder(t *testing.T) {
+	b, _ := newAudienceBuilder(nil, nil, &config.Config{})
+	c := &Container{audienceBuilder: b}
+	require.NotNil(t, c.audienceBuilder)
+
+	s := c.newAudienceService(nil, nil)
+	require.NotNil(t, s)
+	assert.True(t, s.BuilderIsSet(),
+		"the container's builder must reach the service; without it BuildAudience returns 503 forever")
+
+	// And a container with no builder must NOT claim one — the degrade is real, not implied.
+	assert.False(t, (&Container{}).newAudienceService(nil, nil).BuilderIsSet())
+}
+
+// TestAudienceService_ColdStartBindsAllBuildDeps pins the cold-start late-binding. The audience
+// service is constructed in 503 mode with NO brief repo and NO builder, so a retry path that
+// binds only the audience repo leaves BuildAudience returning 503 forever — on a pod that looks
+// completely healthy. My first cut did exactly that.
+//
+// The audienceBackendSetter interface now names all three setters, so a path that forgets one
+// fails to satisfy it at COMPILE time rather than at 3am.
+func TestAudienceService_ColdStartBindsAllBuildDeps(t *testing.T) {
+	// The concrete service must satisfy the full late-bind contract.
+	var ab audienceBackendSetter = service.NewAudienceService(nil)
+
+	ab.SetBackend(fakeAudienceRepo{})
+	ab.SetBriefRepo(nil)
+	b, _ := newAudienceBuilder(nil, nil, &config.Config{})
+	ab.SetBuilder(b)
+
+	s, ok := ab.(*service.AudienceService)
+	require.True(t, ok)
+	assert.True(t, s.BuilderIsSet(),
+		"the cold-start path must bind the builder; binding only the audience repo leaves BuildAudience 503 forever")
+}
+
+// TestSetBuilder_IgnoresNil guards the degraded deployment: with no HubSpot/Snowflake
+// configured the container's builder is nil, and binding it must leave the service reporting
+// "not configured" rather than storing a nil interface that panics on first use.
+func TestSetBuilder_IgnoresNil(t *testing.T) {
+	s := service.NewAudienceService(nil)
+	s.SetBuilder(nil)
+	assert.False(t, s.BuilderIsSet(), "a nil builder must not register as configured")
 }
 
 // TestStuckClaimRemediation_AlwaysRequiresUpstreamCheck is the load-bearing half of the
