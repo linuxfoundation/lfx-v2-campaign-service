@@ -151,19 +151,16 @@ func TestValidateLogFragmentBadFilename(t *testing.T) {
 	}
 }
 
-// TestValidateLogFragmentImpossibleCalendarDate pins that the filename date is
-// parsed as a real calendar date, not just matched against \d{4}-\d{2}-\d{2} digit
-// shape. "2026-99-99" matches that shape but names no actual day.
-func TestValidateLogFragmentImpossibleCalendarDate(t *testing.T) {
+func TestValidateLogFragmentImpossibleDate(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "log"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	writeFile(t, filepath.Join(dir, "log", "2026-99-99-ticket.md"),
-		"# 2026-99-99 — ticket\n\n**Update** — did the thing.\n")
+	writeFile(t, filepath.Join(dir, "log", "2026-99-99-find-brief.md"),
+		"# 2026-99-99 — find brief\n\n**Update** — did the thing.\n")
 
 	if errs := Validate(dir); len(errs) == 0 {
-		t.Fatal("Validate() = no errors, want an invalid-calendar-date error for 2026-99-99")
+		t.Fatal("Validate() = no errors, want an impossible-calendar-date error")
 	}
 }
 

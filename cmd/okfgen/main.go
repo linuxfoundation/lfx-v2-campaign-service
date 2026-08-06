@@ -109,25 +109,12 @@ func run() error {
 		{Title: "Specs", Link: "specs/index.md",
 			Description: "Feature specs tracked via speckit."},
 		{Title: "Log", Link: "log/",
-			Description: "Dated change log; one file per entry, so concurrent PRs never\n  edit the same log file."},
+			Description: "Dated change log; one file per entry, so concurrent PRs never edit the same log file."},
 	}); err != nil {
 		return fmt.Errorf("write root index: %w", err)
 	}
-	// WriteIndex only renders title+bullets, so the OKF-deviation note that
-	// explains WHY this bundle keeps log/ instead of a single log.md (see
-	// docs/knowledge/index.md) has no place in that generic rendering and must
-	// be appended separately, or a re-run of this tool would silently drop it.
-	if err := okfgen.AppendNote(bundleRoot+"/index.md",
-		"**OKF deviation:** OKF v0.1 §7 reserves a single `log.md` newest-first\n"+
-			"changelog. This bundle instead keeps `docs/knowledge/log/`, one dated fragment\n"+
-			"per entry (`YYYY-MM-DD-<slug>.md`), because a single append-at-top file was the\n"+
-			"dominant source of merge conflicts between concurrent PRs. Each fragment still\n"+
-			"carries an ISO date in its name, so a conformant `log.md` can be regenerated any\n"+
-			"time an external OKF consumer needs one: normalize each fragment's own H1 into a\n"+
-			"`## YYYY-MM-DD` entry under one shared `# Log` heading, newest first — not plain\n"+
-			"concatenation, since every fragment starts with its own H1 and the legacy format\n"+
-			"requires exactly one.\n"); err != nil {
-		return fmt.Errorf("append root index deviation note: %w", err)
+	if err := appendLogDeviationNote(bundleRoot + "/index.md"); err != nil {
+		return fmt.Errorf("append log deviation note: %w", err)
 	}
 
 	if err := okfgen.SeedLog(bundleRoot, "2026-07-09",
@@ -135,4 +122,29 @@ func run() error {
 		return fmt.Errorf("seed log: %w", err)
 	}
 	return nil
+}
+
+// logDeviationNote documents this bundle's OKF v0.1 §7 deviation: a
+// docs/knowledge/log/ fragment directory instead of a single log.md.
+const logDeviationNote = `
+**OKF deviation:** OKF v0.1 §7 reserves a single ` + "`log.md`" + ` newest-first
+changelog. This bundle instead keeps ` + "`docs/knowledge/log/`" + `, one dated fragment
+per entry (` + "`YYYY-MM-DD-<slug>.md`" + `), because a single append-at-top file was the
+dominant source of merge conflicts between concurrent PRs. Each fragment still
+carries an ISO date in its name, so a conformant ` + "`log.md`" + ` can be reconstructed by
+normalizing each fragment's H1 into an ` + "`## YYYY-MM-DD`" + ` heading any time an
+external OKF consumer needs one.
+`
+
+func appendLogDeviationNote(path string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.WriteString(logDeviationNote)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }

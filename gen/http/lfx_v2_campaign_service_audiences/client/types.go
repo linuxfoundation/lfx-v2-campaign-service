@@ -108,6 +108,31 @@ type UpdateAudienceResponseBody struct {
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
 
+// BuildAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body.
+type BuildAudienceResponseBody struct {
+	// Audience UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Owning brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Platform the audience is built on
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// Pointer to the built master list in the platform (empty until built)
+	PlatformMasterListID *string `form:"platform_master_list_id,omitempty" json:"platform_master_list_id,omitempty" xml:"platform_master_list_id,omitempty"`
+	// Platform suppression list ids applied to the master
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// Human-readable provenance: how the audience was built (past events, geo,
+	// topic)
+	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
+	// Build lifecycle status
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Optimistic-concurrency version
+	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+}
+
 // CreateAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "create-audience" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -322,6 +347,56 @@ type UpdateAudiencePreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "update-audience" endpoint HTTP
 // response body for the "PreconditionRequired" error.
 type UpdateAudiencePreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// BuildAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "BadRequest" error.
+type BuildAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// BuildAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "Conflict" error.
+type BuildAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// BuildAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type BuildAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// BuildAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "InternalServerError" error.
+type BuildAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// BuildAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "NotFound" error.
+type BuildAudienceNotFoundResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -746,6 +821,88 @@ func NewUpdateAudiencePreconditionRequired(body *UpdateAudiencePreconditionRequi
 	return v
 }
 
+// NewBuildAudienceAudienceAccepted builds a
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint result
+// from a HTTP "Accepted" response.
+func NewBuildAudienceAudienceAccepted(body *BuildAudienceResponseBody, etag *string) *lfxv2campaignserviceaudiences.Audience {
+	v := &lfxv2campaignserviceaudiences.Audience{
+		ID:                   *body.ID,
+		ProjectID:            *body.ProjectID,
+		BriefID:              *body.BriefID,
+		Platform:             *body.Platform,
+		PlatformMasterListID: body.PlatformMasterListID,
+		InclusionSummary:     body.InclusionSummary,
+		Status:               *body.Status,
+		Version:              *body.Version,
+	}
+	if body.SuppressionListIds != nil {
+		v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
+		for i, val := range body.SuppressionListIds {
+			v.SuppressionListIds[i] = val
+		}
+	}
+	v.Etag = etag
+
+	return v
+}
+
+// NewBuildAudienceBadRequest builds a lfx-v2-campaign-service-audiences
+// service build-audience endpoint BadRequest error.
+func NewBuildAudienceBadRequest(body *BuildAudienceBadRequestResponseBody) *lfxv2campaignserviceaudiences.BadRequestError {
+	v := &lfxv2campaignserviceaudiences.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewBuildAudienceConflict builds a lfx-v2-campaign-service-audiences service
+// build-audience endpoint Conflict error.
+func NewBuildAudienceConflict(body *BuildAudienceConflictResponseBody) *lfxv2campaignserviceaudiences.ConflictError {
+	v := &lfxv2campaignserviceaudiences.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewBuildAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-audiences service build-audience endpoint
+// ServiceUnavailable error.
+func NewBuildAudienceServiceUnavailable(body *BuildAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceaudiences.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceaudiences.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewBuildAudienceInternalServerError builds a
+// lfx-v2-campaign-service-audiences service build-audience endpoint
+// InternalServerError error.
+func NewBuildAudienceInternalServerError(body *BuildAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceaudiences.InternalServerError {
+	v := &lfxv2campaignserviceaudiences.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewBuildAudienceNotFound builds a lfx-v2-campaign-service-audiences service
+// build-audience endpoint NotFound error.
+func NewBuildAudienceNotFound(body *BuildAudienceNotFoundResponseBody) *lfxv2campaignserviceaudiences.NotFoundError {
+	v := &lfxv2campaignserviceaudiences.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // ValidateCreateAudienceResponseBody runs the validations defined on
 // Create-AudienceResponseBody
 func ValidateCreateAudienceResponseBody(body *CreateAudienceResponseBody) (err error) {
@@ -833,6 +990,40 @@ func ValidateListAudiencesResponseBody(body *ListAudiencesResponseBody) (err err
 // ValidateUpdateAudienceResponseBody runs the validations defined on
 // Update-AudienceResponseBody
 func ValidateUpdateAudienceResponseBody(body *UpdateAudienceResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Version == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.Platform != nil {
+		if !(*body.Platform == "hubspot") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platform", *body.Platform, []any{"hubspot"}))
+		}
+	}
+	if body.Status != nil {
+		if !(*body.Status == "building" || *body.Status == "built" || *body.Status == "failed") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"building", "built", "failed"}))
+		}
+	}
+	return
+}
+
+// ValidateBuildAudienceResponseBody runs the validations defined on
+// Build-AudienceResponseBody
+func ValidateBuildAudienceResponseBody(body *BuildAudienceResponseBody) (err error) {
 	if body.ID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
@@ -1119,6 +1310,66 @@ func ValidateUpdateAudiencePreconditionFailedResponseBody(body *UpdateAudiencePr
 // ValidateUpdateAudiencePreconditionRequiredResponseBody runs the validations
 // defined on update-audience_PreconditionRequired_response_body
 func ValidateUpdateAudiencePreconditionRequiredResponseBody(body *UpdateAudiencePreconditionRequiredResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateBuildAudienceBadRequestResponseBody runs the validations defined on
+// build-audience_BadRequest_response_body
+func ValidateBuildAudienceBadRequestResponseBody(body *BuildAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateBuildAudienceConflictResponseBody runs the validations defined on
+// build-audience_Conflict_response_body
+func ValidateBuildAudienceConflictResponseBody(body *BuildAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateBuildAudienceServiceUnavailableResponseBody runs the validations
+// defined on build-audience_ServiceUnavailable_response_body
+func ValidateBuildAudienceServiceUnavailableResponseBody(body *BuildAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateBuildAudienceInternalServerErrorResponseBody runs the validations
+// defined on build-audience_InternalServerError_response_body
+func ValidateBuildAudienceInternalServerErrorResponseBody(body *BuildAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateBuildAudienceNotFoundResponseBody runs the validations defined on
+// build-audience_NotFound_response_body
+func ValidateBuildAudienceNotFoundResponseBody(body *BuildAudienceNotFoundResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

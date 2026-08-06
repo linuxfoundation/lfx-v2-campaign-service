@@ -11,8 +11,6 @@
 changelog. This bundle instead keeps `docs/knowledge/log/`, one dated fragment
 per entry (`YYYY-MM-DD-<slug>.md`), because a single append-at-top file was the
 dominant source of merge conflicts between concurrent PRs. Each fragment still
-carries an ISO date in its name, so a conformant `log.md` can be regenerated any
-time an external OKF consumer needs one: normalize each fragment's own H1 into a
-`## YYYY-MM-DD` entry under one shared `# Log` heading, newest first — not plain
-concatenation, since every fragment starts with its own H1 and the legacy format
-requires exactly one.
+carries an ISO date in its name, so a conformant `log.md` can be reconstructed by
+normalizing each fragment's H1 into an `## YYYY-MM-DD` heading any time an
+external OKF consumer needs one.
