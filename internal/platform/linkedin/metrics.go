@@ -106,6 +106,12 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 			if err != nil {
 				return nil, fmt.Errorf("get campaign metrics: parse costInUsd %q: %w", *elem.CostInUsd, err)
 			}
+			// Each micros value individually fits int64 (costInUsdToMicros rejects an
+			// overflowing single value), but the running SUM across elements can still
+			// overflow — reject rather than silently wrap into a negative CostMicros.
+			if micros > math.MaxInt64-metrics.CostMicros {
+				return nil, fmt.Errorf("get campaign metrics: aggregate costInUsd overflows int64 micros")
+			}
 			metrics.CostMicros += micros
 		}
 	}

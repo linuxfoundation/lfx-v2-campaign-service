@@ -100,6 +100,37 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 	}
 }
 
+func TestGetCampaignMetrics_AggregateCostOverflowIsError(t *testing.T) {
+	// Each element's costInUsd converts to a micros value comfortably under int64's
+	// per-value overflow guard on its own, but two of them summed together exceeds
+	// math.MaxInt64 — the aggregate sum must be rejected, not silently wrapped negative.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"elements": [
+				{"impressions": 1000, "clicks": 50, "costInUsd": "6000000000000.00"},
+				{"impressions": 1000, "clicks": 50, "costInUsd": "6000000000000.00"}
+			]
+		}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+
+	ctx := context.Background()
+	metrics, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatalf("expected an aggregate overflow error, got metrics %+v", metrics)
+	}
+	if !strings.Contains(err.Error(), "overflow") {
+		t.Errorf("expected overflow error, got: %v", err)
+	}
+}
+
 func TestGetCampaignMetrics_NoActivity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
