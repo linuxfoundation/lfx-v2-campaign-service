@@ -69,6 +69,23 @@ const (
 	CampaignStatusPending         = "pending"
 	CampaignStatusCreated         = "created"
 	CampaignStatusCreatedDegraded = "created_degraded"
+	// CampaignStatusDeleted is the terminal SOFT-DELETE state. The row is retained
+	// (it holds platform_campaign_id, the only local pointer to a campaign that may
+	// still exist and still be spending upstream) but is invisible to reads and
+	// excluded from the (brief_id, platform) partial unique index, which frees the
+	// slot for a re-dispatch. Deleting never touches the ad platform — see the
+	// service layer.
+	CampaignStatusDeleted = "deleted"
+	// CampaignStatusGroupCreated and CampaignStatusUnconfirmed are the RETAINED PARTIAL
+	// orphan statuses: the upstream create did not complete (only a sub-resource such as
+	// the campaign group exists, or the outcome is ambiguous). The orchestrator preserves
+	// them on the row so it records WHAT went wrong, and treats them as non-reusable so a
+	// retry re-attempts the create. Mirrored from the service package's
+	// partialOrphanStatuses / the dispatch package's literals, which are unexported;
+	// declared here so packages that cannot import those (postgres) can still reason
+	// about them. Drift-guarded by TestPartialOrphanStatusValues in internal/dispatch.
+	CampaignStatusGroupCreated = "group_created"
+	CampaignStatusUnconfirmed  = "unconfirmed"
 )
 
 // CampaignStatusToggleable reports whether a campaign in the given status may have its run
@@ -115,6 +132,31 @@ func IsValidMetricsWindow(w MetricsWindow) bool {
 	}
 }
 
+// CampaignStatusNeedsReconciliation reports whether a campaign's status is a marker that an
+// operator or a resume pass still has to resolve, rather than a settled outcome.
+//
+// The three statuses here all mean "the local row and the ad platform may disagree, and this
+// string is the only record of how":
+//
+//   - pending: a bare dispatch claim. Either an in-flight dispatch owns it, or a dispatch
+//     died mid-flight and may have created a campaign upstream that has no local id.
+//   - group_created / unconfirmed: a partial orphan — a sub-resource exists, or the create
+//     outcome is ambiguous.
+//
+// Acting on such a row OVERWRITES that marker and so destroys the signal. This is the same
+// doctrine CampaignStatusToggleable enforces for the run-state toggle; it is a separate
+// predicate because the two answer different questions and legitimately differ on
+// created_degraded, which is fully created upstream (safe to retire, and to toggle only
+// after reconciliation).
+func CampaignStatusNeedsReconciliation(status string) bool {
+	switch status {
+	case CampaignStatusPending, CampaignStatusGroupCreated, CampaignStatusUnconfirmed:
+		return true
+	default:
+		return false
+	}
+}
+
 // CampaignMetrics is a platform-agnostic, live read-through performance
 // snapshot for one campaign over one window. It is never persisted — a
 // MetricsReader dispatcher call populates it fresh on every read, the same
@@ -128,6 +170,24 @@ type CampaignMetrics struct {
 	CostMicros  int64
 	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
 	Ctr float64
+}
+
+// CampaignStatusDeletable reports whether a campaign in the given status is a settled,
+// complete record that a soft-delete can safely retire: nothing about what happened
+// upstream is lost by overwriting the row with 'deleted'.
+//
+// Deliberately a whitelist, not "!CampaignStatusNeedsReconciliation(status)": the
+// campaigns.status column is unconstrained TEXT, so a status this predicate has never
+// seen — a typo, a future addition, upstream drift — must fail CLOSED (treated as not
+// yet safe to delete) rather than silently pass as deletable. The complement form fails
+// OPEN on exactly that input, which is the defect this function exists to avoid.
+func CampaignStatusDeletable(status string) bool {
+	switch status {
+	case CampaignStatusCreated, CampaignStatusCreatedDegraded, CampaignRunActive, CampaignRunPaused:
+		return true
+	default:
+		return false
+	}
 }
 
 // JobStatus is the status vocabulary shared by campaign_jobs and the API's
