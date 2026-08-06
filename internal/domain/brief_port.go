@@ -127,8 +127,12 @@ type CampaignWriter interface {
 	// UpsertCampaign inserts or updates the campaign row for a (brief, platform).
 	// Campaigns are updated in place when a brief changes after they exist.
 	UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
-	// ReplaceCampaign replaces a campaign's mutable fields, gating on version.
-	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
+	// ReplaceCampaign replaces a campaign's mutable fields, gating on version. lockToken is the
+	// token returned by ClaimCampaignVersion when the caller holds the claim lock for this
+	// campaign (the zero CampaignLockToken otherwise) — implementations that reuse the lock
+	// holder's own connection for this write MUST use lockToken's own handle, never a lookup by
+	// campaign ID, so a write can never attach to a different claimant's connection.
+	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, lockToken CampaignLockToken, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 	// ClaimCampaignVersion atomically reserves write ownership of a campaign row by
 	// bumping its version, gated on expectedVersion. It returns ErrPreconditionFailed
 	// if expectedVersion is stale, or ErrNotFound if the row is gone.

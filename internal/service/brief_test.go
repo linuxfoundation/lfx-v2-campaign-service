@@ -558,7 +558,7 @@ func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Pr
 func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
-func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
 	return c, r.recordIndex(c, indexPayload)
 }
@@ -863,7 +863,7 @@ func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string
 	cp := *r.got
 	return &cp, nil
 }
-func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, expectedVersion int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	// Mirror the real implementation: gate on expectedVersion and bump the version.
 	if r.got.Version != expectedVersion {
 		return nil, domain.ErrPreconditionFailed

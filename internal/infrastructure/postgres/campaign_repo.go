@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -299,8 +300,10 @@ func enqueueCampaignIndex(ctx context.Context, tx pgx.Tx, c *model.Campaign, ind
 // indexer. Pinned by a test.
 const indexObjectTypeCampaign = "campaign"
 
-// ReplaceCampaign replaces mutable fields, gating on expectedVersion.
-func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+// ReplaceCampaign replaces mutable fields, gating on expectedVersion. lockToken is the
+// CampaignLockToken returned by ClaimCampaignVersion when the caller holds the claim lock for
+// this campaign (the zero token otherwise); see the connection-reuse comment below.
+func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, lockToken domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	// RETURNING keeps the write and the snapshot that gets indexed in ONE statement, so the
 	// outbox payload is exactly what committed. The prior implementation re-read via
 	// GetCampaign after the UPDATE, which could observe a LATER concurrent write and index a
@@ -310,19 +313,24 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		config_snapshot=$7, result=$8, version=version+1, updated_at=now()
 		WHERE id=$9 AND brief_id=$10 AND project_id=$11 AND version=$12
 		RETURNING ` + campaignCols
-	// If a caller holds the claim lock for this campaign, the write MUST run on that
+	// If the caller holds the claim lock for this campaign, the write MUST run on that
 	// SAME pooled connection rather than acquiring a second one from the pool: the lock
 	// holder pins one connection for the whole claim window, so opening a second here
 	// would need a second connection from the pool at the same time. Under a small or
 	// saturated pool (pool_max_conns=1 makes it certain) that starves this write behind
 	// its own lock holder, blocking every toggle until persistResultTimeout.
+	//
+	// Use the caller's OWN claimed connection (via lockToken), never activeCampaignLocks.Load
+	// by campaign ID: if this caller's session died and a successor's ClaimCampaignVersion
+	// already overwrote the map entry, a lookup-by-ID would silently attach this write to the
+	// SUCCESSOR's connection instead of this caller's — corrupting the mutual exclusion the
+	// lock exists to provide (both writers' effects could land, or one write silently uses the
+	// wrong session). lockToken pins the exact connection this caller owns.
 	var beginner interface {
 		Begin(context.Context) (pgx.Tx, error)
-	}
-	if val, ok := activeCampaignLocks.Load(c.ID); ok {
-		beginner = val.(*campaignLock).conn
-	} else {
-		beginner = r.db
+	} = r.db
+	if lock, ok := lockToken.Handle().(*campaignLock); ok && lock != nil {
+		beginner = lock.conn
 	}
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
@@ -369,6 +377,11 @@ var activeCampaignLocks sync.Map // maps campaignID to *campaignLock
 type campaignLock struct {
 	conn    *pgxpool.Conn
 	lockKey int64
+	// released guards conn/lockKey disposal so a second ReleaseCampaignLock call with
+	// this SAME token (e.g. a caller's explicit release racing the UNCONFIRMED cooldown
+	// path, or any other duplicate release) is a true no-op instead of re-unlocking and
+	// re-releasing a connection the pool may have already handed to a different caller.
+	released atomic.Bool
 }
 
 // ClaimCampaignVersion gates a writer's exclusive access to a campaign version,
@@ -484,6 +497,13 @@ func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, token domain.Cam
 	lock, ok := token.Handle().(*campaignLock)
 	if !ok || lock == nil {
 		// No lock claimed (zero token), or a token from a different implementation.
+		return nil
+	}
+	if !lock.released.CompareAndSwap(false, true) {
+		// This exact token was already released (e.g. by a prior call, or a concurrent
+		// caller racing this one) — conn was already unlocked and returned to the pool,
+		// so touching it again here would reuse a connection the pool may have since
+		// handed to a different caller.
 		return nil
 	}
 	campaignID := token.CampaignID

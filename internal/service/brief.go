@@ -563,7 +563,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// the lock but did NOT bump the version; ReplaceCampaign will bump it
 	// (from version to version+1) inside the outbox transaction, preserving the
 	// invariant that every campaign write co-commits its index event.
-	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, lockToken, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -733,7 +733,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// did NOT bump the version; ReplaceCampaign will bump it (from version to version+1)
 	// inside the outbox transaction, preserving the invariant that every campaign write
 	// co-commits its index event.
-	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, lockToken, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		// The platform WAS changed but the row write failed → platform and DB now diverge.
 		// Log it loudly as an operational reconcile signal (the run state on the platform is

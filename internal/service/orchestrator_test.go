@@ -193,7 +193,7 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	r.existing[c.BriefID+"|"+string(c.Platform)] = c
 	return c, nil
 }
-func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }
 
