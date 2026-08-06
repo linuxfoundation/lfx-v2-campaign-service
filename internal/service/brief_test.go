@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -848,6 +850,16 @@ func TestBriefService_GetJob_SkippedSurfacesNonFailure(t *testing.T) {
 // campaign from GetCampaign and records the ReplaceCampaign it receives.
 type toggleCampaignRepo struct {
 	fakeCampaignRepo
+	// claimMu is this fake's analog of the real repo's per-campaign Postgres advisory
+	// lock (see CampaignRepo.ClaimCampaignVersion): held from a successful claim until
+	// ReleaseCampaignLock, so a concurrent second claim BLOCKS rather than failing
+	// immediately, and only discovers the version mismatch after it re-checks post-wait —
+	// exactly the interleaving a sequential (non-goroutine) test cannot exercise.
+	claimMu sync.Mutex
+	// dataMu guards got/replaced against concurrent goroutines racing GetCampaign
+	// (called outside claimMu, before any claim is held) against the claim holder's
+	// ReplaceCampaign.
+	dataMu         sync.Mutex
 	got            *model.Campaign
 	replaced       *model.Campaign
 	getErr         error
@@ -860,16 +872,21 @@ func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
+	r.dataMu.Lock()
+	defer r.dataMu.Unlock()
 	cp := *r.got
 	return &cp, nil
 }
 func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, expectedVersion int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	// Mirror the real implementation: gate on expectedVersion and bump the version.
+	r.dataMu.Lock()
 	if r.got.Version != expectedVersion {
+		r.dataMu.Unlock()
 		return nil, domain.ErrPreconditionFailed
 	}
 	r.got.Version++
 	c.Version = r.got.Version
+	r.dataMu.Unlock()
 	r.replaced = c
 	if indexPayload == nil {
 		return c, nil
@@ -884,16 +901,31 @@ func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaig
 
 // ClaimCampaignVersion mirrors the real implementation: it gates on expectedVersion
 // and acquires a lock, but does NOT bump the version (that happens in ReplaceCampaign).
+// It BLOCKS on claimMu the same way the real advisory lock blocks a concurrent claim on
+// the same campaign — so two goroutines racing this call genuinely serialize here rather
+// than both proceeding, and the loser's version re-check happens only after the winner's
+// full claim→platform-call→persist→release cycle has completed.
 func (r *toggleCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	r.claimMu.Lock()
 	if r.claimStatusErr != nil {
+		r.claimMu.Unlock()
 		return nil, domain.CampaignLockToken{}, r.claimStatusErr
 	}
-	if r.got.Version != expectedVersion {
+	r.dataMu.Lock()
+	ver := r.got.Version
+	cp := *r.got
+	r.dataMu.Unlock()
+	if ver != expectedVersion {
+		r.claimMu.Unlock()
 		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
 	}
-	// Return a copy of the campaign at the current version (no bump).
-	cp := *r.got
 	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
+}
+
+// ReleaseCampaignLock releases the advisory-lock analog acquired by ClaimCampaignVersion.
+func (r *toggleCampaignRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	r.claimMu.Unlock()
+	return nil
 }
 
 // stubToggler implements PlatformDispatcher + StatusToggler, recording the toggle call.
@@ -991,43 +1023,107 @@ func TestBriefService_ToggleCampaignStatus_StaleIfMatchSkipsPlatform(t *testing.
 	}
 }
 
-// TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize pins the actual
-// race LFXV2-2901 closes: two toggles reading the SAME version must not both reach
-// the platform. The second call reuses the stale IfMatch the first call also read,
-// simulating two concurrent requests racing on one row.
+// concurrentStubToggler implements PlatformDispatcher + StatusToggler for the genuine
+// concurrency test below. Unlike stubToggler, its ToggleStatus is safe to call from
+// multiple goroutines and tracks how many calls were ever IN FLIGHT AT ONCE — the thing
+// a broken claim would let happen — rather than just the final state one caller left
+// behind, which a sequential test cannot observe by construction.
+type concurrentStubToggler struct {
+	mu          sync.Mutex
+	calls       int
+	inFlight    int32
+	maxInFlight int32
+}
+
+func (d *concurrentStubToggler) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d *concurrentStubToggler) ToggleStatus(context.Context, string, model.Provider, *model.Campaign, string) error {
+	n := atomic.AddInt32(&d.inFlight, 1)
+	for {
+		max := atomic.LoadInt32(&d.maxInFlight)
+		if n <= max || atomic.CompareAndSwapInt32(&d.maxInFlight, max, n) {
+			break
+		}
+	}
+	// Widen the window a broken (unserialized) claim would let a second call overlap in.
+	time.Sleep(20 * time.Millisecond)
+	atomic.AddInt32(&d.inFlight, -1)
+	d.mu.Lock()
+	d.calls++
+	d.mu.Unlock()
+	return nil
+}
+
+// TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize pins the actual race
+// LFXV2-2901 closes: two GENUINELY CONCURRENT toggles (real goroutines, released at the
+// same instant) reading the same version must not both reach the platform. toggleCampaignRepo
+// models the real repo's blocking per-campaign advisory lock (ClaimCampaignVersion blocks
+// a concurrent claim rather than racing an in-memory check), so this exercises the actual
+// interleaving the production code depends on rather than asserting the same outcome via
+// two calls made one after the other, which the fake's earlier version already appeared to
+// satisfy without ever serializing anything.
 func TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
 		PlatformCampaignID: "t3_c", Status: "created", Version: 3,
 	}
-	tog := &stubToggler{}
-	s, camps := newToggleService(camp, tog)
-	im := "3"
+	tog := &concurrentStubToggler{}
+	repo := newFakeBriefRepo()
+	camps := &toggleCampaignRepo{got: camp}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
+	s := NewBriefService(repo, camps, jobs, orch)
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
 
-	if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
-		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
-	}); err != nil {
-		t.Fatalf("first toggle: %v", err)
+	im := "3"
+	statuses := [2]string{model.CampaignRunPaused, model.CampaignRunActive}
+	errs := [2]error{}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start // both goroutines release at the same instant
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: statuses[i],
+			})
+			errs[i] = err
+		}(i)
 	}
-	if tog.gotStat != model.CampaignRunPaused {
-		t.Fatalf("first toggle never reached the platform: %+v", tog)
+	close(start)
+	wg.Wait()
+
+	if tog.maxInFlight > 1 {
+		t.Fatalf("platform saw %d toggle calls in flight at once; the version claim did not serialize them", tog.maxInFlight)
+	}
+	if tog.calls != 1 {
+		t.Fatalf("platform was called %d times, want exactly 1 — the losing concurrent toggle must be rejected at claim time, not reach the platform", tog.calls)
+	}
+
+	successes, failures := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		default:
+			failures++
+			var precond *briefs.PreconditionFailedError
+			if !errors.As(err, &precond) {
+				t.Errorf("expected the losing concurrent toggle to fail with a 412 precondition error, got %T: %v", err, err)
+			}
+		}
+	}
+	if successes != 1 || failures != 1 {
+		t.Fatalf("got %d successes and %d failures, want exactly 1 of each", successes, failures)
 	}
 	// The claim bumped the row's version, so the persisted row must reflect that
-	// bumped version, not the stale IfMatch the caller sent.
+	// bumped version, not the stale IfMatch either caller sent.
 	if camps.replaced == nil || camps.replaced.Version != 4 {
 		t.Fatalf("persisted version = %+v, want 4 (claimed version, not the stale IfMatch)", camps.replaced)
-	}
-
-	// A second, concurrent caller that read the row at the same version 3 (before
-	// either claim landed) must be rejected at claim time, before it ever calls the
-	// platform a second time.
-	if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
-		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunActive,
-	}); err == nil {
-		t.Fatal("expected the second concurrent toggle (stale version 3) to be rejected")
-	}
-	if tog.gotStat != model.CampaignRunPaused {
-		t.Errorf("the second, stale-version toggle reached the platform: %+v", tog)
 	}
 }
 
