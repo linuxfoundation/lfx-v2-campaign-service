@@ -95,6 +95,33 @@ type CampaignReader interface {
 	DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider) error
 }
 
+// CampaignLockToken is an opaque handle identifying one successful ClaimCampaignVersion call.
+// ReleaseCampaignLock and ReleaseCampaignLockAfterCooldown must be passed the exact token
+// returned by the claim they are releasing, never a bare campaign ID — that is the whole point
+// of the token. Releasing by campaign ID alone cannot tell "the lock I claimed" from "whatever
+// lock is in the map right now": if this claimant's session dies during a cooldown and a NEW
+// claimant claims and overwrites the same campaign's entry, a delayed release keyed only by
+// campaign ID would load and release the successor's live lock instead of a no-op. The token
+// carries this claim's own identity so a stale release can never touch a different claim. The
+// zero value denotes "no lock held" and is always a safe no-op to release.
+type CampaignLockToken struct {
+	CampaignID string
+	handle     any
+}
+
+// NewCampaignLockToken constructs a CampaignLockToken wrapping a repository-internal lock
+// handle. Only CampaignWriter implementations, which own the concrete handle type, should call
+// this; every other caller must treat CampaignLockToken as opaque.
+func NewCampaignLockToken(campaignID string, handle any) CampaignLockToken {
+	return CampaignLockToken{CampaignID: campaignID, handle: handle}
+}
+
+// Handle returns the opaque lock handle for use by the CampaignWriter implementation that
+// created this token.
+func (t CampaignLockToken) Handle() any {
+	return t.handle
+}
+
 // CampaignWriter mutates campaigns.
 type CampaignWriter interface {
 	// UpsertCampaign inserts or updates the campaign row for a (brief, platform).
@@ -125,19 +152,20 @@ type CampaignWriter interface {
 	// persist would then lose (a real divergence between the platform and the row,
 	// even though every individual write was individually consistent).
 	//
-	// Callers MUST call ReleaseCampaignLock after claiming to allow other writers
-	// to proceed. Use defer for guaranteed release, even on panic or cancellation.
-	ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, error)
-	// ReleaseCampaignLock releases the advisory lock held by ClaimCampaignVersion.
-	// It is a no-op if no lock is held for this campaign. Callers MUST call this
-	// after claiming, either directly or via defer, to allow other writers to proceed.
-	ReleaseCampaignLock(ctx context.Context, campaignID string) error
-	// ReleaseCampaignLockAfterCooldown releases the advisory lock held for campaignID after
+	// Callers MUST call ReleaseCampaignLock, passing back the returned token, after claiming.
+	// Use defer for guaranteed release, even on panic or cancellation.
+	ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, CampaignLockToken, error)
+	// ReleaseCampaignLock releases the advisory lock identified by token, as returned by
+	// ClaimCampaignVersion. It is a no-op for the zero CampaignLockToken, or if token no longer
+	// identifies the lock currently held for its campaign (see CampaignLockToken). Callers MUST
+	// call this after claiming, either directly or via defer, to allow other writers to proceed.
+	ReleaseCampaignLock(ctx context.Context, token CampaignLockToken) error
+	// ReleaseCampaignLockAfterCooldown releases the advisory lock identified by token after
 	// cooldown elapses, or immediately once the process starts shutting down — whichever
 	// comes first. Used instead of a bare ReleaseCampaignLock call when a caller must hold the
 	// lock past its own request's lifetime (see BriefService.ToggleCampaignStatus's UNCONFIRMED
 	// path) without leaking the held connection past process shutdown.
-	ReleaseCampaignLockAfterCooldown(campaignID string, cooldown time.Duration)
+	ReleaseCampaignLockAfterCooldown(token CampaignLockToken, cooldown time.Duration)
 }
 
 // CampaignRepository is the full persistence port for campaigns.

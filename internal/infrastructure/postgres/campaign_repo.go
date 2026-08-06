@@ -392,21 +392,31 @@ type campaignLock struct {
 // This keeps the version increment inside the outbox transaction, preserving the
 // invariant that EVERY campaign write co-commits its index event (see
 // campaign_repo.go:273-278).
-func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, error) {
+func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	// Acquire a dedicated connection from the pool. This connection is held for the
 	// duration of the claim and must be released by ReleaseCampaignLock on the same
 	// session (advisory locks are connection-scoped).
 	conn, err := r.db.Acquire(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("acquire connection for claim: %w", err)
+		return nil, domain.CampaignLockToken{}, fmt.Errorf("acquire connection for claim: %w", err)
 	}
 
 	// Acquire an advisory lock on the dedicated connection. Use a deterministic
 	// hash of the campaign ID so the same campaign always gets the same lock key.
 	lockKey := int64(hashCampaignID(campaignID))
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
+		// pg_advisory_lock itself can be reported as failed to the client (e.g. the request
+		// context is cancelled mid-call) while Postgres actually granted the lock server-side.
+		// A plain conn.Release() would return that connection to the pool with the lock still
+		// held on its session — permanently stranding it, since a session advisory lock is NOT
+		// released just by returning the connection. Destroy the connection instead, mirroring
+		// the pattern used below when the guarded read fails after a successful lock acquire.
+		if closeErr := conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
+			slog.WarnContext(ctx, "failed to close campaign connection after advisory lock acquire error",
+				"campaign_id", campaignID, "error", closeErr)
+		}
 		conn.Release()
-		return nil, fmt.Errorf("claim advisory lock: %w", err)
+		return nil, domain.CampaignLockToken{}, fmt.Errorf("claim advisory lock: %w", err)
 	}
 
 	// Read the campaign at the expected version. Do NOT bump the version yet; that
@@ -443,49 +453,51 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 			_, gerr := r.GetCampaign(ctx, projectID, briefID, campaignID)
 			switch {
 			case errors.Is(gerr, domain.ErrNotFound):
-				return nil, domain.ErrNotFound
+				return nil, domain.CampaignLockToken{}, domain.ErrNotFound
 			case gerr != nil:
-				return nil, gerr
+				return nil, domain.CampaignLockToken{}, gerr
 			default:
-				return nil, domain.ErrPreconditionFailed
+				return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
 			}
 		}
-		return nil, fmt.Errorf("claim campaign version: %w", err)
+		return nil, domain.CampaignLockToken{}, fmt.Errorf("claim campaign version: %w", err)
 	}
 
 	// Store the lock in the package-level map. The advisory lock ensures only
 	// one writer can hold a lock for a given campaign at a time, so this map
 	// is safe from concurrent modification for the same key.
-	activeCampaignLocks.Store(campaignID, &campaignLock{
+	lock := &campaignLock{
 		conn:    conn,
 		lockKey: lockKey,
-	})
+	}
+	activeCampaignLocks.Store(campaignID, lock)
 
-	return c, nil
+	return c, domain.NewCampaignLockToken(campaignID, lock), nil
 }
 
-// ReleaseCampaignLock releases the advisory lock held by ClaimCampaignVersion.
-// It is a no-op if no lock is held for this campaign, OR if the entry currently held for
-// campaignID is no longer the one this caller expects to release (see the CompareAndDelete
-// below). Callers MUST call this after claiming, either directly or via defer, to allow other
-// writers to proceed.
-func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, campaignID string) error {
-	val, ok := activeCampaignLocks.Load(campaignID)
-	if !ok {
-		// No lock held for this campaign. This is not necessarily an error;
-		// it can happen if claim failed.
+// ReleaseCampaignLock releases the advisory lock identified by token, as returned by
+// ClaimCampaignVersion. It is a no-op for the zero CampaignLockToken, or if the entry currently
+// held for token.CampaignID is no longer the exact lock token identifies (see the
+// CompareAndDelete below). Callers MUST call this after claiming, either directly or via defer,
+// to allow other writers to proceed.
+func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, token domain.CampaignLockToken) error {
+	lock, ok := token.Handle().(*campaignLock)
+	if !ok || lock == nil {
+		// No lock claimed (zero token), or a token from a different implementation.
 		return nil
 	}
-	lock := val.(*campaignLock)
+	campaignID := token.CampaignID
 
 	// CompareAndDelete, not LoadAndDelete: a delayed release (the UNCONFIRMED cooldown path
 	// in service.ToggleCampaignStatus schedules one up to unconfirmedLockCooldown after this
 	// lock's own session may have ended) must not blindly delete whatever is in the map now.
 	// If this session's connection died during the cooldown, Postgres drops its advisory lock
 	// on its own, and a NEW claimant can then Store its own *campaignLock under the same
-	// campaignID key. An unconditional delete-by-key here would remove and release THAT
-	// successor's lock and connection out from under it, re-opening the exact concurrent-write
-	// window the lock exists to prevent. Only release if the entry is still this exact lock.
+	// campaignID key. token pins the EXACT *campaignLock this caller claimed (not whatever is
+	// freshly loaded from the map), so CompareAndDelete only succeeds if that same lock is
+	// still the live entry — an unconditional delete-by-key here would otherwise remove and
+	// release a successor's lock and connection out from under it, re-opening the exact
+	// concurrent-write window the lock exists to prevent.
 	if !activeCampaignLocks.CompareAndDelete(campaignID, lock) {
 		return nil
 	}
@@ -521,24 +533,45 @@ var (
 	cooldownWG       sync.WaitGroup
 	cooldownShutdown = make(chan struct{})
 	cooldownOnce     sync.Once
+	// cooldownMu guards cooldownStopped, and serializes it against every cooldownWG.Add(1) in
+	// ReleaseCampaignLockAfterCooldown. sync.WaitGroup requires that any Add(1) which starts
+	// when the counter is zero happen before the matching Wait — but Wait can already have
+	// observed a zero counter and returned by the time a straggler ReleaseCampaignLockAfterCooldown
+	// call (racing shutdown) reaches its Add(1), violating that contract. Gating every Add(1) on
+	// cooldownStopped, set under the same mutex before StopCooldownsForShutdown's Wait, makes the
+	// two mutually exclusive in real time: a straggler either completes its Add() before stopped
+	// is set (so Wait — locked out until the Add's critical section ends — is guaranteed to
+	// observe it), or observes stopped already set and skips the WaitGroup entirely.
+	cooldownMu      sync.Mutex
+	cooldownStopped bool
 )
 
-// ReleaseCampaignLockAfterCooldown releases the advisory lock held for campaignID after
+// ReleaseCampaignLockAfterCooldown releases the advisory lock identified by token after
 // cooldown elapses, or immediately if StopCooldownsForShutdown is called first — whichever
 // comes first. Used by the UNCONFIRMED toggle path (see service.ToggleCampaignStatus) to hold
 // the claim lock past the request's lifetime without leaking it past process shutdown:
 // pgxpool.Close blocks until every checked-out connection is returned, so an unbounded-looking
 // time.Sleep here would otherwise make Container.Close overrun its shutdown budget waiting for
 // this one connection.
-func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(campaignID string, cooldown time.Duration) {
+func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(token domain.CampaignLockToken, cooldown time.Duration) {
+	cooldownMu.Lock()
+	if cooldownStopped {
+		cooldownMu.Unlock()
+		// Shutdown has already been signaled, and StopCooldownsForShutdown's Wait may already
+		// have returned — joining cooldownWG now could race a Wait that already saw zero.
+		// Release synchronously instead of spawning a tracked goroutine.
+		_ = r.ReleaseCampaignLock(context.Background(), token)
+		return
+	}
 	cooldownWG.Add(1)
+	cooldownMu.Unlock()
 	go func() {
 		defer cooldownWG.Done()
 		select {
 		case <-time.After(cooldown):
 		case <-cooldownShutdown:
 		}
-		_ = r.ReleaseCampaignLock(context.Background(), campaignID)
+		_ = r.ReleaseCampaignLock(context.Background(), token)
 	}()
 }
 
@@ -550,6 +583,9 @@ func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(campaignID string, coold
 // unconfirmedLockCooldown. Safe to call more than once; only the first call's close takes
 // effect, and every call still waits for outstanding releases.
 func StopCooldownsForShutdown(timeout time.Duration) {
+	cooldownMu.Lock()
+	cooldownStopped = true
+	cooldownMu.Unlock()
 	cooldownOnce.Do(func() { close(cooldownShutdown) })
 	done := make(chan struct{})
 	go func() {

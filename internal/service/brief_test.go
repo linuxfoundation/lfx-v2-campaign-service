@@ -576,18 +576,19 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 	r.indexPayloads = append(r.indexPayloads, payload)
 	return nil
 }
-func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, _ string, expectedVersion int64) (*model.Campaign, error) {
+func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	if r.cur.Version != expectedVersion {
-		return nil, domain.ErrPreconditionFailed
+		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
 	}
 	r.cur.Version++
 	cp := *r.cur
-	return &cp, nil
+	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
 }
-func (r *campaignEditRepo) ReleaseCampaignLock(context.Context, string) error {
+func (r *campaignEditRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
 	return nil
 }
-func (r *campaignEditRepo) ReleaseCampaignLockAfterCooldown(string, time.Duration) {}
+func (r *campaignEditRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {
+}
 
 // UpdateCampaign must validate status before claiming the version, so a rejected
 // request (400 validation error) does not bump the version. If validation failed
@@ -883,16 +884,16 @@ func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaig
 
 // ClaimCampaignVersion mirrors the real implementation: it gates on expectedVersion
 // and acquires a lock, but does NOT bump the version (that happens in ReplaceCampaign).
-func (r *toggleCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, _ string, expectedVersion int64) (*model.Campaign, error) {
+func (r *toggleCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	if r.claimStatusErr != nil {
-		return nil, r.claimStatusErr
+		return nil, domain.CampaignLockToken{}, r.claimStatusErr
 	}
 	if r.got.Version != expectedVersion {
-		return nil, domain.ErrPreconditionFailed
+		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
 	}
 	// Return a copy of the campaign at the current version (no bump).
 	cp := *r.got
-	return &cp, nil
+	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
 }
 
 // stubToggler implements PlatformDispatcher + StatusToggler, recording the toggle call.

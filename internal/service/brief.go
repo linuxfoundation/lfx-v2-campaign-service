@@ -543,11 +543,12 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// persist then loses — the platform and the row diverge even though this edit
 	// and that toggle were each individually consistent. Claiming here makes every
 	// campaign writer serialize through the same version-gated mutex.
-	if _, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version); cerr != nil {
+	_, lockToken, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
+	if cerr != nil {
 		return nil, mapBriefErr(cerr)
 	}
 	// Ensure lock is released even if a panic or context cancellation occurs.
-	defer func() { _ = campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID) }()
+	defer func() { _ = campaignRepo.ReleaseCampaignLock(ctx, lockToken) }()
 
 	existing.CampaignName = p.Campaign.CampaignName
 	// Only overwrite the stored config when the caller actually supplied one.
@@ -639,7 +640,8 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// diverged with no compensating rollback. The atomic claim closes that: only one caller can
 	// ever win a given expectedVersion, so the loser is rejected here, before either the
 	// platform is called or a claim is granted for anyone else to race against.
-	if _, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version); cerr != nil {
+	_, lockToken, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
+	if cerr != nil {
 		return nil, mapBriefErr(cerr)
 	}
 	// Defer lock release: it MUST NOT be released until after persistence, and it MUST use
@@ -654,7 +656,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	releaseNow := true
 	defer func() {
 		if releaseNow {
-			_ = campaignRepo.ReleaseCampaignLock(ctx, p.CampaignID)
+			_ = campaignRepo.ReleaseCampaignLock(ctx, lockToken)
 		}
 	}()
 
@@ -703,7 +705,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// release also cuts short at process shutdown instead of holding its pooled
 			// connection for the full 30s: see ReleaseCampaignLockAfterCooldown.
 			releaseNow = false
-			campaignRepo.ReleaseCampaignLockAfterCooldown(p.CampaignID, unconfirmedLockCooldown)
+			campaignRepo.ReleaseCampaignLockAfterCooldown(lockToken, unconfirmedLockCooldown)
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
 		default:
 			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution

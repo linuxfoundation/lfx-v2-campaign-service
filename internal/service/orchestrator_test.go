@@ -200,29 +200,30 @@ func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int
 // ClaimCampaignVersion simulates the atomic version-gated UPDATE against byID: it
 // bumps the stored row's version on a match, or reports precondition-failed /
 // not-found, mirroring CampaignRepo.ClaimCampaignVersion.
-func (r *fakeCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.claimVersionErr != nil {
-		return nil, r.claimVersionErr
+		return nil, domain.CampaignLockToken{}, r.claimVersionErr
 	}
 	c, ok := r.byID[campaignID]
 	if !ok {
-		return nil, domain.ErrNotFound
+		return nil, domain.CampaignLockToken{}, domain.ErrNotFound
 	}
 	if c.Version != expectedVersion {
-		return nil, domain.ErrPreconditionFailed
+		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
 	}
 	c.Version++
 	cp := *c
-	return &cp, nil
+	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
 }
 
-func (r *fakeCampaignRepo) ReleaseCampaignLock(context.Context, string) error {
+func (r *fakeCampaignRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
 	return nil
 }
 
-func (r *fakeCampaignRepo) ReleaseCampaignLockAfterCooldown(string, time.Duration) {}
+func (r *fakeCampaignRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {
+}
 
 // okDispatcher always succeeds.
 type okDispatcher struct{}
