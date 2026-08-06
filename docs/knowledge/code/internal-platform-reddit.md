@@ -136,6 +136,19 @@ Response handling distinguishes two cases:
 CTR is calculated as clicks/impressions, or 0 when impressions is 0.
 
 The `model.MetricsWindow`/`model.CampaignMetrics` types and the `service.MetricsReader`
-interface this depends on are NOT yet on `main` (GA-5, PR #70, is still an open, unmerged
-epic-stacked PR) — this branch was cut from `main` directly and adds its own copy of that
-scaffold, mirroring the same pattern already used on the Meta/LinkedIn/X metrics branches.
+interface this depends on come from the platform-agnostic metrics foundation
+(LFXV2-2997, merged to `main`), not from a per-branch copy.
+
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` reddit adapter (see [internal/dispatch](internal-dispatch.md))
+interprets OAuth2 (clientId/secret/refreshToken) credentials; AccountID comes from the
+connection.
+
+It implements `StatusToggler`: `resolveRedditClient` (shared with `Dispatch`, so a create
+and a toggle accept exactly the same connections) builds the client, then
+`client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND its
+child ad group + ad (read from the persisted `CampaignResult`) — because the create path
+PAUSES all three, so toggling only the campaign would not serve.
+
+See [internal/platform/reddit](../../../internal/platform/reddit).
