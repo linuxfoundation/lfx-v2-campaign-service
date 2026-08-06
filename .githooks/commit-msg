@@ -58,24 +58,39 @@ if [[ -n "$replay_head" ]]; then
   # it is NOT used directly: a whitespace-only amend would hash to the same id
   # as the original patch and be treated as a faithful replay, skipping the
   # current committer's sign-off for content that actually changed. Instead,
-  # keep only the actual +/- content lines (dropping the `+++`/`---` file
-  # headers, `index` lines, `@@ ... @@` hunk headers, and unchanged context
-  # lines) and hash what remains. Dropping context lines — not just index/hunk
-  # headers — is what preserves cross-base tolerance: a replay landing on a
-  # different base commit can shift surrounding context without changing the
-  # patch itself, and that must not flip the fingerprint. A whitespace-only
-  # edit to a +/- line itself still changes the hash, unlike patch-id.
+  # build a fingerprint from `git diff --binary` that keeps everything needed
+  # to identify WHAT changed (file identity, mode/rename metadata, binary
+  # content, and the actual +/- content lines) while normalizing away only
+  # what legitimately varies across a replay landing on a different base
+  # commit: blob-oid `index` lines, `@@ ... @@` hunk-header line numbers, and
+  # unchanged context lines. Earlier drafts of this filter kept ONLY +/-
+  # content lines, which dropped the `diff --git a/x b/y` file-identity line,
+  # mode/rename metadata, and binary-patch bodies entirely — an edit to a
+  # DIFFERENT file (or a binary- or mode-only change) with the same textual
+  # content, or none at all, would then fingerprint identically to the
+  # original and wrongly qualify for the replay exemption. A whitespace-only
+  # edit to a +/- line, or any change to a binary blob, still flips the hash,
+  # unlike patch-id.
   #
-  # The `|| true` is required: `grep` exits 1 when nothing matches, which
-  # happens whenever the diff is empty (e.g. `git diff --cached` at a
-  # `reword`/`edit` rebase stop where nothing is staged) or the diff has no
-  # content lines. Under `set -euo pipefail`, an unguarded grep exit 1 here
-  # would abort the whole hook — including on an otherwise-correctly-signed
-  # commit — before the committer-sign-off fallback ever runs. Wrapping the
-  # filtering pipe in `|| true` forces this stage to exit 0 so an empty diff
-  # yields an empty (but well-defined) fingerprint instead of aborting.
+  # awk (not grep) does the filtering: grep exits 1 when nothing matches its
+  # pattern, which happens whenever the diff is empty (e.g. `git diff
+  # --cached` at a `reword`/`edit` rebase stop where nothing is staged) or has
+  # no matching lines — under `set -euo pipefail`, an unguarded grep exit 1
+  # here would abort the whole hook, including on an otherwise-correctly-
+  # signed commit, before the committer-sign-off fallback ever runs. awk exits
+  # 0 even when it prints nothing, so an empty diff yields a well-defined
+  # empty-blob fingerprint instead of aborting.
   diff_fingerprint() {
-    git diff "$@" -- 2>/dev/null | { grep -E '^[+-]' | grep -Ev '^(\+\+\+|---) ' || true; } | git hash-object --stdin 2>/dev/null
+    git diff --binary "$@" -- 2>/dev/null | awk '
+      /^GIT binary patch$/ { print; inbin=1; next }
+      inbin { print; if ($0 == "") inbin=0; next }
+      /^diff --git / { print; next }
+      /^(old mode|new mode|new file mode|deleted file mode|similarity index|rename from|rename to|copy from|copy to) / { print; next }
+      /^Binary files .* differ$/ { print; next }
+      /^\+\+\+ / || /^--- / { next }
+      /^[+-]/ { print; next }
+      { next }
+    ' | git hash-object --stdin 2>/dev/null
   }
 
   original_message=$(git log -1 --format=%B "$replay_head")

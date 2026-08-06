@@ -97,6 +97,47 @@ msg_file() {
   rm -f .git/REBASE_HEAD
 }
 
+@test "rejects a modified replay that moves the same content change to a different file" {
+  echo one >a.txt
+  echo one >b.txt
+  git add a.txt b.txt
+  git commit -q -m "initial" --no-verify
+
+  echo two >a.txt
+  git add a.txt
+  # Original author == original committer (distinct from the "Test Committer"
+  # identity `setup()` configures for running the hook below), so the
+  # replay-exemption's author-trailer check can actually match the message's
+  # Signed-off-by trailer and reach the fingerprint comparison. `git commit -s`
+  # stamps the COMMITTER identity into the trailer, not the author; without
+  # this override the trailer would read "Test Committer" — the same identity
+  # invoking the hook for the replay below — and the fallback committer check
+  # would trivially accept the commit regardless of the fingerprint mismatch
+  # this test exists to catch.
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    GIT_COMMITTER_NAME="Original Author" GIT_COMMITTER_EMAIL="original@example.com" \
+    git commit -q -s -m "feat: original change"
+  replay_sha=$(git rev-parse HEAD)
+  echo "$replay_sha" >.git/REBASE_HEAD
+  git reset --soft HEAD^
+
+  # Apply the exact same textual content change (one -> two) but to a
+  # DIFFERENT file than the original commit touched. A fingerprint built from
+  # only +/- content lines (dropping the `diff --git a/x b/y` file-identity
+  # line) hashes this identically to the real replay and would wrongly grant
+  # the exemption for an edit that moved to an unrelated file.
+  git reset -q HEAD -- a.txt
+  git checkout -- a.txt
+  echo two >b.txt
+  git add b.txt
+
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    f=$(msg_file "$(git log -1 --format=%B "$replay_sha")")
+  run env GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" "$HOOK" "$f"
+  [ "$status" -ne 0 ]
+  rm -f .git/REBASE_HEAD
+}
+
 @test "rejects a replay whose message was edited without a fresh sign-off" {
   git commit -q -m "initial" --no-verify
   echo two >file.txt
