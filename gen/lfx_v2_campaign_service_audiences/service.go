@@ -25,6 +25,10 @@ type Service interface {
 	// Partially update an audience's build result/status (requires If-Match; only
 	// supplied fields change).
 	UpdateAudience(context.Context, *UpdateAudiencePayload) (res *Audience, err error)
+	// Build a brief's HubSpot audience from its event details: derive the
+	// regional-expansion inclusion lists, create them in HubSpot, and record the
+	// master list. Until an audience is built the email channel cannot dispatch.
+	BuildAudience(context.Context, *BuildAudiencePayload) (res *Audience, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -47,7 +51,7 @@ const ServiceName = "lfx-v2-campaign-service-audiences"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [4]string{"create-audience", "get-audience", "list-audiences", "update-audience"}
+var MethodNames = [5]string{"create-audience", "get-audience", "list-audiences", "update-audience", "build-audience"}
 
 // Audience is the result type of the lfx-v2-campaign-service-audiences service
 // create-audience method.
@@ -102,6 +106,17 @@ type AudienceUpdateInput struct {
 	// Set true to remove all suppression lists (round-trips where an empty array
 	// cannot)
 	ClearSuppressionLists *bool
+}
+
+// BuildAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-audiences service build-audience method.
+type BuildAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
 }
 
 // CreateAudiencePayload is the payload type of the

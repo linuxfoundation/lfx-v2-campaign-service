@@ -72,4 +72,20 @@ the shared ambiguity classifier (and honors the `Unconfirmed()` behavioral inter
 caller can tell a maybe-applied outcome (including a partial cascade) from a definite rejection.
 `doRequest` gained an optional per-call headers map to carry the `X-Restli-Method` header.
 
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` linkedin adapter (see [internal/dispatch](internal-dispatch.md))
+interprets a single OAuth2 accessToken; it builds RuntimeConfig from the connection's
+AccountID + `org_id` (must be the NUMERIC org id) plus caller-supplied targeting profiles
+from config.
+
+It implements `StatusToggler` and CASCADES: its create leaves the campaign PAUSED and its
+creatives DRAFT, so a full ACTIVATE must lift the creatives too (a DRAFT creative never
+serves, and a creative's EFFECTIVE status is gated by its campaign).
+`UpdateCampaignAndCreativesStatus` PARTIAL_UPDATEs the campaign status, DISCOVERS the
+creatives via the creatives FINDER (LinkedIn persists only a creative count, not ids), and
+PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE, a definite 400 on an
+in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) — the
+campaign is already the effective gate.
+
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
