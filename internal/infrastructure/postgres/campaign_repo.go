@@ -498,9 +498,12 @@ func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, token domain.Cam
 	// still the live entry — an unconditional delete-by-key here would otherwise remove and
 	// release a successor's lock and connection out from under it, re-opening the exact
 	// concurrent-write window the lock exists to prevent.
-	if !activeCampaignLocks.CompareAndDelete(campaignID, lock) {
-		return nil
-	}
+	//
+	// A failed CompareAndDelete only means SOMEONE ELSE'S lock now occupies the map slot — it
+	// says nothing about this token's own connection, which this call still exclusively owns
+	// and must dispose of below regardless. Returning early here without disposing lock.conn
+	// would leak that pool slot forever, since nothing else references it.
+	activeCampaignLocks.CompareAndDelete(campaignID, lock)
 
 	// Release on a bounded detached context to guarantee the unlock runs even
 	// if the original context was cancelled (which may happen during platform
