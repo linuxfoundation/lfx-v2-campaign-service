@@ -58,6 +58,10 @@ type Client struct {
 	// toggle-campaign-status endpoint.
 	ToggleCampaignStatusDoer goahttp.Doer
 
+	// DeleteCampaign Doer is the HTTP client used to make requests to the
+	// delete-campaign endpoint.
+	DeleteCampaignDoer goahttp.Doer
+
 	// GetJob Doer is the HTTP client used to make requests to the get-job endpoint.
 	GetJobDoer goahttp.Doer
 
@@ -92,6 +96,7 @@ func NewClient(
 		GetCampaignDoer:          doer,
 		UpdateCampaignDoer:       doer,
 		ToggleCampaignStatusDoer: doer,
+		DeleteCampaignDoer:       doer,
 		GetJobDoer:               doer,
 		RestoreResponseBody:      restoreBody,
 		scheme:                   scheme,
@@ -336,6 +341,30 @@ func (c *Client) ToggleCampaignStatus() goa.Endpoint {
 		resp, err := c.ToggleCampaignStatusDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// DeleteCampaign returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service delete-campaign server.
+func (c *Client) DeleteCampaign() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeDeleteCampaignRequest(c.encoder)
+		decodeResponse = DecodeDeleteCampaignResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildDeleteCampaignRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.DeleteCampaignDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
 		}
 		return decodeResponse(resp)
 	}
