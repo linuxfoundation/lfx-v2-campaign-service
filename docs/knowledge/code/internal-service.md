@@ -104,10 +104,18 @@ fail fast rather than hold a request open).
 
 The `window` query parameter is a closed, platform-agnostic vocabulary
 (`model.MetricsWindow`: `today`, `yesterday`, `last_7_days`, `last_14_days`,
-`last_30_days` [default], `this_month`, `last_month`) — never a platform's own dialect
+`last_30_days`, `this_month`, `last_month`) — never a platform's own dialect
 (e.g. Google Ads' GAQL `DURING` literals, Meta's Insights `date_preset`). Each platform's
 `MetricsReader` adapter is responsible for mapping this vocabulary to its own platform's
 query syntax; the mapping (and any platform-specific validation, e.g. an allow-list guard
 against GAQL injection) lives in the platform client package, not here.
+
+When the caller omits `window`, `defaultMetricsWindowFor` (`internal/service/brief.go`)
+picks the default PER PLATFORM rather than applying one global constant: `last_30_days`
+for every platform except X Ads, which defaults to `last_7_days` because its stats
+endpoint caps queryable date ranges at 7 days per request — `last_30_days` is simply
+unreachable there (see `internal/platform/twitter` and `internal/dispatch/twitter.go`
+below). A single global default would make every omitted-window request against an X
+campaign fail with a guaranteed 400.
 
 See [internal/service](../../../internal/service).

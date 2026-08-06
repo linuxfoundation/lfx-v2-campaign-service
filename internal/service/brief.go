@@ -495,10 +495,13 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
-	// Default to last_30_days when no window is specified by the caller — matches the
-	// published contract in design/brief.go, the generated OpenAPI, and
-	// docs/knowledge/code/internal-service.md.
-	window := model.MetricsWindowLast30Days
+	// Default when no window is specified by the caller is platform-aware, not a single
+	// global constant: X Ads' stats endpoint caps queryable date ranges at 7 days per
+	// request (internal/platform/twitter, internal/dispatch/twitter.go), so last_30_days
+	// — otherwise the documented default — is unreachable for that platform and would
+	// turn every omitted-window request into a guaranteed 400. See
+	// defaultMetricsWindowFor and docs/knowledge/code/internal-service.md.
+	window := defaultMetricsWindowFor(existing.Platform)
 	if p.Window != nil {
 		window = model.MetricsWindow(*p.Window)
 		if !model.IsValidMetricsWindow(window) {
@@ -530,6 +533,22 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		CostMicros:         m.CostMicros,
 		Ctr:                m.Ctr,
 	}, nil
+}
+
+// defaultMetricsWindowFor returns the window GetCampaignMetrics uses when the caller omits
+// the window parameter, for the given platform. last_30_days is the default for every
+// platform except X Ads: its stats endpoint caps queryable date ranges at 7 days per
+// request, so last_30_days always fails there (twitterMetricsWindow only maps today and
+// last_7_days). Falling through to last_30_days for any platform not listed here is
+// intentional — a future platform with its own similarly narrow window support should add
+// a case rather than silently omit one and rediscover this the same way.
+func defaultMetricsWindowFor(platform model.Provider) model.MetricsWindow {
+	switch platform {
+	case model.ProviderTwitterAds:
+		return model.MetricsWindowLast7Days
+	default:
+		return model.MetricsWindowLast30Days
+	}
 }
 
 func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampaignPayload) (*briefs.Campaign, error) {
