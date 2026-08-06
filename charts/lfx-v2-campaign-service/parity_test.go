@@ -450,6 +450,49 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 	}
 }
 
+// TestDeploymentUsesRecreateStrategy pins the rollout strategy, because this service runs
+// its own schema migrations at boot and migration 000014 is BACKWARD-INCOMPATIBLE: it drops
+// UNIQUE (brief_id, platform), after which the previous release's bare
+// `ON CONFLICT (brief_id, platform)` matches no index and errors on every dispatch claim.
+//
+// Kubernetes' default RollingUpdate surges the new pod BEFORE terminating the old one
+// (maxSurge 25% rounds up to 1), so the new pod would migrate the shared database while the
+// old pod still serves writes against it. Recreate orders it the other way, so the
+// incompatible schema is never live under the old code.
+//
+// Why this is pinned rather than left to convention: 000013 and 000014 cannot be staged
+// apart to remove the need for it. Verified on PostgreSQL 16.10 — with the drop deferred,
+// the old full constraint still covers soft-deleted rows, so a re-dispatch after delete is
+// SILENTLY swallowed by ON CONFLICT DO NOTHING (RowsAffected 0, read back as "already
+// claimed"). So the ordering guarantee has to come from the rollout strategy, and a future
+// edit that "restores the default" would quietly reopen the window.
+func TestDeploymentUsesRecreateStrategy(t *testing.T) {
+	deployment := helmTemplate(t, "templates/deployment.yaml")
+
+	// Strip comment lines before asserting. The template's own comments explain WHY
+	// RollingUpdate is wrong here, so a naive substring search over the raw render would
+	// match the prose rather than the setting.
+	var yamlOnly strings.Builder
+	for _, line := range strings.Split(deployment, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			yamlOnly.WriteString(line)
+			yamlOnly.WriteString("\n")
+		}
+	}
+	rendered := yamlOnly.String()
+
+	if !strings.Contains(rendered, "type: Recreate") {
+		t.Errorf("deployment must set `strategy.type: Recreate`; rendered chart does not.\n"+
+			"RollingUpdate surges the new pod before terminating the old one, letting the previous "+
+			"release run against the post-000014 schema where its bare ON CONFLICT (brief_id, platform) "+
+			"fails on every dispatch claim.\nrendered:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "RollingUpdate") {
+		t.Errorf("deployment must NOT use RollingUpdate while a backward-incompatible migration "+
+			"(000014, DROP CONSTRAINT) ships in this release.\nrendered:\n%s", rendered)
+	}
+}
+
 // TestEveryConfiguredEnvVarIsWiredInTheChart is a second parity invariant: an environment
 // variable the SERVICE reads must be one the CHART actually injects.
 //

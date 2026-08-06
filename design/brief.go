@@ -480,6 +480,30 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("delete-campaign", func() {
+		Description("Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes the campaign from this service and frees its (brief, platform) slot so the brief can be re-dispatched to that platform. It does NOT delete, pause, or otherwise modify the campaign on the ad platform — a campaign already created upstream keeps running and spending until it is stopped there. Use the status-toggle endpoint to pause it first. A campaign that is mid-dispatch returns 409.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			ifMatchAttr()
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		commonBriefErrors(false)
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			DELETE("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusNoContent)
+			briefErrorResponses(false)
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
 	Method("get-job", func() {
 		Description("Poll campaign-creation job status.")
 		Payload(func() {

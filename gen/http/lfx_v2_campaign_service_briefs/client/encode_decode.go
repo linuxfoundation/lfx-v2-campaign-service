@@ -2046,6 +2046,194 @@ func DecodeToggleCampaignStatusResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildDeleteCampaignRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "delete-campaign" endpoint
+func (c *Client) BuildDeleteCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.DeleteCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "delete-campaign", "*lfxv2campaignservicebriefs.DeleteCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: DeleteCampaignLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("DELETE", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "delete-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeDeleteCampaignRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs delete-campaign server.
+func EncodeDeleteCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.DeleteCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "delete-campaign", "*lfxv2campaignservicebriefs.DeleteCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		if p.IfMatch != nil {
+			head := *p.IfMatch
+			req.Header.Set("If-Match", head)
+		}
+		return nil
+	}
+}
+
+// DecodeDeleteCampaignResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-briefs delete-campaign endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeDeleteCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
+//   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - error: internal error
+func DecodeDeleteCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusNoContent:
+			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			err = ValidateDeleteCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			return nil, NewDeleteCampaignBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body DeleteCampaignConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			err = ValidateDeleteCampaignConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			return nil, NewDeleteCampaignConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body DeleteCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			err = ValidateDeleteCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			return nil, NewDeleteCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body DeleteCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			err = ValidateDeleteCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			return nil, NewDeleteCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body DeleteCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			err = ValidateDeleteCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			return nil, NewDeleteCampaignNotFound(&body)
+		case http.StatusPreconditionFailed:
+			var (
+				body DeleteCampaignPreconditionFailedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			err = ValidateDeleteCampaignPreconditionFailedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			return nil, NewDeleteCampaignPreconditionFailed(&body)
+		case http.StatusPreconditionRequired:
+			var (
+				body DeleteCampaignPreconditionRequiredResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			err = ValidateDeleteCampaignPreconditionRequiredResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
+			}
+			return nil, NewDeleteCampaignPreconditionRequired(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "delete-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetJobRequest instantiates a HTTP request object with method and path
 // set to call the "lfx-v2-campaign-service-briefs" service "get-job" endpoint
 func (c *Client) BuildGetJobRequest(ctx context.Context, v any) (*http.Request, error) {

@@ -52,9 +52,13 @@ const campaignStatusPending = "pending"
 // PRESERVES these on the persisted row (rather than flattening every partial to
 // "pending") so the row surfaces WHAT went wrong, and treats them as NON-reusable so a
 // retry re-attempts the incomplete create.
+// The two literals are exported from the model package (as
+// CampaignStatusGroupCreated/CampaignStatusUnconfirmed) so the postgres repo's delete
+// guard can share this vocabulary; referenced here rather than re-spelled so the two
+// definitions cannot drift apart.
 var partialOrphanStatuses = map[string]bool{
-	"group_created": true,
-	"unconfirmed":   true,
+	model.CampaignStatusGroupCreated: true,
+	model.CampaignStatusUnconfirmed:  true,
 }
 
 // preservableErrorStatuses are the dispatcher-set statuses that are PRESERVED on the
@@ -70,9 +74,9 @@ var partialOrphanStatuses = map[string]bool{
 // package's campaignStatusCreatedDegraded; the group_created/unconfirmed literals are
 // drift-guarded by TestPartialOrphanStatusValues in the dispatch package.
 var preservableErrorStatuses = map[string]bool{
-	"group_created":    true,
-	"unconfirmed":      true,
-	"created_degraded": true,
+	model.CampaignStatusGroupCreated:    true,
+	model.CampaignStatusUnconfirmed:     true,
+	model.CampaignStatusCreatedDegraded: true,
 }
 
 // isReusableCampaign reports whether an existing campaign row is a completed upstream

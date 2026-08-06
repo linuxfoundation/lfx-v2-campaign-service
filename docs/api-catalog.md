@@ -49,7 +49,12 @@ A campaign is subordinate to a brief. This is a **collection** under the brief (
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across the platforms selected in the body (async → `JobCreateResponse` with `jobId`). Persists one execution record per platform. |
 | GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Get one campaign execution; returns ETag. |
 | PUT | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Replace a campaign execution (requires `If-Match`). |
+| DELETE | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Delete a campaign (soft delete; requires `If-Match`). **Local only — does NOT touch the ad platform.** Frees the campaign's `(brief, platform)` slot so the brief can be re-dispatched to that platform. `409` if the campaign is mid-dispatch. |
 | GET | `/projects/{projectId}/jobs/{jobId}` | `campaign_manager` | JSON | Poll campaign creation job status (`JobPollResponse`). |
+
+**Deleting a campaign.** A campaign row occupies its brief's slot for one platform — the `(brief_id, platform)` uniqueness that makes dispatch idempotent (a retry cannot create a second paid campaign upstream) also means a campaign created with the wrong budget, or one whose upstream create failed ambiguously, would block that pair forever. `DELETE` frees the slot: the row is soft-deleted (`status = 'deleted'`) and excluded from the partial unique index, so a re-dispatch to the same `(brief, platform)` succeeds while two *live* campaigns for the pair are still rejected. The soft-deleted row is retained deliberately — it holds `platform_campaign_id`, the only local pointer to a campaign that may still exist upstream — and becomes invisible to reads (`GET` returns `404`).
+
+> **The ad platform is not touched.** This service has no verified campaign-delete API for any provider, so `DELETE` never deletes, pauses, or modifies the campaign on the ad platform. **A campaign already created upstream keeps running and spending until it is stopped there.** Pause it first via the status-toggle endpoint, or stop it in the platform's own console. Deleting a campaign that is mid-dispatch (`status = 'pending'`, an active dispatch claim) returns `409`: freeing the slot under an in-flight dispatch could let a concurrent claim double-create upstream.
 
 > Listing a project's or brief's campaigns, and per-campaign change history, are served by the Query Service.
 
