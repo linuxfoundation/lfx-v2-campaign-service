@@ -52,19 +52,30 @@ if [[ -n "$replay_head" ]]; then
   # must be unchanged from the original commit. Message equality alone misses a
   # tree-only amend (e.g. `git commit --amend --no-edit` at an interactive-rebase
   # `edit` stop): the message and its Signed-off-by trailer survive untouched
-  # while the tree changes underneath. `git patch-id` is compared rather than
-  # the tree/SHA directly because it hashes the DIFF, not the tree state — a
-  # patch-id match holds even when the replay lands on a different base commit
-  # (a plain rebase or cherry-pick onto new history), which a tree-hash
-  # comparison would falsely flag as changed.
+  # while the tree changes underneath.
+  #
+  # `git patch-id --stable` deliberately ignores whitespace AND line numbers, so
+  # it is NOT used directly: a whitespace-only amend would hash to the same id
+  # as the original patch and be treated as a faithful replay, skipping the
+  # current committer's sign-off for content that actually changed. Instead,
+  # strip only the parts of `git diff` that legitimately vary across a replay
+  # onto different history — hunk-header line numbers (`@@ ... @@`) and blob-oid
+  # `index` lines — and hash what remains. This still tolerates a replay landing
+  # on a different base commit (context lines shifting doesn't change the +/-
+  # content), while a whitespace-only edit to the content itself changes the
+  # hash, unlike patch-id.
+  diff_fingerprint() {
+    git diff "$@" -- 2>/dev/null | grep -Ev '^(index |@@ )' | git hash-object --stdin 2>/dev/null
+  }
+
   original_message=$(git log -1 --format=%B "$replay_head")
   current_message=$(<"$commit_msg_file")
 
-  original_patch_id=$(git diff "${replay_head}^!" -- 2>/dev/null | git patch-id --stable 2>/dev/null | awk '{print $1}')
-  staged_patch_id=$(git diff --cached -- 2>/dev/null | git patch-id --stable 2>/dev/null | awk '{print $1}')
+  original_fingerprint=$(diff_fingerprint "${replay_head}^!")
+  staged_fingerprint=$(diff_fingerprint --cached)
 
   if [[ "$original_message" == "$current_message" ]] && \
-     [[ -n "$original_patch_id" ]] && [[ "$original_patch_id" == "$staged_patch_id" ]] && \
+     [[ -n "$original_fingerprint" ]] && [[ "$original_fingerprint" == "$staged_fingerprint" ]] && \
      git interpret-trailers --parse "$commit_msg_file" | grep -qFx "$expected_author_trailer"; then
     # Message AND content (via patch-id) are unchanged from the original commit,
     # AND the original author's trailer is present: this is a faithful, unmodified

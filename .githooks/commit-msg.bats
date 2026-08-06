@@ -63,6 +63,15 @@ msg_file() {
   replay_sha=$(git rev-parse HEAD)
   echo "$replay_sha" >.git/REBASE_HEAD
 
+  # Genuinely enter the exemption's patch-id (fingerprint) comparison: soft-reset
+  # HEAD back to the parent so the "two" change is re-staged in the index,
+  # matching what `git diff --cached` sees at an interactive-rebase stop right
+  # before the replayed commit is made. Without this, the index already matches
+  # HEAD (nothing staged), `git diff --cached` is empty, the fingerprint check
+  # fails, and the test would only pass via the fallback committer-check path —
+  # never actually exercising the exemption this test claims to cover.
+  git reset --soft HEAD^
+
   GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
     f=$(msg_file "$(git log -1 --format=%B "$replay_sha")")
   run env GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" "$HOOK" "$f"
@@ -79,7 +88,7 @@ msg_file() {
   replay_sha=$(git rev-parse HEAD)
   echo "$replay_sha" >.git/REBASE_HEAD
 
-  f=$(msg_file "feat: reworded during rebase\n\nSigned-off-by: Original Author <original@example.com>")
+  f=$(msg_file $'feat: reworded during rebase\n\nSigned-off-by: Original Author <original@example.com>')
   run env GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" "$HOOK" "$f"
   [ "$status" -ne 0 ]
   rm -f .git/REBASE_HEAD
