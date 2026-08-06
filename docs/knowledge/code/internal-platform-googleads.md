@@ -175,8 +175,11 @@ up to the minimum, capped at the maximum — never silently dropping down to
 zero, but empties/duplicates ARE dropped and the count IS capped, so a caller
 should not assume its exact input list survives verbatim), and
 `buildAdFinalURL` builds the ad's destination URL from the brief's
-registration URL, UTM-tagging it without overwriting a `utm_*` key the
-registration URL already carries.
+registration URL, UTM-tagging it: `utm_source`/`utm_medium` are set
+unconditionally to `google`/`cpc` (a Google CPC click must attribute to this
+channel, never to a `utm_source` the registration URL already carried), while
+`utm_campaign`/`utm_content` are set only when the registration URL does not
+already carry them (`setIfAbsent`).
 
 `buildAdFinalURL` rejects a registration URL that: fails to parse; uses a
 scheme other than http/https; has no host; carries embedded userinfo
