@@ -1,5 +1,47 @@
 # Log
 
+## 2026-08-05 (continuation: finish PR #61's round-3 knowledge-doc + comment items)
+
+**Docs** — Two items from dealako's round-3 review on PR #61 (LFXV2-2774) landed as inline
+threads *after* the initial five-item batch (previous entry, same date) was already pushed:
+- `docs/knowledge/kubernetes/deployment.md` and `docs/knowledge/code/internal-infrastructure-config.md`
+  didn't mention the `SNOWFLAKE_ACCOUNT` / `SNOWFLAKE_USER` / `SNOWFLAKE_PRIVATE_KEY` /
+  `SNOWFLAKE_WAREHOUSE` / `SNOWFLAKE_ROLE` secret/config wiring added by this branch — both files
+  still only documented `PG*`/`CREDENTIAL_ENCRYPTION_KEY`. Added the Snowflake settings, noting
+  they're optional as a group (unlike PG*) and degrade audience building to country-only rather
+  than blocking startup.
+- Tightened the `internal/dispatch/audience_builder.go` / `audience_builder_test.go` year-stripping
+  comments further per dealako's exact wording: they now explicitly state that year exclusion is
+  applied in Go over the returned rows, not baked into the SQL predicate — the same drift the
+  previous entry's fix addressed, but dealako's inline thread asked for a more precise phrasing.
+
+## 2026-08-05 (continuation: close out dealako's round-3 doc/test cleanup on PR #61)
+
+**Fix** — Addressed the five minor + two nit items from dealako's third review round on the
+audience-build PR (LFXV2-2774), all doc/test/comment cleanup with no behavioral change:
+- `internal/platform/snowflake/client_test.go`: added `TestResolvePastEventNames_ExcludesYearlessNames`,
+  pinning the `if extractedYear == "" { continue }` fail-closed exclusion in `client.go`'s
+  past-editions loop, which previously had no direct test coverage.
+- `docs/api-catalog.md`: the `BuildAudience` 503 doc line named "service dependencies
+  (orchestrator, dispatcher)"; the actual `buildDeps()` check
+  (`internal/service/audience_build.go`) only tests `s.briefs`/`s.builder` nil-ness. Corrected the
+  text to name the real dependencies (brief repository, HubSpot/Snowflake builder).
+- `internal/dispatch/audience_builder.go` and its test: the year-stripping comment described a SQL
+  query shape (`ILIKE '%term%' AND NOT ILIKE '%year%'`) that no longer exists — year filtering
+  moved to Go in a prior round (`d545672`). Updated both comments to describe the current
+  ILIKE-only match and why a year-bearing search term still excludes past editions from it.
+- `docs/knowledge/code/internal-platform-snowflake.md`: was stale against the same query change —
+  still described a `NOT ILIKE` year exclusion in SQL and a raw `LIMIT maxEventRows+1`. Updated to
+  describe Go-side year filtering (with the yearless-exclusion rule) and the actual
+  `(maxEventRows+1)*2` raw fetch limit.
+- `internal/container/container.go`'s `newAudienceBuilder()`: its `error` return was always nil and
+  discarded at both call sites (the one real failure path returns a degraded builder with a nil
+  error instead). Dropped the unused return value; updated the two production call sites and four
+  test call sites accordingly.
+
+The last three items came from dealako reconciling against Copilot's suppressed comments on this
+PR (a full-file pass that caught drift a diff-scoped review round didn't).
+
 ## 2026-08-05
 
 **Docs** — Migration `000012_index_outbox_published_at` (PR #60) landed without a log entry,
@@ -62,6 +104,171 @@ the package scope at creation/dispatcher wiring, so both documented the feature 
 shipped. They now carry the cascade direction (pause gates the parent first, activate works upward),
 the child-id guard (an `adId` with no `adGroupId` is refused, an ad group with no ad is allowed), the
 per-parent scoping of each child PUT, and the retry/presence rules above.
+**Fix** — A nil Snowflake resolver conflated "deliberately unconfigured" with "configured but
+broken at boot" (LFXV2-2774, PR #61). `newAudienceBuilder` logged a client-construction failure
+and then passed `snow = nil`, so `ResolvePastEditions` returned `(nil, nil)` — exactly what an
+unconfigured deployment returns. `BuildAudience` took its SUCCESS branch, never logged the
+degrade, and stored the benign first-time-event note.
+
+A malformed or rotated `SNOWFLAKE_PRIVATE_KEY` was therefore indistinguishable from "no warehouse
+configured": a returning KubeCon would silently lose its entire past-registrant audience while
+every signal reported success. The construction error is now carried on the builder
+(`NewDegradedAudienceBuilder` → `snowErr`) and returned from `ResolvePastEditions`, so the caller
+hits the degrade branch and the stored `InclusionSummary` says "NARROWER THAN INTENDED". The
+plain unconfigured case deliberately KEEPS the benign note — only a real error is an outage.
+
+**Fix** — A failed `UpdateAudience` on the partial-build path lost the created HubSpot list ids,
+contradicting the comment above it claiming they are RECORDED. With the write rejected the row
+stays `building` with an EMPTY `inclusion_summary` while real lists exist upstream — the exact
+unreconcilable state the comment says is fixed. The ids now travel in the returned error, so the
+500 body carries them when persistence cannot.
+
+**Fix** — The unnarrowed-editions caveat was filed as a GAP (PR #61 review). It was appended to
+`Plan.Notes`, which `InclusionSummary` always renders under **"Not included"** — so the summary
+announced that groups 5 and 7 were missing while listing them as built three lines above, and the
+caveat's own "verify the editions listed above" pointed at a section it did not sit in.
+
+Added `Plan.Caveats` for qualifications on lists that WERE built, rendered under its own heading
+directly after the past-edition names it qualifies. `Notes` keeps its gaps-only meaning. A test
+pins the section ordering, not just the text, since the wording alone passed while misfiled.
+
+**Fix** — The success-path persist failure no longer claims the build "failed upstream" (PR #61
+review). Returning it through `audienceBuildErr` inherited that prefix, but on this path HubSpot
+SUCCEEDED and only the local write failed — so the body blamed the one system known to be fine
+and contradicted the wrapped message telling the operator the lists EXIST. Added
+`audiencePersistErr` ("the audience lists were created but recording them failed"). The partial
+path keeps the upstream wording, which is accurate there; a test pins both directions so the
+label cannot simply be dropped everywhere.
+
+**Update** — A brief with no location now records that its past editions were matched BROADLY
+(PR #61 review). `ResolvePastEventNames` drops its location predicate when `locationTerm` is
+blank, so a multi-city family resolves other cities' editions.
+
+Recorded rather than refused, deliberately. The resolved names are only ever used ANDed with the
+host country (group 5) or region (group 7), so a stray edition cannot reach outside the target
+geography — it widens the audience to family alumni already inside it. Degrading to country-only
+(the reviewer's suggestion) would discard a correct returning-event audience whenever a brief
+omits an OPTIONAL field, which is worse than the imprecision. `PlanInput.EditionsUnnarrowed` adds
+a note beside the resolved names so the breadth is auditable and fixable by setting a location.
+
+**Fix** — The SUCCESS-path persist failure dropped the created list ids (PR #61 review). The
+partial path was fixed to carry them, but a failed `UpdateAudience` after a fully successful
+build still returned `mapAudienceErr`, which has no case for a database error — a pgx failure
+fell through to `default:` and returned a bare "an internal server error occurred". The ids
+survived only in a slog line the caller deciding whether to retry cannot see.
+
+This path is the worse of the two: every inclusion list AND the master exist upstream, so a blind
+retry duplicates the entire set. It now returns `unrecordedListsErr` like the partial path.
+Note that `createPlanLists` already returns the master as the last element of `ids`, so the code
+guards with `slices.Contains` instead of re-appending it — a naive append names the master twice
+and reads like two separate orphans.
+
+**Fix** — An ambiguous HubSpot outcome was classified in the ROW but not in the RESPONSE (PR #61
+review). `hubspot.IsUnconfirmed` covers four sources — a 2xx-with-no-id, a mutating 429, a
+mutating 5xx, and a mutating transport failure — and all four correctly keep the row `building`.
+But only the 2xx-no-id sentinel spelled out "verify before retrying" in its message; the other
+three returned a plain 500 reading like an ordinary transient error, inviting exactly the blind
+retry that duplicates a list HubSpot may already have created. `unconfirmedNote` now annotates
+the error for every ambiguous outcome.
+
+**Fix** — `audience.titleCase` indexed `w[:1]` by BYTE, so a non-ASCII country name would be
+split mid-rune into mojibake and become an exact `IS_ANY_OF` filter matching nobody. Not
+reachable today (all 30 region-map keys are ASCII) but the map's own comment invites additions.
+Now decodes with `utf8.DecodeRuneInString`.
+
+## 2026-08-03
+
+**Update** — Moved the year-stripping to the SERVICE boundary (LFXV2-2774, PR #61 review).
+`BuildAudience` passed the brief's full `eventName` across the `AudienceBuilder` interface, and
+the concrete builder happened to strip the year — so the shipped path worked, but the CONTRACT
+did not require it and any other implementation would reinherit the unsatisfiable
+`ILIKE '%…2026%' AND NOT ILIKE '%2026%'` query.
+
+`eventFamily()` now splits the name before the call and the interface documents that `eventTerm`
+must be year-free. Relying on an implementation to undo a bad argument is not a contract.
+
+**Update** — Sibling discovery never worked (LFXV2-2774, PR #61 review). `ResolvePastEditions`
+passed the full event name as the search term while ALSO excluding that name's year, so the
+query was `ILIKE '%KubeCon Korea 2026%' AND NOT ILIKE '%2026%'` — unsatisfiable. Every returning
+event silently degraded to a country-only audience. The year is now stripped from the term.
+
+Related, same area: the wall-clock year fallback was WRONG in both directions (it dropped the
+2026 edition for a 2027 brief read in 2026, and admitted a brief's own edition for an older
+one), so a missing year now yields NO editions and the caller records the gap. The year is
+derived from the event name when the details omit it. Warehouse names are no longer trimmed —
+they are exact HubSpot filter values, so normalizing them could match nothing.
+
+Also: the HubSpot client is resolved ONCE per build (cached by project) so a connection replaced
+mid-build cannot scatter lists across portals; `audienceBuildErr` reports Code "500" to match the
+status Goa actually encodes (it claimed 502 while Goa sent 500); and the kodata OpenAPI specs,
+api-catalog, README env contract and dispatch package concept are synced.
+
+**Update** — Four filter-shape fixes on the audience build (LFXV2-2774, PR #61 review). All were
+invariants the HubSpot client ALREADY documented (`internal/platform/hubspot/lists.go:19-23`) and
+the first cut violated — each fails at the platform, not in review:
+
+- **The master was an INTERSECTION.** Sibling membership filters inside one AND branch mean "in
+  list A AND in list B" — typically empty, exactly backwards. Each list now gets its own AND
+  branch under the OR root.
+- **`LIST_MEMBERSHIP` → `IN_LIST`.** The client calls the former out as invalid.
+- **Groups 5 and 7 nested ORs.** `countryOrBranch` returned an OR and callers appended those
+  under another OR. It now returns the AND BRANCHES (`countryAndBranches`) which callers splice
+  flat into one root.
+- **Region countries matched nobody.** `CountriesIn` returned lowercase map keys straight into an
+  exact `IS_ANY_OF`. Added `DisplayName`, and groups 4/5 now canonicalize the brief's country
+  too — a brief saying "USA" was filtering on the literal "USA".
+
+**Update** — Two serious fixes on the audience build (LFXV2-2774, PR #61 review):
+
+**The master list is now a real UNION.** `createPlanLists` recorded the FIRST inclusion list
+(group 4) as the master, and the dispatcher sends to `platform_master_list_id` and nothing else
+— so groups 5 and 7 were created in the portal and NEVER emailed. A build that reported success
+while reaching a fraction of the intended audience. `MasterListFilter` builds a
+`LIST_MEMBERSHIP`/`IN_LIST` OR over every created list, and the master is created last.
+
+**Only approved briefs build.** `BuildAudience` did not check brief status, so a DRAFT brief
+could create real HubSpot lists and become sendable while its event details were still being
+edited. It now applies the same guard the campaign-creation path uses.
+
+**Update** — Cold start now binds ALL audience-build dependencies (LFXV2-2774, PR #61 review).
+The retry path called `ab.SetBackend(audienceRepo)` only, but the audience service is built in
+503 mode with NO brief repo and NO builder — so after a cold start `BuildAudience` returned 503
+FOREVER on a pod that otherwise looked completely healthy.
+
+Same opt-in-setter trap #60 had to fix for the indexer, repeated in new code. The remedy is
+stronger this time: `audienceBackendSetter` now names all three setters, so a path that binds
+only some of them fails to satisfy the interface at COMPILE time. (Verified: reverting the fix
+no longer fails a test — it fails the build.)
+
+`SetBuilder(nil)` is also now a no-op, so a degraded deployment reports "not configured" instead
+of storing a nil interface that panics on first use.
+
+**Update** — Wired audience building end to end (LFXV2-2774). This closes the gap that made the
+email channel unusable: `dispatch/hubspot.go` refuses every brief whose audience is not `built`
+with a master list, and nothing could produce one. `hubspot.CreateList`, `UpdateListFilters` and
+`snowflake.ResolvePastEventNames` all already existed with ZERO callers — this is assembly, not
+new capability.
+
+`POST /projects/{id}/briefs/{briefId}/audiences/build` reads the brief's event details, resolves
+past editions from Snowflake, plans the inclusion lists (see
+[internal/audience](code/internal-audience.md)), creates them in HubSpot, and records the master
+list + provenance, flipping the row `building` to `built`.
+
+Ordering and failure handling are the parts worth remembering:
+
+- The audience row is written as BUILDING **before** any HubSpot call, so a crash mid-build
+  leaves a visible reconcilable row rather than an invisible gap plus orphan lists.
+- A partial build (some lists created, then a failure) leaves the row BUILDING with the reason
+  recorded — NOT `failed`, which would overstate what is known, and not `built`, which has no
+  master list. A 2xx with no list id is UNCONFIRMED and says "verify before retrying".
+- Snowflake is OPTIONAL as a group: unconfigured, partially configured, or holding an unusable
+  key all degrade to a country-only audience instead of failing. Guarding this needs care — the
+  nil `*snowflake.Client` must never be assigned into the interface, or `snow == nil` is false
+  and the degrade path panics. There is a test for exactly that.
+- All three `AudienceService` construction sites route through `newAudienceService`, and the
+  builder is asserted via `BuilderIsSet` rather than through a `BuildAudience` error: a nil repo
+  short-circuits before the builder is consulted, so an error-based assertion passes vacuously
+  (the first version of that test did, and stayed green with `SetBuilder` removed).
 **Fix** — Renumbered `000015_index_outbox_lease` → `000011_index_outbox_lease`. It COLLIDED with
 `000015_drop_campaigns_full_unique_platform` on `feat/LFXV2-campaign-delete` (PR #64): two
 different migration files claiming the same version in two open PRs.

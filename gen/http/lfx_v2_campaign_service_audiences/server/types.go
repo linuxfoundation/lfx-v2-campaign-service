@@ -108,6 +108,31 @@ type UpdateAudienceResponseBody struct {
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
 
+// BuildAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body.
+type BuildAudienceResponseBody struct {
+	// Audience UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Owning brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Platform the audience is built on
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Pointer to the built master list in the platform (empty until built)
+	PlatformMasterListID *string `form:"platform_master_list_id,omitempty" json:"platform_master_list_id,omitempty" xml:"platform_master_list_id,omitempty"`
+	// Platform suppression list ids applied to the master
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// Human-readable provenance: how the audience was built (past events, geo,
+	// topic)
+	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
+	// Build lifecycle status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+}
+
 // CreateAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "create-audience" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -328,6 +353,56 @@ type UpdateAudiencePreconditionRequiredResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// BuildAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "BadRequest" error.
+type BuildAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// BuildAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "Conflict" error.
+type BuildAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// BuildAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type BuildAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// BuildAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "InternalServerError" error.
+type BuildAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// BuildAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "NotFound" error.
+type BuildAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AudienceResponseBody is used to define fields on response body types.
 type AudienceResponseBody struct {
 	// Audience UUID
@@ -456,6 +531,29 @@ func NewListAudiencesResponseBody(res *lfxv2campaignserviceaudiences.ListAudienc
 // service.
 func NewUpdateAudienceResponseBody(res *lfxv2campaignserviceaudiences.Audience) *UpdateAudienceResponseBody {
 	body := &UpdateAudienceResponseBody{
+		ID:                   res.ID,
+		ProjectID:            res.ProjectID,
+		BriefID:              res.BriefID,
+		Platform:             res.Platform,
+		PlatformMasterListID: res.PlatformMasterListID,
+		InclusionSummary:     res.InclusionSummary,
+		Status:               res.Status,
+		Version:              res.Version,
+	}
+	if res.SuppressionListIds != nil {
+		body.SuppressionListIds = make([]string, len(res.SuppressionListIds))
+		for i, val := range res.SuppressionListIds {
+			body.SuppressionListIds[i] = val
+		}
+	}
+	return body
+}
+
+// NewBuildAudienceResponseBody builds the HTTP response body from the result
+// of the "build-audience" endpoint of the "lfx-v2-campaign-service-audiences"
+// service.
+func NewBuildAudienceResponseBody(res *lfxv2campaignserviceaudiences.Audience) *BuildAudienceResponseBody {
+	body := &BuildAudienceResponseBody{
 		ID:                   res.ID,
 		ProjectID:            res.ProjectID,
 		BriefID:              res.BriefID,
@@ -716,6 +814,61 @@ func NewUpdateAudiencePreconditionRequiredResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewBuildAudienceBadRequestResponseBody builds the HTTP response body from
+// the result of the "build-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewBuildAudienceBadRequestResponseBody(res *lfxv2campaignserviceaudiences.BadRequestError) *BuildAudienceBadRequestResponseBody {
+	body := &BuildAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewBuildAudienceConflictResponseBody builds the HTTP response body from the
+// result of the "build-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewBuildAudienceConflictResponseBody(res *lfxv2campaignserviceaudiences.ConflictError) *BuildAudienceConflictResponseBody {
+	body := &BuildAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewBuildAudienceServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "build-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewBuildAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceaudiences.ConnServiceUnavailableError) *BuildAudienceServiceUnavailableResponseBody {
+	body := &BuildAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewBuildAudienceInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "build-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewBuildAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceaudiences.InternalServerError) *BuildAudienceInternalServerErrorResponseBody {
+	body := &BuildAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewBuildAudienceNotFoundResponseBody builds the HTTP response body from the
+// result of the "build-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+func NewBuildAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiences.NotFoundError) *BuildAudienceNotFoundResponseBody {
+	body := &BuildAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateAudiencePayload builds a lfx-v2-campaign-service-audiences service
 // create-audience endpoint payload.
 func NewCreateAudiencePayload(body *CreateAudienceRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignserviceaudiences.CreateAudiencePayload {
@@ -761,6 +914,17 @@ func NewUpdateAudiencePayload(body *UpdateAudienceRequestBody, projectID string,
 	v.AudienceID = audienceID
 	v.BearerToken = bearerToken
 	v.IfMatch = ifMatch
+
+	return v
+}
+
+// NewBuildAudiencePayload builds a lfx-v2-campaign-service-audiences service
+// build-audience endpoint payload.
+func NewBuildAudiencePayload(projectID string, briefID string, bearerToken *string) *lfxv2campaignserviceaudiences.BuildAudiencePayload {
+	v := &lfxv2campaignserviceaudiences.BuildAudiencePayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
 
 	return v
 }

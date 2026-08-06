@@ -30,6 +30,62 @@ const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 	created_by, created_at, updated_at`
 
 // CreateAudience inserts a new audience row and returns it.
+// CreateAudienceForApprovedBrief inserts the row only if the parent brief is still APPROVED at
+// expectedVersion. See the port for why the plain create is not sufficient here.
+//
+// A guarded INSERT ... WHERE EXISTS is NOT sufficient here. Under READ COMMITTED the
+// statement's snapshot can still see the approved row while a concurrent ReplaceBrief
+// commits a draft/version change before this insert commits — so the build would create
+// REAL HubSpot lists from a brief that is no longer approved.
+func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
+	// SELECT ... FOR UPDATE takes a row-level exclusive lock and re-reads the row's CURRENT
+	// committed state, so this check cannot straddle a concurrent commit: whichever
+	// transaction takes the lock first runs to completion before the other observes the row.
+	// This guarantees that if we observe the brief as approved, it will remain approved
+	// (or return ErrStaleApproval if it moved) until our INSERT completes, preventing the
+	// creation of HubSpot lists from a draft or modified brief.
+	// Same shape as JobRepo.CreateJobForApprovedBrief.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create audience for approved brief: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		status  string
+		version int64
+	)
+	lockQ := `SELECT status, version FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`
+	if serr := tx.QueryRow(ctx, lockQ, a.BriefID, a.ProjectID).Scan(&status, &version); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			// Absent, or the caller's project does not own it. Either way there is nothing
+			// approved at expectedVersion to build from.
+			return nil, domain.ErrStaleApproval
+		}
+		return nil, fmt.Errorf("create audience for approved brief: lock brief: %w", serr)
+	}
+	if status != "approved" || version != expectedVersion {
+		return nil, domain.ErrStaleApproval
+	}
+
+	insertQ := `INSERT INTO campaign_audiences
+		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
+		 inclusion_summary, status, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		RETURNING ` + audienceCols
+	out, serr := scanAudience(tx.QueryRow(ctx, insertQ,
+		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
+		a.SuppressionListIDs, nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
+		a.CreatedBy))
+	if serr != nil {
+		return nil, fmt.Errorf("create audience for approved brief: insert: %w", serr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("create audience for approved brief: commit: %w", cerr)
+	}
+	return out, nil
+}
+
 func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
 	// Gate the insert on an ACTIVE parent brief scoped by BOTH (project_id, brief_id).
 	// A bare brief_id FK check would let a caller authorized for project A supply a
