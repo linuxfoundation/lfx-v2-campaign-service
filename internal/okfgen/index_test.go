@@ -34,6 +34,34 @@ func TestWriteIndex(t *testing.T) {
 	}
 }
 
+func TestAppendNote(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.md")
+	if err := os.WriteFile(path, []byte("# Bundle\n\n* [A](a.md) - desc\n"), 0o644); err != nil {
+		t.Fatalf("writing index: %v", err)
+	}
+
+	if err := AppendNote(path, "**Note** — a deviation."); err != nil {
+		t.Fatalf("AppendNote: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading index: %v", err)
+	}
+	want := "# Bundle\n\n* [A](a.md) - desc\n\n**Note** — a deviation."
+	if string(data) != want {
+		t.Errorf("AppendNote() content = %q, want %q", data, want)
+	}
+}
+
+func TestAppendNoteMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendNote(filepath.Join(dir, "missing.md"), "note"); err == nil {
+		t.Fatal("AppendNote() = no error, want an error for a missing file")
+	}
+}
+
 func TestEntriesFromRefs(t *testing.T) {
 	entries := EntriesFromRefs([]ConceptRef{{Title: "A", FileName: "a.md", Description: "d"}})
 	if len(entries) != 1 || entries[0].Link != "a.md" || entries[0].Title != "A" || entries[0].Description != "d" {
