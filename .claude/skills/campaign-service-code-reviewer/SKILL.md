@@ -273,8 +273,9 @@ bug**"* — so quote it as written and do not narrow it to notable, significant 
 behaviour-changing bugs. Those softeners appear nowhere in the rule surface, and
 inventing one lets the reviewer skip an upkeep miss the written rule covers. When
 a patch changes architecture, a Helm manifest, a package's role, or fixes a bug,
-expect a matching concept under `docs/knowledge/**` **and** a dated entry in
-`docs/knowledge/log.md`. The
+expect a matching concept under `docs/knowledge/**` **and** a new dated
+fragment under `docs/knowledge/log/` (`YYYY-MM-DD-<slug>.md`, one file per
+entry). The
 containing `index.md` bullet is required **only** when a concept was added,
 renamed, or its description changed — `CLAUDE.md` conditions that step, so
 demanding an index edit for an in-place concept body update is a false finding

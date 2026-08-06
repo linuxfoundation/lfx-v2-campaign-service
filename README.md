@@ -91,6 +91,24 @@ openssl rand -base64 32
 - `NATS_URL` — NATS server URL (reserved for messaging; defaults to
   in-cluster NATS URL)
 
+### Snowflake (optional, audience building)
+
+Read-only warehouse access, used ONLY to resolve an event's past editions when
+building an audience (LFXV2-2774). These are OPTIONAL as a GROUP: unless
+`SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER` and `SNOWFLAKE_PRIVATE_KEY` are ALL set,
+the warehouse is treated as unconfigured and audience building still works —
+it produces a country-only audience and records the narrower scope in the
+audience's inclusion summary. A partial or unusable configuration degrades the
+same way rather than failing startup, because past editions ENRICH an audience
+rather than making it correct.
+
+- `SNOWFLAKE_ACCOUNT` — account identifier
+- `SNOWFLAKE_USER` — user for key-pair auth
+- `SNOWFLAKE_PRIVATE_KEY` — PEM private key for key-pair auth
+- `SNOWFLAKE_WAREHOUSE` — optional warehouse; the account default is used when
+  omitted
+- `SNOWFLAKE_ROLE` — optional role; the user's default is used when omitted
+
 ### Observability (`OTEL_*`)
 
 OpenTelemetry is opt-in. Exporters default to `none` (no collector
@@ -419,8 +437,10 @@ responsibility.
    overwrite hand-edited concept files.
 2. Add or update the concept's `* [Title](url) - description` bullet in the
    relevant `index.md`.
-3. Append a dated entry to `docs/knowledge/log.md`:
-   `## YYYY-MM-DD` followed by `**Update** — <what changed and why>.`
+3. Add a new file `docs/knowledge/log/YYYY-MM-DD-<slug>.md` (slug = ticket +
+   short description), with a first H1 dated to match the filename followed
+   by `**Update** — <what changed and why>.` One file per entry — this keeps
+   concurrent PRs from ever editing the same log file.
 
 **Validate before pushing:**
 

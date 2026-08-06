@@ -129,4 +129,29 @@ nothing, so a definite 4xx stays definite. The exported `IsOutcomeUnconfirmed` f
 together with `createOutcomeAmbiguous` for callers across the package boundary (the
 dispatcher), mirroring the reddit client's helper of the same name.
 
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` twitter adapter (see [internal/dispatch](internal-dispatch.md))
+interprets an OAuth1 4-tuple (consumer key/secret + access token/secret); AccountConfig
+comes from AccountID + `funding_instrument_id`. Budget (`budgetAmount`) is in the
+ACCOUNT's currency (no FX). It surfaces a `Reused` reuse/config-drift flag and classifies
+an exhausted mutating 429 as UNCONFIRMED; it validates the destination URL (https/http,
+no embedded userinfo) up front. `validateTwitterConnection` holds the credential rules
+shared by `Dispatch` and `ToggleStatus`, with ONE intentional asymmetry:
+`funding_instrument_id` is required only by `Dispatch`. It is a create-time field that
+`UpdateCampaignAndChildrenStatus` never puts on the wire, so requiring it in the shared
+validator would refuse an otherwise-valid pause. Do not fold that check into
+`validateTwitterConnection` — both halves are pinned by tests.
+
+It implements `StatusToggler` with a DIFFERENT cascade shape: scope is the campaign + line
+item ONLY. `CreateCampaign` creates both PAUSED but the promoted-tweet association is
+created ACTIVE by the API (that endpoint does not accept `entity_status`), and the LINE
+ITEM is X's delivery gate — so pausing the line item stops serving and re-activating it
+resumes serving without the association ever changing. Toggling the promoted tweet would
+be unnecessary and, on activate, unable to make an otherwise-paused tree serve.
+`UpdateCampaignAndChildrenStatus` PUTs `entity_status` (query params, not a JSON body, per
+the X Ads v12 contract), ordering child-first on ACTIVATE and campaign-gate-first on
+PAUSE. An ACTIVATE with an unknown line-item id is refused as `ErrCampaignNotProvisioned`
+(a 409) before any call.
+
 See [internal/platform/twitter](../../../internal/platform/twitter).
