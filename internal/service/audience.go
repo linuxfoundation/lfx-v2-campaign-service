@@ -24,6 +24,11 @@ import (
 type AudienceService struct {
 	mu   sync.RWMutex
 	repo domain.AudienceRepository
+	// briefs and builder are needed only by BuildAudience (see audience_build.go). They are
+	// late-bound like repo, and BuildAudience returns a typed 503 when either is absent —
+	// so a deployment without Snowflake/HubSpot configured still serves the CRUD routes.
+	briefs  domain.BriefRepository
+	builder AudienceBuilder
 }
 
 var (
@@ -44,6 +49,14 @@ func (s *AudienceService) SetBackend(repo domain.AudienceRepository) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.repo = repo
+}
+
+// SetBriefRepo late-binds the brief repository BuildAudience reads event details from.
+// Separate from SetBackend so the existing single-arg call sites are unaffected.
+func (s *AudienceService) SetBriefRepo(b domain.BriefRepository) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.briefs = b
 }
 
 // ready returns the repo or a typed 503 when the database is not wired yet.
@@ -322,6 +335,11 @@ func mapAudienceErr(err error) error {
 		// on create/list the ErrNotFound comes from a missing/cross-project/archived
 		// PARENT BRIEF, not a missing audience — so don't claim "audience not found".
 		return &audiences.NotFoundError{Code: "404", Message: "the audience or its parent brief was not found"}
+	case errors.Is(err, domain.ErrStaleApproval):
+		// The brief moved (re-edited / re-approved) between the build's approval check and the
+		// insert. A 409 tells the caller to refresh and retry rather than implying the brief
+		// or audience is missing.
+		return &audiences.ConflictError{Code: "409", Message: "the brief changed while its audience was being built; refresh and rebuild"}
 	case errors.Is(err, domain.ErrConflict):
 		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

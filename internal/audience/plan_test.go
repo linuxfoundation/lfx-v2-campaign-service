@@ -1,0 +1,243 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package audience
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func groupsOf(p *Plan) []Group {
+	var out []Group
+	for _, l := range p.Lists {
+		out = append(out, l.Group)
+	}
+	return out
+}
+
+// TestBuildPlan_FullyResolvedEvent covers the normal case: a returning event in a mapped
+// country builds all three deterministic groups.
+func TestBuildPlan_FullyResolvedEvent(t *testing.T) {
+	p, err := BuildPlan(PlanInput{
+		EventName:    "KubeCon Korea 2026",
+		Country:      "South Korea",
+		PastEditions: []string{"KubeCon Korea 2025", "KubeCon Korea 2024"},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []Group{GroupEducationEnrolled, GroupEventRegistered, GroupRegionRegistrants}, groupsOf(p))
+	assert.Equal(t, RegionAPAC, p.Region)
+	assert.Equal(t, []string{"KubeCon Korea 2025", "KubeCon Korea 2024"}, p.PastEditions)
+
+	for _, l := range p.Lists {
+		assert.NotEmpty(t, l.Filter, "every planned list must carry a filter tree")
+		// HubSpot list names are portal-global, so each must be scoped to this event.
+		assert.Contains(t, l.Name, "KubeCon Korea 2026",
+			"list names must be event-scoped or two events in one country collide")
+	}
+}
+
+// TestBuildPlan_FirstTimeEventStillBuilds pins that a first-time event is NOT an error. It has
+// no past editions, so groups 5 and 7 are impossible — but group 4 is still valid, and refusing
+// to build would leave the HubSpot dispatcher permanently unable to send for new events.
+func TestBuildPlan_FirstTimeEventStillBuilds(t *testing.T) {
+	p, err := BuildPlan(PlanInput{EventName: "Brand New Summit 2026", Country: "Japan"})
+	require.NoError(t, err)
+
+	assert.Equal(t, []Group{GroupEducationEnrolled}, groupsOf(p))
+	assert.Empty(t, p.PastEditions)
+
+	joined := strings.Join(p.Notes, "\n")
+	assert.Contains(t, joined, "No past editions resolved",
+		"the gap must be recorded, not silently omitted")
+}
+
+// TestBuildPlan_WarehouseErrorGetsTheOutageNote pins the note that distinguishes the two empty
+// results. "No past editions" and "could not read past editions" both leave PastEditions empty
+// but mean OPPOSITE things to an operator: the first is expected and final, the second means the
+// audience is narrower than intended and must be rebuilt. The log line rotates away; this note is
+// the durable record, so it has to say which one happened.
+//
+// The error message is redacted (safeErrorCause) to avoid persisting sensitive warehouse
+// connection details or driver errors into the API response or stored InclusionSummary. The
+// detailed cause is still available in the contextual log line (slog.WarnContext) if the log
+// sink is trusted, but the response/storage gets only a generic warehouse failure message.
+func TestBuildPlan_WarehouseErrorGetsTheOutageNote(t *testing.T) {
+	p, err := BuildPlan(PlanInput{
+		EventName:       "KubeCon Korea 2026",
+		Country:         "South Korea",
+		PastEditionsErr: errors.New("snowflake is configured but unusable: bad private key"),
+	})
+	require.NoError(t, err, "a warehouse outage must still yield the country-only audience")
+
+	assert.Equal(t, []Group{GroupEducationEnrolled}, groupsOf(p))
+
+	joined := strings.Join(p.Notes, "\n")
+	assert.Contains(t, joined, "NARROWER THAN INTENDED",
+		"an operator must be told to rebuild; without this the audience looks final")
+	assert.Contains(t, joined, "warehouse failure",
+		"the note must record that a warehouse error occurred, without exposing sensitive details")
+	assert.NotContains(t, joined, "bad private key",
+		"sensitive error details (key material, DSN) must not be persisted in the response/storage")
+	assert.NotContains(t, joined, "Expected for a first-time event",
+		"a warehouse outage must NOT borrow the first-time-event note: that note tells the "+
+			"operator nothing is wrong, which is the exact wrong conclusion here")
+}
+
+// TestBuildPlan_UnnarrowedEditionsAreRecorded pins the note for a location-free warehouse lookup.
+//
+// Without a location predicate the warehouse matches the event FAMILY alone, so a multi-city
+// family can resolve other cities' editions. The audience is still built — groups 5 and 7 AND the
+// host country/region onto every edition branch, so a stray edition cannot reach outside the
+// target geography; it widens to family alumni already inside it. That is a judgement call an
+// operator must be able to SEE, so it goes in the durable summary next to the resolved names
+// rather than being inferred later from list sizes.
+func TestBuildPlan_UnnarrowedEditionsAreRecorded(t *testing.T) {
+	p, err := BuildPlan(PlanInput{
+		EventName:          "Open Source Summit 2026",
+		Country:            "Japan",
+		PastEditions:       []string{"Open Source Summit Milan 2025", "Open Source Summit Tokyo 2025"},
+		EditionsUnnarrowed: true,
+	})
+	require.NoError(t, err, "a missing location must not discard a valid returning-event audience")
+
+	// The groups still build: the note is transparency, not a downgrade.
+	assert.Equal(t, []Group{GroupEducationEnrolled, GroupEventRegistered, GroupRegionRegistrants}, groupsOf(p))
+
+	// It is a CAVEAT, not a gap. Notes render under "Not included", which would claim groups 5
+	// and 7 are missing at the same moment the summary lists them as built.
+	joined := strings.Join(p.Caveats, "\n")
+	assert.Contains(t, joined, "no location",
+		"the operator must be told WHY the editions were matched broadly")
+	assert.Contains(t, joined, "OTHER CITIES",
+		"the actual risk — cross-city editions — must be named, not implied")
+	assert.Contains(t, joined, "set the brief's location and rebuild",
+		"the note must say how to narrow it")
+	assert.NotContains(t, strings.Join(p.Notes, "\n"), "OTHER CITIES",
+		"a caveat about a built group must not be filed as a gap")
+
+	// Rendering: the caveat must sit with the editions it qualifies, ABOVE the inclusion lists,
+	// and must not land in the "Not included" section.
+	s := p.InclusionSummary()
+	editionsAt := strings.Index(s, "Past editions")
+	caveatAt := strings.Index(s, "OTHER CITIES")
+	listsAt := strings.Index(s, "Inclusion lists:")
+	notIncludedAt := strings.Index(s, "Not included:")
+	require.NotEqual(t, -1, caveatAt)
+	require.NotEqual(t, -1, notIncludedAt)
+	assert.Greater(t, caveatAt, editionsAt, "the caveat must follow the editions it qualifies")
+	assert.Less(t, caveatAt, listsAt, "the caveat must be read before the lists it applies to")
+	assert.Less(t, caveatAt, notIncludedAt,
+		"the caveat must NOT fall inside 'Not included' — those groups were built")
+
+	// A located brief must NOT carry the caveat; otherwise it is noise on every audience and
+	// stops being read at all.
+	located, lerr := BuildPlan(PlanInput{
+		EventName:    "Open Source Summit Tokyo 2026",
+		Country:      "Japan",
+		PastEditions: []string{"Open Source Summit Tokyo 2025"},
+	})
+	require.NoError(t, lerr)
+	assert.Empty(t, located.Caveats)
+	assert.NotContains(t, located.InclusionSummary(), "Caveats",
+		"an unqualified audience must not carry an empty caveats section")
+}
+
+// TestBuildPlan_UnmappedCountryFailsSoft pins the deliberate asymmetry: an unknown country
+// costs REACH (no region-wide list) but not correctness, because the country-scoped lists are
+// still valid. Failing the whole build would be worse than building a narrower audience.
+func TestBuildPlan_UnmappedCountryFailsSoft(t *testing.T) {
+	p, err := BuildPlan(PlanInput{
+		EventName:    "Edge Summit 2026",
+		Country:      "Atlantis",
+		PastEditions: []string{"Edge Summit 2025"},
+	})
+	require.NoError(t, err, "an unmapped country must not fail the build")
+
+	assert.Equal(t, []Group{GroupEducationEnrolled, GroupEventRegistered}, groupsOf(p))
+	assert.Empty(t, p.Region, "no region may be guessed for an unmapped country")
+	assert.Contains(t, strings.Join(p.Notes, "\n"), "not in the region map")
+}
+
+// TestBuildPlan_AlwaysRecordsJudgementGaps pins that the summary never implies completeness.
+// Group 6 and domain-fit narrowing are judgement calls that are deliberately not mechanised,
+// and an operator reading the audience record must be able to see that.
+func TestBuildPlan_AlwaysRecordsJudgementGaps(t *testing.T) {
+	p, err := BuildPlan(PlanInput{
+		EventName:    "KubeCon Korea 2026",
+		Country:      "South Korea",
+		PastEditions: []string{"KubeCon Korea 2025"},
+	})
+	require.NoError(t, err)
+
+	joined := strings.Join(p.Notes, "\n")
+	assert.Contains(t, joined, "Group 6")
+	assert.Contains(t, joined, "Domain-fit")
+
+	summary := p.InclusionSummary()
+	assert.Contains(t, summary, "Not included:", "the summary must state what was NOT built")
+	assert.Contains(t, summary, "KubeCon Korea 2025", "past editions belong in the provenance")
+	assert.Contains(t, summary, "APAC")
+}
+
+// TestBuildPlan_RequiresCountryAndEventName pins the two inputs with no safe default. A missing
+// country cannot be inferred, and a missing event name would produce colliding list names.
+func TestBuildPlan_RequiresCountryAndEventName(t *testing.T) {
+	_, err := BuildPlan(PlanInput{EventName: "Some Event"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "country")
+
+	_, err = BuildPlan(PlanInput{Country: "Japan"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "event name")
+}
+
+// TestBuildPlan_DropsBlankEditions guards against a blank name reaching HubSpot, where it would
+// match nobody and silently shrink the audience.
+func TestBuildPlan_DropsBlankEditions(t *testing.T) {
+	p, err := BuildPlan(PlanInput{
+		EventName:    "KubeCon Korea 2026",
+		Country:      "South Korea",
+		PastEditions: []string{"  ", "KubeCon Korea 2025", ""},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"KubeCon Korea 2025"}, p.PastEditions)
+}
+
+// TestBuildPlan_BuildRefDisambiguatesRebuilds pins that two builds of the SAME brief do not
+// produce identical list names. Several audiences per brief are supported, and HubSpot list
+// names are portal-global — without a discriminator a rebuild either has its create rejected or
+// silently adopts the previous build's lists, leaving the master pointing at stale membership.
+func TestBuildPlan_BuildRefDisambiguatesRebuilds(t *testing.T) {
+	in := PlanInput{EventName: "KubeCon Korea 2026", Country: "South Korea", PastEditions: []string{"KubeCon Korea 2025"}}
+
+	in.BuildRef = "aud-11111111-aaaa"
+	first, err := BuildPlan(in)
+	require.NoError(t, err)
+
+	in.BuildRef = "aud-22222222-bbbb"
+	second, err := BuildPlan(in)
+	require.NoError(t, err)
+
+	require.Equal(t, len(first.Lists), len(second.Lists))
+	for i := range first.Lists {
+		assert.NotEqual(t, first.Lists[i].Name, second.Lists[i].Name,
+			"two builds of one brief must not emit the same list name")
+	}
+	assert.NotEqual(t, first.MasterName(), second.MasterName(), "the master name must differ too")
+
+	// The event still leads the name, so an operator can recognise it in the HubSpot UI.
+	assert.Contains(t, first.Lists[0].Name, "KubeCon Korea 2026")
+	assert.Contains(t, first.MasterName(), "KubeCon Korea 2026")
+
+	// With no BuildRef the names stay clean (the first build for a brief).
+	in.BuildRef = ""
+	plain, err := BuildPlan(in)
+	require.NoError(t, err)
+	assert.NotContains(t, plain.Lists[0].Name, "(")
+}

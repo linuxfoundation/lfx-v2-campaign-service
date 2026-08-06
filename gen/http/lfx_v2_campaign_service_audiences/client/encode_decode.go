@@ -746,6 +746,178 @@ func DecodeUpdateAudienceResponse(decoder func(*http.Response) goahttp.Decoder, 
 	}
 }
 
+// BuildBuildAudienceRequest instantiates a HTTP request object with method and
+// path set to call the "lfx-v2-campaign-service-audiences" service
+// "build-audience" endpoint
+func (c *Client) BuildBuildAudienceRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceaudiences.BuildAudiencePayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-audiences", "build-audience", "*lfxv2campaignserviceaudiences.BuildAudiencePayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: BuildAudienceLfxV2CampaignServiceAudiencesPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-audiences", "build-audience", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeBuildAudienceRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-audiences build-audience server.
+func EncodeBuildAudienceRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceaudiences.BuildAudiencePayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-audiences", "build-audience", "*lfxv2campaignserviceaudiences.BuildAudiencePayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeBuildAudienceResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-audiences build-audience endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeBuildAudienceResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceaudiences.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceaudiences.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceaudiences.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceaudiences.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceaudiences.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeBuildAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusAccepted:
+			var (
+				body BuildAudienceResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			err = ValidateBuildAudienceResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			var (
+				etag *string
+			)
+			etagRaw := resp.Header.Get("Etag")
+			if etagRaw != "" {
+				etag = &etagRaw
+			}
+			res := NewBuildAudienceAudienceAccepted(&body, etag)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body BuildAudienceBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			err = ValidateBuildAudienceBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			return nil, NewBuildAudienceBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body BuildAudienceConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			err = ValidateBuildAudienceConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			return nil, NewBuildAudienceConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body BuildAudienceServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			err = ValidateBuildAudienceServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			return nil, NewBuildAudienceServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body BuildAudienceInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			err = ValidateBuildAudienceInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			return nil, NewBuildAudienceInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body BuildAudienceNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			err = ValidateBuildAudienceNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-audiences", "build-audience", err)
+			}
+			return nil, NewBuildAudienceNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-audiences", "build-audience", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // marshalLfxv2campaignserviceaudiencesAudienceInputToAudienceInputRequestBody
 // builds a value of type *AudienceInputRequestBody from a value of type
 // *lfxv2campaignserviceaudiences.AudienceInput.
