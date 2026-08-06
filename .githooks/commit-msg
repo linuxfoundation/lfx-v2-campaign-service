@@ -58,14 +58,24 @@ if [[ -n "$replay_head" ]]; then
   # it is NOT used directly: a whitespace-only amend would hash to the same id
   # as the original patch and be treated as a faithful replay, skipping the
   # current committer's sign-off for content that actually changed. Instead,
-  # strip only the parts of `git diff` that legitimately vary across a replay
-  # onto different history — hunk-header line numbers (`@@ ... @@`) and blob-oid
-  # `index` lines — and hash what remains. This still tolerates a replay landing
-  # on a different base commit (context lines shifting doesn't change the +/-
-  # content), while a whitespace-only edit to the content itself changes the
-  # hash, unlike patch-id.
+  # keep only the actual +/- content lines (dropping the `+++`/`---` file
+  # headers, `index` lines, `@@ ... @@` hunk headers, and unchanged context
+  # lines) and hash what remains. Dropping context lines — not just index/hunk
+  # headers — is what preserves cross-base tolerance: a replay landing on a
+  # different base commit can shift surrounding context without changing the
+  # patch itself, and that must not flip the fingerprint. A whitespace-only
+  # edit to a +/- line itself still changes the hash, unlike patch-id.
+  #
+  # The `|| true` is required: `grep` exits 1 when nothing matches, which
+  # happens whenever the diff is empty (e.g. `git diff --cached` at a
+  # `reword`/`edit` rebase stop where nothing is staged) or the diff has no
+  # content lines. Under `set -euo pipefail`, an unguarded grep exit 1 here
+  # would abort the whole hook — including on an otherwise-correctly-signed
+  # commit — before the committer-sign-off fallback ever runs. Wrapping the
+  # filtering pipe in `|| true` forces this stage to exit 0 so an empty diff
+  # yields an empty (but well-defined) fingerprint instead of aborting.
   diff_fingerprint() {
-    git diff "$@" -- 2>/dev/null | grep -Ev '^(index |@@ )' | git hash-object --stdin 2>/dev/null
+    git diff "$@" -- 2>/dev/null | { grep -E '^[+-]' | grep -Ev '^(\+\+\+|---) ' || true; } | git hash-object --stdin 2>/dev/null
   }
 
   original_message=$(git log -1 --format=%B "$replay_head")

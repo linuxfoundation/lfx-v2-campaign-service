@@ -79,6 +79,24 @@ msg_file() {
   rm -f .git/REBASE_HEAD
 }
 
+@test "exempts a reword-only replay with an empty staged diff" {
+  git commit -q -m "initial" --no-verify
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    git commit -q -s -m "feat: original change" --allow-empty
+  replay_sha=$(git rev-parse HEAD)
+  echo "$replay_sha" >.git/REBASE_HEAD
+
+  # A pure `reword` rebase stop: the tree is untouched, so the index already
+  # matches HEAD and `git diff --cached` is empty. diff_fingerprint's filtering
+  # pipe (grep with no matching lines) must not abort the hook under
+  # `set -euo pipefail` here — an empty diff on both sides is a valid,
+  # trivially-equal fingerprint, not a fingerprint-check failure.
+  f=$(msg_file "$(git log -1 --format=%B "$replay_sha")")
+  run env GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" "$HOOK" "$f"
+  [ "$status" -eq 0 ]
+  rm -f .git/REBASE_HEAD
+}
+
 @test "rejects a replay whose message was edited without a fresh sign-off" {
   git commit -q -m "initial" --no-verify
   echo two >file.txt
