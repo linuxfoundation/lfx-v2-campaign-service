@@ -49,9 +49,13 @@ func AppendNote(path, note string) error {
 	if err != nil {
 		return fmt.Errorf("opening %s to append note: %w", path, err)
 	}
-	defer f.Close()
-	if _, err := f.WriteString("\n" + note); err != nil {
-		return fmt.Errorf("appending note to %s: %w", path, err)
+	_, writeErr := f.WriteString("\n" + note)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("appending note to %s: %w", path, writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("closing %s: %w", path, closeErr)
 	}
 	return nil
 }
