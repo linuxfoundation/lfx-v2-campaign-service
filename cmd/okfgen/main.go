@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/okfgen"
 )
@@ -108,8 +109,13 @@ func run() error {
 			Description: "Go package structure of the service."},
 		{Title: "Specs", Link: "specs/index.md",
 			Description: "Feature specs tracked via speckit."},
+		{Title: "Log", Link: "log/",
+			Description: "Dated change log; one file per entry, so concurrent PRs never edit the same log file."},
 	}); err != nil {
 		return fmt.Errorf("write root index: %w", err)
+	}
+	if err := okfgen.AppendNote(bundleRoot+"/index.md", strings.TrimPrefix(logDeviationNote, "\n")); err != nil {
+		return fmt.Errorf("append log deviation note: %w", err)
 	}
 
 	if err := okfgen.SeedLog(bundleRoot, "2026-07-09",
@@ -118,3 +124,15 @@ func run() error {
 	}
 	return nil
 }
+
+// logDeviationNote documents this bundle's OKF v0.1 §7 deviation: a
+// docs/knowledge/log/ fragment directory instead of a single log.md.
+const logDeviationNote = `
+**OKF deviation:** OKF v0.1 §7 reserves a single ` + "`log.md`" + ` newest-first
+changelog. This bundle instead keeps ` + "`docs/knowledge/log/`" + `, one dated fragment
+per entry (` + "`YYYY-MM-DD-<slug>.md`" + `), because a single append-at-top file was the
+dominant source of merge conflicts between concurrent PRs. Each fragment still
+carries an ISO date in its name, so a conformant ` + "`log.md`" + ` can be reconstructed by
+normalizing each fragment's H1 into an ` + "`## YYYY-MM-DD`" + ` heading any time an
+external OKF consumer needs one.
+`

@@ -131,4 +131,18 @@ building block. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classif
 the `Unconfirmed()` behavioral interface) so a caller can tell a maybe-applied outcome
 (transport/5xx/3xx-mutating, or a partial cascade) from a definite rejection.
 
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` meta adapter (see [internal/dispatch](internal-dispatch.md))
+interprets a single OAuth2 accessToken; AccountConfig comes from AccountID (`act_...`) +
+`page_id` (REQUIRED by the connection design — the dispatcher needs it to attach the
+promoted-object page, so requiring it at connection time surfaces a 4xx instead of a
+silent dispatch failure). Budget is in the ACCOUNT's currency (no FX), with an optional
+CurrencyOffset.
+
+It implements `StatusToggler` and CASCADES: its create PAUSES the campaign, ad set, and
+ads, so `UpdateCampaignAndChildrenStatus` POSTs the status to the campaign, the persisted
+ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta persists the ad set id
+but not the individual ad ids). It needs only the access token, not the page id.
+
 See [internal/platform/meta](../../../internal/platform/meta).
