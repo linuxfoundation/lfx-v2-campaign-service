@@ -928,6 +928,16 @@ func (r *toggleCampaignRepo) ReleaseCampaignLock(context.Context, domain.Campaig
 	return nil
 }
 
+// ReleaseCampaignLockAfterCooldown overrides the embedded fakeCampaignRepo's
+// no-op: the real ToggleCampaignStatus UNCONFIRMED path calls this instead of
+// ReleaseCampaignLock, so without an override claimMu is never unlocked here
+// and any later claim on the same fake deadlocks. The fake ignores the
+// cooldown duration and releases immediately — there's no real connection to
+// hold open, and the test only cares that the lock is eventually released.
+func (r *toggleCampaignRepo) ReleaseCampaignLockAfterCooldown(_ domain.CampaignLockToken, _ time.Duration) {
+	r.claimMu.Unlock()
+}
+
 // stubToggler implements PlatformDispatcher + StatusToggler, recording the toggle call.
 type stubToggler struct {
 	err     error
