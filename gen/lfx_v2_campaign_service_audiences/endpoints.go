@@ -20,6 +20,7 @@ type Endpoints struct {
 	GetAudience    goa.Endpoint
 	ListAudiences  goa.Endpoint
 	UpdateAudience goa.Endpoint
+	BuildAudience  goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-audiences"
@@ -32,6 +33,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GetAudience:    NewGetAudienceEndpoint(s, a.JWTAuth),
 		ListAudiences:  NewListAudiencesEndpoint(s, a.JWTAuth),
 		UpdateAudience: NewUpdateAudienceEndpoint(s, a.JWTAuth),
+		BuildAudience:  NewBuildAudienceEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -42,6 +44,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetAudience = m(e.GetAudience)
 	e.ListAudiences = m(e.ListAudiences)
 	e.UpdateAudience = m(e.UpdateAudience)
+	e.BuildAudience = m(e.BuildAudience)
 }
 
 // NewCreateAudienceEndpoint returns an endpoint function that calls the method
@@ -133,5 +136,28 @@ func NewUpdateAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.En
 			return nil, err
 		}
 		return s.UpdateAudience(ctx, p)
+	}
+}
+
+// NewBuildAudienceEndpoint returns an endpoint function that calls the method
+// "build-audience" of service "lfx-v2-campaign-service-audiences".
+func NewBuildAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*BuildAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.BuildAudience(ctx, p)
 	}
 }

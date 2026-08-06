@@ -19,16 +19,18 @@ type Client struct {
 	GetAudienceEndpoint    goa.Endpoint
 	ListAudiencesEndpoint  goa.Endpoint
 	UpdateAudienceEndpoint goa.Endpoint
+	BuildAudienceEndpoint  goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-audiences" service client
 // given the endpoints.
-func NewClient(createAudience, getAudience, listAudiences, updateAudience goa.Endpoint) *Client {
+func NewClient(createAudience, getAudience, listAudiences, updateAudience, buildAudience goa.Endpoint) *Client {
 	return &Client{
 		CreateAudienceEndpoint: createAudience,
 		GetAudienceEndpoint:    getAudience,
 		ListAudiencesEndpoint:  listAudiences,
 		UpdateAudienceEndpoint: updateAudience,
+		BuildAudienceEndpoint:  buildAudience,
 	}
 }
 
@@ -100,6 +102,24 @@ func (c *Client) ListAudiences(ctx context.Context, p *ListAudiencesPayload) (re
 func (c *Client) UpdateAudience(ctx context.Context, p *UpdateAudiencePayload) (res *Audience, err error) {
 	var ires any
 	ires, err = c.UpdateAudienceEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*Audience), nil
+}
+
+// BuildAudience calls the "build-audience" endpoint of the
+// "lfx-v2-campaign-service-audiences" service.
+// BuildAudience may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) BuildAudience(ctx context.Context, p *BuildAudiencePayload) (res *Audience, err error) {
+	var ires any
+	ires, err = c.BuildAudienceEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

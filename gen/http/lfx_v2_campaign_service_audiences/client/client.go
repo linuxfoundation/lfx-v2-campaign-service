@@ -34,6 +34,10 @@ type Client struct {
 	// update-audience endpoint.
 	UpdateAudienceDoer goahttp.Doer
 
+	// BuildAudience Doer is the HTTP client used to make requests to the
+	// build-audience endpoint.
+	BuildAudienceDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -59,6 +63,7 @@ func NewClient(
 		GetAudienceDoer:     doer,
 		ListAudiencesDoer:   doer,
 		UpdateAudienceDoer:  doer,
+		BuildAudienceDoer:   doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -158,6 +163,30 @@ func (c *Client) UpdateAudience() goa.Endpoint {
 		resp, err := c.UpdateAudienceDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audiences", "update-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// BuildAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-audiences service build-audience server.
+func (c *Client) BuildAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeBuildAudienceRequest(c.encoder)
+		decodeResponse = DecodeBuildAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildBuildAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.BuildAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audiences", "build-audience", err)
 		}
 		return decodeResponse(resp)
 	}

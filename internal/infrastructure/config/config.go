@@ -31,6 +31,15 @@ type Config struct {
 	// disables indexing without affecting any other capability.
 	NATSUrl string
 
+	// Snowflake read-only credentials for audience building. Optional as a GROUP: when
+	// account/user/key are not all present the warehouse is treated as unconfigured and
+	// audience building degrades to country-only rather than failing.
+	SnowflakeAccount    string
+	SnowflakeUser       string
+	SnowflakePrivateKey string
+	SnowflakeWarehouse  string
+	SnowflakeRole       string
+
 	// IndexerServiceToken is the SERVICE credential the index relay stamps onto replayed
 	// messages. Outbox rows store no token — the table is retained for audit, so a per-request
 	// JWT written there would persist as a live credential — and the indexer requires a
@@ -90,6 +99,12 @@ func LoadConfig() *Config {
 		// that disables index publishing, and envOrDefault cannot express it (it
 		// collapses unset and empty into the default).
 		NATSUrl: envOrDefaultUnlessSet(constants.EnvNATSURL, constants.DefaultNATSURL),
+
+		SnowflakeAccount:    os.Getenv(constants.EnvSnowflakeAccount),
+		SnowflakeUser:       os.Getenv(constants.EnvSnowflakeUser),
+		SnowflakePrivateKey: os.Getenv(constants.EnvSnowflakePrivateKey),
+		SnowflakeWarehouse:  os.Getenv(constants.EnvSnowflakeWarehouse),
+		SnowflakeRole:       os.Getenv(constants.EnvSnowflakeRole),
 
 		IndexerServiceToken:     os.Getenv(constants.EnvIndexerServiceToken),
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
