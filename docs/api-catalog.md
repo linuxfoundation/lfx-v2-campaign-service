@@ -65,6 +65,7 @@ Because these paths nest under `/briefs/{briefId}/`, they inherit the gateway wi
 | GET | `/projects/{projectId}/briefs/{briefId}/audiences/{audienceId}` | `campaign_manager` | JSON | Get one audience; returns ETag. |
 | GET | `/projects/{projectId}/briefs/{briefId}/audiences` | `campaign_manager` | JSON | List a brief's audiences (newest first). |
 | PATCH | `/projects/{projectId}/briefs/{briefId}/audiences/{audienceId}` | `campaign_manager` | JSON | Partially update an audience (load-then-merge; requires `If-Match`). |
+| POST | `/projects/{projectId}/briefs/{briefId}/audiences/build` | `campaign_manager` | JSON | Build the brief's HubSpot audience: derive the regional-expansion inclusion lists, create them, and record the master list (`202`). `400` when the brief is not approved or its details lack an event name/country; `500` when the brief's HubSpot connection is missing; `503` when the audience-build dependencies (brief repository, HubSpot/Snowflake builder) are unconfigured. Snowflake enrichment is optional; builds proceed country-only if unavailable. Until an audience is `built`, the email channel cannot dispatch. |
 
 ### Monitoring (Insights Phase)
 

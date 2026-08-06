@@ -1,7 +1,7 @@
 ---
 type: "Kubernetes Resource"
 title: "Deployment"
-description: "Helm Deployment for the campaign service, including PG* and CREDENTIAL_ENCRYPTION_KEY from lfx-v2-campaign-service-secrets."
+description: "Helm Deployment for the campaign service, including PG*, CREDENTIAL_ENCRYPTION_KEY, and SNOWFLAKE_* from lfx-v2-campaign-service-secrets."
 resource: "charts/lfx-v2-campaign-service/templates/deployment.yaml"
 ---
 
@@ -15,6 +15,16 @@ including `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` /
 `password`, `dbname`, `engine`, `credential-encryption-key`). The encryption
 key is required whenever a database URL is configured because startup
 initializes the AES-GCM encryptor before opening the pool used by `/readyz`.
+
+`SNOWFLAKE_ACCOUNT` / `SNOWFLAKE_USER` / `SNOWFLAKE_PRIVATE_KEY` also come via
+`secretKeyRef` to `lfx-v2-campaign-service-secrets` (keys `snowflake-account`,
+`snowflake-user`, `snowflake-private-key`), each marked `optional: true` — unlike
+the Postgres/encryption vars, an unset Snowflake secret does not block startup:
+the warehouse client is a read-only enrichment for the email channel's
+past-editions audience lookup (`internal/platform/snowflake`), and its absence
+just narrows a built audience to country-only rather than failing the pod.
+`SNOWFLAKE_WAREHOUSE` / `SNOWFLAKE_ROLE` are plain (non-secret) values, empty by
+default so a cluster with no override uses the account's default.
 
 Probes: `livez` restarts a hung process (never touches the DB); `readyz` gates
 traffic on DB connectivity. The `startupProbe` on `/readyz` carries a ~90s
