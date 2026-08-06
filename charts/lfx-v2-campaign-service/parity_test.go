@@ -446,7 +446,7 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 }
 
 // TestDeploymentUsesRecreateStrategy pins the rollout strategy, because this service runs
-// its own schema migrations at boot and migration 000011 is BACKWARD-INCOMPATIBLE: it drops
+// its own schema migrations at boot and migration 000014 is BACKWARD-INCOMPATIBLE: it drops
 // UNIQUE (brief_id, platform), after which the previous release's bare
 // `ON CONFLICT (brief_id, platform)` matches no index and errors on every dispatch claim.
 //
@@ -455,7 +455,7 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 // old pod still serves writes against it. Recreate orders it the other way, so the
 // incompatible schema is never live under the old code.
 //
-// Why this is pinned rather than left to convention: 000010 and 000011 cannot be staged
+// Why this is pinned rather than left to convention: 000013 and 000014 cannot be staged
 // apart to remove the need for it. Verified on PostgreSQL 16.10 — with the drop deferred,
 // the old full constraint still covers soft-deleted rows, so a re-dispatch after delete is
 // SILENTLY swallowed by ON CONFLICT DO NOTHING (RowsAffected 0, read back as "already
@@ -479,12 +479,12 @@ func TestDeploymentUsesRecreateStrategy(t *testing.T) {
 	if !strings.Contains(rendered, "type: Recreate") {
 		t.Errorf("deployment must set `strategy.type: Recreate`; rendered chart does not.\n"+
 			"RollingUpdate surges the new pod before terminating the old one, letting the previous "+
-			"release run against the post-000011 schema where its bare ON CONFLICT (brief_id, platform) "+
+			"release run against the post-000014 schema where its bare ON CONFLICT (brief_id, platform) "+
 			"fails on every dispatch claim.\nrendered:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "RollingUpdate") {
 		t.Errorf("deployment must NOT use RollingUpdate while a backward-incompatible migration "+
-			"(000011, DROP CONSTRAINT) ships in this release.\nrendered:\n%s", rendered)
+			"(000014, DROP CONSTRAINT) ships in this release.\nrendered:\n%s", rendered)
 	}
 }
 

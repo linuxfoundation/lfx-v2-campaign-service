@@ -2,13 +2,13 @@
 -- SPDX-License-Identifier: MIT
 
 -- Drop the full UNIQUE (brief_id, platform) constraint from 000002, now that
--- 000010's partial unique index (excluding soft-deleted rows) enforces the same
+-- 000013's partial unique index (excluding soft-deleted rows) enforces the same
 -- rule for LIVE campaigns. Until this runs, the old constraint still covers
 -- deleted rows, so a deleted campaign's slot stays occupied and the whole point of
--- 000010 is unrealized.
+-- 000013 is unrealized.
 --
--- Why this is a SEPARATE migration from 000010 rather than a second statement
--- there: 000010's CREATE INDEX CONCURRENTLY cannot share a file with other
+-- Why this is a SEPARATE migration from 000013 rather than a second statement
+-- there: 000013's CREATE INDEX CONCURRENTLY cannot share a file with other
 -- statements (a multi-statement migration is batched, which reintroduces the
 -- implicit transaction that CONCURRENTLY forbids). Splitting also gives the
 -- required ordering for free -- golang-migrate applies versions in ascending
@@ -19,17 +19,17 @@
 -- upstream.
 --
 -- The guard. A failed CREATE INDEX CONCURRENTLY does not roll back -- it leaves an
--- INVALID index that Postgres refuses to use, and 000010's IF NOT EXISTS would
+-- INVALID index that Postgres refuses to use, and 000013's IF NOT EXISTS would
 -- then skip the rebuild while reporting success. If this migration dropped the old
 -- constraint anyway, campaigns would be left with NO enforceable uniqueness on
 -- (brief_id, platform): every dispatch claim would win, and concurrent retries
 -- would create duplicate paid campaigns upstream -- silently, since nothing would
 -- error. So the drop is conditional on the replacement index being present, valid,
 -- AND matching its required definition (see the guard below -- a name check alone is
--- not enough, because 000010's IF NOT EXISTS lets a pre-existing index of the same
+-- not enough, because 000013's IF NOT EXISTS lets a pre-existing index of the same
 -- name suppress the real build), and RAISEs otherwise. Failing the migration (and so
 -- the pod's startup) is the correct outcome: it is loud, it is recoverable by
--- re-running 000010's build, and it leaves the old constraint protecting the table
+-- re-running 000013's build, and it leaves the old constraint protecting the table
 -- meanwhile.
 --
 -- The DO block also means this migration is NOT idempotent-by-accident: on a
@@ -53,8 +53,8 @@ BEGIN
     END IF;
 
     -- Check the index's DEFINITION, not just its name. A name-and-indisvalid check is
-    -- not enough: 000010 builds with IF NOT EXISTS, so any pre-existing index that
-    -- happens to carry this name makes 000010 a silent no-op AND satisfies a name-only
+    -- not enough: 000013 builds with IF NOT EXISTS, so any pre-existing index that
+    -- happens to carry this name makes 000013 a silent no-op AND satisfies a name-only
     -- guard -- and then this migration drops the sole real uniqueness constraint. The
     -- index must therefore be proven to enforce what the constraint enforced:
     --   * on public.campaigns (not some other table's index of the same name),
@@ -88,7 +88,7 @@ BEGIN
               = '(status <> ''deleted''::text)'
     ) THEN
         RAISE EXCEPTION
-            'refusing to drop campaigns_brief_id_platform_key: the replacement index public.uq_campaigns_brief_platform_live is missing, INVALID (a failed CONCURRENTLY build in 000010), or does not match its required definition -- UNIQUE on public.campaigns, keyed on exactly (brief_id, platform), partial WHERE status <> ''deleted''. Dropping the constraint now would leave (brief_id, platform) with no enforceable uniqueness, allowing duplicate paid campaigns. Inspect the index, rebuild it from 000010, then re-run this migration.';
+            'refusing to drop campaigns_brief_id_platform_key: the replacement index public.uq_campaigns_brief_platform_live is missing, INVALID (a failed CONCURRENTLY build in 000013), or does not match its required definition -- UNIQUE on public.campaigns, keyed on exactly (brief_id, platform), partial WHERE status <> ''deleted''. Dropping the constraint now would leave (brief_id, platform) with no enforceable uniqueness, allowing duplicate paid campaigns. Inspect the index, rebuild it from 000013, then re-run this migration.';
     END IF;
 
     EXECUTE 'ALTER TABLE public.campaigns DROP CONSTRAINT campaigns_brief_id_platform_key';

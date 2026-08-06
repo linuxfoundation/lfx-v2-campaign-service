@@ -51,12 +51,12 @@
 -- CONCURRENTLY cannot run inside one. Do NOT add other statements to this file --
 -- a multi-statement migration would be batched and reintroduce the transaction
 -- constraint. That is why dropping the old constraint is a SEPARATE migration
--- (000011) rather than a second statement here; it also gives the required
+-- (000014) rather than a second statement here; it also gives the required
 -- ordering for free, since golang-migrate applies versions in order.
 --
 -- A failed CONCURRENTLY build does NOT roll back: it leaves the index marked
 -- INVALID, and the IF NOT EXISTS below would then see that name and skip the
--- rebuild while reporting success. 000011 refuses to drop the old constraint
+-- rebuild while reporting success. 000014 refuses to drop the old constraint
 -- unless this index is present AND valid, so a failed build here can never leave
 -- the table with no working uniqueness -- the deploy fails loudly instead.
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_campaigns_brief_platform_live
