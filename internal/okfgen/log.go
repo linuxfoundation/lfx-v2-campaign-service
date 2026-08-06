@@ -9,15 +9,16 @@ import (
 	"path/filepath"
 )
 
-// SeedLog writes an initial log.md at destDir/log.md with one dated entry,
-// per OKF §7 (log.md has no frontmatter, "##"-level ISO 8601 date headings,
-// newest first).
+// SeedLog writes an initial log fragment at destDir/log/<date>-bundle-created.md
+// with one dated entry: no frontmatter (a fragment is not a concept), and a
+// first H1 carrying the same date as the filename.
 func SeedLog(destDir, date, message string) error {
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return fmt.Errorf("creating directory %s: %w", destDir, err)
+	logDir := filepath.Join(destDir, "log")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return fmt.Errorf("creating directory %s: %w", logDir, err)
 	}
-	path := filepath.Join(destDir, "log.md")
-	content := fmt.Sprintf("# Log\n\n## %s\n\n**Creation** — %s\n", date, message)
+	path := filepath.Join(logDir, date+"-bundle-created.md")
+	content := fmt.Sprintf("# %s — bundle created\n\n**Creation** — %s\n", date, message)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}

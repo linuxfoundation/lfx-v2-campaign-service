@@ -40,6 +40,26 @@ func WriteIndex(path, title string, entries []IndexEntry) error {
 	return nil
 }
 
+// AppendNote appends a blank line followed by note to the file at path. Used
+// for the root index's OKF-deviation note (see cmd/okfgen/main.go), which
+// documents a bundle-specific structural choice that WriteIndex's generic
+// title+bullets rendering has no place for.
+func AppendNote(path, note string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening %s to append note: %w", path, err)
+	}
+	_, writeErr := f.WriteString("\n" + note)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("appending note to %s: %w", path, writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("closing %s: %w", path, closeErr)
+	}
+	return nil
+}
+
 // EntriesFromRefs converts generator ConceptRefs into index entries for the
 // same directory the concepts were written to (Link is the concept file's
 // base name).

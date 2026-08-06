@@ -425,8 +425,10 @@ responsibility.
    overwrite hand-edited concept files.
 2. Add or update the concept's `* [Title](url) - description` bullet in the
    relevant `index.md`.
-3. Append a dated entry to `docs/knowledge/log.md`:
-   `## YYYY-MM-DD` followed by `**Update** — <what changed and why>.`
+3. Add a new file `docs/knowledge/log/YYYY-MM-DD-<slug>.md` (slug = ticket +
+   short description), with a first H1 dated to match the filename followed
+   by `**Update** — <what changed and why>.` One file per entry — this keeps
+   concurrent PRs from ever editing the same log file.
 
 **Validate before pushing:**
 
