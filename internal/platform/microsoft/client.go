@@ -653,7 +653,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			// A request HAS already been sent (the 429 proves Microsoft received it), so a
+			// cancellation/deadline while waiting to retry leaves the outcome AMBIGUOUS,
+			// not "not applied". Returning the bare ctx.Err() here would match neither
+			// transportError nor apiError, so IsOutcomeUnconfirmed would report false
+			// and the caller would be told the mutation definitely did not apply. Wrap it
+			// so the ambiguity survives. Mirrors the google-ads client fix for the same gap.
+			return nil, &transportError{Method: method, Path: path, err: ctx.Err()}
 		case <-time.After(wait):
 		}
 	}

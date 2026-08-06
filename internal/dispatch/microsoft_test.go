@@ -335,3 +335,279 @@ func TestMicrosoft_WhitespaceCredentialsNeverReachTheAPI(t *testing.T) {
 		})
 	}
 }
+
+// TestMicrosoft_ToggleStatus_CascadesToChildren verifies the dispatcher resolves creds and
+// PUTs Status across the whole tree — the create path PAUSES all three, so toggling only the
+// campaign would not serve.
+func TestMicrosoft_ToggleStatus_CascadesToChildren(t *testing.T) {
+	type call struct{ method, path string }
+	var (
+		mu    sync.Mutex
+		calls []call
+	)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls = append(calls, call{r.Method, r.URL.Path})
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := microsoftToggleCampaign("321", "654", "987")
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	// The handler runs on the server goroutine; take the same lock the writer used so the
+	// assertions below observe every append (srv.Close is deferred, so it orders nothing here).
+	mu.Lock()
+	defer mu.Unlock()
+	// PAUSE: campaign gate FIRST, then ad group, then ad.
+	if len(calls) != 3 {
+		t.Fatalf("issued %d calls, want 3 (campaign + ad group + ad): %+v", len(calls), calls)
+	}
+	wantOrder := []string{"Campaigns", "AdGroups", "Ads"}
+	for i, want := range wantOrder {
+		if calls[i].method != http.MethodPut {
+			t.Errorf("call[%d] method = %s, want PUT", i, calls[i].method)
+		}
+		if !strings.HasSuffix(calls[i].path, want) {
+			t.Errorf("call[%d] path = %q, want a %s update (order: gate first on pause)", i, calls[i].path, want)
+		}
+	}
+}
+
+// TestMicrosoft_ToggleStatus_ActivateOrdersChildrenFirst pins the reverse ordering: on
+// ACTIVATE nothing may serve until the whole tree is ready, so the campaign gate flips LAST.
+func TestMicrosoft_ToggleStatus_ActivateOrdersChildrenFirst(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := microsoftToggleCampaign("321", "654", "987")
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunActive); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) != 3 || !strings.HasSuffix(paths[0], "AdGroups") || !strings.HasSuffix(paths[1], "Ads") || !strings.HasSuffix(paths[2], "Campaigns") {
+		t.Errorf("activate order = %v, want [AdGroups Ads Campaigns] (children first, gate last)", paths)
+	}
+}
+
+// TestMicrosoft_ToggleStatus_ActivateWithoutChildrenIsNotProvisioned pins the fail-closed
+// guard: with a child id missing nothing could serve, so refuse with
+// ErrCampaignNotProvisioned (a 409) WITHOUT calling Microsoft.
+func TestMicrosoft_ToggleStatus_ActivateWithoutChildrenIsNotProvisioned(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		reached bool
+	)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		reached = true
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	for _, tc := range []struct{ name, adGroup, ad string }{
+		{"no ad group", "", "987"},
+		{"no ad", "654", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			reached = false
+			mu.Unlock()
+			camp := microsoftToggleCampaign("321", tc.adGroup, tc.ad)
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunActive)
+			if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+				t.Fatalf("want ErrCampaignNotProvisioned, got %T: %v", err, err)
+			}
+			mu.Lock()
+			sawRequest := reached
+			mu.Unlock()
+			if sawRequest {
+				t.Error("no API call should be made — the refusal is a local state check")
+			}
+		})
+	}
+}
+
+// TestMicrosoft_ToggleStatus_ChildIDsMatchPersistedShape pins microsoftChildIDs against the
+// blob campaignFromMicrosoft actually writes (microsoft.CampaignResult's lowerCamel json
+// tags). A renamed/nested field would silently yield "" and turn every ACTIVATE into a
+// spurious not-provisioned 409.
+func TestMicrosoft_ToggleStatus_ChildIDsMatchPersistedShape(t *testing.T) {
+	marshaled, err := json.Marshal(&microsoft.CampaignResult{CampaignID: "321", AdGroupID: "654", AdID: "987"})
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	ag, ad := microsoftChildIDs(&model.Campaign{Result: marshaled})
+	if ag != "654" || ad != "987" {
+		t.Fatalf("microsoftChildIDs over the real persisted blob = (%q, %q), want (654, 987); blob: %s", ag, ad, marshaled)
+	}
+	if ag, ad := microsoftChildIDs(nil); ag != "" || ad != "" {
+		t.Errorf("a nil campaign must yield empty ids, got (%q, %q)", ag, ad)
+	}
+	if ag, ad := microsoftChildIDs(&model.Campaign{Result: json.RawMessage(`{`)}); ag != "" || ad != "" {
+		t.Errorf("a malformed blob must yield empty ids, got (%q, %q)", ag, ad)
+	}
+}
+
+// TestMicrosoft_ToggleStatus_RejectsUnsupportedStatus keeps the run-state vocabulary closed.
+func TestMicrosoft_ToggleStatus_RejectsUnsupportedStatus(t *testing.T) {
+	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{})
+	camp := microsoftToggleCampaign("321", "654", "987")
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, "archived"); err == nil {
+		t.Fatal("an unsupported run status must be rejected")
+	}
+}
+
+func microsoftToggleCampaign(campaignID, adGroupID, adID string) *model.Campaign {
+	return &model.Campaign{
+		Platform:           model.ProviderMicrosoftAds,
+		PlatformCampaignID: campaignID,
+		Result:             json.RawMessage(`{"campaignId":"` + campaignID + `","adGroupId":"` + adGroupID + `","adId":"` + adID + `"}`),
+	}
+}
+
+// TestMicrosoft_ToggleStatus_PartialCascadeIsUnconfirmed pins the dispatcher's classification
+// step: the client reports a partially-applied cascade as Unconfirmed, and the dispatcher must
+// PROPAGATE that (as unconfirmedToggleError) rather than surface it as a definite failure.
+// Without the wrap the service would report "not modified" for a change that DID partially land.
+func TestMicrosoft_ToggleStatus_PartialCascadeIsUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var puts int
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		puts++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// The campaign gate applies cleanly; the ad group is then REJECTED outright.
+		if strings.HasSuffix(r.URL.Path, "AdGroups") {
+			_, _ = io.WriteString(w, `{"PartialErrors":[{"Code":1234,"Message":"nope"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := microsoftToggleCampaign("321", "654", "987")
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("a rejected child status update must not be reported as success")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a partial cascade (campaign paused, ad group rejected) must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestMicrosoft_ToggleStatus_5xxIsUnconfirmed pins the same propagation for a transport-level
+// ambiguity: Microsoft may have applied the change before the 5xx, so the outcome is unknowable.
+func TestMicrosoft_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := microsoftToggleCampaign("321", "654", "987")
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
+	if err == nil {
+		t.Fatal("expected an error on a 5xx toggle")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a 5xx toggle must be Unconfirmed() — the change may have applied, got %T: %v", err, err)
+	}
+}
+
+// TestMicrosoft_ToggleStatus_PauseWithOrphanAdIsNotProvisioned pins the second local refusal:
+// a persisted row with an ad id but NO ad-group id cannot be paused, because Microsoft
+// addresses an ad by its parent (the Ads PUT is scoped by AdGroupId). Reporting success would
+// leave the ad serving. It is a fact about the ROW, so it is ErrCampaignNotProvisioned (409)
+// and must be caught before any credential resolution or upstream call.
+func TestMicrosoft_ToggleStatus_PauseWithOrphanAdIsNotProvisioned(t *testing.T) {
+	var mu sync.Mutex
+	var reached bool
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		reached = true
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		reached = true
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewMicrosoftDispatcher(
+		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+	)
+	camp := microsoftToggleCampaign("321", "", "987")
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Fatalf("want ErrCampaignNotProvisioned for an ad with no ad group, got %T: %v", err, err)
+	}
+	mu.Lock()
+	sawRequest := reached
+	mu.Unlock()
+	if sawRequest {
+		t.Error("the refusal is a local row check — no token or API request may be made")
+	}
+}
